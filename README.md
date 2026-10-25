@@ -1,127 +1,67 @@
 <p align="center">
-  <img src="media/hero.png" alt="Sitegeist" width="400">
+  <img src="media/hero.png" alt="Tabkyra" width="400">
 </p>
 
-An AI assistant that lives in your browser sidebar, and a bridge that lets coding agents
-use your browser too. Built for collaboration, not autonomy theater. You guide, it executes.
+# Tabkyra
 
-Sitegeist automates repetitive web tasks, extracts data from any website, navigates across
-pages, fills out forms, compiles research, and turns what it finds into documents,
-spreadsheets, or whatever you need. It works on any website through a Chromium side panel
-(Chrome, Brave, Edge, Arc, Vivaldi, Opera, Chromium), using the AI provider of your choice.
+An AI agent in your browser's side panel, and a browser your coding agents can use.
+Claude Code, Codex, OpenCode or any MCP client drives tabs in its own tab group in the
+background while you keep working in yours. Bring your own API key or sign in with
+ChatGPT, GitHub Copilot or Google Gemini. Nothing is collected or tracked.
 
-Bring your own API key or log in with an existing subscription (Anthropic Claude,
-OpenAI/ChatGPT, GitHub Copilot, Google Gemini). Your data stays on your machine. Nothing
-is collected or tracked.
+## Quick start (60 seconds)
 
-This fork (0xSero/sitegeist) adds three things to upstream (badlogic/sitegeist):
+1. **Build** (once): `./scripts/setup-siblings.sh && npm run build`, which makes `dist-chrome/`.
+2. **Load it** in Helium or Chrome: open `chrome://extensions`, turn on Developer mode,
+   click **Load unpacked** and pick `dist-chrome/`. The id is always
+   `kenehmggpggpiolepbjojeenmeapgfoc` (fixed by the manifest `key`).
+3. **Install the CLI and the native host:**
 
-1. **Background operation.** Every chat owns its own tab group. Tabs open inactive, the
-   agent acts on its own current tab, and it never sees or touches your other tabs.
-2. **Per-tab panels for parallel tasks.** The panel is bound to a tab, not a window (the
-   Claude-in-Chrome model): each task lives on the tab you opened it on, and a tab shows
-   the panel only when a task owns it. Run several tasks at once, one per tab, and put
-   two tabs in two windows to watch both side by side.
-3. **Dynamic model lists.** Models are fetched from the connected providers at runtime
-   instead of a hardcoded table.
-4. **A harness bridge.** Claude Code, Codex, omp, pi, or any MCP client can drive the
-   browser through Sitegeist, in the background, with no configuration.
+   ```bash
+   (cd cli && npm link)      # puts `tabkyra` (and the old `sitegeist` alias) on PATH
+   tabkyra install           # registers ai.tabkyra.bridge for Helium, Chrome, Chromium, Edge, Brave, ...
+   ```
 
-## Install the extension
+   Reload the extension once, then `tabkyra status` lists which browsers have the host
+   and whether the extension is connected.
+4. **Connect your agent:**
 
-1. Download or build (`npm run build`) the unpacked extension in `dist-chrome/`.
-2. Open `chrome://extensions` (or `brave://extensions`), enable Developer mode, click
-   Load unpacked, select `dist-chrome/`.
-3. Open the side panel with `Cmd+Shift+S` / `Ctrl+Shift+S` and connect a provider.
+   ```bash
+   claude mcp add tabkyra -- tabkyra mcp
+   ```
 
-No toggles are required. In-page JavaScript runs through the `userScripts` API when the
-browser exposes it (an isolated world whose CSP blocks network access from injected code)
-and through the debugger's `Runtime.evaluate` otherwise (the page's main world; Chrome
-shows its "is debugging this browser" bar). If you want the stricter sandbox, enable
-**Allow user scripts** in the extension's details; everything works either way.
+   Codex (`~/.codex/config.toml`):
 
-Requires Chrome 141+ or the equivalent Chromium release.
+   ```toml
+   [mcp_servers.tabkyra]
+   command = "tabkyra"
+   args = ["mcp"]
+   ```
 
-## Use it from a coding agent
+   OpenCode, OMP or any other MCP client: a stdio server with command `tabkyra`, args `["mcp"]`.
 
-```bash
-cd cli && npm install && npm run build && npm link   # until published to npm
-sitegeist install                                     # native-messaging manifest for every Chromium browser found
-claude mcp add sitegeist -- sitegeist mcp             # Claude Code
-sitegeist pi-extension                                # pi: writes ~/.pi/agent/extensions/sitegeist.ts
-sitegeist status                                      # is the extension reachable?
-```
+For the side panel itself, press `Cmd+Shift+S` / `Ctrl+Shift+S` and add a provider.
+Requires Chromium 141 or newer.
 
-Codex, in `~/.codex/config.toml`:
+## Safety model
 
-```toml
-[mcp_servers.sitegeist]
-command = "sitegeist"
-args = ["mcp"]
-```
+- **Nothing listens on the network.** The browser spawns the native host; the host owns a
+  socket in `/tmp/tabkyra-bridge-<user>/` (0700 directory, 0600 socket) and only relays
+  frames. The client refuses sockets and directories another user owns.
+- **Only this extension can reach the host.** The host manifest's `allowed_origins` names
+  the one fixed extension id.
+- **Agents work in their own tab group** ("Tabkyra · claude", ...). Tabs open in the
+  background and agents cannot see your other tabs. `tabs_show` is the only tool that
+  changes what you see, and popups from agent tabs do not steal focus.
+- **Site permissions.** By default an agent must ask before it opens a new site. Claude
+  Code and Codex show the prompt inline; otherwise answer it in the side panel under
+  Settings > Bridge or run `tabkyra allow <host>`. `tabkyra yolo` allows any site and
+  `tabkyra ask` turns prompting back on.
+- **No Claude subscription login.** Anthropic does not allow Claude Pro/Max subscriptions
+  in third-party apps, so Tabkyra takes Anthropic API keys only.
 
-omp: add an MCP server entry that runs `sitegeist mcp`.
-
-`sitegeist mcp` installs the manifest itself on first run, so the only manual step is
-loading the extension once. Reload the extension after the first install.
-
-How it is wired, and why it is safe:
-
-```
-harness ── stdio MCP ── sitegeist mcp ── unix socket ── native host ── native messaging ── extension
-```
-
-The browser spawns the native host. The host owns a socket in
-`/tmp/sitegeist-bridge-<user>/` (0700 directory, 0600 socket) that only your user can
-reach, and it only relays frames; all logic and all permission checks live in the
-extension. Nothing listens on the network. Each harness gets its own tab group
-("Sitegeist · claude", "Sitegeist · pi") and works in the background; `tabs_show` is the
-only tool that changes what you see.
-
-Site access: by default the extension asks before an agent opens a new site. Claude Code
-and Codex show the prompt inline (MCP elicitation). Otherwise answer it in the side panel
-under Settings > Bridge, run `sitegeist allow <host>`, or switch to "allow any site".
-
-CLI commands: `mcp`, `install`, `status`, `allow <host>`, `reload`, `debug`,
-`pi-extension`. See `cli/README.md`.
-
-## What changed in this fork
-
-Extension:
-
-- `src/browser/` is new and is the only code that touches tabs: `session.ts` (tab group
-  per session, current tab, persistence in `chrome.storage.session`), `cdp.ts`
-  (`chrome.debugger` screenshots, real input events, focus emulation so hidden tabs keep
-  running `requestAnimationFrame` and lazy loading), `page.ts` (navigation with load
-  wait, in-page scripts with `userScripts` → `scripting` → CDP fallbacks, snapshot with
-  element refs), `foreground-guard.ts` (popups opened by agent tabs no longer steal
-  focus).
-- Every tool now acts on the session's current tab instead of the active tab:
-  `navigate` (new `showTab`, `closeTab`, `back`/`forward`; `switchToTab` no longer
-  focuses), `browserjs()`, native input events, debugger, skills, element picker,
-  `extract_image` (CDP screenshot instead of `captureVisibleTab`).
-- Opening the side panel puts the tab you opened it on into the session's tab group
-  right away, so the group exists from the start. The side panel only reacts to URL
-  changes on its own tabs. A link icon in the header shares further tabs with the agent.
-- `src/models/`: runtime model discovery for Anthropic, OpenAI, ChatGPT/Codex, Gemini,
-  GitHub Copilot, OpenRouter, Mistral, Groq, xAI, Cerebras, Hugging Face; metadata from
-  the generated table and models.dev; cached in IndexedDB (`discovered-models` store).
-  Providers without a list endpoint keep the static table. `registerModels` was added to
-  `pi-ai` (`../pi-mono/packages/ai/src/models.ts`).
-- `src/bridge/`: native messaging port, one browser session per connected harness,
-  request routing, site permissions, diagnostics (`bridge.debug`, `bridge.bench`,
-  `bridge.reload`). Settings gained a Bridge tab.
-- Manifest: fixed `key` (stable id `kjnkealaldnlmhpooihmomfkbllgmdkk`), new permissions
-  `tabGroups`, `nativeMessaging`, `alarms`.
-- Fixed the type errors in the custom provider dialogs.
-
-CLI (`cli/`, package `sitegeist`): native host, socket client, MCP server with 22 tools,
-installer for all Chromium browser directories (macOS, Linux, Windows registry), pi
-extension generator.
-
-Design and evidence (reference implementations, experiments, protocol): see
-`docs/agent-bridge-design.md`. Live task results and bridge latencies: `docs/benchmarks.md`.
-Full list of changes: `CHANGELOG.md`.
+More: `cli/README.md` (commands, environment variables, MCP tools) and
+`docs/agent-bridge-design.md` (protocol and design).
 
 ## Development
 
@@ -131,7 +71,7 @@ Clone this repo plus its sibling dependencies into the same parent directory:
 parent/
   mini-lit/          # https://github.com/badlogic/mini-lit
   pi-mono/           # https://github.com/badlogic/pi-mono
-  sitegeist/         # this repo
+  tabkyra/           # this repo
 ```
 
 Check out pi-mono at the pinned commit, apply `patches/pi-mono.patch` (model registration,
@@ -147,7 +87,7 @@ declarations and install everything:
 Rebuild the extension and reload it from the terminal:
 
 ```bash
-npm run build && sitegeist reload
+npm run build && tabkyra reload
 ```
 
 Note: a production build bumps the version in `static/manifest.chrome.json`.
@@ -156,31 +96,16 @@ Note: a production build bumps the version in `static/manifest.chrome.json`.
 
 ```bash
 ./check.sh        # biome + tsc for the extension and the site
-(cd cli && npm run check)
+(cd cli && npm run check && npm test)   # CLI typecheck, build, installer test
+(cd cli && npm run test:e2e)            # extension + host + MCP in a throwaway headless Chromium
+                                        # (first time: cd cli && npx playwright-core install chromium)
 ```
 
 The Husky pre-commit hook runs `./check.sh`.
 
-## Updating the website
+## Credits
 
-```bash
-cd site && ./run.sh deploy
-```
-
-Builds the static site and uploads it to `sitegeist.ai`. Requires SSH access to
-`slayer.marioslab.io`.
-
-## Releasing
-
-```bash
-./release.sh patch   # 1.0.0 -> 1.0.1
-./release.sh minor   # 1.0.0 -> 1.1.0
-./release.sh major   # 1.0.0 -> 2.0.0
-```
-
-Bumps the version in `static/manifest.chrome.json`, commits, tags, and pushes. GitHub
-Actions builds the extension and creates a release.
-
-## License
-
-AGPL-3.0. See [LICENSE](LICENSE). Upstream: [badlogic/sitegeist](https://github.com/badlogic/sitegeist).
+Tabkyra is a fork of [Sitegeist](https://github.com/badlogic/sitegeist) by Mario Zechner
+(badlogic), via [0xSero's fork](https://github.com/0xSero/sitegeist), which added the
+agent bridge, background tab groups, per-tab panels and runtime model discovery
+(details in `docs/fork-changes.md`). Licensed AGPL-3.0, like upstream. See [LICENSE](LICENSE).

@@ -59,6 +59,7 @@ Tabkyra side panel under Settings > Bridge, run `tabkyra allow <host>`, or switc
 mode to "allow any site" there. pi: set `TABKYRA_AUTO_ALLOW=1` to auto-approve.
 
 `TABKYRA_SESSION=<name>` makes a harness re-adopt the same tab group across restarts.
+`TABKYRA_SOCKET_DIR` moves the socket directory (the end-to-end test runs a private bridge this way).
 `TABKYRA_CLIENT_NAME` overrides the tab group label.
 
 ## MCP tools
