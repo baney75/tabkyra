@@ -81,7 +81,8 @@ from the current results. Commit it in the same pull request as the change that 
 numbers, so a reviewer sees any accuracy given up.
 
 Measured on 2026-10-25 (13 skills, 244 cases): top-1 92.8% (193 of 208), false invokes 2.8%
-(1 of 36), p95 under 0.2 ms per match, index build under 10 ms. Twenty-six positive cases and
+(1 of 36), p95 about 0.2 ms per match and an index build of about 20 ms on the CI runner
+(about 0.1 ms and under 10 ms on an Apple-silicon Mac). Twenty-six positive cases and
 six `none` cases were written before the scorer was run on them; on those alone the router
 scored 88.5% and 0%.
 
