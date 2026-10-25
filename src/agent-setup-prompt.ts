@@ -21,7 +21,7 @@ export function agentSetupPrompt(version: string): string {
    - Any MCP client: a stdio server named "tabkyra" that runs ~/.config/tabkyra/tabkyra with the argument "mcp". JSON configs need the full path, not ~.
    - pi has no MCP client: run tabkyra pi-extension instead.
 5. Install the skills: tabkyra skill install
-   If this harness reads AGENTS.md instead of skill folders: tabkyra skill print >> AGENTS.md
+   If this harness reads AGENTS.md instead of skill folders: cd back to the project you started in (not the Tabkyra clone), then run tabkyra skill print >> AGENTS.md
 6. Run tabkyra doctor and fix anything it reports with the command it prints.
 7. Restart or reload MCP servers if this harness needs it, then call the tabkyra status tool. Tell me whether it says connected.
 

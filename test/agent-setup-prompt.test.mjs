@@ -42,6 +42,12 @@ test("the setup prompt refuses to build without a version to pin", () => {
 	assert.match(prompt, /4\. Connect this harness, even if Tabkyra already works in another one/);
 });
 
+test("the setup prompt appends skills to the user's project AGENTS.md, not the clone's", () => {
+	// Step 2 leaves the shell in ~/tabkyra-src/tabkyra; appending there would dirty the clone and stop the next update.
+	const line = prompt.split("\n").find((l) => l.includes(">> AGENTS.md"));
+	assert.match(line, /cd back to the project you started in \(not the Tabkyra clone\), then run tabkyra skill print >> AGENTS\.md/);
+});
+
 test("the setup prompt passes the skill security lint", () => {
 	// Appending to AGENTS.md is the one agent-config write the prompt makes, at the user's request.
 	const findings = lintText("setup prompt", prompt, { reference: true }).filter((f) => !(f.rule === "config-tamper" && /AGENTS\.md/.test(prompt.split("\n")[f.line - 1])));
