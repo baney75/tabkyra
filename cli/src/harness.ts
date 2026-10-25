@@ -29,6 +29,7 @@ export interface Harness {
 	configured: Configured;
 	/** The command the existing entry runs, when there is one. */
 	currentCommand?: string;
+	note?: string;
 	/** Command that removes a stale entry before re-adding it. */
 	removeCommand?: string[];
 	/** Command that adds the server, when the harness has one. */
@@ -80,7 +81,11 @@ function sameFile(a: string, b: string): boolean {
 export function classify(command: string | undefined, args: string[]): Configured {
 	if (!command) return undefined;
 	const resolved = isAbsolute(command) ? command : which(command);
-	if (command === cliLauncherPath()) return launcherValid() && args.join(" ") === "mcp" ? true : "stale";
+	if (command === cliLauncherPath()) {
+		if (!launcherValid()) return "stale";
+		// The right launcher with other arguments is a deliberate customization, not breakage.
+		return args.join(" ") === "mcp" ? true : "other";
+	}
 	if (!resolved || !existsSync(resolved)) return "stale";
 	const script = process.argv[1];
 	// `node /path/to/tabkyra mcp` is this CLI too.
@@ -100,6 +105,8 @@ function readJson(file: string): Record<string, unknown> | undefined {
 interface EntryState {
 	configured: Configured;
 	currentCommand?: string;
+	/** Why the state is what it is, when that isn't obvious. */
+	note?: string;
 }
 
 /** The tabkyra entry under `key` in a JSON config. Unparseable files are "unknown", not "configured". */
@@ -121,12 +128,17 @@ function jsonServerState(file: string, key: string, commandOf: (entry: Record<st
  * means no entry; a crash, timeout or output we can't parse means we can't tell.
  */
 function cliServerState(binary: string, fields: { command: RegExp; args: RegExp; scope?: RegExp }): EntryState {
+	// Windows harness CLIs are .cmd shims that spawnSync can't run without a shell.
+	if (process.platform === "win32") return { configured: undefined, note: "Not checked on Windows." };
 	const result = spawnSync(binary, ["mcp", "get", "tabkyra"], { encoding: "utf8", timeout: 15000, cwd: homedir() });
 	if (result.error || result.signal) return { configured: undefined };
 	if (result.status !== 0) return { configured: false };
 	const out = result.stdout ?? "";
 	// Claude Code: only a user-scope entry serves every project.
-	if (fields.scope && !fields.scope.test(out)) return { configured: false };
+	if (fields.scope && !fields.scope.test(out)) {
+		const scope = out.match(/^\s*Scope:\s*(.+)$/m)?.[1]?.trim() ?? "another scope";
+		return { configured: undefined, note: `Claude Code has a tabkyra entry in ${scope}, not in user scope.` };
+	}
 	const command = out.match(fields.command)?.[1]?.trim();
 	if (command === undefined) return { configured: undefined };
 	const args = (out.match(fields.args)?.[1] ?? "").trim().split(/\s+/).filter(Boolean);

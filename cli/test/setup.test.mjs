@@ -151,19 +151,23 @@ test("an entry running some other command is flagged but never replaced under --
 	fakeHarness("codex", launcher(), { args: "mcp --debug" });
 	const checks = JSON.parse(run(["doctor", "--json"]).out).checks;
 	assert.equal(checks.find((c) => c.id === "mcp:claude").status, "warn");
-	assert.equal(checks.find((c) => c.id === "mcp:codex").status, "fail", "the launcher with other args is not this setup");
+	assert.equal(checks.find((c) => c.id === "mcp:codex").status, "warn", "the launcher with other args is a customization, not breakage");
 
 	const { out } = run(["setup", "--yes", "--no-wait"]);
 	assert.match(out, /left alone/);
 	const calls = readFileSync(harnessLog, "utf8");
 	assert.ok(!calls.includes("claude mcp remove") && !calls.includes("claude mcp add"), calls);
+	assert.ok(!calls.includes("codex mcp remove") && !calls.includes("codex mcp add"), calls);
 });
 
-test("a Claude Code entry outside user scope does not count", () => {
+test("a Claude Code entry outside user scope is reported, and setup adds nothing over it", () => {
+	writeFileSync(harnessLog, "");
 	fakeHarness("claude", launcher(), { scope: "Local config (private to you in this project)" });
 	const check = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
-	assert.equal(check.status, "fail");
-	assert.match(check.label, /not configured/);
+	assert.equal(check.status, "warn");
+	assert.match(check.detail, /Local config/);
+	run(["setup", "--yes", "--no-wait"]);
+	assert.ok(!readFileSync(harnessLog, "utf8").includes("claude mcp add"));
 });
 
 test("setup without --yes and without a terminal never edits a harness config", () => {

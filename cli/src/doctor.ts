@@ -233,7 +233,7 @@ function harnessChecks(): Check[] {
 					id,
 					status: "warn",
 					label: `${h.name}: couldn't tell whether Tabkyra is configured`,
-					detail: h.configFile ? `${h.configFile} could not be parsed.` : `\`${h.id} mcp get tabkyra\` failed or printed something unexpected.`,
+					detail: h.note ?? (h.configFile ? `${h.configFile} could not be parsed.` : `\`${h.id} mcp get tabkyra\` failed or printed something unexpected.`),
 					fix: h.configFile ? `Check ${h.configFile}` : `${h.id} mcp get tabkyra`,
 				};
 			}

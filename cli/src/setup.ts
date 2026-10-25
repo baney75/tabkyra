@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BridgeClient, listSockets } from "./client.ts";
 import { buildState, builtVersion, sourceVersion } from "./doctor.ts";
-import { harnesses, runCommand, shellJoin, tabkyraBinary, which } from "./harness.ts";
+import { harnesses, launcherValid, runCommand, shellJoin, tabkyraBinary, which } from "./harness.ts";
 import { browserDirs, install } from "./install.ts";
 import { extensionDir, repoRoot } from "./paths.ts";
 import { banner, box, c, confirm, sym } from "./ui.ts";
@@ -34,6 +34,7 @@ function step(n: number, title: string): void {
 function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env): boolean {
 	console.log(`  ${c.dim(`$ ${shellJoin([command, ...args])}`)}`);
 	const result = spawnSync(command, args, { cwd, env, stdio: "inherit" });
+	if (result.error) console.log(`  ${sym.fail} ${result.error.message}`);
 	return result.status === 0;
 }
 
@@ -49,8 +50,13 @@ async function ensureBuild(options: SetupOptions): Promise<boolean> {
 			? `  ${sym.warn} No extension build at ${extensionDir()}`
 			: `  ${sym.warn} The extension build (${builtVersion()}) does not match this checkout (${sourceVersion()})`,
 	);
-	if (!(await confirm(`  ${state === "missing" ? "Build" : "Rebuild"} it now? This takes about a minute.`, { assumeYes: options.yes }))) {
+	if (!(await confirm(`  ${state === "missing" ? "Build it now? The first build fetches pi-mono and mini-lit and takes a few minutes." : "Rebuild it now?"}`, { assumeYes: options.yes }))) {
 		console.log(`  Build it yourself with: ${c.bold(`cd ${shellJoin([root])} && ./scripts/setup-siblings.sh && npm run build`)}`);
+		return false;
+	}
+	if (process.platform === "win32") {
+		console.log(`  ${sym.warn} Automatic builds need a POSIX shell. Build it yourself in Git Bash or WSL:`);
+		console.log(`  ${c.bold(`cd ${shellJoin([root])} && ./scripts/setup-siblings.sh && npm run build`)}`);
 		return false;
 	}
 	// The extension compiles against sibling checkouts of pi-mono and mini-lit.
@@ -132,8 +138,13 @@ async function probe(): Promise<Probe> {
 		try {
 			await client.connect(path);
 			if (!client.extensionConnected) continue;
-			const info = (await client.call("bridge.debug", {}, 5000).catch(() => ({}))) as { version?: string };
-			return { connected: true, version: info.version, socket: path };
+			try {
+				const info = (await client.call("bridge.debug", {}, 5000)) as { version?: string };
+				return { connected: true, version: info.version, socket: path };
+			} catch (err) {
+				// Connected but not answering: not ready, and the reason is worth showing.
+				return { connected: true, socket: path, error: err instanceof Error ? err.message : String(err) };
+			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -216,22 +227,35 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 	return ok;
 }
 
-/** Connected and running the build on disk. A stale running copy is reloaded once. */
-async function connectedOnCurrentBuild(state: { reloaded: boolean }): Promise<Probe & { ready: boolean }> {
+/** How long to wait for a reloaded extension to come back on the current build. */
+const RELOAD_GRACE_MS = 15000;
+
+interface ReloadState {
+	reloadedAt?: number;
+}
+
+/**
+ * Connected and running the build on disk. A stale running copy is reloaded once; if it
+ * still runs another version after RELOAD_GRACE_MS, `mismatch` says so and the caller stops.
+ */
+async function connectedOnCurrentBuild(state: ReloadState): Promise<Probe & { ready: boolean; mismatch?: boolean }> {
 	const p = await probe();
 	if (!p.connected) return { ...p, ready: false };
 	const built = builtVersion();
-	if (!built || !p.version || p.version === built) return { ...p, ready: true };
-	if (!state.reloaded && p.socket) {
-		state.reloaded = true;
+	if (!p.version) return { ...p, ready: !built && !p.error };
+	if (!built || p.version === built) return { ...p, ready: true };
+	if (state.reloadedAt === undefined && p.socket) {
+		state.reloadedAt = Date.now();
 		console.log(`  ${sym.warn} The browser runs Tabkyra ${p.version}, the build is ${built}. Reloading the extension...`);
 		await reloadExtension(p.socket);
+		return { ...p, ready: false };
 	}
-	return { ...p, ready: false };
+	const mismatch = state.reloadedAt !== undefined && Date.now() - state.reloadedAt > RELOAD_GRACE_MS;
+	return { ...p, ready: false, mismatch };
 }
 
 async function loadExtension(options: SetupOptions): Promise<boolean> {
-	const reload = { reloaded: false };
+	const reload: ReloadState = {};
 	const first = await connectedOnCurrentBuild(reload);
 	if (first.ready) {
 		console.log(`  ${sym.ok} The extension is loaded and connected ${c.dim(`(${first.version ?? "unknown version"})`)}.`);
@@ -277,6 +301,13 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 	while (Date.now() < deadline) {
 		const p = await connectedOnCurrentBuild(reload);
 		last = p;
+		if (p.mismatch) {
+			if (live) process.stdout.write("\r\x1b[2K");
+			console.log(`  ${sym.fail} The browser still runs Tabkyra ${p.version} after a reload; the build is ${builtVersion()}.`);
+			console.log(`  It is probably loaded from another folder. On chrome://extensions, remove Tabkyra and load unpacked:`);
+			console.log(`  ${c.cyan(dir)}`);
+			return false;
+		}
 		if (p.ready) {
 			if (live) process.stdout.write("\r\x1b[2K");
 			console.log(`  ${sym.ok} ${c.bold("Connected.")} Tabkyra can reach your browser ${c.dim(`(${p.version ?? "unknown version"})`)}.`);
@@ -288,7 +319,10 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 	if (live) process.stdout.write("\r\x1b[2K");
 	console.log(`  ${sym.fail} The extension did not connect within ${options.timeoutS} s.`);
 	if (last.connected) console.log(`  It is connected but still runs an old build. Reload it on chrome://extensions.`);
-	else if (last.error) console.log(`  Last error: ${last.error}`);
+	else if (reload.reloadedAt !== undefined) {
+		console.log(`  It went away after the reload. On chrome://extensions, check that Tabkyra is on and loaded from:`);
+		console.log(`  ${c.cyan(dir)}`);
+	} else if (last.error) console.log(`  Last error: ${last.error}`);
 	console.log(`  If it is loaded, reload it once on chrome://extensions, then run ${c.bold("tabkyra doctor")}.`);
 	return false;
 }
@@ -304,6 +338,13 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 
 	step(2, "Register the native host with your browsers");
 	if (!registerHost()) return 1;
+	if (!launcherValid()) {
+		install({ force: true });
+		if (!launcherValid()) {
+			console.log(`  ${sym.fail} Could not write the agent launcher at ${tabkyraBinary()}. Check that ~/.config/tabkyra is writable.`);
+			return 1;
+		}
+	}
 
 	// Harnesses come before the wait, so an unattended run configures them even if the
 	// browser step is still to come.
