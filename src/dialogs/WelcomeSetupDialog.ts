@@ -32,11 +32,11 @@ export class WelcomeSetupDialog extends DialogBase {
 				className: "flex flex-col gap-4",
 				children: html`
 					${DialogHeader({
-						title: "Welcome to Sitegeist",
+						title: "Welcome to Tabkyra",
 					})}
 					<p class="text-sm text-foreground">
 						To get started, you need to connect at least one AI provider.
-						You can either log in with an existing subscription (Anthropic, OpenAI, or GitHub Copilot)
+						You can either log in with an existing subscription (ChatGPT, GitHub Copilot, or Google Gemini)
 						or enter an API key.
 					</p>
 					<div class="flex justify-end">
