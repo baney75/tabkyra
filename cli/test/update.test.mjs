@@ -297,12 +297,15 @@ test("nightly channel sees prereleases; stable does not", async () => {
 	const nightly = await run(appCli(), "update", "--check", "--channel", "nightly");
 	assert.equal(nightly.code, 100, nightly.out);
 	assert.match(nightly.out, /9\.2\.0-nightly\.20261025/);
-	// The channel is remembered.
-	assert.equal(JSON.parse(readFileSync(join(home, ".config", "tabkyra", "update.json"), "utf8")).channel, "nightly");
-	const r = await run(appCli(), "update");
+	// A read-only check doesn't change the saved channel; an update does.
+	const settings = join(home, ".config", "tabkyra", "update.json");
+	assert.equal(existsSync(settings) ? JSON.parse(readFileSync(settings, "utf8")).channel : "stable", "stable");
+	const r = await run(appCli(), "update", "--channel", "nightly");
 	assert.equal(r.code, 0, r.out);
 	assert.equal(appVersion(), "9.2.0-nightly.20261025");
-	await run(appCli(), "update", "--channel", "stable", "--check");
+	assert.equal(JSON.parse(readFileSync(settings, "utf8")).channel, "nightly");
+	await run(appCli(), "update", "--channel", "stable");
+	assert.equal(JSON.parse(readFileSync(settings, "utf8")).channel, "stable");
 	releases.delete("v9.2.0-nightly.20261025");
 });
 
@@ -318,6 +321,57 @@ test("an update interrupted between the two renames is undone", async () => {
 	assert.equal(appVersion("previous"), "9.2.0-nightly.20261025");
 });
 
+test("rollback right after an interrupted update repairs first and deletes nothing", async () => {
+	// Crash window again: app/ moved to previous/, new release never landed.
+	renameSync(join(tabkyraHome, "app"), join(tabkyraHome, "previous-crash"));
+	rmSync(join(tabkyraHome, "previous"), { recursive: true, force: true });
+	renameSync(join(tabkyraHome, "previous-crash"), join(tabkyraHome, "previous"));
+	const r = await run(cli, "update", "--rollback", "--yes");
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /interrupted update was undone/);
+	assert.match(r.out, /No previous release/);
+	assert.equal(appVersion(), "9.3.0", "the release is back in app/");
+});
+
+test("a rollback interrupted after its second rename keeps both releases", async () => {
+	// Install 9.3.1 so there is a previous release, then fake the crash: app/ is the old
+	// release, previous/ is gone, and the newer one sits in .swap-*.
+	publish("9.3.1");
+	assert.equal((await run(appCli(), "update")).code, 0);
+	renameSync(join(tabkyraHome, "app"), join(tabkyraHome, ".swap-crash"));
+	renameSync(join(tabkyraHome, "previous"), join(tabkyraHome, "app"));
+	const r = await run(appCli(), "update", "--check");
+	assert.match(r.out, /Kept 9\.3\.1 for rollback/);
+	assert.equal(appVersion(), "9.3.0");
+	assert.equal(appVersion("previous"), "9.3.1");
+	assert.equal(existsSync(join(tabkyraHome, ".swap-crash")), false);
+	assert.equal((await run(appCli(), "update", "--rollback")).code, 0);
+	assert.equal(appVersion(), "9.3.1");
+});
+
+test("rollback from a checkout asks first and changes nothing without a yes", async () => {
+	const launcher = readFileSync(join(home, ".config", "tabkyra", "host"), "utf8");
+	const r = await run(cli, "update", "--rollback");
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /Roll back the release install/);
+	assert.equal(appVersion(), "9.3.1");
+	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), launcher);
+});
+
+test("a held lock stops a second updater; a dead one is taken over", async () => {
+	const lock = join(tabkyraHome, "update.lock");
+	mkdirSync(lock);
+	// No pid written yet and fresh: another updater is between mkdir and writing its pid.
+	let r = await run(appCli(), "update", "--check");
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /Another tabkyra update is running/);
+	// A pid that no longer exists: taken over.
+	writeFileSync(join(lock, "pid"), "999999");
+	r = await run(appCli(), "update", "--check");
+	assert.equal(r.code, 0, r.out);
+	assert.equal(existsSync(lock), false);
+});
+
 test("usage errors exit 2", async () => {
 	assert.equal((await run(cli, "update", "--channel", "beta")).code, 2);
 	assert.equal((await run(cli, "update", "--rollback", "--check")).code, 2);
@@ -327,7 +381,7 @@ test("usage errors exit 2", async () => {
 test("the native host tells the extension an update is available", async () => {
 	writeFileSync(
 		join(home, ".config", "tabkyra", "update-status.json"),
-		JSON.stringify({ checkedAt: Date.now(), channel: "stable", current: "9.3.0", latest: "9.4.0", available: true }),
+		JSON.stringify({ checkedAt: Date.now(), channel: "stable", current: appVersion(), latest: "9.4.0", available: true }),
 	);
 	// The host reads the installed version of the copy it runs from: the release in app/.
 	const host = spawn(process.execPath, [appCli(), "host", "chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/"], { env: env() });
@@ -355,5 +409,5 @@ test("the native host tells the extension an update is available", async () => {
 	host.kill();
 	assert.equal(message.available, true);
 	assert.equal(message.latest, "9.4.0");
-	assert.equal(message.current, "9.3.0");
+	assert.equal(message.current, appVersion());
 });

@@ -13,7 +13,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import RELEASE_KEY from "../../keys/tabkyra-release.pub";
@@ -349,59 +349,92 @@ function stage(zip: Buffer, version: string): string {
 
 // ---- swap, lock, recover ---------------------------------------------------
 
-/** One updater at a time. A lock left by a dead process is taken over. */
+/** A lock older than this whose owner can't be identified is taken over. */
+const LOCK_STALE_MS = 10 * 60 * 1000;
+
+/**
+ * One updater at a time. The lock is a directory (mkdir is atomic) holding the owner's pid.
+ * It is taken over only when that pid is dead, or when no pid was written and it is old.
+ */
 function withLock<T>(fn: () => T): T {
 	const root = installRoot();
 	mkdirSync(root, { recursive: true, mode: 0o700 });
 	const lock = join(root, "update.lock");
-	let fd: number;
-	try {
-		fd = openSync(lock, "wx");
-	} catch {
-		const pid = Number(readFileSync(lock, "utf8"));
-		let alive = false;
+	const take = (): boolean => {
 		try {
-			if (pid > 0) {
-				process.kill(pid, 0);
-				alive = true;
-			}
+			mkdirSync(lock);
+			writeFileSync(join(lock, "pid"), String(process.pid));
+			return true;
 		} catch {
-			/* dead */
+			return false;
 		}
-		if (alive) throw new UpdateError(`Another tabkyra update is running (pid ${pid})`);
-		rmSync(lock, { force: true });
-		fd = openSync(lock, "wx");
+	};
+	if (!take()) {
+		let pid = 0;
+		try {
+			pid = Number(readFileSync(join(lock, "pid"), "utf8"));
+		} catch {
+			/* not written yet */
+		}
+		let held: boolean;
+		if (pid > 0) {
+			try {
+				process.kill(pid, 0);
+				held = true;
+			} catch {
+				held = false;
+			}
+		} else {
+			held = Date.now() - statSync(lock).mtimeMs < LOCK_STALE_MS;
+		}
+		if (held) throw new UpdateError(`Another tabkyra update is running${pid > 0 ? ` (pid ${pid})` : ""}. Try again when it finishes.`);
+		// Move the dead lock aside first, so two takers can't both delete and recreate it.
+		const dead = join(root, `.lock-dead-${randomBytes(6).toString("hex")}`);
+		try {
+			renameSync(lock, dead);
+			rmSync(dead, { recursive: true, force: true });
+		} catch {
+			/* someone else took it over */
+		}
+		if (!take()) throw new UpdateError("Another tabkyra update just started. Try again when it finishes.");
 	}
-	writeFileSync(fd, String(process.pid));
-	closeSync(fd);
 	try {
 		return fn();
 	} finally {
-		rmSync(lock, { force: true });
+		rmSync(lock, { recursive: true, force: true });
 	}
 }
 
 /**
- * Finish or undo a swap a crash interrupted, and clear old staging folders.
- * The only gap is between the two renames, when app/ is missing and previous/ holds it.
+ * Repair what a crash mid-swap left, without deleting a release:
+ * - app/ missing: the newest of .swap-* (a rollback in flight) or previous/ becomes app/;
+ * - previous/ missing: an orphaned .swap-* becomes previous/;
+ * - staging folders (never yet installed) are removed.
+ * Runs under the lock at the start of every update, rollback and check.
  */
 export function recover(): string | undefined {
 	const root = installRoot();
 	if (!existsSync(root)) return undefined;
+	const notes: string[] = [];
+	const swaps: string[] = [];
 	for (const name of readdirSync(root)) {
-		if (name.startsWith(".staging-") || name.startsWith(".swap-")) {
-			if (name.startsWith(".swap-") && !existsSync(appDir())) {
-				renameSync(join(root, name), appDir());
-				continue;
-			}
-			rmSync(join(root, name), { recursive: true, force: true });
+		if (name.startsWith(".staging-") || name.startsWith(".lock-dead-")) rmSync(join(root, name), { recursive: true, force: true });
+		else if (name.startsWith(".swap-")) swaps.push(join(root, name));
+	}
+	if (!existsSync(appDir())) {
+		const source = swaps.shift() ?? (existsSync(previousDir()) ? previousDir() : undefined);
+		if (source) {
+			renameSync(source, appDir());
+			notes.push(`An interrupted ${source === previousDir() ? "update" : "rollback"} was undone; ${installedVersion(appDir()) ?? "the release"} is back in place.`);
 		}
 	}
-	if (!existsSync(appDir()) && existsSync(previousDir())) {
-		renameSync(previousDir(), appDir());
-		return "An interrupted update was undone; the previous release is back in place.";
+	if (!existsSync(previousDir()) && swaps.length > 0) {
+		renameSync(swaps.shift() as string, previousDir());
+		notes.push(`Kept ${installedVersion(previousDir()) ?? "the other release"} for rollback after an interrupted swap.`);
 	}
-	return undefined;
+	// Anything still left is a third copy; keep it out of the way rather than delete it.
+	for (const extra of swaps) notes.push(`An extra copy from an interrupted swap is at ${extra}; delete it if you don't need it.`);
+	return notes.length ? notes.join(" ") : undefined;
 }
 
 /** app/ -> previous/, staged -> app/. Each step is one rename; a failed second step is undone. */
@@ -466,16 +499,23 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 	const log = (line: string) => {
 		if (!options.json) console.log(line);
 	};
-	if (options.channel || options.autoCheck !== undefined) {
+	// A read-only --check never changes settings; --channel is remembered when updating.
+	if (!options.check && (options.channel || options.autoCheck !== undefined)) {
 		const saved = readSavedSettings();
 		if (options.channel) saved.channel = options.channel;
 		if (options.autoCheck !== undefined) saved.autoCheck = options.autoCheck;
 		writeSettings(saved);
 	}
-	const channel = readSettings().channel;
+	const channel = options.channel ?? readSettings().channel;
 	log(banner(options.rollback ? "rollback" : `update ${c.dim(`(${channel})`)}`));
 
-	if (options.rollback) return rollback(log);
+	if (options.rollback) return rollback(log, options.yes);
+
+	// Repair an interrupted swap before anything reads the install.
+	if (existsSync(installRoot())) {
+		const note = withLock(recover);
+		if (note) log(`${sym.warn} ${note}`);
+	}
 
 	if (options.autoCheck !== undefined && !options.check) {
 		log(`${sym.ok} Daily update check ${options.autoCheck ? "on" : "off"}.`);
@@ -526,8 +566,7 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 	if (!release || release.version !== status.latest) throw new UpdateError("The release list changed during the update; run it again");
 	const zip = await downloadVerified(release, log);
 	withLock(() => {
-		const note = recover();
-		if (note) log(`${sym.warn} ${note}`);
+		recover();
 		const staged = stage(zip, release.version);
 		swapIn(staged);
 	});
@@ -539,18 +578,27 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 	return 0;
 }
 
-function rollback(log: (line: string) => void): number {
-	if (!existsSync(previousDir())) {
-		throw new UpdateError(`No previous release to roll back to (${previousDir()} is missing)`);
+async function rollback(log: (line: string) => void, yes: boolean): Promise<number> {
+	if (!isManagedCopy()) {
+		// Rolling back re-registers the native host and launcher from the release folder.
+		log(`${sym.dot} This tabkyra runs from ${repoRoot()}, not from the release install in ${appDir()}.`);
+		log(`  ${c.dim("Rolling that install back also points the native host and agent launcher at it.")}`);
+		const ok = await confirm(`Roll back the release install in ${appDir()}?`, { assumeYes: yes, defaultYes: false });
+		if (!ok) return 1;
 	}
-	const from = installedVersion(appDir());
-	const to = installedVersion(previousDir());
+	let from: string | undefined;
+	let to: string | undefined;
 	withLock(() => {
-		recover();
+		const note = recover();
+		if (note) log(`${sym.warn} ${note}`);
 		const app = appDir();
 		const prev = previousDir();
+		if (!existsSync(app)) throw new UpdateError(`No release is installed in ${app}`);
+		if (!existsSync(prev)) throw new UpdateError(`No previous release to roll back to (${prev} is missing)`);
+		from = installedVersion(app);
+		to = installedVersion(prev);
 		const hold = join(installRoot(), `.swap-${randomBytes(6).toString("hex")}`);
-		// Three renames; recover() puts .swap-* back as app/ if a crash leaves app/ missing.
+		// Three renames; recover() repairs any point a crash can stop at (see above).
 		renameSync(app, hold);
 		renameSync(prev, app);
 		renameSync(hold, prev);

@@ -79,7 +79,11 @@ function onExtensionMessage(message: ExtToHost): void {
 async function sendUpdateStatus(): Promise<void> {
 	try {
 		const status = await cachedOrFreshStatus();
-		if (!status || status.error) return;
+		// Checks off, or the check failed: clear any notice the extension still shows.
+		if (!status || status.error) {
+			toExtension({ type: "update_status", available: false, current: status?.current ?? VERSION, channel: status?.channel ?? "stable", checkedAt: Date.now() });
+			return;
+		}
 		toExtension({
 			type: "update_status",
 			available: status.available,

@@ -12,8 +12,8 @@ quiet "Update available" line. You run the update.
 | `tabkyra update --check --json` | The same, as JSON (`current`, `latest`, `available`, `channel`, `url`, `error`) | as above |
 | `tabkyra update` | Downloads, verifies and installs the newest release | 0 done or up to date, 1 refused or failed |
 | `tabkyra update --yes` | Also answers yes to "install the release" when you run from a git checkout | |
-| `tabkyra update --rollback` | Swaps back to the release before this one (run it again to undo) | 0, 1 when there is none |
-| `--channel stable\|nightly` | Picks the channel and remembers it in `~/.config/tabkyra/update.json` | |
+| `tabkyra update --rollback` | Swaps back to the release before this one (run it again to undo). From a git checkout it asks first (`--yes` skips the question) | 0, 1 when there is none or you said no |
+| `--channel stable\|nightly` | Picks the channel. An update (not `--check`) remembers it in `~/.config/tabkyra/update.json` | |
 | `tabkyra update --auto-check off` | Turns the daily check off (`on` turns it back on). `TABKYRA_NO_UPDATE_CHECK=1` also turns it off | |
 
 Stable takes releases tagged `vX.Y.Z`. Nightly also takes prereleases such as
@@ -66,11 +66,18 @@ Any failure stops the update, and the installed release stays as it was.
 
 ## How the swap works
 
-The update holds a lock (`update.lock`; a lock left by a dead process is taken over), then
-does two renames: `app/` becomes `previous/`, and the staged folder becomes `app/`. If the
-second rename fails, the first is undone. If the process dies between the two, the next
-`tabkyra update` or `--rollback` sees `app/` missing and moves `previous/` back. Rollback
-is three renames under the same lock.
+The update holds a lock: a directory, `update.lock`, holding the owner's pid. It is taken
+over only when that pid is dead, or when no pid was written and the lock is over 10 minutes
+old. Under the lock it does two renames: `app/` becomes `previous/`, and the staged folder
+becomes `app/`. If the second rename fails, the first is undone. Rollback is three renames
+through a `.swap-*` folder.
+
+Every `tabkyra update` run, including `--check` and `--rollback`, first repairs whatever a
+crash left, without deleting a release:
+
+- if `app/` is missing, a `.swap-*` folder or `previous/` becomes `app/`;
+- if `previous/` is missing, an orphaned `.swap-*` becomes `previous/`;
+- unused staging folders are removed.
 
 After the swap, the new CLI runs `install`, which rewrites the launcher and every browser's
 native host manifest if they changed. Then it tells you to reload Tabkyra
@@ -94,11 +101,17 @@ panel.
    pushes.
    Nightly: tag the commit `vX.Y.Z-nightly.<yyyymmdd>`, where `X.Y.Z` equals the manifest
    version, then push the tag.
-3. `.github/workflows/release.yml` runs on the tag. It checks the tag against the manifest,
-   checks out the pinned siblings (`scripts/setup-siblings.sh`), builds, runs the checks and
-   the CLI tests, packages (`scripts/release/package.mjs`), signs with minisign, checks
-   that signature against the committed public key, and attaches the three files. A tag
-   with a `-` becomes a prerelease.
+3. `.github/workflows/release.yml` runs on the tag in two jobs.
+   - **build** has a read-only token, no secrets and no persisted git credentials. It
+     checks the tag against the manifest, checks out the pinned siblings (pi-mono and
+     mini-lit, by commit, in `scripts/setup-siblings.sh`), builds, runs the checks and the
+     CLI tests, packages (`scripts/release/package.mjs`), and uploads the files.
+   - **publish** runs no npm and no repo code. It downloads those files, installs minisign,
+     signs `SHA256SUMS`, verifies the signature against the public key at the tagged commit,
+     and creates the release. It is the only job that holds the secret or a write token,
+     so install scripts in the build can't read the key.
+
+   A tag with a `-` becomes a prerelease.
 
 ## One-time setup (Donovan)
 
@@ -142,8 +155,10 @@ throwaway key (`cli/test/helpers/minisign-sign.mjs`):
   an archive that escapes its folder, and a build with no key, all refused with nothing
   changed;
 - rollback and roll forward;
-- the nightly channel;
-- recovery from a crash between the two renames;
+- the nightly channel (a `--check` doesn't save it);
+- recovery from a crash in each window of an update and a rollback;
+- rollback from a checkout asking first;
+- a held lock and a dead one;
 - usage errors;
 - the native host sending `update_status` to the extension.
 
