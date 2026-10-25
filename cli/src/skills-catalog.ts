@@ -5,9 +5,12 @@
  */
 
 import ACADEMIC_RESEARCH from "../../skills/academic-research/SKILL.md";
+import ADVERSARIAL_REVIEW from "../../skills/adversarial-review/SKILL.md";
 import ARTIFACTS from "../../skills/artifacts/SKILL.md";
 import AUTORESEARCH from "../../skills/autoresearch/SKILL.md";
+import BUG from "../../skills/bug/SKILL.md";
 import DORKS from "../../skills/dorks/SKILL.md";
+import FIX from "../../skills/fix/SKILL.md";
 import KYRASKILLMAKER from "../../skills/kyraskillmaker/SKILL.md";
 import NEWS_RESEARCH from "../../skills/news-research/SKILL.md";
 import OSINT from "../../skills/osint/SKILL.md";
@@ -19,9 +22,12 @@ import TABKYRA from "../../skills/tabkyra/SKILL.md";
 export const SKILLS: ReadonlyMap<string, string> = new Map([
 	["tabkyra", TABKYRA],
 	["academic-research", ACADEMIC_RESEARCH],
+	["adversarial-review", ADVERSARIAL_REVIEW],
 	["artifacts", ARTIFACTS],
 	["autoresearch", AUTORESEARCH],
+	["bug", BUG],
 	["dorks", DORKS],
+	["fix", FIX],
 	["kyraskillmaker", KYRASKILLMAKER],
 	["news-research", NEWS_RESEARCH],
 	["osint", OSINT],

@@ -135,3 +135,25 @@ A "Local models" provider set in the side panel. It finds OpenAI-compatible serv
 the user's tailnet peers. The native host asks `tailscale status --json` for the peers and
 probes each port with a short timeout. A model on a tailnet peer counts as local for
 private mode (D8 in #15 already treats `*.ts.net` and 100.64/10 as local).
+
+## D14. Fix submissions and tier variants (owner, 2026-10-25)
+
+`submit` in `~/.config/tabkyra/rsi.json` takes `"ask"` (default), `"auto"` or `"never"`.
+The owner asked that users be able to submit fixes automatically, which overrides DC-5's
+confirm-each-submission default for users who choose `"auto"`. Auto submission still only
+opens a pull request: CI, adversarial review and a maintainer decide what enters the
+library (D10). A skill classified personal (D6) is never submitted under any setting.
+When a fix for a small model would weaken a skill that works for large ones, `/fix`
+writes a `<name>-lite` skill instead of editing the original. The router (DC-3) picks the
+variant by model tier.
+
+## D15. Voice and mail skills (owner, 2026-10-25)
+
+The writing-voice skill learns the user's style only from the user's own mail and
+documents, read in place through their signed-in Tabkyra tabs or their Drive. It keeps
+just a style profile (sentence length, word choice, openings, sign-offs, a few short
+example lines), not the messages. The profile is a personal skill (D6): it stays on the
+user's devices and is never submitted, synced to shared storage or put in a bug report.
+Email organization reads freely, but creating labels, moving mail or changing filters acts
+under the user's sign-in. It shows the plan and waits for the user's yes, per the safety
+rules.

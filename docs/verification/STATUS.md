@@ -65,3 +65,8 @@ bug reports. None is merged yet.
 | New | Shared successes and failures (opt-in) | none | D11 |
 | New | Report button that has the agent write the report via `/bug` | none | D5 |
 | New | Agent-customizable appearance; modified builds lose auto-acceptance | none | D10 |
+| New | Skill: PCB design and research | none | |
+| New | Skill: email organization and label creation | none | Label changes act under the user's sign-in: ask first (D15) |
+| New | Skills: writing, and writing in the user's voice from their own mail and documents | none | D15 |
+| New | Hooks and linting system for harnesses | none | |
+| New | Autoresearch kanban (add and check tasks) with a traces view | none | Pairs with the DC-12 dashboard skill |
