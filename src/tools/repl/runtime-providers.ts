@@ -6,7 +6,7 @@ import {
 	BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION,
 	NAVIGATE_RUNTIME_PROVIDER_DESCRIPTION,
 } from "../../prompts/prompts.js";
-import { getSitegeistStorage } from "../../storage/app-storage.js";
+import { getTabkyraStorage } from "../../storage/app-storage.js";
 import type { NavigateParams, NavigateTool } from "../navigate.js";
 import { buildWrapperCode } from "./userscripts-helpers.js";
 
@@ -130,7 +130,7 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 		}
 
 		// Load skills for current tab URL
-		const skillsRepo = getSitegeistStorage().skills;
+		const skillsRepo = getTabkyraStorage().skills;
 		let skillLibrary = "";
 
 		if (tab.url) {
@@ -174,7 +174,7 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 		);
 
 		// Use fixed worldId for all executions
-		const FIXED_WORLD_ID = "sitegeist-browser-script";
+		const FIXED_WORLD_ID = "tabkyra-browser-script";
 
 		// Cancellation: userScripts.terminate (Chrome 138+) or Runtime.terminateExecution on the debugger path
 		const supportsTerminate =

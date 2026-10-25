@@ -54,7 +54,7 @@ function isConnectionError(err: unknown): boolean {
 	return (
 		message === "Bridge connection closed" ||
 		message === "Not connected" ||
-		message.startsWith("No sitegeist browser bridge") ||
+		message.startsWith("No tabkyra browser bridge") ||
 		code === "ECONNREFUSED" ||
 		code === "ENOENT" ||
 		code === "EPIPE" ||
@@ -79,7 +79,7 @@ export class BridgeClient {
 		const target = path ?? listSockets()[0];
 		if (!target) {
 			throw new Error(
-				"No sitegeist browser bridge is running. Make sure the sitegeist extension is loaded in a Chromium browser and that `sitegeist install` has been run.",
+				"No tabkyra browser bridge is running. Make sure the tabkyra extension is loaded in a Chromium browser and that `tabkyra install` has been run.",
 			);
 		}
 		if (process.platform !== "win32") assertSecurePath(target, "socket");

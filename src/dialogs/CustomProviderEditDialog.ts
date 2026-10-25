@@ -10,7 +10,7 @@ import type { CustomProvider, CustomProviderType } from "@mariozechner/pi-web-ui
 import { html, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import { Toast } from "../components/Toast.js";
-import { getSitegeistStorage } from "../storage/app-storage.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 import { syncCustomProviderCorsRules } from "../utils/custom-provider-cors.js";
 
 /** Manual (model-list) custom provider types supported by the editor. */
@@ -146,7 +146,7 @@ export class CustomProviderEditDialog extends DialogBase {
 			}));
 
 		try {
-			const storage = getSitegeistStorage();
+			const storage = getTabkyraStorage();
 
 			// Reject a name already used by a *different* custom provider.
 			const existing = await storage.customProviders.getAll();

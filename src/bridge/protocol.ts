@@ -1,14 +1,14 @@
 /**
- * Wire protocol of the sitegeist bridge. Shared by the extension (src/bridge) and
+ * Wire protocol of the tabkyra bridge. Shared by the extension (src/bridge) and
  * the CLI (cli/src), which imports this file directly.
  *
- *   harness ── stdio MCP ── `sitegeist mcp` ── unix socket ── native host ── native messaging ── extension
+ *   harness ── stdio MCP ── `tabkyra mcp` ── unix socket ── native host ── native messaging ── extension
  *
  * Both socket legs carry `[uint32 LE length][UTF-8 JSON]` frames. The native host
  * copies frames between the two and only adds/strips `clientId`.
  */
 
-export const NATIVE_HOST_NAME = "ai.sitegeist.bridge";
+export const NATIVE_HOST_NAME = "ai.tabkyra.bridge";
 export const PROTOCOL_VERSION = 1;
 
 /** Native messaging caps host->extension frames at 1 MiB; leave headroom. */

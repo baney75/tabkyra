@@ -36,9 +36,8 @@ import { CostsTab } from "./dialogs/CostsTab.js";
 import { CustomProvidersTab } from "./dialogs/CustomProvidersTab.js";
 import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
-import { SitegeistSessionListDialog } from "./dialogs/SessionListDialog.js";
+import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
-import { UpdateNotificationDialog } from "./dialogs/UpdateNotificationDialog.js";
 import { WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
 import { browserMessageTransformer } from "./messages/message-transformer.js";
 import {
@@ -52,7 +51,7 @@ import { refreshDiscoveredModels } from "./models/registry.js";
 import { resolveApiKey } from "./oauth/index.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { Recorder } from "./recording/recorder.js";
-import { SitegeistAppStorage } from "./storage/app-storage.js";
+import { TabkyraAppStorage } from "./storage/app-storage.js";
 import { DebuggerTool } from "./tools/debugger.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserWhichElementTool, skillTool } from "./tools/index.js";
@@ -104,7 +103,7 @@ setCdpMessageHandler(async (message) => {
 // ============================================================================
 // STORAGE SETUP
 // ============================================================================
-const storage = new SitegeistAppStorage();
+const storage = new TabkyraAppStorage();
 setAppStorage(storage);
 
 // ============================================================================
@@ -279,7 +278,7 @@ function downloadCurrentChat() {
 		Toast.error("Nothing to export yet");
 		return;
 	}
-	downloadChatMarkdown(messages, currentTitle || "Sitegeist chat", agent.state.model);
+	downloadChatMarkdown(messages, currentTitle || "Tabkyra chat", agent.state.model);
 }
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -842,7 +841,7 @@ const renderApp = () => {
 						size: "sm",
 						children: icon(History, "sm"),
 						onClick: () => {
-							SitegeistSessionListDialog.open(
+							TabkyraSessionListDialog.open(
 								(sessionId: string) => {
 									loadSession(sessionId);
 								},
@@ -1086,44 +1085,6 @@ async function testSteps(): Promise<boolean> {
 }
 
 // ============================================================================
-// UPDATE CHECK
-// ============================================================================
-function isNewerVersion(latest: string, current: string): boolean {
-	const latestParts = latest.split(".").map(Number);
-	const currentParts = current.split(".").map(Number);
-
-	for (let i = 0; i < Math.max(latestParts.length, currentParts.length); i++) {
-		const l = latestParts[i] || 0;
-		const c = currentParts[i] || 0;
-		if (l > c) return true;
-		if (l < c) return false;
-	}
-	return false;
-}
-
-async function checkForUpdates() {
-	try {
-		const currentVersion = chrome.runtime.getManifest().version;
-
-		// Fetch latest version
-		const response = await fetch("https://sitegeist.ai/uploads/version.json", {
-			cache: "no-cache",
-		});
-		const data = await response.json();
-		const latestVersion = data.version;
-
-		// Show dialog only if server version is newer than current version
-		if (isNewerVersion(latestVersion, currentVersion)) {
-			// Show update dialog - blocks until extension is updated and restarted
-			await UpdateNotificationDialog.show(latestVersion);
-		}
-	} catch (err) {
-		console.warn("[Sidepanel] Failed to check for updates:", err);
-		// Silently fail - don't block startup
-	}
-}
-
-// ============================================================================
 // INIT
 // ============================================================================
 async function initApp() {
@@ -1172,9 +1133,6 @@ async function initApp() {
 
 	// In-page scripts use the userScripts API when the browser exposes it and fall back
 	// to an isolated content-script world otherwise, so no permission prompt is needed.
-
-	// TODO: re-enable update check when publishing to users
-	// await checkForUpdates();
 
 	// Initialize default skills
 	const { initializeDefaultSkills } = await import("./tools/skill.js");

@@ -32,7 +32,7 @@ startBridge();
 // no panel, so the panel is naturally confined to its task's tabs. Two tasks = two tabs,
 // each with its own panel; put them in two windows to see both at once.
 //
-// The one exception: sitegeist's agent runs inside the panel document, and Chrome tears
+// The one exception: tabkyra's agent runs inside the panel document, and Chrome tears
 // that document down when the panel is hidden. So while a task is mid-run we keep its
 // panel enabled on the window's active tab even if the user peeks at another tab, and
 // confine again once the run ends.

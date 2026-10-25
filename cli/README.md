@@ -1,65 +1,65 @@
-# sitegeist (CLI)
+# tabkyra (CLI)
 
-Bridge between coding harnesses and the Sitegeist browser extension. Any MCP client
+Bridge between coding harnesses and the Tabkyra browser extension. Any MCP client
 (Claude Code, Codex, omp) and pi can drive a Chromium browser through it. Each harness
 gets its own tab group and works in the background while you keep using your tabs.
 
 ```
-harness ── stdio MCP ── sitegeist mcp ── unix socket ── native host ── native messaging ── extension
+harness ── stdio MCP ── tabkyra mcp ── unix socket ── native host ── native messaging ── extension
 ```
 
 Nothing listens on the network. The browser spawns the native host; the host owns a
-socket in `/tmp/sitegeist-bridge-<user>/` (0700 directory, 0600 socket) that only your
+socket in `/tmp/tabkyra-bridge-<user>/` (0700 directory, 0600 socket) that only your
 user can reach. The client refuses sockets and directories it does not own.
 
 ## Install
 
 ```bash
-npm install -g sitegeist        # or: npm link from this directory
-sitegeist install               # writes the native-messaging manifest for every Chromium browser found
+npm link                      # from this directory; puts tabkyra (and the sitegeist alias) on PATH
+tabkyra install               # writes the native-messaging manifest for every Chromium browser found
 ```
 
-`sitegeist mcp` runs the installer itself on first use, so a harness configured to start
+`tabkyra mcp` runs the installer itself on first use, so a harness configured to start
 it needs no extra step. Reload the extension once after the first install.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `sitegeist mcp` | stdio MCP server exposing the browser tools |
-| `sitegeist install [--force]` | write the native host manifest (Chrome, Chromium, Brave, Edge, Arc, Vivaldi, Opera; Linux and Windows too) |
-| `sitegeist status` | is a browser reachable, is the extension connected |
-| `sitegeist allow <host>` | let agents open a site without a prompt (subdomains included) |
-| `sitegeist reload` | reload the extension (after rebuilding `dist-chrome`) |
-| `sitegeist debug` | bridge state, recent request timings, Chrome API benchmark |
-| `sitegeist pi-extension` | write `~/.pi/agent/extensions/sitegeist.ts` for pi |
+| `tabkyra mcp` | stdio MCP server exposing the browser tools |
+| `tabkyra install [--force]` | write the native host manifest (Helium, Chrome, Chromium, Brave, Edge, Arc, Vivaldi, Opera; Linux and Windows too) |
+| `tabkyra status` | which browsers have the host manifest, is the extension connected |
+| `tabkyra allow <host>` | let agents open a site without a prompt (subdomains included) |
+| `tabkyra reload` | reload the extension (after rebuilding `dist-chrome`) |
+| `tabkyra debug` | bridge state, recent request timings, Chrome API benchmark |
+| `tabkyra pi-extension` | write `~/.pi/agent/extensions/tabkyra.ts` for pi |
 
 ## Harness setup
 
 ```bash
-claude mcp add sitegeist -- sitegeist mcp
-sitegeist pi-extension
+claude mcp add tabkyra -- tabkyra mcp
+tabkyra pi-extension
 ```
 
 Codex (`~/.codex/config.toml`):
 
 ```toml
-[mcp_servers.sitegeist]
-command = "sitegeist"
+[mcp_servers.tabkyra]
+command = "tabkyra"
 args = ["mcp"]
 ```
 
-omp: add an MCP server entry that runs `sitegeist mcp`.
+omp: add an MCP server entry that runs `tabkyra mcp`.
 
 ## Permissions
 
 By default the extension asks before an agent opens a new site. MCP clients that support
 elicitation (Claude Code, Codex) show the prompt inline; otherwise answer it in the
-Sitegeist side panel under Settings > Bridge, run `sitegeist allow <host>`, or switch the
-mode to "allow any site" there. pi: set `SITEGEIST_AUTO_ALLOW=1` to auto-approve.
+Tabkyra side panel under Settings > Bridge, run `tabkyra allow <host>`, or switch the
+mode to "allow any site" there. pi: set `TABKYRA_AUTO_ALLOW=1` to auto-approve.
 
-`SITEGEIST_SESSION=<name>` makes a harness re-adopt the same tab group across restarts.
-`SITEGEIST_CLIENT_NAME` overrides the tab group label.
+`TABKYRA_SESSION=<name>` makes a harness re-adopt the same tab group across restarts.
+`TABKYRA_CLIENT_NAME` overrides the tab group label.
 
 ## MCP tools
 

@@ -2,7 +2,7 @@ import { getCurrentBrowserSession, hasCurrentBrowserSession } from "../../browse
 import { injectScript } from "../../browser/inject.js";
 import { createOverlayScript, removeOverlayScript } from "./overlay-content.js";
 
-const OVERLAY_WORLD_ID = "sitegeist-repl-overlay";
+const OVERLAY_WORLD_ID = "tabkyra-repl-overlay";
 
 /**
  * The session's current tab id, if the session has one.

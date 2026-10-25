@@ -10,7 +10,7 @@ import { goBack, goForward, navigateTab, waitForLoad } from "../browser/page.js"
 import { SkillPill } from "../components/SkillPill.js";
 import { TabPill } from "../components/TabPill.js";
 import { NAVIGATE_TOOL_DESCRIPTION } from "../prompts/prompts.js";
-import { getSitegeistStorage } from "../storage/app-storage.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import { formatSkills } from "../utils/format-skills.js";
 import "../utils/i18n-extension.js";
@@ -161,7 +161,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		const title = tab.title || "Untitled";
 		const favicon = tab.favIconUrl;
 
-		const skillsRepo = getSitegeistStorage().skills;
+		const skillsRepo = getTabkyraStorage().skills;
 		const matchingSkills = finalUrl ? await skillsRepo.getSkillsForUrl(finalUrl) : [];
 		const { newOrUpdated, unchanged, formattedText: skillsOutput } = formatSkills(matchingSkills);
 		const skills = [...newOrUpdated, ...unchanged].map((s) => ({

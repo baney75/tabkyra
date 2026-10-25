@@ -94,7 +94,7 @@ export async function dispatchToSandbox(message: Record<string, unknown>): Promi
 	return response;
 }
 
-const BINDING = "__sitegeistSend";
+const BINDING = "__tabkyraSend";
 const bindingReady = new Set<number>();
 let bindingListenerInstalled = false;
 const runningExecutions = new Map<string, number>();
@@ -121,7 +121,7 @@ function installBindingListener(): void {
 			} catch (err) {
 				error = err instanceof Error ? err.message : String(err);
 			}
-			const expression = `window.__sitegeistReceive && window.__sitegeistReceive(${parsed.id}, ${JSON.stringify(
+			const expression = `window.__tabkyraReceive && window.__tabkyraReceive(${parsed.id}, ${JSON.stringify(
 				response ?? null,
 			)}, ${JSON.stringify(error ?? null)})`;
 			await cdpSend(tabId, "Runtime.evaluate", { expression, returnByValue: true }).catch(() => undefined);
@@ -148,23 +148,23 @@ async function ensureBinding(tabId: number): Promise<void> {
  */
 const SHIM = `(() => {
 	const w = window;
-	if (!w.__sitegeistPending) {
-		w.__sitegeistPending = new Map();
-		w.__sitegeistSeq = 0;
-		w.__sitegeistReceive = (id, response, error) => {
-			const p = w.__sitegeistPending.get(id);
+	if (!w.__tabkyraPending) {
+		w.__tabkyraPending = new Map();
+		w.__tabkyraSeq = 0;
+		w.__tabkyraReceive = (id, response, error) => {
+			const p = w.__tabkyraPending.get(id);
 			if (!p) return;
-			w.__sitegeistPending.delete(id);
+			w.__tabkyraPending.delete(id);
 			if (error) p.reject(new Error(error)); else p.resolve(response);
 		};
 	}
-	if (!w.__sitegeistChrome) {
-		w.__sitegeistChrome = {
+	if (!w.__tabkyraChrome) {
+		w.__tabkyraChrome = {
 			runtime: {
-				id: "sitegeist",
+				id: "tabkyra",
 				sendMessage: (message) => new Promise((resolve, reject) => {
-					const id = ++w.__sitegeistSeq;
-					w.__sitegeistPending.set(id, { resolve, reject });
+					const id = ++w.__tabkyraSeq;
+					w.__tabkyraPending.set(id, { resolve, reject });
 					w.${BINDING}(JSON.stringify({ id, message }));
 				}),
 			},
@@ -175,7 +175,7 @@ const SHIM = `(() => {
 async function cdpInject<T>(tabId: number, code: string, options: InjectOptions): Promise<T> {
 	await ensureBinding(tabId);
 	// `chrome` inside the injected code resolves to the shim; the page's own window.chrome is untouched.
-	const expression = `${SHIM}\n(async () => { const chrome = window.__sitegeistChrome; return await (${code}); })()`;
+	const expression = `${SHIM}\n(async () => { const chrome = window.__tabkyraChrome; return await (${code}); })()`;
 	if (options.executionId) runningExecutions.set(options.executionId, tabId);
 	try {
 		const result = await cdpSend<{
@@ -200,7 +200,7 @@ async function cdpInject<T>(tabId: number, code: string, options: InjectOptions)
 export async function injectScript<T = unknown>(tabId: number, code: string, options: InjectOptions = {}): Promise<T> {
 	const api = userScriptsApi();
 	if (!api) return cdpInject<T>(tabId, code, options);
-	const worldId = options.worldId ?? "sitegeist";
+	const worldId = options.worldId ?? "tabkyra";
 	if (!configuredWorlds.has(worldId)) {
 		try {
 			await api.configureWorld({ worldId, messaging: true, csp: options.csp });

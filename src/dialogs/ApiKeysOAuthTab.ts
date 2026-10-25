@@ -12,10 +12,9 @@ import {
 	serializeOAuthCredentials,
 } from "../oauth/index.js";
 
-const OAUTH_PROVIDERS: OAuthProviderId[] = ["anthropic", "openai-codex", "github-copilot", "google-gemini-cli"];
+const OAUTH_PROVIDERS: OAuthProviderId[] = ["openai-codex", "github-copilot", "google-gemini-cli"];
 
 const PROVIDER_KEY_MAP: Record<OAuthProviderId, string> = {
-	anthropic: "anthropic",
 	"openai-codex": "openai-codex",
 	"github-copilot": "github-copilot",
 	"google-gemini-cli": "google-gemini-cli",

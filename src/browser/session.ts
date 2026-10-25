@@ -16,7 +16,7 @@
 import { detachTab, ensureAttached, isRestrictedUrl, releaseAgentViewport } from "./cdp.js";
 
 const STORAGE_KEY = "browser_sessions";
-const GROUP_PREFIX = "Sitegeist";
+const GROUP_PREFIX = "Tabkyra";
 const GROUP_COLORS: `${chrome.tabGroups.Color}`[] = [
 	"blue",
 	"cyan",
@@ -103,7 +103,7 @@ export async function sessionIdForTab(tabId: number): Promise<string | undefined
 }
 
 /**
- * Ungroup tabs sitting in "Sitegeist · ..." groups that no live session owns (left behind
+ * Ungroup tabs sitting in "Tabkyra · ..." groups that no live session owns (left behind
  * by an extension reload, which clears session storage but not the browser's groups).
  */
 export async function cleanupOrphanGroups(): Promise<number> {

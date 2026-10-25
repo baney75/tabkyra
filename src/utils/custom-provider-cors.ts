@@ -12,7 +12,7 @@
  * saving/deleting a provider or reloading the extension always converges.
  */
 
-import { getSitegeistStorage } from "../storage/app-storage.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 
 const RULE_ID_BASE = 2000;
 const RULE_ID_MAX = 2999;
@@ -48,7 +48,7 @@ export async function syncCustomProviderCorsRules(): Promise<void> {
 	const dnr = (globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome?.declarativeNetRequest;
 	if (!dnr?.updateDynamicRules) return;
 
-	const storage = getSitegeistStorage();
+	const storage = getTabkyraStorage();
 	const providers = await storage.customProviders.getAll();
 
 	const hostnames = new Set<string>();

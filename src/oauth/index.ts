@@ -1,12 +1,11 @@
 /**
- * Browser OAuth integration for sitegeist.
+ * Browser OAuth integration for Tabkyra.
  *
  * Credentials are stored as JSON strings in the provider keys store.
  * When getApiKey encounters a JSON string, it parses it as OAuthCredentials,
  * refreshes the token if expired, and returns the access token.
  */
 
-import { loginAnthropic, refreshAnthropic } from "./anthropic.js";
 import { loginGitHubCopilot, refreshGitHubCopilot } from "./github-copilot.js";
 import { loginGeminiCli, refreshGeminiCli } from "./google-gemini-cli.js";
 import { loginOpenAICodex, refreshOpenAICodex } from "./openai-codex.js";
@@ -19,10 +18,11 @@ import {
 
 export { isOAuthCredentials, type OAuthCredentials, parseOAuthCredentials, serializeOAuthCredentials };
 
-export type OAuthProviderId = "anthropic" | "openai-codex" | "github-copilot" | "google-gemini-cli";
+// Anthropic subscription (Claude Pro/Max) login is intentionally absent: Anthropic does not allow
+// Claude subscriptions in third-party apps. Anthropic API keys work through the API key list.
+export type OAuthProviderId = "openai-codex" | "github-copilot" | "google-gemini-cli";
 
 const OAUTH_PROVIDERS: Record<OAuthProviderId, { name: string }> = {
-	anthropic: { name: "Anthropic (Claude Pro/Max)" },
 	"openai-codex": { name: "ChatGPT Plus/Pro" },
 	"github-copilot": { name: "GitHub Copilot" },
 	"google-gemini-cli": { name: "Google Gemini" },
@@ -58,8 +58,6 @@ export async function oauthLogin(
 	onDeviceCode?: DeviceCodeCallback,
 ): Promise<OAuthCredentials> {
 	switch (provider) {
-		case "anthropic":
-			return loginAnthropic();
 		case "openai-codex":
 			return loginOpenAICodex();
 		case "github-copilot":
@@ -77,8 +75,6 @@ export async function oauthLogin(
  */
 export async function oauthRefresh(credentials: OAuthCredentials, _proxyUrl?: string): Promise<OAuthCredentials> {
 	switch (credentials.providerId) {
-		case "anthropic":
-			return refreshAnthropic(credentials);
 		case "openai-codex":
 			return refreshOpenAICodex(credentials);
 		case "github-copilot":
@@ -107,6 +103,11 @@ export async function resolveApiKey(
 	}
 
 	let credentials = parseOAuthCredentials(storedValue);
+	if (!isOAuthProvider(credentials.providerId)) {
+		throw new Error(
+			`${credentials.providerId} subscription login is not supported. Add an API key in Settings instead.`,
+		);
+	}
 
 	// Refresh if expired (or within 60s of expiry)
 	if (Date.now() >= credentials.expires - 60_000) {

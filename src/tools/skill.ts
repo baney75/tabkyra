@@ -20,11 +20,11 @@ import { getCurrentBrowserSession, hasCurrentBrowserSession } from "../browser/c
 import { DomainPill } from "../components/DomainPill.js";
 import { SkillPill } from "../components/SkillPill.js";
 import { SKILL_TOOL_DESCRIPTION } from "../prompts/prompts.js";
-import { getSitegeistStorage } from "../storage/app-storage.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import { defaultSkills } from "./default-skills.js";
 
-const getSkills = () => getSitegeistStorage().skills;
+const getSkills = () => getTabkyraStorage().skills;
 
 // Initialize default skills on first run
 export async function initializeDefaultSkills() {

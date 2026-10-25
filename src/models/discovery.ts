@@ -92,14 +92,8 @@ interface AnthropicListResponse {
 }
 
 const anthropic: Adapter = async ({ token }, signal) => {
-	const headers: Record<string, string> = { "anthropic-version": "2023-06-01" };
-	// OAuth tokens are bearer tokens; API keys go in x-api-key.
-	if (token.startsWith("sk-ant-oat") || token.startsWith("sk-ant-ort")) {
-		headers.Authorization = `Bearer ${token}`;
-		headers["anthropic-beta"] = "oauth-2025-04-20";
-	} else {
-		headers["x-api-key"] = token;
-	}
+	// API keys only: Claude subscription tokens are not supported in third-party apps.
+	const headers: Record<string, string> = { "anthropic-version": "2023-06-01", "x-api-key": token };
 	const out: DiscoveredModel[] = [];
 	let after: string | undefined;
 	for (let page = 0; page < 5; page++) {

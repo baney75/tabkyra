@@ -3,7 +3,7 @@
  *
  * Messages come straight from `agent.state.messages`, which is a mix of the
  * pi-agent-core message roles (user / assistant / toolResult) plus the custom
- * sitegeist roles (navigation / welcome / user-with-attachments).
+ * tabkyra roles (navigation / welcome / user-with-attachments).
  */
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
@@ -44,7 +44,7 @@ function textFromContent(content: unknown): string {
 /** Serialize a conversation to readable Markdown. */
 export function chatToMarkdown(messages: AgentMessage[], title: string, model?: Model<any>): string {
 	const lines: string[] = [];
-	lines.push(`# ${title || "Sitegeist chat"}`);
+	lines.push(`# ${title || "Tabkyra chat"}`);
 	lines.push("");
 	const meta: string[] = [`Exported: ${new Date().toLocaleString()}`];
 	if (model) meta.push(`Model: ${model.provider}/${model.id}`);

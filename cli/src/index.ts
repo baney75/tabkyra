@@ -3,37 +3,38 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BridgeClient, listSockets } from "./client.ts";
 import { runNativeHost } from "./host.ts";
-import { install, isInstalled } from "./install.ts";
+import { hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { VERSION } from "./version.ts";
 
-const HELP = `sitegeist ${VERSION} - browser bridge for coding harnesses
+const HELP = `tabkyra ${VERSION} - browser bridge for coding harnesses
 
 Usage:
-  sitegeist mcp             Run the MCP server on stdio (installs the native host on first run)
-  sitegeist install         Write the native messaging manifest for every Chromium browser found
-  sitegeist status          Show whether the extension is reachable
-  sitegeist reload          Reload the extension (picks up a rebuilt dist-chrome)
-  sitegeist allow <host>    Allow agents to open a site (subdomains included)
-  sitegeist yolo            Allow agents to open ANY site (no per-site prompts)
-  sitegeist ask             Require a prompt before agents open an un-allowed site (default)
-  sitegeist debug           Print the extension's bridge state and recent timing log
-  sitegeist pi-extension    Write a pi extension to ~/.pi/agent/extensions/sitegeist.ts
-  sitegeist host            (internal) native messaging host, spawned by the browser
+  tabkyra mcp             Run the MCP server on stdio (installs the native host on first run)
+  tabkyra install         Write the native messaging manifest for every Chromium browser found
+  tabkyra status          Show whether the extension is reachable
+  tabkyra reload          Reload the extension (picks up a rebuilt dist-chrome)
+  tabkyra allow <host>    Allow agents to open a site (subdomains included)
+  tabkyra yolo            Allow agents to open ANY site (no per-site prompts)
+  tabkyra ask             Require a prompt before agents open an un-allowed site (default)
+  tabkyra debug           Print the extension's bridge state and recent timing log
+  tabkyra pi-extension    Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts
+  tabkyra host            (internal) native messaging host, spawned by the browser
 
 Harness setup:
-  claude mcp add sitegeist -- sitegeist mcp
-  codex:  [mcp_servers.sitegeist]  command = "sitegeist"  args = ["mcp"]
-  omp:    add an MCP server entry running "sitegeist mcp"
-  pi:     sitegeist pi-extension
+  claude mcp add tabkyra -- tabkyra mcp
+  codex:  [mcp_servers.tabkyra]  command = "tabkyra"  args = ["mcp"]
+  omp:    add an MCP server entry running "tabkyra mcp"
+  pi:     tabkyra pi-extension
 `;
 
 async function status(): Promise<void> {
 	const sockets = listSockets();
-	console.log(`native host manifest: ${isInstalled() ? "installed" : "missing (run: sitegeist install)"}`);
+	console.log(`native host manifest: ${isInstalled() ? "installed" : "missing (run: tabkyra install)"}`);
+	for (const b of hostStatus()) console.log(`  ${b.name.padEnd(14)} ${b.state.padEnd(8)} ${b.file}`);
 	if (sockets.length === 0) {
-		console.log("bridge sockets: none. Is the sitegeist extension loaded in a running Chromium browser?");
+		console.log("bridge sockets: none. Is the tabkyra extension loaded in a running Chromium browser?");
 		process.exitCode = 1;
 		return;
 	}
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
 			for (const f of result.written) console.log(`wrote   ${f}`);
 			for (const f of result.skipped) console.log(`current ${f}`);
 			if (result.written.length + result.skipped.length === 0) console.log("no Chromium browser profile directories found");
-			console.log("Reload the sitegeist extension once if it was loaded before this install.");
+			console.log("Reload the tabkyra extension once if it was loaded before this install.");
 			return;
 		}
 		case "status":
@@ -77,7 +78,7 @@ async function main(): Promise<void> {
 			return;
 		case "allow": {
 			const host = process.argv[3];
-			if (!host) throw new Error("usage: sitegeist allow <host>");
+			if (!host) throw new Error("usage: tabkyra allow <host>");
 			const client = new BridgeClient({ name: "allow" });
 			await client.connect();
 			console.log(JSON.stringify(await client.call("permission.allow", { host }, 5000)));

@@ -3,7 +3,7 @@
  *
  * Ported, simplified, from the parchi/browser-ai "record" feature: capture the
  * user's clicks, inputs, form submits and navigations on the active tab, then
- * turn them into a site-scoped Sitegeist Skill. Because the generated skill's
+ * turn them into a site-scoped Tabkyra Skill. Because the generated skill's
  * `domainPatterns` is the recorded host, the agent automatically sees the skill
  * id when on that site (via the navigate/skill URL matching) and can retrieve
  * and replay it.
@@ -28,7 +28,7 @@ export interface RecordingResult {
 	screenshots: string[];
 }
 
-const RECORD_EVENT = "sitegeist-record-event";
+const RECORD_EVENT = "tabkyra-record-event";
 
 function isRestrictedUrl(url: string): boolean {
 	return (
@@ -48,10 +48,10 @@ function isRestrictedUrl(url: string): boolean {
  */
 function injectedRecorder() {
 	const w = window as any;
-	if (w.__sitegeistRecorderActive) return;
-	w.__sitegeistRecorderActive = true;
+	if (w.__tabkyraRecorderActive) return;
+	w.__tabkyraRecorderActive = true;
 
-	const RECORD_EVENT = "sitegeist-record-event";
+	const RECORD_EVENT = "tabkyra-record-event";
 	const send = (step: any) => {
 		try {
 			chrome.runtime.sendMessage({ type: RECORD_EVENT, step });
@@ -127,12 +127,12 @@ function injectedRecorder() {
 	document.addEventListener("change", onChange, true);
 	document.addEventListener("submit", onSubmit, true);
 
-	w.__sitegeistRecorderCleanup = () => {
+	w.__tabkyraRecorderCleanup = () => {
 		document.removeEventListener("click", onClick, true);
 		document.removeEventListener("change", onChange, true);
 		document.removeEventListener("submit", onSubmit, true);
-		w.__sitegeistRecorderActive = false;
-		w.__sitegeistRecorderCleanup = undefined;
+		w.__tabkyraRecorderActive = false;
+		w.__tabkyraRecorderCleanup = undefined;
 	};
 }
 
@@ -235,7 +235,7 @@ export class Recorder {
 				await chrome.scripting.executeScript({
 					target: { tabId: this.tabId },
 					func: () => {
-						(window as any).__sitegeistRecorderCleanup?.();
+						(window as any).__tabkyraRecorderCleanup?.();
 					},
 				});
 			} catch {
@@ -327,7 +327,7 @@ window.${jsName} = {
 };`;
 }
 
-/** Build a Sitegeist Skill from a recording. */
+/** Build a Tabkyra Skill from a recording. */
 export function buildSkillFromRecording(
 	rec: RecordingResult,
 	opts: { name: string; domainPatterns?: string[] },

@@ -111,7 +111,7 @@ Extension:
 - `src/bridge/`: native messaging port, one browser session per connected harness,
   request routing, site permissions, diagnostics (`bridge.debug`, `bridge.bench`,
   `bridge.reload`). Settings gained a Bridge tab.
-- Manifest: fixed `key` (stable id `bbkgpflnkggdfabgjhofdmdopgjopamc`), new permissions
+- Manifest: fixed `key` (stable id `kjnkealaldnlmhpooihmomfkbllgmdkk`), new permissions
   `tabGroups`, `nativeMessaging`, `alarms`.
 - Fixed the type errors in the custom provider dialogs.
 

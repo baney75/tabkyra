@@ -81,7 +81,7 @@ async function getImageInfoFromPage(
 
 	const result = await injectScript<
 		{ success: boolean; error?: string; src?: string; width?: number; height?: number } | undefined
-	>(tabId, code, { worldId: "sitegeist-extract-image" });
+	>(tabId, code, { worldId: "tabkyra-extract-image" });
 	if (!result) return "Failed to execute script in page";
 	if (!result.success) return result.error ?? "Failed to read image";
 	return { src: result.src ?? "", width: result.width || 0, height: result.height || 0 };

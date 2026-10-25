@@ -9,13 +9,13 @@ import {
 } from "@mariozechner/pi-web-ui";
 import { CostStore } from "./stores/cost-store.js";
 import { DiscoveredModelsStore } from "./stores/discovered-models-store.js";
-import { SitegeistSessionsStore } from "./stores/sessions-store.js";
+import { TabkyraSessionsStore } from "./stores/sessions-store.js";
 import { SkillsStore } from "./stores/skills-store.js";
 
 /**
- * Extended AppStorage for Sitegeist with skills, memories, and prompts stores.
+ * Extended AppStorage for Tabkyra with skills, memories, and prompts stores.
  */
-export class SitegeistAppStorage extends BaseAppStorage {
+export class TabkyraAppStorage extends BaseAppStorage {
 	readonly skills: SkillsStore;
 	readonly costs: CostStore;
 	readonly discoveredModels: DiscoveredModelsStore;
@@ -24,7 +24,7 @@ export class SitegeistAppStorage extends BaseAppStorage {
 		// 1. Create all stores (no backend yet)
 		const settings = new SettingsStore();
 		const providerKeys = new ProviderKeysStore();
-		const sessions = new SitegeistSessionsStore();
+		const sessions = new TabkyraSessionsStore();
 		const customProviders = new CustomProvidersStore();
 		const skills = new SkillsStore();
 		const costs = new CostStore();
@@ -44,7 +44,7 @@ export class SitegeistAppStorage extends BaseAppStorage {
 
 		// 3. Create backend with all configs
 		const backend = new IndexedDBStorageBackend({
-			dbName: "sitegeist-storage",
+			dbName: "tabkyra-storage",
 			version: 4, // v4: discovered-models store
 			stores: configs,
 		});
@@ -61,7 +61,7 @@ export class SitegeistAppStorage extends BaseAppStorage {
 		// 5. Pass base stores to parent
 		super(settings, providerKeys, sessions, customProviders, backend);
 
-		// 6. Store references to sitegeist-specific stores
+		// 6. Store references to tabkyra-specific stores
 		this.skills = skills;
 		this.costs = costs;
 		this.discoveredModels = discoveredModels;
@@ -69,8 +69,8 @@ export class SitegeistAppStorage extends BaseAppStorage {
 }
 
 /**
- * Helper to get typed Sitegeist storage.
+ * Helper to get typed Tabkyra storage.
  */
-export function getSitegeistStorage(): SitegeistAppStorage {
-	return getAppStorage() as SitegeistAppStorage;
+export function getTabkyraStorage(): TabkyraAppStorage {
+	return getAppStorage() as TabkyraAppStorage;
 }
