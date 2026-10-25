@@ -1,67 +1,192 @@
 <p align="center">
-  <img src="media/brand/hero.png" alt="Tabkyra: you steer, your agents work the tabs" width="720">
+  <img src="media/brand/hero.png" alt="Tabkyra: you steer, your agents work the tabs" width="760">
 </p>
 
-# Tabkyra
+<p align="center">
+  <b>Let Claude Code, Codex or any MCP agent drive your real browser, in its own tab group, while you keep working.</b>
+</p>
 
-An AI agent in your browser's side panel, and a browser your coding agents can use.
-Claude Code, Codex, OpenCode or any MCP client drives tabs in its own tab group in the
-background while you keep working in yours. Bring your own API key or sign in with
-ChatGPT, GitHub Copilot or Google Gemini. Nothing is collected or tracked.
+<p align="center">
+  Built on <a href="https://github.com/0xSero/sitegeist">0xSero's agent bridge</a> and
+  <a href="https://github.com/badlogic/sitegeist">Mario Zechner's Sitegeist</a>.
+  <a href="#credits">Credits</a> · <a href="LICENSE">AGPL-3.0</a>
+</p>
 
-## Quick start (60 seconds)
+---
 
-1. **Build** (once): `./scripts/setup-siblings.sh && npm run build`, which makes `dist-chrome/`.
-2. **Load it** in Helium or Chrome: open `chrome://extensions`, turn on Developer mode,
-   click **Load unpacked** and pick `dist-chrome/`. The id is always
-   `kenehmggpggpiolepbjojeenmeapgfoc` (fixed by the manifest `key`).
-3. **Install the CLI and the native host:**
+Tabkyra is a Chromium extension and a small CLI. Your coding agent gets a browser that is
+already signed in where you are signed in. It works in background tabs it owns, and it
+asks before it opens a site you haven't allowed. The extension also has its own side panel
+agent for when you want to chat with a page directly.
 
-   ```bash
-   (cd cli && npm link)      # puts `tabkyra` (and the old `sitegeist` alias) on PATH
-   tabkyra install           # registers ai.tabkyra.bridge for Helium, Chrome, Chromium, Edge, Brave, ...
-   ```
+*Tabkyra* is *tab* plus *kyra*, from Greek *kybernētēs*, "helmsman". You steer, and it
+works the tabs.
 
-   Reload the extension once, then `tabkyra status` lists which browsers have the host
-   and whether the extension is connected.
-4. **Connect your agent:**
+**Credit where it's due.** The agent bridge is the work of **[0xSero](https://github.com/0xSero)**
+([0xSero/sitegeist](https://github.com/0xSero/sitegeist)). That covers the native
+messaging bridge, the CLI and MCP server, agent tab groups, per-tab side panels and the
+foreground guard that keeps agent popups from stealing focus. The extension itself is
+**[Mario Zechner](https://github.com/badlogic)**'s
+[Sitegeist](https://github.com/badlogic/sitegeist), built on his
+[pi](https://github.com/badlogic/pi-mono) agent libraries. Tabkyra packages their work
+with one-command setup, a doctor and a new brand.
 
-   ```bash
-   claude mcp add tabkyra -- tabkyra mcp
-   ```
+## 60 seconds to your first agent-driven tab
 
-   Codex (`~/.codex/config.toml`):
+You need Node 20+, git, and a Chromium browser (Helium, Chrome, Brave, Edge, Arc,
+Vivaldi or Chromium 141+).
 
-   ```toml
-   [mcp_servers.tabkyra]
-   command = "tabkyra"
-   args = ["mcp"]
-   ```
+```bash
+git clone https://github.com/baney75/tabkyra && cd tabkyra
+(cd cli && npm install && npm run build && npm link)
+tabkyra setup
+```
 
-   OpenCode, OMP or any other MCP client: a stdio server with command `tabkyra`, args `["mcp"]`.
+`tabkyra setup` builds the extension, registers the native host with every Chromium
+browser it finds, and offers to add Tabkyra to Claude Code and Codex. For OpenCode,
+Cursor and OMP it prints the config block to paste. Then it shows the one step the
+browser makes you do by hand:
 
-For the side panel itself, press `Cmd+Shift+S` / `Ctrl+Shift+S` and add a provider.
-Requires Chromium 141 or newer.
+```
+╭─ One step in your browser ─────────────────────────────────────╮
+│ 1  Open chrome://extensions, turn on Developer mode,           │
+│    and click Load unpacked.                                    │
+│ 2  Pick this folder:                                           │
+│    /path/to/tabkyra/dist-chrome                                │
+│ 3  Click Details on Tabkyra and turn on Allow user scripts.    │
+╰────────────────────────────────────────────────────────────────╯
+  ✓ Connected. Tabkyra can reach your browser.
+```
+
+Then ask your agent something like:
+
+> Use tabkyra to open news.ycombinator.com and list the top five stories.
+
+If anything is off, `tabkyra doctor` checks each piece and prints the exact command
+that fixes it.
+
+<p align="center">
+  <img src="media/demo.gif" alt="An agent searches a library catalog, places a hold and reads the confirmation, all through Tabkyra's MCP tools" width="860">
+  <br><sub>A real run, recorded headless by <code>scripts/demo/capture.mjs</code>: the agent opens a page, reads it, searches, fills a form and confirms.
+  Each frame is the agent's own <code>screenshot</code>. <a href="media/demo-steps.png">Still frames</a>.</sub>
+</p>
+
+## Connect your agent
+
+`tabkyra setup` does this for you. `tabkyra install` writes a launcher at
+`~/.config/tabkyra/tabkyra` that pins Node by absolute path, so an agent started from a
+GUI app doesn't need `node` on its PATH. Point your harness at it:
+
+**Claude Code**
+
+```bash
+claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp
+```
+
+**Codex**
+
+```bash
+codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp
+```
+
+**OpenCode** (`~/.config/opencode/opencode.json`)
+
+```json
+{ "mcp": { "tabkyra": { "type": "local", "command": ["/Users/you/.config/tabkyra/tabkyra", "mcp"], "enabled": true } } }
+```
+
+**Cursor** (`~/.cursor/mcp.json`) and **OMP** (`~/.omp/agent/mcp.json`)
+
+```json
+{ "mcpServers": { "tabkyra": { "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"] } } }
+```
+
+**pi** has no MCP client, so `tabkyra pi-extension` writes a native pi extension instead.
+
+Any other MCP client can run the stdio server with `~/.config/tabkyra/tabkyra mcp`.
+
+## What your agent can do
+
+| Tools | |
+| --- | --- |
+| `status` | Is the browser connected, which sites are allowed, which tabs are mine |
+| `navigate`, `tabs_context`, `tabs_create`, `tabs_select`, `tabs_close` | Open pages in its own background tabs |
+| `read_page`, `find`, `get_page_text`, `get_page_html`, `screenshot` | Read a page as element refs and text, or look at it |
+| `click`, `type`, `fill`, `press`, `hover`, `scroll`, `drag`, `actions` | Act with real input events, by ref or by screenshot pixel |
+| `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits and debugging |
+| `tabs_show` | Bring a tab in front of you, when you need to sign in or see it |
+
+The tool names match Claude in Chrome's, so prompts written for it carry over. Every
+tool's description includes its parameters and an example.
 
 ## Safety model
 
-- **Nothing listens on the network.** The browser spawns the native host; the host owns a
-  socket in `/tmp/tabkyra-bridge-<user>/` (0700 directory, 0600 socket) and only relays
-  frames. The client refuses sockets and directories another user owns.
-- **Only this extension can reach the host.** The host manifest's `allowed_origins` names
-  the one fixed extension id.
-- **Agents work in their own tab group** ("Tabkyra · claude", ...). Tabs open in the
-  background and agents cannot see your other tabs. `tabs_show` is the only tool that
-  changes what you see, and popups from agent tabs do not steal focus.
-- **Site permissions.** By default an agent must ask before it opens a new site. Claude
-  Code and Codex show the prompt inline; otherwise answer it in the side panel under
-  Settings > Bridge or run `tabkyra allow <host>`. `tabkyra allow-all` allows any site and
-  `tabkyra ask` turns prompting back on.
-- **No Claude subscription login.** Anthropic does not allow Claude Pro/Max subscriptions
-  in third-party apps, so Tabkyra takes Anthropic API keys only.
+Your browser is signed in as you, so the defaults are conservative.
 
-More: `cli/README.md` (commands, environment variables, MCP tools) and
-`docs/agent-bridge-design.md` (protocol and design).
+- **The agent asks before it opens a new site.** Claude Code and Codex show the prompt
+  inline; otherwise answer it in the side panel under Settings > Bridge. Run
+  `tabkyra allow <host>` to pre-approve a site, `tabkyra allow-all` to skip prompts and
+  `tabkyra ask` to turn them back on.
+- **Page text is data, not instructions.** The MCP server tells every agent that page
+  content is untrusted and that it must ask you before acting under your sign-in:
+  sending, posting, buying, deleting or changing settings. It also tells the agent never
+  to type passwords or payment details. For a sign-in or a captcha, it brings the tab to
+  you.
+- **Agents stay in their own tab group** ("Tabkyra · claude", "Tabkyra · codex"). Their
+  tabs open in the background, they can't see your other tabs, and popups from their
+  tabs don't steal focus. `tabs_show` is the only tool that changes what you see.
+- **Nothing listens on the network.** The browser starts the native host, which relays
+  frames over a Unix socket in `/tmp/tabkyra-bridge-<user>/` (0700 directory, 0600
+  socket). The client refuses sockets that another user owns.
+- **Only this extension can reach the host.** The host manifest's `allowed_origins`
+  names one fixed extension id, `kenehmggpggpiolepbjojeenmeapgfoc`.
+- **No Claude subscription login.** Anthropic doesn't allow Claude Pro or Max
+  subscriptions in third-party apps, so the side panel takes Anthropic API keys only.
+  ChatGPT, GitHub Copilot and Gemini sign-in still work, as does any API key.
+
+## How it works
+
+```mermaid
+flowchart LR
+  A["Your agent<br/>Claude Code, Codex, OpenCode, Cursor"] -- "MCP (stdio)" --> B["tabkyra mcp"]
+  B -- "Unix socket<br/>user-only" --> C["Native host<br/>started by the browser"]
+  C -- "Native messaging" --> D["Tabkyra extension"]
+  D -- "chrome.debugger,<br/>tab groups" --> E["Background tabs<br/>Tabkyra · claude"]
+  U(["You"]) -. "approve sites,<br/>watch, take over" .-> D
+```
+
+Each agent session gets its own tab group, and the session survives extension reloads,
+so a harness that reconnects lands back on its own tabs. Screenshots and input go
+through `chrome.debugger`, which works on hidden tabs, so the agent never needs your
+window in front. Protocol and design notes are in
+[`docs/agent-bridge-design.md`](docs/agent-bridge-design.md), and the CLI is documented in
+[`cli/README.md`](cli/README.md).
+
+## FAQ
+
+**Is this the Chrome Web Store version?** No. Tabkyra loads unpacked from
+`dist-chrome`, and `tabkyra setup` builds it for you. The fixed manifest key gives every
+Chromium browser the same extension id.
+
+**Does my agent see my other tabs?** No. It sees and controls only the tabs in its own
+group.
+
+**Can I watch it work?** Yes. Click its tab group, or have the agent call `tabs_show`.
+
+**Why does my agent stop and ask about a site?** That's the permission prompt. Approve
+it once or for good, or run `tabkyra allow <host>` ahead of time.
+
+**It says "Tabkyra isn't connected."** The browser isn't running with the extension
+loaded, or the extension hasn't reached the native host yet. `tabkyra doctor` says
+which one.
+
+**Which browsers?** Chromium 141 or newer: Helium, Chrome, Chromium, Brave, Edge, Arc,
+Vivaldi and Opera, on macOS and Linux. Windows registry entries are written too but
+haven't been tested.
+
+**Does it send my data anywhere?** No. Nothing is collected or tracked. The side panel
+talks only to the model provider you configure, and the bridge never leaves your
+machine.
 
 ## Development
 
@@ -74,38 +199,36 @@ parent/
   tabkyra/           # this repo
 ```
 
-Check out pi-mono at the pinned commit, apply `patches/pi-mono.patch` (model registration,
-composer history and slash commands, thinking level in the model picker), build the sibling
-declarations and install everything:
+`./scripts/setup-siblings.sh` clones them, checks out pi-mono at the pinned commit,
+applies `patches/pi-mono.patch`, builds the declarations and installs everything.
+`./dev.sh` starts the watchers. Rebuild and reload from the terminal with
+`npm run build && tabkyra reload`. A production build bumps the version in
+`static/manifest.chrome.json`; `TABKYRA_NO_BUMP=1` skips that.
 
 ```bash
-./scripts/setup-siblings.sh
-```
-
-`./dev.sh` starts the watchers for mini-lit, pi-mono, the extension and the site.
-
-Rebuild the extension and reload it from the terminal:
-
-```bash
-npm run build && tabkyra reload
-```
-
-Note: a production build bumps the version in `static/manifest.chrome.json`.
-
-## Checks
-
-```bash
-./check.sh        # biome + tsc for the extension and the site
-(cd cli && npm run check && npm test)   # CLI typecheck, build, installer test
+./check.sh                              # biome + tsc for the extension and the site
+(cd cli && npm run check && npm test)   # CLI typecheck, build, setup/doctor/MCP tests
 (cd cli && npm run test:e2e)            # extension + host + MCP in a throwaway headless Chromium
-                                        # (first time: cd cli && npx playwright-core install chromium)
+node media/brand/build.mjs              # regenerate icons and brand art from media/brand
+node scripts/demo/capture.mjs           # re-record the README demo
 ```
 
-The Husky pre-commit hook runs `./check.sh`.
+The brand (mark, palette, type, voice) is documented in
+[`media/brand/BRAND.md`](media/brand/BRAND.md).
 
 ## Credits
 
-Tabkyra is a fork of [Sitegeist](https://github.com/badlogic/sitegeist) by Mario Zechner
-(badlogic), via [0xSero's fork](https://github.com/0xSero/sitegeist), which added the
-agent bridge, background tab groups, per-tab panels and runtime model discovery
-(details in `docs/fork-changes.md`). Licensed AGPL-3.0, like upstream. See [LICENSE](LICENSE).
+- **[0xSero](https://github.com/0xSero)**, [0xSero/sitegeist](https://github.com/0xSero/sitegeist):
+  the agent bridge (native messaging host, Unix-socket client, MCP server and CLI), one
+  tab group per agent session, background screenshots and input through
+  `chrome.debugger`, per-tab side panels, the foreground guard, and runtime model
+  discovery. Details are in [`docs/fork-changes.md`](docs/fork-changes.md).
+- **[Mario Zechner](https://github.com/badlogic)**, [badlogic/sitegeist](https://github.com/badlogic/sitegeist):
+  the original Sitegeist extension, its side panel agent and tools, and the
+  [pi](https://github.com/badlogic/pi-mono) and [mini-lit](https://github.com/badlogic/mini-lit)
+  libraries it runs on.
+- **Tabkyra** ([baney75/tabkyra](https://github.com/baney75/tabkyra)): the name and brand,
+  `tabkyra setup` and `doctor`, the Helium host registration, the MCP polish and the
+  end-to-end test.
+
+Licensed AGPL-3.0, like upstream. See [LICENSE](LICENSE).

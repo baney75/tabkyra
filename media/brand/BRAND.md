@@ -30,7 +30,8 @@ Rules:
 - Keep the tile corner radius at 15/64 of the side (3.75 px at 16 px). Don't add outlines, gradients or shadows
   to the mark itself (a soft brass glow under the tile in the UI is fine).
 - Give the mark clear space of at least one peg length on every side.
-- Don't rotate the mark. The pointer always points up and to the left.
+- Don't rotate the mark. The pointer always points up and to the left. The one exception
+  is the hero's background watermark: the bare brass helm at 7% opacity, turned 11°, cropped off the edge.
 - Never pair it with the Sitegeist orb or badlogic's marks. Tabkyra credits them in words,
   not in pictures.
 

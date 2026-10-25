@@ -4,8 +4,6 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-SERVER=slayer.marioslab.io
-SERVER_DIR=/home/badlogic/sitegeist.ai
 
 case "$1" in
 dev)
@@ -20,13 +18,10 @@ build)
     ;;
 
 deploy)
-    npm install
-    npx vite build --config infra/vite.config.ts
-
-    echo "Uploading to $SERVER..."
-    ssh $SERVER "mkdir -p $SERVER_DIR/uploads"
-    rsync -avz --delete dist/ $SERVER:$SERVER_DIR/dist/
-    echo "Deployed."
+    # The upstream target was Sitegeist's own server. Tabkyra has no hosting yet:
+    # build, then publish dist/ wherever the site should live.
+    echo "No deploy target is configured for Tabkyra. Run '$0 build' and publish dist/." >&2
+    exit 1
     ;;
 
 *)
