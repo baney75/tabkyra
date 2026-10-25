@@ -13,8 +13,13 @@ Nothing on screen is mocked. `scripts/demo/capture-video.mjs` records a real run
   through a CDP session attached to that tab only.
 - The library and skill lint beats run the real CLI against doi.org, OpenAlex and Crossref.
 - `capture.json` holds the tool calls with their real results, the permission prompt, the
-  copied setup prompt, and the CLI output and exit codes. Every line of agent and terminal
-  text in the video is read from it.
+  copied setup prompt, and the CLI output and exit codes. Every recorded value in the video
+  (call arguments, refs, results, URLs, CLI output and exit codes) is read from it. A few fixed
+  labels are written in the scenes: the `# allowed beforehand: tabkyra allow 127.0.0.1` note,
+  the argument-free `read_page { filter: "interactive" }` and `get_page_text {}` call lines, and
+  the "Pinecrest Library" tab title.
+- The video edits the order: the run did the catalog work first and opened Gutenberg after,
+  but the video shows the permission beat first. Each call and result is the run's own.
 
 ## Re-record and re-render
 

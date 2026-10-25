@@ -65,7 +65,10 @@ plate, one line). Commands in captions are set in JetBrains Mono, brass.
 - **Camera:** static.
 - **Caption:** 18.5 s "It works in its own background tab group, and it can't see your other
   tabs."
-- **Transition out:** none; the same window carries into chapter 4 and its page changes.
+- **Transition out:** none; the same window carries into chapter 4 and its page changes. The
+  run itself did the catalog work first and opened Gutenberg after; the video shows the
+  permission beat first because it's the point of the piece. Each call and result is the run's
+  own, but the order across chapters 2 to 4 is edited.
 
 ## Chapter 4: Fills forms, reads back (29.0–47.2 s)
 
@@ -73,7 +76,9 @@ plate, one line). Commands in captions are set in JetBrains Mono, brass.
   beforehand: tabkyra allow 127.0.0.1` and runs the real calls, each synced to the screenshot
   it produced: `navigate` (catalog home), `read_page { filter: "interactive" }` with `e1
   textbox "Search the catalog"` and `e2 button "Search"`, `type { ref: "e1", text:
-  "Moby-Dick", submit: true }` → `{"typed":9}` (results), `click { ref: "e1" } // Place hold`
+  "Moby-Dick", submit: true }` → `{"typed":9}` (results), `read_page { filter: "interactive" }`
+  with `e1 button "Place hold"` and `e2 button "Place hold"` (the refs renumbered),
+  `click { ref: "e1" } // Place hold`
   (hold form), `read_page` with the card, branch and confirm refs, two `fill` calls (filled
   form, 40.0 s), `click { ref: "e3" } // Confirm hold` (confirmation, 42.2 s), and
   `get_page_text {}` → "Hold placed for Ada Lovelace: Moby-Dick. Pick it up at Main Street

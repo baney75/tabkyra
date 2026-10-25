@@ -529,12 +529,33 @@ function uniqueNotices(notices: Verification["notices"]): Verification["notices"
 	});
 }
 
+/**
+ * Notices from two checks of one work. DOI-less notices repeated within one check are kept, but
+ * the same one reported by both checks counts once: keep the larger count per type.
+ */
+function mergeNotices(a: Verification["notices"], b: Verification["notices"]): Verification["notices"] {
+	const count = (list: Verification["notices"]) => {
+		const m = new Map<string, number>();
+		for (const n of list) if (!n.doi) m.set(n.type, (m.get(n.type) ?? 0) + 1);
+		return m;
+	};
+	const inA = count(a);
+	const extra = new Map([...count(b)].map(([type, n]) => [type, n - (inA.get(type) ?? 0)]));
+	const fromB = b.filter((n) => {
+		if (n.doi) return true;
+		const left = extra.get(n.type) ?? 0;
+		extra.set(n.type, left - 1);
+		return left > 0;
+	});
+	return uniqueNotices([...a, ...fromB]);
+}
+
 /** Combine checks of two DOIs for one work (an alias and its primary). */
 function mergeVerification(a: Verification, b: Verification): Verification {
 	return {
 		...a,
 		retracted: a.retracted || b.retracted,
-		notices: uniqueNotices([...a.notices, ...b.notices]),
+		notices: mergeNotices(a.notices, b.notices),
 		sources: [...new Set([...a.sources, ...b.sources])],
 		complete: Boolean(a.complete && b.complete),
 		checks:

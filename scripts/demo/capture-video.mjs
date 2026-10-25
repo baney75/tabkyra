@@ -35,6 +35,11 @@ const target = join(repo, "media", "video", "public", "capture");
 // Everything is written here first, then swapped into `target` once the run has passed.
 // Created in main(), after the prerequisite checks, so a failed check leaves nothing behind.
 let out;
+// Ctrl-C: kill Chromium so pending calls fail and every finally block runs (MCP, CDP, profile,
+// socket and staging cleanup). Temp folders are tracked in case shutdown hangs.
+let interrupted = false;
+let stopBrowser = () => {};
+const temps = new Set();
 const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
 const NEW_SITE = "https://www.gutenberg.org/ebooks/2701";
 
@@ -113,16 +118,28 @@ const freePort = () =>
 
 async function main() {
 	out = mkdtempSync(join(repo, "media", "video", "public", ".capture-new-"));
+	temps.add(out);
 	const cleanUp = () => rmSync(out, { recursive: true, force: true });
-	// Ctrl-C skips finally blocks; remove the staging folder before exiting.
-	process.once("SIGINT", () => {
-		cleanUp();
+	const hardStop = () => {
+		stopBrowser();
+		for (const dir of temps) rmSync(dir, { recursive: true, force: true });
 		process.exit(130);
+	};
+	process.on("SIGINT", () => {
+		if (interrupted) return hardStop(); // a second Ctrl-C doesn't wait
+		interrupted = true;
+		console.error("interrupted: stopping Chromium and cleaning up");
+		stopBrowser();
+		setTimeout(hardStop, 8000).unref();
 	});
 	try {
 		await record();
+		if (interrupted) throw new Error("interrupted");
 		swapIn(out, target);
 		console.log(`wrote ${target}`);
+	} catch (err) {
+		if (!interrupted) throw err;
+		process.exitCode = 130;
 	} finally {
 		cleanUp();
 	}
@@ -149,6 +166,7 @@ const shellQuote = (args) =>
 
 async function record() {
 	const work = mkdtempSync(join(tmpdir(), "tabkyra-video-"));
+	temps.add(work);
 	const capture = { recordedAt: new Date().toISOString(), browser: {}, cli: {} };
 	try {
 		await browserBeats(work, capture);
@@ -163,6 +181,7 @@ async function record() {
 async function browserBeats(work, capture) {
 	const home = join(work, "home");
 	const socketDir = mkdtempSync("/tmp/tkvideo-");
+	temps.add(socketDir);
 	const profile =
 		process.platform === "darwin"
 			? join(home, "Library", "Application Support", "Chromium")
@@ -200,6 +219,7 @@ async function browserBeats(work, capture) {
 		const url = `http://127.0.0.1:${server.address().port}/`;
 		const port = await freePort();
 		execFileSync(process.execPath, [cli, "install"], { env, stdio: "ignore" });
+		if (interrupted) throw new Error("interrupted");
 		browser = spawn(
 			chromium.executablePath(),
 			[
@@ -218,6 +238,9 @@ async function browserBeats(work, capture) {
 			],
 			{ env, stdio: "ignore" },
 		);
+		stopBrowser = () => {
+			if (browser.exitCode === null) browser.kill();
+		};
 		await mcp.connect(
 			new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env, stderr: "ignore" }),
 		);
@@ -372,9 +395,17 @@ async function browserBeats(work, capture) {
 		await panel.shot(join(out, "panel-allowed.png"));
 		capture.browser.boxes.allowedRow = await panel.box(`${findText("www.gutenberg.org")}.parentElement`);
 		capture.browser.panelErrors = await panel.errors();
-		await call("wait", { selector: "h1", timeoutMs: 15_000 }).catch(() => undefined);
+		await call("wait", { selector: "h1", timeoutMs: 15_000 });
 		const shotBook = await shot("book.jpg");
 		const book = JSON.parse(await call("get_page_text"));
+		// The video quotes the heading and the summary line; fail rather than record a half-loaded page.
+		const bookLines = book.text.split("\n");
+		if (
+			!bookLines.some((l) => l.startsWith("Moby Dick; Or, The Whale by")) ||
+			!bookLines.some((l) => l.startsWith('"Moby Dick; Or, The Whale" by Herman Melville'))
+		) {
+			throw new Error(`the Gutenberg page is missing its heading or summary line:\n${book.text.slice(0, 500)}`);
+		}
 		capture.browser.book = { url: book.url, title: book.title, shot: shotBook, text: book.text.slice(0, 3000) };
 
 		capture.browser.statusAfter = JSON.parse(await call("status"));

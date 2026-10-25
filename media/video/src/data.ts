@@ -6,7 +6,13 @@ const elements = (snapshot: string): string[] => snapshot.split("\n").filter((l)
 
 const b = capture.browser;
 const book = b.book;
-const summary = book.text.split("\n").find((l) => l.startsWith('"Moby Dick; Or, The Whale" by Herman Melville')) ?? "";
+/** A line the video quotes; a capture without it fails the render instead of showing a blank. */
+const line = (prefix: string): string => {
+	const found = book.text.split("\n").find((l) => l.startsWith(prefix));
+	if (!found) throw new Error(`capture.json: the book page has no line starting ${prefix}`);
+	return found;
+};
+const summary = line('"Moby Dick; Or, The Whale" by Herman Melville');
 
 export const DATA = {
 	recordedAt: capture.recordedAt,
@@ -17,7 +23,7 @@ export const DATA = {
 	},
 	bookUrl: b.book.url,
 	bookTitle: book.title,
-	bookHeading: book.text.split("\n").find((l) => l.startsWith("Moby Dick; Or, The Whale by")) ?? "",
+	bookHeading: line("Moby Dick; Or, The Whale by"),
 	bookSummary: `${summary.split(". ")[0]}.`,
 	catalogUrl: b.catalogUrl,
 	refs: b.catalog.refs,

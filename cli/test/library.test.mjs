@@ -72,6 +72,8 @@ Object.assign(RECORDS, {
 	"10.1000/alias2": { type: "journal-article", title: "Alias of a retracted work", author: [{ family: "Alias", given: "B." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary-retracted" },
 	"10.1000/alias3": { type: "journal-article", title: "Alias sharing a notice", author: [{ family: "Shared", given: "S." }], issued: { "date-parts": [[2013]] }, DOI: "10.1000/primary3" },
 	"10.1000/primary3": { type: "journal-article", title: "Primary sharing a notice", author: [{ family: "Shared", given: "S." }], issued: { "date-parts": [[2013]] }, DOI: "10.1000/primary3" },
+	"10.1000/alias4": { type: "journal-article", title: "Alias sharing a DOI-less notice", author: [{ family: "Shared", given: "T." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary4" },
+	"10.1000/primary4": { type: "journal-article", title: "Primary sharing a DOI-less notice", author: [{ family: "Shared", given: "T." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary4" },
 	"10.1000/nodoi-notices": { type: "journal-article", title: "Two corrections without DOIs", author: [{ family: "Nodoi", given: "N." }], issued: { "date-parts": [[2012]] }, DOI: "10.1000/nodoi-notices" },
 	"10.1000/primary-retracted": { type: "journal-article", title: "Primary", author: [{ family: "Alias", given: "B." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary-retracted" },
 	"10.1000/marker": { type: "journal-article", title: "A title with tabkyra-generated: inside it", author: [{ family: "Marker", given: "M." }], issued: { "date-parts": [[2013]] }, DOI: "10.1000/marker" },
@@ -148,6 +150,8 @@ before(async () => {
 				"10.1000/retracted": [{ type: "retraction", DOI: "10.1000/NOTICE" }],
 				// Two notices of one type with no DOI: distinct notices, both kept.
 				"10.1000/nodoi-notices": [{ type: "correction" }, { type: "correction" }],
+				"10.1000/alias4": [{ type: "correction" }],
+				"10.1000/primary4": [{ type: "correction" }],
 			};
 			return json(200, { message: { "updated-by": updatedBy[doi] ?? [] } });
 		}
@@ -450,6 +454,12 @@ test("a notice that an alias and its primary both report is listed once", async 
 test("notices without a DOI are each kept", async () => {
 	const r = await lib("add", "10.1000/nodoi-notices");
 	assert.equal(r.out.match(/notice: correction/g)?.length, 2, r.out);
+});
+
+test("a DOI-less notice that an alias and its primary both report is listed once", async () => {
+	const r = await lib("add", "10.1000/alias4");
+	assert.equal(r.out.match(/notice: correction/g)?.length, 1, r.out);
+	assert.equal(items().find((i) => i.DOI === "10.1000/alias4").tabkyra.verified.notices.length, 1);
 });
 
 test("duplicate notices saved by an older version are shown and kept once", async () => {
