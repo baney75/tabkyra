@@ -60,6 +60,20 @@ test("the trusted-hosts field accepts names, IPs, URLs and host:port", () => {
 	assert.equal(hostOf(""), undefined);
 });
 
+test("listing openrouter.ai as trusted doesn't skip the ZDR routing", () => {
+	const m = privateModel({ ...openrouter }, ["openrouter.ai"]);
+	assert.equal(m.compat.openRouterRouting.zdr, true);
+});
+
+test("redaction keeps URLs with parentheses whole, and drops IPv6 and base64 secrets", () => {
+	const text = redact(
+		"Failed https://wiki.example.com/wiki/Jane_Doe_(patient)/records). At [fd7a:115c:a1e0::1234]:8080 and fe80::1, bad credential wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	);
+	assert.doesNotMatch(text, /records|Jane_Doe|fd7a|fe80|wJalr|EXAMPLEKEY/, text);
+	assert.match(text, /\[url\]\)\./, "sentence punctuation after a URL is kept");
+	assert.match(redact("took 12:34:56 to load"), /12:34:56/, "a clock time isn't an IPv6 address");
+});
+
 test("a CORS proxy off the user's machines is refused in private mode", () => {
 	assert.throws(() => assertPrivateProxy(true, "https://proxy.example.com"), PrivateModeError);
 	assert.doesNotThrow(() => assertPrivateProxy(true, "http://localhost:3001"));
@@ -97,6 +111,7 @@ test("bug reports are off by default; turning them off clears the log through th
 	// A checked attribute or a .checked binding (reading e.target.checked in the handler is fine).
 	assert.doesNotMatch(input, /(^|\s)[.?]?checked(\s*=|\s*$|\s)/m, "the welcome checkbox has no checked attribute or binding");
 	assert.match(welcome, /setBugReports\(getTabkyraStorage\(\)/, "the welcome box goes through the shared queue");
+	assert.match(welcome, /this\.reportsOn\s*\?/, "when reports are already on, the welcome dialog says so instead of an unchecked box");
 });
 
 test("the stream gate applies private mode, the trusted hosts and the proxy check to every side panel request", () => {

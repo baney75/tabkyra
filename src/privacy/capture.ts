@@ -18,6 +18,8 @@ export function recordError(storage: TabkyraAppStorage, error: unknown): Promise
 	return serial(async () => {
 		if ((await storage.settings.get<boolean>(BUG_REPORTS_KEY)) !== true) return;
 		const log = (await storage.settings.get<BugEntry[]>(BUG_LOG_KEY)) ?? [];
+		// Another side panel (another window) may have turned reports off meanwhile.
+		if ((await storage.settings.get<boolean>(BUG_REPORTS_KEY)) !== true) return;
 		await storage.settings.set(BUG_LOG_KEY, addEntry(log, error));
 	}).catch(() => undefined);
 }

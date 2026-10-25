@@ -62,7 +62,8 @@ export interface RoutableModel {
 
 /** The model to send in private mode, with ZDR routing added; throws for a provider that isn't allowed. */
 export function privateModel<M extends RoutableModel>(model: M, trustedHosts: string[] = []): M {
-	if (isLocalBaseUrl(model.baseUrl, trustedHosts)) return model;
+	// OpenRouter always takes the ZDR route below, even if its host was listed as trusted.
+	if (!isOpenRouterHost(model.baseUrl) && isLocalBaseUrl(model.baseUrl, trustedHosts)) return model;
 	let url: URL | undefined;
 	try {
 		url = new URL(model.baseUrl);
@@ -87,6 +88,15 @@ export function privateModel<M extends RoutableModel>(model: M, trustedHosts: st
 		};
 	}
 	throw new PrivateModeError(model.provider);
+}
+
+function isOpenRouterHost(baseUrl: string): boolean {
+	try {
+		const host = new URL(baseUrl).hostname.toLowerCase();
+		return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+	} catch {
+		return false;
+	}
 }
 
 /** A host as the user typed it: a name, an IP, a URL or host:port; undefined if it isn't one. */

@@ -89,12 +89,13 @@ export class PrivacyTab extends SettingsTab {
 					<p class="text-xs text-muted-foreground">
 						The side panel agent then runs only OpenRouter models, sent with zero data retention required and no
 						fallback to other endpoints, and models on this computer or on the hosts you list below (a LAN or tailnet
-						machine counts only once you list it).
+						machine counts only once you list it). A local server that forwards to a cloud service (for example an
+						Ollama cloud model) is still a cloud service: don't use one in private mode.
 						Other providers, and a CORS proxy that isn't on those machines, are refused. This covers the side panel
 						agent; an outside agent using the Bridge follows its own settings.
 					</p>
 					<label class="flex flex-col gap-1 text-xs text-muted-foreground">
-						<span>Your own machines: names, IPs or URLs, comma-separated (for example 192.168.1.20, mac.tail1234.ts.net)</span>
+						<span>Your own machines, comma-separated. Prefer names over IPs (for example mac.tail1234.ts.net): a listed IP is trusted on every network, including one where it belongs to someone else.</span>
 						<input
 							class="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
 							.value=${this.trustedHosts}

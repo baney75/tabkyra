@@ -26,13 +26,19 @@ export function redact(text: string): string {
 	return (
 		text
 			.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)(?:[?#][^\s"'<>)]*)?/gi, "ext:/$1")
-			.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>)]+/gi, "[url]")
+			// A URL may contain ")" (wiki paths); only trailing punctuation belongs to the sentence.
+			.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>]+/gi, (m) => `[url]${/[).,;:!?]+$/.exec(m)?.[0] ?? ""}`)
 			// Addresses without "//": data, blob, about and javascript URLs carry page content.
-			.replace(/\b(?:data|blob|about|javascript):[^\s"'<>)]+/gi, "[url]")
+			.replace(/\b(?:data|blob|about|javascript):[^\s"'<>]+/gi, "[url]")
 			.replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, "[ip]")
+			// IPv6: compressed (with "::") or all eight groups, bracketed or not, with a port.
+			.replace(
+				/\[?(?:[0-9a-f]{1,4}:){0,7}[0-9a-f]{0,4}::(?:[0-9a-f]{0,4}:?){0,7}[0-9a-f]{0,4}\]?(?::\d+)?|\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b/gi,
+				"[ip]",
+			)
 			.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
 			.replace(/\b(sk|pk|rk|ghp|gho|ghu|ghs|github_pat|xox[abprs]|AKIA|AIza|ya29|eyJ)[\w-]{10,}/g, "[secret]")
-			.replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[long-token]")
+			.replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, "[long-token]")
 			.replace(/\/(Users|home)\/[^/\s]+/g, "/$1/[user]")
 			.replace(/[A-Z]:\\Users\\[^\\\s]+/g, "C:\\Users\\[user]")
 			.slice(0, 2000)
