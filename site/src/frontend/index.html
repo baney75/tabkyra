@@ -42,13 +42,13 @@
 			</div>
 			<figure class="hero-demo">
 				<img src="img/demo.gif" alt="A scripted MCP client searches a library catalog, places a hold and reads the confirmation through Tabkyra's tools" width="960" height="464">
-				<figcaption>A scripted MCP client driving the real stack, recorded headless. Every frame is its own screenshot.</figcaption>
+				<figcaption>A scripted MCP client driving the real stack, recorded headless. The page in each frame is its own screenshot.</figcaption>
 			</figure>
 		</section>
 
 		<section class="start" id="start">
 			<h2><span class="num">60s</span> To your first agent-driven tab</h2>
-			<p class="section-lede">Node 20+, git and a Chromium browser: Helium, Chrome, Brave, Edge, Arc, Vivaldi or Chromium 141+. Clone into a folder of its own: the first build puts pi-mono and mini-lit beside it. A fresh clone reached "Connected" in 45 seconds on a Mac with a warm npm cache; a cold first install takes longer.</p>
+			<p class="section-lede">Node 20+, git and a Chromium 141+ browser such as Helium, Chrome or Brave (tested headless in Chromium). Clone into a folder of its own: the first build puts pi-mono and mini-lit beside it. A fresh clone reached "Connected" in 45 seconds on a Mac with a warm npm cache; a cold first install takes longer.</p>
 			<div class="term">
 				<div class="term-bar"><span></span><span></span><span></span><button class="copy" data-copy="mkdir tabkyra-src &amp;&amp; cd tabkyra-src&#10;git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra&#10;(cd cli &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link)&#10;tabkyra setup">Copy</button></div>
 <pre><code><span class="p">$</span> mkdir tabkyra-src &amp;&amp; cd tabkyra-src
@@ -76,7 +76,7 @@
   <span class="g">✓</span> Connected. Tabkyra can reach your browser <span class="d">(1.1.8)</span>.</code></pre>
 			</div>
 			<ol class="steps">
-				<li><b>Setup does the work.</b> It builds the extension, registers it with every Chromium browser it finds, and offers to add Tabkyra to Claude Code and Codex. For OpenCode, Cursor and OMP it prints the config to paste.</li>
+				<li><b>Setup does the work.</b> It builds the extension, registers the native host with every Chromium browser it finds, and offers to add Tabkyra to Claude Code and Codex. For OpenCode, Cursor and OMP it prints the config to paste.</li>
 				<li><b>One step is yours.</b> Browsers make you load an unpacked extension by hand. Setup shows the exact folder and waits until it connects.</li>
 				<li><b>Ask your agent.</b> For example: <i>"Use tabkyra to open news.ycombinator.com and list the top five stories."</i> If anything is off, <code>tabkyra doctor</code> prints the exact fix.</li>
 			</ol>
@@ -100,7 +100,7 @@
 				</article>
 				<article>
 					<h3>Nothing on the network</h3>
-					<p>The browser starts a native host that talks over a Unix socket other users can't open. Only the Tabkyra extension can start it. Programs running as you can reach it, as they can your shell.</p>
+					<p>The browser starts a native host that talks over a Unix socket other users can't open. Only the Tabkyra extension can make the browser start it. Programs running as you can reach it, as they can your shell.</p>
 				</article>
 			</div>
 		</section>

@@ -100,6 +100,8 @@ async function record(work) {
 		TABKYRA_SOCKET_DIR: socketDir,
 		TABKYRA_CLIENT_NAME: "claude",
 		TABKYRA_SESSION: "demo",
+		// Keep every config lookup inside the throwaway HOME.
+		XDG_CONFIG_HOME: join(home, ".config"),
 	};
 	delete env.TABKYRA_AUTO_ALLOW;
 
@@ -148,6 +150,9 @@ async function record(work) {
 		const shot = async (calls, note) => {
 			const result = await mcp.callTool({ name: "screenshot", arguments: { maxWidth: 1024 } });
 			const image = result.content.find((c) => c.type === "image");
+			if (result.isError || !image) {
+				throw new Error(`screenshot: ${result.content.map((c) => c.text ?? "").join(" ")}`);
+			}
 			frames.push({ calls, note, image: `data:${image.mimeType};base64,${image.data}` });
 		};
 		const ref = (snapshot, pattern) =>

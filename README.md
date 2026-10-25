@@ -33,8 +33,8 @@ with one-command setup, a doctor and a new brand.
 
 ## 60 seconds to your first agent-driven tab
 
-You need Node 20+, git, and a Chromium browser (Helium, Chrome, Brave, Edge, Arc,
-Vivaldi or Chromium 141+).
+You need Node 20+, git, and a Chromium 141+ browser such as Helium, Chrome or Brave (see
+[Which browsers?](#faq) for what has been tested).
 
 ```bash
 mkdir tabkyra-src && cd tabkyra-src        # setup puts two build dependencies beside the clone
@@ -42,6 +42,8 @@ git clone https://github.com/baney75/tabkyra && cd tabkyra
 (cd cli && npm install && npm run build && npm link)
 tabkyra setup
 ```
+
+If `npm link` fails with a permissions error, skip it and run `node cli/dist/index.js setup`.
 
 The first build clones [pi-mono](https://github.com/badlogic/pi-mono) (pinned and patched)
 and [mini-lit](https://github.com/badlogic/mini-lit) next to the `tabkyra` folder, which is
@@ -79,7 +81,7 @@ provider.
 <p align="center">
   <img src="media/demo.gif" alt="A scripted MCP client searches a library catalog, places a hold and reads the confirmation through Tabkyra's tools" width="860">
   <br><sub>Recorded headless by <code>scripts/demo/capture.mjs</code>: a scripted MCP client drives the real stack (MCP server, native host, extension).
-  The local site was allowed first with <code>tabkyra allow</code>. Each frame is the client's own <code>screenshot</code>. <a href="media/demo-steps.png">Still frames</a>.</sub>
+  The local site was allowed first with <code>tabkyra allow</code>. The page in each frame is the client's own <code>screenshot</code>, framed for display. <a href="media/demo-steps.png">Still frames</a>.</sub>
 </p>
 
 ## Connect your agent
@@ -160,7 +162,7 @@ Your browser is signed in as you, so the defaults are conservative.
   frames over a Unix socket in `/tmp/tabkyra-bridge-<user>/` (0700 directory, 0600
   socket). Other users can't reach it, and the client refuses sockets another user owns.
   Any program running as you can, which is the same trust level as your shell.
-- **Only this extension can start the host.** The host manifest's `allowed_origins`
+- **Only this extension can make the browser start the host.** The host manifest's `allowed_origins`
   names one fixed extension id, `kenehmggpggpiolepbjojeenmeapgfoc`, derived from the
   manifest `key` (the e2e test checks it).
 - **No Claude subscription login.** Anthropic doesn't allow Claude Pro or Max
@@ -203,9 +205,10 @@ it once or for good, or run `tabkyra allow <host>` ahead of time.
 loaded, or the extension hasn't reached the native host yet. `tabkyra doctor` says
 which one.
 
-**Which browsers?** Chromium 141 or newer: Helium, Chrome, Chromium, Brave, Edge, Arc,
-Vivaldi and Opera, on macOS and Linux. Windows registry entries are written too but
-haven't been tested.
+**Which browsers?** Chromium 141 or newer. Tested: Chromium, headless, end to end (the e2e
+test), and host registration for Helium and Chrome on macOS (the install test). Live
+use in Helium or Chrome, and Brave, Edge, Arc, Vivaldi and Opera (registered the same way, on
+macOS and Linux), haven't been tried yet. Windows registry entries are written but untested.
 
 **Does it send my data anywhere?** Tabkyra itself collects nothing and has no server; the
 bridge never leaves your machine. But whatever an agent reads through it (page text,
