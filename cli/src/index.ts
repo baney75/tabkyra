@@ -19,7 +19,7 @@ import { VERSION } from "./version.ts";
 /** One help row. Padding counts visible characters, so color codes don't shift the column. */
 const cmd = (name: string, args: string, what: string) => {
 	const usage = `tabkyra ${name}${args ? ` ${args}` : ""}`;
-	return `  ${c.bold(`tabkyra ${name}`)}${args ? ` ${args}` : ""}${" ".repeat(Math.max(2, 48 - usage.length))}${what}`;
+	return `  ${c.bold(`tabkyra ${name}`)}${args ? ` ${args}` : ""}${" ".repeat(Math.max(2, 54 - usage.length))}${what}`;
 };
 
 function help(): string {

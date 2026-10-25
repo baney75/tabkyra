@@ -1,6 +1,6 @@
 name: Bug report
 description: Something in Tabkyra (side panel, CLI, MCP tools, skills) failed or behaved wrong.
-labels: ["bug"]
+labels: ["bug-report"]
 body:
   - type: markdown
     attributes:

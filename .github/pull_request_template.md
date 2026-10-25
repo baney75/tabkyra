@@ -11,6 +11,7 @@
 - [ ] `node --import tsx --test test/*.test.mjs`
 - [ ] `(cd cli && npx tsc --noEmit && npm test)`
 - [ ] `node cli/dist/index.js skill lint skills`
+- [ ] `(cd cli && node --test test/skill-lint.test.mjs)`
 - [ ] `(cd cli && npm run test:e2e)` (bridge, host or MCP changes)
 
 ## Checklist

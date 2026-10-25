@@ -396,7 +396,7 @@ The full index is [docs/README.md](docs/README.md). The ones most people want:
 the same extension id.
 
 **Do I need an API key?** Not for agents that connect through MCP. Your agent uses its own
-sign-in, and Tabkyra never calls a model. The side panel agent needs an API key from a
+sign-in, and the CLI and the MCP server never call a model. The side panel agent needs an API key from a
 provider, or a model on your own machine.
 
 **Does my agent see my other tabs?** No. It sees and controls only the tabs in its own
@@ -422,7 +422,8 @@ an agent reads through it (page text, screenshots) goes to that agent's model pr
 with any tool the agent uses. The side panel likewise talks to the provider you configure,
 and [private mode](#private-mode-and-bug-reports) limits which ones it may use.
 `tabkyra library` looks up each source you add at its DOI registry (or arXiv), OpenAlex and
-Crossref, and `tabkyra update` checks GitHub for releases.
+Crossref, and `tabkyra update` checks GitHub for releases. The side panel also fetches
+model details from models.dev and the provider you configure.
 
 **Can I add my own skill?** Yes, locally with `tabkyra skill apply`, or for everyone
 through a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) explains the gates. Skills with

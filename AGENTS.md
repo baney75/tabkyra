@@ -8,7 +8,7 @@ If the user did not give you a concrete task, read README.md first.
 
 ## Commands
 - After code changes: run `./check.sh`. Fix all errors and warnings before committing.
-- The user runs `./dev.sh` in a separate tmux session. Do not run `npm run dev` or `npm run build`.
+- The user runs `./dev.sh` in a separate tmux session. Don't start `npm run dev`. Run `npm run build` only for bridge work, as "Bridge development" below says, or with `TABKYRA_OUT_DIR` set to build elsewhere.
 - NEVER commit unless the user asks.
 
 ## Testing
@@ -19,7 +19,7 @@ your change touches before you say it works:
 npx biome check .                       # format and lint (./check.sh runs it with --write)
 npx tsc --noEmit                        # extension types
 node --import tsx --test test/*.test.mjs  # extension tests
-(cd cli && npx tsc --noEmit && npm test)  # CLI build and tests
+(cd cli && npx tsc --noEmit && npm test)  # CLI build and tests (npm test rebuilds cli/dist first)
 node cli/dist/index.js skill lint skills  # the skill gate
 (cd cli && node --test test/skill-lint.test.mjs)  # red-team tests for the lint
 ```

@@ -124,7 +124,9 @@ skill directly.
 
 Harnesses see only each skill's name and its one-line description. The full SKILL.md
 loads when the skill is invoked. Each first-party skill stays under 150 lines and
-1,500 tokens, and longer material is split into separate skills, not appendices. The
+8,000 characters (about 2,000 tokens; amended 2026-10-25 from 1,500 tokens, which every
+well-specified skill exceeded), enforced by the lint's `budget` rule, and longer material is
+split into separate skills, not appendices. The
 router (DC-3) picks at most one skill per task for small models. The `rsi` and `fix`
 skills also check a skill's token count, so an improvement can't bloat it.
 
