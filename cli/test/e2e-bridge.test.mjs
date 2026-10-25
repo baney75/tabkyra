@@ -29,6 +29,18 @@ const PAGE = `<!doctype html><title>Tabkyra e2e</title>
 <button id="go" onclick="document.getElementById('out').textContent = 'Hello, ' + document.getElementById('name').value + '!'">Greet</button>
 <p id="out">waiting</p>`;
 
+const ONLOAD_PAGE = `<!doctype html><title>Tabkyra onload</title><p id="x">before</p>
+<script>alert('Welcome back!'); document.getElementById('x').textContent = 'after';</script>`;
+
+const TYPING_PAGE = `<!doctype html><title>Tabkyra typing</title>
+<form id="f"><input id="q" onkeydown="if(!window.asked){window.asked=true;confirm('Start a new search?')}"></form>
+<p id="sent">not sent</p>
+<script>document.getElementById('f').onsubmit=(e)=>{e.preventDefault();document.getElementById('sent').textContent='sent';};</script>`;
+
+const DIALOG_PAGE = `<!doctype html><title>Tabkyra dialog</title>
+<button id="del" onclick="document.getElementById('res').textContent = confirm('Really delete?') ? 'deleted' : 'kept'">Delete</button>
+<p id="res">untouched</p>`;
+
 let home;
 let socketDir;
 let browser;
@@ -83,9 +95,9 @@ before(async () => {
 			: join(home, ".config", "chromium");
 	mkdirSync(profile, { recursive: true });
 
-	server = createServer((_req, res) => {
+	server = createServer((req, res) => {
 		res.writeHead(200, { "content-type": "text/html" });
-		res.end(PAGE);
+		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
 	});
 	await new Promise((r) => server.listen(0, "127.0.0.1", r));
 	pageUrl = `http://127.0.0.1:${server.address().port}/`;
@@ -189,4 +201,58 @@ test("open a page, snapshot, type, click and read back through MCP", async () =>
 		"the greeting",
 	);
 	assert.match(text, /Hello, Donovan!/);
+});
+
+test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {
+	await tool("navigate", { url: `${pageUrl}dialog` });
+	const started = Date.now();
+	const blocked = await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
+	const message = blocked.content.map((c) => c.text).join("\n");
+	assert.ok(blocked.isError, message);
+	assert.match(message, /dialog_open: A confirm dialog is open on tab \d+: "Really delete\?"/);
+	assert.ok(Date.now() - started < 10_000, "the call must not wait for the 90 s handler timeout");
+	// While it is open, page calls fail the same way instead of hanging.
+	const frozen = await mcp.callTool({ name: "get_page_text", arguments: {} });
+	assert.ok(frozen.isError);
+	assert.match(frozen.content[0].text, /dialog_open/);
+
+	const answered = JSON.parse(await tool("handle_dialog", { accept: false }));
+	assert.equal(answered.type, "confirm");
+	assert.equal(answered.accepted, false);
+	assert.match(await tool("get_page_text"), /kept/);
+
+	await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
+	await tool("handle_dialog", { accept: true });
+	assert.match(await tool("get_page_text"), /deleted/);
+	const none = await mcp.callTool({ name: "handle_dialog", arguments: { accept: true } });
+	assert.ok(none.isError);
+	assert.match(none.content[0].text, /No dialog is open/);
+});
+
+test("an alert() fired while the page loads is reported, not a 90 s hang", async () => {
+	const started = Date.now();
+	const nav = await mcp.callTool({ name: "navigate", arguments: { url: `${pageUrl}onload` } });
+	let message = nav.content.map((c) => c.text).join("\n");
+	if (!nav.isError) {
+		const read = await mcp.callTool({ name: "get_page_text", arguments: {} });
+		assert.ok(read.isError, read.content[0].text);
+		message = read.content[0].text;
+	}
+	assert.match(message, /dialog_open: An alert dialog is open on tab \d+: "Welcome back!"/);
+	assert.ok(Date.now() - started < 20_000, `took ${Date.now() - started} ms`);
+	await tool("handle_dialog", { accept: true });
+	assert.match(await tool("get_page_text"), /after/);
+});
+
+test("a call that ran into a dialog sends no more input once it is answered", async () => {
+	await tool("navigate", { url: `${pageUrl}typing` });
+	const typed = await mcp.callTool({ name: "type", arguments: { selector: "#q", text: "hello world", submit: true } });
+	assert.ok(typed.isError);
+	assert.match(typed.content[0].text, /dialog_open/);
+	await tool("handle_dialog", { accept: false });
+	// Give a still-running handler time to misbehave.
+	await new Promise((r) => setTimeout(r, 1500));
+	const value = await tool("run_js", { code: "document.getElementById('q').value + '|' + document.getElementById('sent').textContent" });
+	assert.match(value, /\|not sent/, `the old call kept typing or submitted: ${value}`);
+	assert.doesNotMatch(value, /ello world/, `the old call kept typing: ${value}`);
 });

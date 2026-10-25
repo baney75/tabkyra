@@ -5,6 +5,7 @@
  */
 
 import {
+	answerDialog,
 	captureScreenshot,
 	scroll as cdpScroll,
 	click,
@@ -13,6 +14,7 @@ import {
 	enableNetworkCapture,
 	evaluateMain,
 	hover,
+	openDialog,
 	pressKey,
 	readConsole,
 	readNetwork,
@@ -62,6 +64,15 @@ export interface HandlerContext {
 	clientId: string;
 	/** Push an event to the calling client only. */
 	emit(event: string, data: Record<string, unknown>): void;
+	/**
+	 * True once this call has failed on a dialog. The handler may still be running (its CDP
+	 * call was waiting on the frozen page); it must send no more input after that.
+	 */
+	aborted(): boolean;
+}
+
+function stopIfAborted(ctx: HandlerContext): void {
+	if (ctx.aborted()) throw new BridgeError(ERR.DIALOG_OPEN, "Stopped: a dialog interrupted this call");
 }
 
 type Handler = (ctx: HandlerContext, params: Params) => Promise<unknown>;
@@ -340,7 +351,9 @@ export const handlers: Record<string, Handler> = {
 			const rect = await locate(tabId, t);
 			await click(tabId, rect.x, rect.y);
 		}
-		await typeText(tabId, text);
+		stopIfAborted(ctx);
+		await typeText(tabId, text, ctx.aborted);
+		stopIfAborted(ctx);
 		if (params.submit === true) await pressKey(tabId, "Enter");
 		return { typed: text.length };
 	},
@@ -349,7 +362,10 @@ export const handlers: Record<string, Handler> = {
 		const key = requireStr(params, "key");
 		const tabId = await resolveTab(ctx, params, true);
 		const repeat = num(params, "repeat") ?? 1;
-		for (let i = 0; i < repeat; i++) await pressKey(tabId, key);
+		for (let i = 0; i < repeat; i++) {
+			stopIfAborted(ctx);
+			await pressKey(tabId, key);
+		}
 		return { pressed: key, repeat };
 	},
 
@@ -411,6 +427,25 @@ export const handlers: Record<string, Handler> = {
 		return { ...(await tabSummary(tabId)), matched: true };
 	},
 
+	/** Answer an alert, confirm or prompt box: accept presses OK, otherwise Cancel. */
+	dialog: async (ctx, params) => {
+		const requested = num(params, "tabId");
+		const open = ctx.session.tabIds.filter((id) => !!openDialog(id));
+		if (requested !== undefined && !open.includes(requested))
+			throw new BridgeError(ERR.NOT_FOUND, `No dialog is open on tab ${requested}.`);
+		// Never guess between two boxes: OK on the wrong one could delete or send something.
+		if (requested === undefined && open.length > 1) {
+			const list = open.map((id) => `tab ${id}: ${JSON.stringify(openDialog(id)?.message)}`).join("; ");
+			throw new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab (${list}). Pass tabId.`);
+		}
+		const tabId = requested ?? open[0];
+		if (tabId === undefined) throw new BridgeError(ERR.NOT_FOUND, "No dialog is open on your tabs.");
+		if (typeof params.accept !== "boolean")
+			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
+		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"));
+		return { tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
+	},
+
 	/**
 	 * Several input steps in one call (press / click / drag / type / hover / scroll / wait),
 	 * optionally ending with a screenshot. Canvas work (draw, label, connect) is otherwise one
@@ -433,6 +468,7 @@ export const handlers: Record<string, Handler> = {
 				continue;
 			}
 			const withTab = params.tabId !== undefined && sub.tabId === undefined ? { ...sub, tabId: params.tabId } : sub;
+			stopIfAborted(ctx);
 			try {
 				done.push(await handlers[kind](ctx, withTab));
 			} catch (err) {
@@ -441,6 +477,7 @@ export const handlers: Record<string, Handler> = {
 			}
 			if (settleMs > 0 && i < steps.length - 1) await new Promise((r) => setTimeout(r, settleMs));
 		}
+		stopIfAborted(ctx);
 		const out: Record<string, unknown> = { steps: done.length };
 		if (wantShot) out.screenshot = await handlers.screenshot(ctx, { tabId: params.tabId });
 		return out;

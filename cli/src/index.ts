@@ -8,6 +8,7 @@ import { runMcpServer } from "./mcp.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { runSetup, type SetupOptions } from "./setup.ts";
+import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
 import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
 import { VERSION } from "./version.ts";
@@ -25,6 +26,8 @@ function help(): string {
 		section("Agents"),
 		cmd("mcp", "", "MCP server on stdio (what Claude Code, Codex, OpenCode run)"),
 		cmd("pi-extension", "", "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts"),
+		cmd("skill install", "[--all]", "Teach Claude Code, Codex and OpenCode to use Tabkyra well"),
+		cmd("skill print", "", "The same skill as text for AGENTS.md or any other agent"),
 		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("(tabkyra setup adds these for you.)")}`,
@@ -214,6 +217,7 @@ const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
 	debug: { flags: [], positional: 0 },
 	mcp: { flags: [], positional: 0 },
 	"pi-extension": { flags: [], positional: 1 },
+	skill: { flags: ["--force", "--all"], positional: 1 },
 };
 
 function checkArgs(command: string, args: string[]): void {
@@ -312,6 +316,12 @@ async function main(): Promise<void> {
 			}
 			await withBridge("reload", (client) => client.call("bridge.reload", {}, 5000));
 			console.log(`${sym.ok} Reloading the extension. It reconnects in a few seconds.`);
+			return;
+		}
+		case "skill": {
+			const sub = argv.slice(1).find((a) => !a.startsWith("-"));
+			if (sub !== "install" && sub !== "print") throw new UsageError("Usage: tabkyra skill install [--all] [--force] | tabkyra skill print");
+			process.exitCode = runSkill(sub, { force: flag("--force"), all: flag("--all") });
 			return;
 		}
 		case "pi-extension":

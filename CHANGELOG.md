@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- `tabkyra skill install` writes the Tabkyra agent skill (`skills/tabkyra/SKILL.md`) for Claude Code (`~/.claude/skills`), Codex (`~/.codex/skills`) and OpenCode (`~/.config/opencode/skills`), and never replaces a tabkyra skill it didn't write without `--force`. `tabkyra skill print` gives the same text as an AGENTS.md section. `tabkyra setup` offers it. `cli/test/skill.test.mjs` keeps the skill, the MCP instructions and the tool schemas in agreement.
+- `handle_dialog` MCP tool and `dialog` bridge method. An alert, confirm or prompt box used to freeze every call for 90 s; now the call fails at once with `dialog_open` and the box's text, and `handle_dialog` presses OK or Cancel.
+- `cli/eval/skill-eval.mjs`: three scripted tasks on a local fixture site, with and without the skill, through `claude -p` on a headless throwaway browser.
 - `tabkyra update`: installs signed GitHub releases. It verifies the minisign signature on `SHA256SUMS` against `keys/tabkyra-release.pub`, checks that the signed comment names the version, checks the zip's SHA-256, and unpacks into staging with path, symlink and size checks. It swaps the release in with renames under a lock, keeps the previous release for `--rollback`, re-registers the native host, and tells you to reload. `--check` (exit 100 when an update exists, `--json`), `--channel stable|nightly`, `--auto-check on|off`. Docs: `docs/updates.md`.
 - Side panel "Update available" notice, fed by the native host's daily check. It never installs anything.
 - `.github/workflows/release.yml`: on a version tag, builds against the pinned siblings, runs the checks, packages (`scripts/release/package.mjs`), signs with minisign from the `MINISIGN_SECRET_KEY` secret, and attaches the zip, `SHA256SUMS` and `SHA256SUMS.minisig`.
