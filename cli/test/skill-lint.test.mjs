@@ -238,6 +238,10 @@ test("every folder under skills/ is bundled, and every bundled skill has a folde
 	const catalog = readFileSync(join(here, "..", "src", "skills-catalog.ts"), "utf8");
 	const bundled = [...catalog.matchAll(/\["([a-z0-9-]+)", [A-Z_]+\]/g)].map((m) => m[1]).sort();
 	assert.deepEqual(bundled, folders);
+	// Each entry imports its own folder's SKILL.md, so a bundled skill can't come from elsewhere.
+	for (const [, name, constant] of catalog.matchAll(/\["([a-z0-9-]+)", ([A-Z_]+)\]/g)) {
+		assert.match(catalog, new RegExp(`import ${constant} from "\\.\\./\\.\\./skills/${name}/SKILL\\.md";`), `${name} must import skills/${name}/SKILL.md`);
+	}
 	const list = spawnSync(process.execPath, [cli, "skill", "list"], { encoding: "utf8", env: { HOME: lintHome, PATH: dirname(process.execPath), NO_COLOR: "1" } });
 	for (const name of folders) assert.match(list.stdout, new RegExp(`^${name}\\b`, "m"));
 });
@@ -471,4 +475,28 @@ test("each skill subcommand takes only its own flags", () => {
 	assert.equal(runIn(home, "skill", "lint", "--raw").code, 2);
 	assert.equal(runIn(home, "skill", "list", "extra").code, 2);
 	assert.equal(runIn(home, "skill", "print", "osint", "--raw").code, 0);
+});
+
+test("index.json and history links are refused, and a directory in place of SKILL.md doesn't crash install", () => {
+	const home = mkdtempSync(join(root, "indexlink-"));
+	const victim = join(home, "victim.txt");
+	writeFileSync(victim, "keep me\n");
+	const local = join(home, ".config", "tabkyra", "skills-local");
+	mkdirSync(local, { recursive: true });
+	symlinkSync(victim, join(local, "index.json"));
+	const r = runIn(home, "skill", "apply", draftOf(home, "dorks", (t) => t.replace("## When something goes wrong", "## When something goes wrong\n\n| New symptom | New fix |")), "--yes");
+	assert.notEqual(r.code, 0, r.out);
+	assert.equal(readFileSync(victim, "utf8"), "keep me\n");
+	const home2 = mkdtempSync(join(root, "eisdir-"));
+	mkdirSync(join(home2, ".claude", "skills", "osint", "SKILL.md"), { recursive: true });
+	const i = runIn(home2, "skill", "install", "osint");
+	assert.doesNotMatch(i.out, /EISDIR/);
+	assert.equal(i.code, 1, i.out);
+});
+
+test("an edit can't add a new section to an existing skill", () => {
+	const home = mkdtempSync(join(root, "newsection-"));
+	const r = runIn(home, "skill", "apply", draftOf(home, "news-research", (t) => `${t}\n## Exceptions\n\n- Internal sites follow other rules.\n`), "--yes");
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /adds section "Exceptions"/);
 });

@@ -98,9 +98,17 @@ function readIndex(): LocalIndex {
 	}
 }
 
+function indexFile(): string {
+	return join(localSkillsDir(), "index.json");
+}
+
 function writeIndex(index: LocalIndex): void {
+	assertNoLinks([configDir(), localSkillsDir(), indexFile()]);
 	mkdirSync(localSkillsDir(), { recursive: true });
-	writeFileSync(join(localSkillsDir(), "index.json"), `${JSON.stringify(index, null, "\t")}\n`);
+	// Temp file + rename replaces the path itself, never a file a link points at.
+	const tmp = `${indexFile()}.${process.pid}.tmp`;
+	writeFileSync(tmp, `${JSON.stringify(index, null, "\t")}\n`, { flag: "wx" });
+	renameSync(tmp, indexFile());
 }
 
 /** The folder for one local skill, proven to sit directly inside skills-local. */
@@ -157,12 +165,15 @@ function localText(name: string): { text?: string; problem?: string } {
 	if (!readIndex()[name]) return { problem: `${file} wasn't added with tabkyra skill apply` };
 	if (PROTECTED_SKILLS.has(name)) return { problem: `${name} changes only through a reviewed pull request` };
 	if (isLink(file) || isLink(dirname(file))) return { problem: `${file} is a symlink` };
+	if (!lstatSync(file).isFile()) return { problem: `${file} is not a file` };
 	const text = readFileSync(file, "utf8");
 	const errors = lintText(file, text, { dirName: name }).filter((f) => f.severity === "error");
 	if (errors.length) return { problem: `${file} fails lint (${errors[0].rule})` };
 	const bundled = SKILLS.get(name);
 	const missing = bundled === undefined ? [] : headings(bundled).filter((h) => !headings(text).includes(h));
 	if (missing.length) return { problem: `${file} drops the section "${missing[0]}"` };
+	const added = bundled === undefined ? [] : headings(text).filter((h) => !headings(bundled).includes(h));
+	if (added.length) return { problem: `${file} adds the section "${added[0]}"` };
 	const changed = bundled === undefined ? [] : changedProtectedSections(bundled, text);
 	if (changed.length) return { problem: `${file} changes the protected section "${changed[0]}"` };
 	return { text };
@@ -259,6 +270,7 @@ function stamp(): string {
 /** Copy a file we're about to replace into skill-history/<name>/. */
 function backUp(name: string, file: string, label: string): string {
 	const dest = join(historyDir(), assertName(name), `${stamp()}.${label}.md`);
+	assertNoLinks([configDir(), historyDir(), dirname(dest)]);
 	mkdirSync(dirname(dest), { recursive: true });
 	writeFileSync(dest, readFileSync(file));
 	return dest;
@@ -283,6 +295,10 @@ export function installSkills(options: { force: boolean; all: boolean; only?: st
 			}
 			if (isLink(file) || isLink(dirname(file))) {
 				results.push({ target, skill, file, state: "linked" });
+				continue;
+			}
+			if (existsSync(file) && !lstatSync(file).isFile()) {
+				results.push({ target, skill, file, state: "kept" });
 				continue;
 			}
 			const wanted = skillFile(skill);
@@ -361,6 +377,10 @@ export function planApply(path: string): ApplyPlan {
 	if (current !== undefined) {
 		const missing = headings(current).filter((h) => !headings(text).includes(h));
 		if (missing.length) throw new SkillError(`The edit drops section${missing.length > 1 ? "s" : ""} ${missing.map((h) => `"${h}"`).join(", ")}. Edits add or change; they don't remove sections.`);
+		const added = headings(text).filter((h) => !headings(current).includes(h));
+		if (added.length) {
+			throw new SkillError(`The edit adds section${added.length > 1 ? "s" : ""} ${added.map((h) => `"${h}"`).join(", ")}. Edits change existing sections; a new section could override a protected one, so it needs a reviewed pull request.`);
+		}
 		const changed = changedProtectedSections(current, text);
 		if (changed.length) {
 			throw new SkillError(`The edit changes a protected section (${changed.map((h) => `"${h}"`).join(", ")}). Safety, rules, purpose-check and done-when sections change only through a reviewed pull request.`);
@@ -371,7 +391,7 @@ export function planApply(path: string): ApplyPlan {
 
 /** Apply a checked plan: back up, keep the edit, install it where nothing else owns the name. */
 export function applySkill(plan: ApplyPlan): { backup?: string; results: InstallResult[] } {
-	assertNoLinks([configDir(), localSkillsDir(), historyDir(), localSkillDir(plan.name), localFile(plan.name)]);
+	assertNoLinks([configDir(), localSkillsDir(), indexFile(), historyDir(), join(historyDir(), plan.name), localSkillDir(plan.name), localFile(plan.name)]);
 	let backup: string | undefined;
 	if (plan.current !== undefined) {
 		backup = join(historyDir(), plan.name, `${stamp()}.md`);
@@ -397,7 +417,7 @@ export function revertSkill(name: string): { removed: boolean; results: InstallR
 	const file = join(dir, "SKILL.md");
 	const index = readIndex();
 	if (!existsSync(file) && !index[name]) return { removed: false, results: [] };
-	assertNoLinks([configDir(), localSkillsDir(), historyDir(), dir, file]);
+	assertNoLinks([configDir(), localSkillsDir(), indexFile(), historyDir(), join(historyDir(), name), dir, file]);
 	if (existsSync(file)) {
 		const kept = join(historyDir(), name, `${stamp()}.reverted.md`);
 		mkdirSync(dirname(kept), { recursive: true });

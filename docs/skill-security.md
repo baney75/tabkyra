@@ -98,8 +98,12 @@ user has turned on both adversarial review and auto-apply, and the reviewer appr
 - Known gaps, tracked as issues: `config-tamper` doesn't yet catch a shell redirect or
   `install`/`ln`/`rsync` into an installed skill folder; `remote-code` doesn't yet catch an
   extensionless download that a later line runs; and package runners (`npx`, `uvx`,
-  `pipx run`) without a pinned version aren't flagged. Review must catch these by hand
-  until the rules land.
+  `pipx run`) without a pinned version aren't flagged. The negation check also accepts
+  "never ... except <secret>" and "never hide <secret>" phrasings, and a secret
+  environment variable passed to a network tool without a listed verb isn't flagged.
+  Review must catch these by hand until the rules land.
+- `skill apply` refuses edits that add a new section to an existing skill, since a new
+  section could override a protected one.
 
 - CODEOWNERS asks for a maintainer's review on the paths that control skills. It blocks a
   merge only if branch protection requires code-owner review.
