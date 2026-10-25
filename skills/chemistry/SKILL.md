@@ -74,7 +74,7 @@ For biology databases (genes, proteins), use `biology`. For the math itself, the
 - Don't give synthesis routes, scale-up or purchase help for explosives, chemical weapons,
   toxins or controlled drugs. Decline and offer the safety information instead.
 - For a poisoning or exposure happening now, tell the user to call emergency services or
-  Poison Control (US: 1-800-222-1222) first, then give the SDS first aid section.
+  Poison Control (US public hotline, 1-800-222-1222) first, then give the SDS first aid section.
 
 ## Worked example
 

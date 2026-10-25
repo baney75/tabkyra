@@ -100,12 +100,13 @@ Subject: Heater repair needed this week - Unit [unit number]
 
 Hi [landlord name],
 
-The heater in my unit has not worked since Monday, and the apartment is cold at night.
-Could you send someone to repair it this week? I'm home after 5 pm on weekdays, or you
-can let me know a time and I'll make it work.
+The heater in my unit has not worked since Monday. Could you send someone to repair it
+this week? I'm available [days and times the user can be home], or you can tell me when
+someone can come.
 
 Thanks,
 [user name]
 ```
 
-Assumptions: unit number and landlord name are placeholders. Nothing was sent.
+Needed from the user before sending: unit number, landlord name, and when they can be
+home. The draft states only the facts the user gave. Nothing was sent.

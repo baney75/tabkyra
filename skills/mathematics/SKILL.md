@@ -48,8 +48,10 @@ to learn, not just for the answer.
    `navigate {"url":"https://www.wolframalpha.com/input?i=integrate+x*e%5Ex+from+0+to+1"}`,
    `wait {"text":"Result","timeoutMs":15000}`, `get_page_text {"maxChars":3000}`.
    Graph in Desmos: `navigate {"url":"https://www.desmos.com/calculator"}`,
-   `read_page {"filter":"interactive"}`, click the first expression box, `type
-   {"ref":"[box ref]","text":"y=x^2-5x+6"}`, then `screenshot {}` and read the roots.
+   `read_page {"filter":"interactive"}`, then type in parts, because Desmos keeps the
+   cursor in an exponent until ArrowRight:
+   `actions {"steps":[{"click":{"ref":"[box ref]"}},{"type":"y=x^2"},{"press":"ArrowRight"},{"type":"-5x+6"}],"screenshot":true}`.
+   Check the screenshot shows the expression you meant before reading the roots.
 7. **Compare.** If the check agrees, go on. If not, recheck step 3 line by line, find the
    wrong line, fix it, and check again.
 8. **Answer.** The final result first, then the worked steps, then the check you ran and
@@ -68,6 +70,7 @@ to learn, not just for the answer.
 | `ModuleNotFoundError: sympy` or `scipy` | Use the browser check in step 6, or plain Python arithmetic |
 | WolframAlpha reads the input wrong | Add parentheses and `*` for products; read its "Input interpretation" line |
 | WolframAlpha shows a sign-in or limit page | Use SymPy or Desmos instead |
+| Desmos shows the rest of the expression inside the exponent | Clear the box, retype it, and press `ArrowRight` after each exponent |
 | Check and work disagree | Recheck signs, chain rule factors and constants first; they cause most errors |
 | A numeric check is off by a tiny amount | Floating point. Compare to 1e-9 relative, not exact |
 | The problem is ambiguous | State the reading you chose, or ask if the choice changes the answer |

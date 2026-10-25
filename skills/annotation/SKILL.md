@@ -38,9 +38,10 @@ Marks made with `run_js` change only how the page looks in that tab. A reload re
 2. **Pick the tool** for the source from the table.
 3. **Web page: open it.** `navigate {"url":"https://..."}` then
    `find {"query":"[words from the spot]"}` to get a ref or a selector for each point.
-4. **Web page: mark each point.** One `run_js` call per point, with the point's number and
-   the element's exact text:
-   `run_js {"code":"const n=[...document.querySelectorAll('h1,h2,h3,p,li,td,button,a,label')].find(e=>e.textContent.includes('Start free trial'));if(!n){'not found'}else{n.style.outline='3px solid #E5484D';n.style.background='#FFF3B0';const b=document.createElement('span');b.textContent='1';b.style.cssText='background:#E5484D;color:#fff;border-radius:9px;padding:1px 7px;margin-right:6px;font:bold 13px sans-serif';n.prepend(b);n.scrollIntoView({block:'center'});'ok'}"}`
+4. **Web page: mark each point.** One `run_js` call per point. Set `q` to the element's
+   exact text and `k` to the point's number. It marks the deepest element holding the
+   text, so a button inside a table cell gets the mark, not the cell:
+   `run_js {"code":"const q='Start free trial',k='1';const m=[...document.querySelectorAll('h1,h2,h3,h4,p,li,td,th,button,a,label,span')].filter(e=>e.textContent.includes(q));const n=m.find(e=>!m.some(o=>o!==e&&e.contains(o)));if(!n){'not found'}else{n.style.outline='3px solid #E5484D';n.style.background='#FFF3B0';const b=document.createElement('span');b.textContent=k;b.style.cssText='background:#E5484D;color:#fff;border-radius:9px;padding:1px 7px;margin-right:6px;font:bold 13px sans-serif';n.prepend(b);n.scrollIntoView({block:'center'});'ok'}"}`
    If it returns `not found`, shorten the text to a unique phrase and try once more.
 5. **Web page: capture.** `screenshot {}` for each screenful with marks. Use
    `scroll {"dy":700}` between captures. Then `tabs_show` so the user sees the marked tab.
@@ -84,7 +85,9 @@ Marks made with `run_js` change only how the page looks in that tab. A reload re
   user's sign-in. Show the exact text and wait for the user's yes.
 - Don't annotate other people's private messages or records for anyone but the user.
 - Before sharing a screenshot, check it for names, emails and account numbers the user may
-  not want shown, and offer to blur them with `-region 300x40+120+220 -blur 0x8`.
+  not want shown, and offer to cover them with an opaque box:
+  `magick in.png -fill black -draw "rectangle 120,220 420,260" out.png`. Blur can be
+  reversed on short text such as account numbers; use it only for faces or backgrounds.
 
 ## Worked example
 

@@ -468,8 +468,8 @@
 {"task": "Plan a logo for my nonprofit and write the usage rules", "skill": "branding"}
 {"task": "Check if my startup name is available as a .com and a trademark", "skill": "branding"}
 {"task": "Build a brand from scratch for my new clothing line", "skill": "branding"}
-{"task": "What's the weather like in Chicago today?", "skill": "none"}
-{"task": "Fix the failing unit test in src/parser.ts", "skill": "none"}
+{"task": "What's the capital of Australia?", "skill": "none"}
+{"task": "Write a regular expression that matches US ZIP codes", "skill": "none"}
 {"task": "Tell me a joke about cats", "skill": "none"}
 {"task": "Rename all the .jpeg files in this folder to .jpg", "skill": "none"}
 {"task": "What year did the Berlin Wall fall?", "skill": "none"}

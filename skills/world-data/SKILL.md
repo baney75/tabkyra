@@ -82,8 +82,9 @@ recent values. The first JSON element holds `lastupdated`. Find indicator codes 
 The user asks: "What's Japan's life expectancy right now?"
 
 ```
-curl -s "https://api.worldbank.org/v2/country/JP/indicator/SP.DYN.LE00.IN?format=json&mrv=1"
-  -> 84.04 years, date 2024, lastupdated 2026-10-08
+curl -s "https://api.worldbank.org/v2/country/JP/indicator/SP.DYN.LE00.IN?format=json&mrv=5"
+  -> lastupdated 2026-10-08; 2024: 84.04, 2023: 84.04, 2022: 84.00, ...
+     latest non-null row is 2024, so use 84.04
 curl -s "https://ourworldindata.org/grapher/life-expectancy.csv?useColumnShortNames=true" | grep '^Japan,' | tail -1
   -> Japan,JPN,2023,84.7123
 curl -s "https://ourworldindata.org/grapher/life-expectancy.metadata.json"

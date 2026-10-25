@@ -39,8 +39,12 @@ final checks and export. Never upload or post a video for the user without their
    blank line. Check `ffmpeg -hide_banner -filters` for `subtitles`.
    - If present, burn in: `ffmpeg -i in.mp4 -vf "subtitles=cap.srt" -c:a copy subbed.mp4`
    - If not, add a soft track: `ffmpeg -i in.mp4 -i cap.srt -map 0 -map 1 -c:v copy -c:a copy -c:s mov_text soft.mp4`
-7. **B-roll or picture-in-picture.** Overlay clip 2 from second 2 to 5, bottom right:
-   `ffmpeg -i main.mp4 -i broll.mp4 -filter_complex "[1:v]scale=480:-2[pip];[0:v][pip]overlay=W-w-40:H-h-40:enable='between(t,2,5)'" -c:a copy out.mp4`
+7. **B-roll or picture-in-picture.** Show the first 3 s of clip 2 at seconds 2 to 5 of the
+   main video, bottom right. `trim` picks the b-roll part, and `setpts=...+2/TB` shifts it
+   to start at second 2; without the shift, overlay shows the wrong part or a frozen frame:
+   `ffmpeg -i main.mp4 -i broll.mp4 -filter_complex "[1:v]trim=start=0:duration=3,setpts=PTS-STARTPTS+2/TB,scale=480:-2[pip];[0:v][pip]overlay=W-w-40:H-h-40:eof_action=pass:enable='between(t,2,5)'[v]" -map "[v]" -map 0:a? -c:v libx264 -crf 18 -c:a copy out.mp4`
+   For another window, change `duration`, the `+2` and `between(t,2,5)` together. Grab
+   frames just inside the start and end (2.1 s and 4.9 s) and one after (5.1 s) to check.
    For a full-frame cutaway, cut the b-roll to length and join it in step 5.
 8. **Vertical short.** Center crop to 9:16:
    `ffmpeg -i in.mp4 -vf "crop=ih*9/16:ih,scale=1080:1920" -c:a copy vertical.mp4`
@@ -79,7 +83,9 @@ Check the platform's current upload specs before a final export, for example
 
 | Symptom | Fix |
 | --- | --- |
-| `No option name near` on `subtitles` | This ffmpeg lacks libass. Use the soft-track command in step 6, or an ffmpeg build with libass |
+| `No such filter: 'subtitles'` | This ffmpeg lacks libass. Use the soft-track command in step 6, or an ffmpeg build with libass |
+| `No option name near` on `subtitles` | Run `ffmpeg -hide_banner -filters` first. No `subtitles` line: same as the row above (ffmpeg 9 prints this message for a missing filter too). Filter present: the path broke the syntax, so copy the .srt to a plain name such as `cap.srt` |
+| PiP shows the wrong part of the b-roll or a frozen frame | The b-roll timestamps weren't shifted. Use step 7's `trim` and `setpts` |
 | Cut starts with a frozen or black frame | You used `-c copy`. Re-encode as in step 4 |
 | Concat fails or audio drifts | Inputs differ. Re-encode all clips to the same settings, then join |
 | `height not divisible by 2` | Use `-2` in `scale`, as in the commands above |

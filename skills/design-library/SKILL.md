@@ -36,18 +36,22 @@ design-library/
 ```
 
 Index line format: `- [type] [name] - [tags] - [date] - [source] - [path]`.
+Reference boards of other people's work don't go here; `reference` keeps them in
+`~/.config/tabkyra/personal/references/`.
 
 ## Steps to save
 
 1. **Confirm it is the user's.** Save only what the user made, commissioned, or picked
    from a source whose license allows reuse. For anything else, use `reference`.
-2. **Create the folder** if missing: `mkdir -p ~/.config/tabkyra/personal/design-library/palettes`
-   (and the other subfolders as needed).
+2. **Create the folder privately** if missing:
+   `(umask 077 && mkdir -p ~/.config/tabkyra/personal/design-library/palettes) && chmod 700 ~/.config/tabkyra/personal ~/.config/tabkyra/personal/design-library`
+   (swap `palettes` for the subfolder you need).
 3. **Search first.** `grep -i "[name or tag]" ~/.config/tabkyra/personal/design-library/index.md`.
    If a close match exists, update it instead of adding a duplicate.
 4. **Write the entry** with the template for its type below.
 5. **Check palettes for contrast.** For each text and background pair:
-   `python3 -c "import sys;f=lambda h:[(x/12.92 if x<=0.04045 else ((x+0.055)/1.055)**2.4) for x in [int(h[i:i+2],16)/255 for i in (1,3,5)]];L=lambda h:(lambda c:0.2126*c[0]+0.7152*c[1]+0.0722*c[2])(f(h));a,b=sorted(map(L,sys.argv[1:3]),reverse=True);print(round((a+0.05)/(b+0.05),2))" '#1F3A5F' '#FFFFFF'`
+   `python3 -c "import sys;n=lambda h:(lambda t:t if len(t)==6 else sys.exit('need 6 hex digits: '+h))(h.strip().lstrip('#'));f=lambda h:[(x/12.92 if x<=0.04045 else ((x+0.055)/1.055)**2.4) for x in [int(n(h)[i:i+2],16)/255 for i in (0,2,4)]];L=lambda h:(lambda c:0.2126*c[0]+0.7152*c[1]+0.0722*c[2])(f(h));a,b=sorted(map(L,sys.argv[1:3]),reverse=True);print(round((a+0.05)/(b+0.05),2))" 1F3A5F FFFFFF`
+   It takes hex with or without `#`. Expand 3-digit codes first (`#fff` is `FFFFFF`).
    4.5 or more passes WCAG AA for body text, 3 or more for large text and icons.
 6. **Record font licenses.** For each font, the license (SIL OFL for most Google Fonts,
    `https://fonts.google.com`) and where it came from.
@@ -85,6 +89,7 @@ Used in: [projects]
 - The entry exists in the right subfolder, with source, date, tags and license notes.
 - Palette entries list contrast ratios for each text pair.
 - The index line is present, and no duplicate entry was made.
+- `ls -ld` shows the personal and design-library folders with mode 700.
 - Nothing from the library was uploaded, pushed or shared.
 
 ## When something goes wrong
@@ -93,7 +98,8 @@ Used in: [projects]
 | --- | --- |
 | A palette pair fails contrast | Keep it, mark it "not for text", and suggest a darker or lighter step that passes |
 | A font's license is unknown | Mark it "license unknown, don't ship" until the user confirms |
-| The user wants the library in a cloud folder | Fine if only their own devices sync it. Not a shared or team folder |
+| The user wants the library in a cloud folder | Only an end-to-end encrypted sync the user alone controls, such as Proton Drive, or iCloud with Advanced Data Protection on. Otherwise keep it local. Never a shared or team folder |
+| `need 6 hex digits` from the contrast command | Expand the short code (`#fff` to `FFFFFF`) and run it again |
 | The user asks to publish or share an entry | Export that one entry to a file for them, and let them share it |
 | Index and folders disagree | Rebuild the index from the files with `ls -R` and show the diff first |
 

@@ -38,21 +38,27 @@ launch, say an attorney should run a full search.
 6. **Rate each name.** Clear: no live mark close in name and class. Risky: a similar live
    mark in a related class. Blocked: an identical or near mark in the same class. Keep
    only clear names.
-7. **Check domains and handles.** `whois [name].com`; "No match" means unregistered.
-   Search the name on a web search for businesses using it without a registration.
-8. **Pick three finalists** and show the user each with its rating, domain status and
+7. **Check domains.** `whois [name].com`; "No match" means unregistered. Search the name
+   on a web search for businesses using it without a registration.
+8. **Check handles** on the platforms the user cares about. In Tabkyra, `navigate` to each
+   profile URL and `get_page_text {"maxChars":1500}`: `https://www.instagram.com/[handle]/`,
+   `https://x.com/[handle]`, `https://www.tiktok.com/@[handle]`,
+   `https://www.youtube.com/@[handle]`, `https://github.com/[handle]`. A not-found message
+   means free; a profile means taken. A sign-in wall means unknown: say so, don't guess.
+9. **Pick three finalists** and show the user each with its rating, domain status and
    one line on why it fits. Wait for their pick.
-9. **Build the palette.** Primary, secondary, one accent, a dark and a light neutral. Check
+10. **Build the palette.** Primary, secondary, one accent, a dark and a light neutral. Check
    each text pair with the contrast command in `design-library`; 4.5 or more for body text.
-10. **Pick type.** One heading and one body font, both with licenses that allow commercial
+11. **Pick type.** One heading and one body font, both with licenses that allow commercial
     use (SIL OFL fonts from `https://fonts.google.com` are safe).
-11. **Write the logo direction.** Mark type (wordmark, lettermark, symbol plus wordmark),
+12. **Write the logo direction.** Mark type (wordmark, lettermark, symbol plus wordmark),
     the idea behind it, what to avoid (anything close to competitors' marks), and minimum
     size. Leave final drawing to a designer or the user.
-12. **Write usage rules.** Clear space, minimum sizes, color use, what not to do (stretch,
+13. **Write usage rules.** Clear space, minimum sizes, color use, what not to do (stretch,
     recolor, add effects), and voice in three do and don't pairs.
-13. **Save the kit** to `[design library]/brands/[brand]/brand-kit.md` and add an index line.
-14. **Hand over** the kit path, the name search results with links and dates, and the
+14. **Save the kit** to `[design library]/brands/[brand]/brand-kit.md`, creating folders as
+    in `design-library` step 2 (private, mode 700), and add an index line.
+15. **Hand over** the kit path, the name search results with links and dates, and the
     attorney note.
 
 ## Done when

@@ -52,7 +52,7 @@ Never place an order or pay for parts or boards. That is the user's step.
     `kicad-cli pcb export gerbers -o fab/ board.kicad_pcb`,
     `kicad-cli pcb export drill -o fab/ board.kicad_pcb`,
     `kicad-cli sch export bom -o fab/bom.csv board.kicad_sch`,
-    `kicad-cli pcb export pos -o fab/pos.csv board.kicad_pcb` for assembly.
+    `kicad-cli pcb export pos --format csv --units mm -o fab/pos.csv board.kicad_pcb` for assembly.
 13. **Check the Gerbers visually.** Open them in KiCad's Gerber viewer or the fab's online
     viewer. Look for missing layers, the outline, and silkscreen over pads.
 14. **Hand over.** The part table with links and stock, ERC and DRC results, and the
@@ -70,7 +70,7 @@ Never place an order or pay for parts or boards. That is the user's step.
 | Symptom | Fix |
 | --- | --- |
 | DigiKey or Mouser shows a bot check | `tabs_show` and ask the user to finish it, then continue. Use Octopart meanwhile |
-| `kicad-cli: command not found` | It ships with KiCad 7 or later. On macOS, `/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli` |
+| `kicad-cli: command not found` | It ships with KiCad. `sch erc`, `pcb drc` and `sch export bom` need KiCad 8 or later; check with `kicad-cli version`. On macOS, `/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli` |
 | DRC floods with clearance errors | The rules don't match the fab. Redo step 8, then rerun |
 | Parity errors after edits | Update PCB from schematic (F8), then rerun DRC |
 | Part out of stock everywhere | Search the function and package, such as `LDO 3.3V SOT-223`, and compare pinouts before swapping |

@@ -39,11 +39,39 @@ For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, e
    idea per note. Put it where the vault's conventions say, or the inbox folder.
 4. **Link it.** Add `[[...]]` links to two to five related notes found in step 2, and a
    link back from the most related note.
-5. **Rename safely.** Before renaming, find every link:
-   `grep -rl "\[\[Old title" "[vault]" --include=*.md`. Rename the file, then update each
-   link to the new title. Check `grep` finds no old links.
-6. **Archive, don't delete.** Move notes the user wants gone to the vault's archive folder.
-7. **Verify.** `cat` the new note and `grep` the links you added.
+5. **Rename: prefer Obsidian.** If the user has Obsidian open, ask them to rename the note
+   there; with "Automatically update internal links" on, it fixes every link. Otherwise go
+   on with steps 6 to 8. Rename in place only; a move to another folder is the user's job.
+6. **Rename: check for clashes.** `find "[vault]" -name "Old title.md"` must return one
+   file, and `grep -rn "aliases" "[vault]" --include=*.md | grep "Old title"` must return
+   nothing outside that note. If either fails, links may point to another note: stop and ask.
+7. **Rename: move the file and fix links.** `mv` the file to the new title in the same
+   folder. Write this to `relink.py` outside the vault and run
+   `python3 -I relink.py "[vault]" "Old title" "New title"`. It changes only exact targets:
+   `[[Old title]]`, `|`, `#` and embed forms, folder-qualified links and Markdown links.
+
+   ```python
+   import pathlib, re, sys
+   vault, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+   wiki = re.compile(r"(!?\[\[(?:[^\]|#]*/)?)" + re.escape(old) + r"(\.md)?(?=\]\]|\||#)")
+   md = re.compile(r"(\]\((?:[^)\s]*/)?)" + re.escape(old.replace(" ", "%20")) + r"(\.md)(?=[)#])")
+   for p in pathlib.Path(vault).rglob("*.md"):
+       if ".obsidian" in p.parts or ".trash" in p.parts:
+           continue
+       t = p.read_text(encoding="utf-8")
+       u = wiki.sub(lambda m: m.group(1) + new + (m.group(2) or ""), t)
+       u = md.sub(lambda m: m.group(1) + new.replace(" ", "%20") + m.group(2), u)
+       if u != t:
+           p.write_text(u, encoding="utf-8")
+           print("updated", p)
+   ```
+
+8. **Rename: verify.** This must print nothing (put the old title in both places):
+   `grep -rnE '\[\[([^]|#]*/)?Old title(\.md)?(\]\]|\||#)|\]\(([^)]*/)?Old%20title\.md' "[vault]" --include=*.md`.
+   Then `grep -rn "New title" "[vault]" --include=*.md` and check each updated file's links
+   read right, with text such as `[[Biology]]` unchanged.
+9. **Archive, don't delete.** Move notes the user wants gone to the vault's archive folder.
+10. **Verify.** `cat` the new note and `grep` the links you added.
 
 ## Steps for Notion
 
@@ -89,11 +117,11 @@ The user says: "Save a note in Obsidian about the spacing effect, and link it to
 notes."
 
 ```
-find ~ -maxdepth 4 -type d -name .obsidian -not -path '*/Library/*'   -> ~/Vault/.obsidian
-grep -ril "spaced\|spacing effect" ~/Vault --include=*.md | head     -> 1_Subjects/Psych/Memory.md
-grep -ril "study" ~/Vault --include=*.md | head                      -> 2_Personal/Study habits.md
+find ~ -maxdepth 4 -type d -name .obsidian -not -path '*/Library/*'   -> [vault]/.obsidian
+grep -ril "spaced\|spacing effect" "[vault]" --include=*.md | head  -> Psych/Memory.md
+grep -ril "study" "[vault]" --include=*.md | head                   -> Study habits.md
 ```
 
-Write `~/Vault/0_Inbox/Spacing effect.md` with `tags: [learning]` and `created: 2026-10-25`,
+Write `[vault]/Inbox/Spacing effect.md` with `tags: [learning]` and `created: 2026-10-25`,
 three lines on the idea, and links `[[Memory]]` and `[[Study habits]]`. Append
 `- [[Spacing effect]]` under Related in `Study habits.md`. `cat` both to confirm.

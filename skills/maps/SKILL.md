@@ -37,7 +37,8 @@ For coordinates, GeoJSON, bulk geocoding or OpenStreetMap data queries, use `map
 1. **Pin the trip.** Origin, destination, mode, and departure or arrival time. If the
    origin is "home" or "here" and you don't have it, ask. Don't guess an address.
 2. **Check the browser.** `status {}`.
-3. **Open the route.** `navigate` to the Google directions URL with the user's places.
+3. **Open the route in a new tab.** `tabs_create {"url":"[Google directions URL]"}` with
+   the user's places, and note the `tabId` it returns. Later `navigate` calls reuse it.
    If the user prefers OpenStreetMap or Google is blocked, use the OSM URL.
 4. **Wait for results.** `wait {"text":"min","timeoutMs":15000}`.
 5. **Read the routes.** `get_page_text {"maxChars":4000}`. Record each route's time,
@@ -51,7 +52,8 @@ For coordinates, GeoJSON, bulk geocoding or OpenStreetMap data queries, use `map
 9. **Straight-line distance,** when asked, from two coordinates:
    `python3 -c "from math import radians,sin,cos,asin,sqrt;a,b,c,d=map(radians,[42.045,-87.688,43.039,-87.906]);print(round(2*6371*asin(sqrt(sin((c-a)/2)**2+cos(a)*cos(c)*sin((d-b)/2)**2)),1),'km')"`
 10. **Answer.** Best route first: time, distance, main roads, then alternatives, the link,
-    and "checked at [time]". Close the tab with `tabs_close`.
+    and "checked at [time]". Close only the tab from step 3:
+    `tabs_close {"tabId":[that id]}`. Never close a tab this task didn't create.
 
 ## Done when
 
@@ -84,12 +86,13 @@ The user says: "How long to drive from Evanston to Milwaukee if I leave at 5 pm 
 
 ```
 status {}
-navigate {"url":"https://www.google.com/maps/dir/?api=1&origin=Evanston+IL&destination=Milwaukee+WI&travelmode=driving"}
+tabs_create {"url":"https://www.google.com/maps/dir/?api=1&origin=Evanston+IL&destination=Milwaukee+WI&travelmode=driving"}
+                                     -> tabId 63
 wait {"text":"min","timeoutMs":15000}
 read_page {"filter":"interactive"}   -> e12 "Leave now" options
 click {"ref":"e12"}                  -> choose Depart at, set 5:00 PM
 get_page_text {"maxChars":4000}      -> typically 1 hr 35 min to 2 hr 20 min, 76 mi via I-94 W
-tabs_close {"tabId":...}
+tabs_close {"tabId":63}
 ```
 
 Answer: "Leaving at 5 pm, plan on about 1 hr 35 min to 2 hr 20 min, 76 miles via I-94 W.

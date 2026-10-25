@@ -37,7 +37,7 @@ the user to use a paid geocoder or their own Nominatim for more.
 
 1. **Pin the data.** What features, which area, which fields, which output format.
 2. **Geocode each address,** one per second:
-   `curl -s -A 'tabkyra-map-data/1.0' 'https://nominatim.openstreetmap.org/search?q=1600+Pennsylvania+Ave+NW,+Washington+DC&format=jsonv2&limit=1'`
+   `curl -s -A 'tabkyra-map-data/1.0' 'https://nominatim.openstreetmap.org/search?q=[street+address,+city,+state]&format=jsonv2&limit=1'`
    Keep `lat`, `lon`, `display_name`. If `display_name` names a different place, mark the
    row unmatched. Don't keep a wrong match.
 3. **Write the Overpass query.** Tags come from the OSM wiki (`https://wiki.openstreetmap.org/wiki/Map_features`).

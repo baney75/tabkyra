@@ -36,34 +36,43 @@ Search URL: `https://mail.google.com/mail/u/0/#search/is%3Aunread+newer_than%3A7
 
 1. **Check the browser.** `status {}`. Open the inbox URL from the table. If a sign-in page
    shows, call `tabs_show` and ask the user to sign in. Never type their password.
-2. **Measure.** `get_page_text {"maxChars":8000}` on the inbox and on a few searches
-   (unread, last 30 days, promotions). Count messages per sender and per topic. Read
+2. **Find candidates.** `get_page_text {"maxChars":8000}` on the first pages of the inbox
+   and of a few searches (unread, last 30 days, promotions). Note senders and topics that
+   repeat. A list view shows only 50 to 100 rows, so never count or estimate from it. Read
    subjects and senders only, unless the user asks you to read bodies.
-3. **Find what needs the user.** List messages that ask a question, have a deadline, or
+3. **Count each candidate with its own search.** Run the row's exact query, for example
+   `#search/from%3Areceipts%40shop.example`, and read the count in the header (`1-50 of 214`).
+   If the header says "many", write "more than 50" and say so.
+4. **Find what needs the user.** List messages that ask a question, have a deadline, or
    come from a person the user wrote to recently. These come first in the report.
-4. **Draft the plan.** A table with one row per change:
+5. **Draft the plan.** A table with one row per change:
 
    | Change | Matches | Count now | Effect |
    | --- | --- | --- | --- |
-   | New label `Receipts` + filter | `from:(receipts@shop.com OR billing@isp.com)` | 214 | Label, skip inbox |
+   | New label `Receipts` + filter | `from:(receipts@shop.example OR billing@isp.example)` | 214 | Label only |
    | Archive | `category:promotions older_than:30d` | 1,380 | Leaves inbox, still searchable |
 
+   Gmail's "Skip the Inbox" filter action archives mail, and Outlook's "move to folder"
+   takes it out of the inbox. A row with either is an archive row, and its Effect says so.
    Prefer label and archive over delete. Never plan a permanent delete.
-5. **Show the plan and stop.** Ask: "Apply these changes?" Wait for the user's yes. If they
-   change rows, update the table and show it again.
-6. **Apply one row at a time.** For a Gmail filter: run the row's search, open the search
+6. **Show the plan and stop.** Ask: "Apply these changes?" Wait for the user's yes. If they
+   change rows or add a limit ("don't archive anything"), update the table so no row breaks
+   it, and show it again before applying.
+7. **Apply one row at a time.** For a Gmail filter: run the row's search, open the search
    options panel, click Create filter, tick the actions in the row, and tick "Also apply
    filter to matching conversations" only if the row says so. Use `read_page
    {"filter":"interactive"}` for refs before each click.
-7. **Confirm each row.** Reload the filter list or the label and `read_page`. Check the
-   count matches the plan. If it doesn't, stop and tell the user before the next row.
-8. **Report.** What was applied, counts, the needs-a-reply list, and how to undo each row
+8. **Confirm each row.** Reload the filter list, then run the row's search again and read
+   the count header. Check the count matches the plan. If it doesn't, stop and tell the user before the next row.
+9. **Report.** What was applied, counts, the needs-a-reply list, and how to undo each row
    (delete the filter, remove the label, search the archive).
 
 ## Done when
 
 - The user saw the plan table and said yes before anything changed.
+- Every count came from a search's count header, not from counting list rows.
 - Every applied row was read back and its count matches, or you stopped and reported.
+- No applied row breaks a limit the user stated, such as "don't archive anything".
 - The report lists every change with its undo, plus the messages that need the user.
 
 ## When something goes wrong
@@ -92,12 +101,16 @@ The user says: "My Gmail is a mess. Sort it out."
 ```
 status {}
 navigate {"url":"https://mail.google.com/mail/u/0/#inbox"}
-get_page_text {"maxChars":8000}     -> 3,412 in inbox, top senders: 3 shops, 2 newsletters
+get_page_text {"maxChars":8000}     -> first 50 rows: 3 shops and 2 newsletters repeat
+navigate {"url":"https://mail.google.com/mail/u/0/#search/from%3A(receipts%40shop.example+OR+billing%40isp.example)"}
+get_page_text {"maxChars":1500}     -> header "1-50 of 214"
 navigate {"url":"https://mail.google.com/mail/u/0/#search/category%3Apromotions+older_than%3A30d"}
-get_page_text {"maxChars":4000}     -> 1,380 conversations
+get_page_text {"maxChars":1500}     -> header "1-50 of 1,380"
 ```
 
-Plan shown: label `Receipts` with a filter for 3 senders (214), label `Newsletters` with a
-filter for 2 lists (402), archive old promotions (1,380). Plus 4 messages that need a reply.
-The user says "yes, but don't archive anything". Apply rows 1 and 2, read each back, and
-report the counts and the undo for each.
+Plan shown: label `Receipts` and skip the inbox for 3 senders (214, archives them), label
+`Newsletters` and skip the inbox for 2 lists (402, archives them), archive old promotions
+(1,380). Plus 4 messages that need a reply. The user says "yes, but don't archive
+anything". Skip the Inbox counts as archiving, so revise: rows 1 and 2 become label-only
+filters, row 3 is dropped. Show the revised table, get a yes, apply rows 1 and 2, rerun
+each search to read the counts back, and report the undo for each.
