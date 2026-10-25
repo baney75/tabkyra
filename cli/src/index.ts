@@ -113,12 +113,17 @@ async function status(json: boolean): Promise<number> {
 			try {
 				await client.connect(path);
 				if (!client.extensionConnected) continue;
-				const info = (await client.call("status", {}, 5000, { retry: false })) as {
+				// 20 s: above the extension's 15 s session-open limit.
+				const info = (await client.call("status", {}, 20000, { retry: false })) as {
 					extensionVersion: string;
 					permissionMode: string;
 					allowedHosts: string[];
 				};
-				Object.assign(report, { connected: true, ...info, message: undefined });
+				report.connected = true;
+				report.extensionVersion = info.extensionVersion;
+				report.permissionMode = info.permissionMode;
+				report.allowedHosts = info.allowedHosts;
+				report.message = undefined;
 				break;
 			} catch (err) {
 				// Keep the reason; a later socket may still answer.
@@ -159,10 +164,38 @@ async function status(json: boolean): Promise<number> {
 	return report.connected ? 0 : 1;
 }
 
+/** Options each command accepts; anything else is a usage error. `setup` parses its own. */
+const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
+	doctor: { flags: ["--json"], positional: 0 },
+	status: { flags: ["--json"], positional: 0 },
+	install: { flags: ["--force"], positional: 0 },
+	allow: { flags: [], positional: 1 },
+	"allow-all": { flags: [], positional: 0 },
+	yolo: { flags: [], positional: 0 },
+	ask: { flags: [], positional: 0 },
+	reload: { flags: [], positional: 0 },
+	debug: { flags: [], positional: 0 },
+	mcp: { flags: [], positional: 0 },
+	"pi-extension": { flags: [], positional: 1 },
+};
+
+function checkArgs(command: string, args: string[]): void {
+	const accepts = ACCEPTS[command];
+	if (!accepts) return;
+	const flags = args.filter((a) => a.startsWith("-"));
+	const positional = args.filter((a) => !a.startsWith("-"));
+	const unknown = flags.find((f) => !accepts.flags.includes(f));
+	const usage = `Usage: tabkyra ${command}${accepts.flags.map((f) => ` [${f}]`).join("")}${command === "allow" ? " <host>" : command === "pi-extension" ? " [dir]" : ""}`;
+	if (unknown) throw new UsageError(`Unknown option "${unknown}". ${usage}`);
+	if (positional.length > accepts.positional) throw new UsageError(`Unexpected argument "${positional[accepts.positional]}". ${usage}`);
+}
+
 async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
 	const [command] = argv;
 	const flag = (name: string) => argv.includes(name);
+	// `host` is spawned by the browser with its origin as an argument; leave it alone.
+	if (command && command !== "host") checkArgs(command, argv.slice(1));
 	switch (command) {
 		case "setup": {
 			const parsed = parseSetupArgs(argv.slice(1));
@@ -170,18 +203,12 @@ async function main(): Promise<void> {
 			process.exitCode = await runSetup(parsed);
 			return;
 		}
-		case "doctor": {
-			const unknown = argv.slice(1).find((a) => a !== "--json");
-			if (unknown) throw new UsageError(`Unknown option "${unknown}". Usage: tabkyra doctor [--json]`);
+		case "doctor":
 			process.exitCode = await runDoctor({ json: flag("--json") });
 			return;
-		}
-		case "status": {
-			const unknown = argv.slice(1).find((a) => a !== "--json");
-			if (unknown) throw new UsageError(`Unknown option "${unknown}". Usage: tabkyra status [--json]`);
+		case "status":
 			process.exitCode = await status(flag("--json"));
 			return;
-		}
 		case "host":
 			runNativeHost();
 			return;

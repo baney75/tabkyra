@@ -72,7 +72,7 @@ export class BridgeClient {
 	private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 	clientId?: string;
 	extensionConnected = false;
-	/** Set after the first welcome; only a bridge that once worked is worth waiting for. */
+	/** Set once the extension has been connected; only a bridge that once worked is worth waiting for. */
 	private everConnected = false;
 
 	constructor(private readonly options: ClientOptions) {}
@@ -134,9 +134,9 @@ export class BridgeClient {
 					if (msg.type === "welcome") {
 						welcomed = true;
 						clearTimeout(timer);
-						this.everConnected = true;
 						this.clientId = msg.clientId;
 						this.extensionConnected = msg.extensionConnected;
+						if (msg.extensionConnected) this.everConnected = true;
 						resolve();
 					} else this.onMessage(msg);
 				}
@@ -173,6 +173,7 @@ export class BridgeClient {
 			this.options.onEvent?.(msg.event, msg.data);
 		} else if (msg.type === "extension_status") {
 			this.extensionConnected = msg.connected;
+			if (msg.connected) this.everConnected = true;
 			this.options.onExtensionStatus?.(msg.connected);
 		}
 	}
@@ -197,7 +198,13 @@ export class BridgeClient {
 			// Nothing was ever reachable: say so now instead of polling for 40 s.
 			if (!this.everConnected) throw new Error(NOT_CONNECTED);
 			this.close();
-			await this.reconnect(40000);
+			try {
+				await this.reconnect(40000);
+			} catch {
+				// The drop outlasted the wait: report it, and don't wait again on the next call.
+				this.everConnected = false;
+				throw new Error(NOT_CONNECTED);
+			}
 			return this.callOnce<T>(method, params, timeoutMs);
 		}
 	}

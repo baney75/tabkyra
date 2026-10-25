@@ -2,7 +2,8 @@
 // description, the safety rules are in the instructions, and a tool call fails fast
 // with the one not-connected message instead of hanging.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -72,4 +73,49 @@ test("status reports not connected without failing", async () => {
 	const body = JSON.parse(result.content[0].text);
 	assert.equal(body.connected, false);
 	assert.equal(body.message, NOT_CONNECTED);
+});
+
+test("a host with no extension behind it is reported as not connected, at once", async () => {
+	// A fake native host: welcomes with extensionConnected:false, then drops any request.
+	const dir = join(root, "fake-sock");
+	mkdirSync(dir, { mode: 0o700 });
+	const path = join(dir, `${process.pid}.sock`);
+	const frame = (m) => {
+		const body = Buffer.from(JSON.stringify(m));
+		const head = Buffer.alloc(4);
+		head.writeUInt32LE(body.length);
+		return Buffer.concat([head, body]);
+	};
+	const server = createServer((socket) => {
+		let hello = false;
+		socket.on("data", () => {
+			if (!hello) {
+				hello = true;
+				socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: false }));
+			} else socket.destroy();
+		});
+	});
+	await new Promise((r) => server.listen(path, r));
+	chmodSync(path, 0o600);
+	const client = new Client({ name: "tabkyra-mcp-fake-host", version: "0.0.0" });
+	try {
+		await client.connect(
+			new StdioClientTransport({
+				command: process.execPath,
+				args: [cli, "mcp"],
+				env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: dir },
+				stderr: "ignore",
+			}),
+		);
+		const started = Date.now();
+		const nav = await client.callTool({ name: "navigate", arguments: { url: "https://example.com" } });
+		assert.equal(nav.isError, true);
+		assert.equal(nav.content[0].text, NOT_CONNECTED);
+		const status = JSON.parse((await client.callTool({ name: "status", arguments: {} })).content[0].text);
+		assert.equal(status.connected, false);
+		assert.ok(Date.now() - started < 10000, `took ${Date.now() - started} ms; a bridge that never had the extension must not be waited for`);
+	} finally {
+		await client.close().catch(() => {});
+		server.close();
+	}
 });

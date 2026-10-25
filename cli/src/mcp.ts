@@ -75,6 +75,9 @@ function isNotConnected(err: unknown): boolean {
 	return message === "Bridge unavailable" || message.startsWith("The bridge at ") || isConnectionError(err);
 }
 
+/** Above the extension's 15 s session-open timeout (native.ts runRequest). */
+const STATUS_TIMEOUT_MS = 20000;
+
 function harnessName(): string {
 	const explicit = process.env.TABKYRA_CLIENT_NAME;
 	if (explicit) return explicit;
@@ -205,10 +208,12 @@ export async function runMcpServer(): Promise<void> {
 		},
 		async () => {
 			try {
-				const result = (await client.call("status", {}, 10000, { retry: false })) as Record<string, unknown>;
+				// Longer than the extension's own 15 s session-open limit, so its error arrives first.
+				const result = (await client.call("status", {}, STATUS_TIMEOUT_MS, { retry: false })) as Record<string, unknown>;
 				return { content: text({ connected: true, ...result }) };
 			} catch (err) {
-				if (isNotConnected(err)) return { content: text({ connected: false, message: NOT_CONNECTED }) };
+				// A host with no extension behind it is not a connection the agent can use.
+				if (isNotConnected(err) || !client.extensionConnected) return { content: text({ connected: false, message: NOT_CONNECTED }) };
 				// Reached the extension, but it refused or failed (e.g. the bridge is off in Settings).
 				return { content: text({ connected: true, error: errorMessage(err) }) };
 			}
