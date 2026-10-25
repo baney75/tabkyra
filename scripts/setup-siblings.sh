@@ -6,6 +6,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 parent="$(dirname "$here")"
 pi_mono_rev="ff1ea1232"
+mini_lit_rev="dee21bf1175de0cb16a946ba8fb62c1e590fbd3c"
 
 [ -d "$parent/mini-lit" ] || git clone https://github.com/badlogic/mini-lit.git "$parent/mini-lit"
 [ -d "$parent/pi-mono" ] || git clone https://github.com/badlogic/pi-mono.git "$parent/pi-mono"
@@ -41,6 +42,15 @@ else
 	git apply "$here/patches/pi-mono.patch"
 fi
 
+# Pin mini-lit too: the release build runs its install scripts, so it must be a known revision.
+if [ "$(git -C "$parent/mini-lit" rev-parse HEAD)" != "$mini_lit_rev" ]; then
+	if git -C "$parent/mini-lit" diff --quiet; then
+		git -C "$parent/mini-lit" checkout -q "$mini_lit_rev"
+	else
+		echo "mini-lit has local changes and is not at $mini_lit_rev; resolve them first" >&2
+		exit 1
+	fi
+fi
 (cd "$parent/mini-lit" && npm install --no-audit --no-fund && npm run build)
 npm install --no-audit --no-fund
 # Never run `npm run build` in packages/ai: it regenerates the model list.

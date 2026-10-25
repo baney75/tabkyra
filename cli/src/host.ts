@@ -12,6 +12,7 @@ import type { ClientToHost, ExtToHost, HostToClient, HostToExt } from "../../src
 import { MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { socketDir, socketPath } from "./paths.ts";
+import { cachedOrFreshStatus } from "./update.ts";
 import { VERSION } from "./version.ts";
 
 interface Client {
@@ -51,6 +52,7 @@ function onExtensionMessage(message: ExtToHost): void {
 	switch (message.type) {
 		case "hello":
 			extensionReady = true;
+			void sendUpdateStatus();
 			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true });
 			// The extension restarted; re-announce every live client so it recreates sessions.
 			for (const client of clients.values()) {
@@ -66,6 +68,32 @@ function onExtensionMessage(message: ExtToHost): void {
 			return;
 		case "pong":
 			return;
+	}
+}
+
+/**
+ * Tell the extension whether a newer release exists. Reads the cached check and refreshes it
+ * at most once a day (one GET to the GitHub releases API). It never downloads or installs:
+ * the user runs `tabkyra update`. Off with `tabkyra update --auto-check off`.
+ */
+async function sendUpdateStatus(): Promise<void> {
+	try {
+		const status = await cachedOrFreshStatus();
+		// Checks off, or the check failed: clear any notice the extension still shows.
+		if (!status || status.error) {
+			toExtension({ type: "update_status", available: false, current: status?.current ?? VERSION, channel: status?.channel ?? "stable", checkedAt: Date.now() });
+			return;
+		}
+		toExtension({
+			type: "update_status",
+			available: status.available,
+			current: status.current,
+			latest: status.latest,
+			channel: status.channel,
+			checkedAt: status.checkedAt,
+		});
+	} catch (err) {
+		process.stderr.write(`[tabkyra-host] update check failed: ${String(err)}\n`);
 	}
 }
 

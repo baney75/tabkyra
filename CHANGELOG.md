@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- `tabkyra update`: installs signed GitHub releases. It verifies the minisign signature on `SHA256SUMS` against `keys/tabkyra-release.pub`, checks that the signed comment names the version, checks the zip's SHA-256, and unpacks into staging with path, symlink and size checks. It swaps the release in with renames under a lock, keeps the previous release for `--rollback`, re-registers the native host, and tells you to reload. `--check` (exit 100 when an update exists, `--json`), `--channel stable|nightly`, `--auto-check on|off`. Docs: `docs/updates.md`.
+- Side panel "Update available" notice, fed by the native host's daily check. It never installs anything.
+- `.github/workflows/release.yml`: on a version tag, builds against the pinned siblings, runs the checks, packages (`scripts/release/package.mjs`), signs with minisign from the `MINISIGN_SECRET_KEY` secret, and attaches the zip, `SHA256SUMS` and `SHA256SUMS.minisig`.
 - README rewritten around `tabkyra setup`, with a demo recorded from a real headless run (`scripts/demo/capture.mjs` writes `media/demo.gif` and `media/demo-steps.png`), harness snippets, the safety model, a diagram, an FAQ and credits naming 0xSero's and Mario Zechner's contributions.
 - New Tabkyra site (`site/`): the brand, the same quick start, the demo, safety, how it works and credits. Built, not deployed.
 - MCP `status` tool (and bridge method): connection, permission mode, allowed sites, the session's tab group and tabs. It never fails; when nothing is connected it says how to fix it.
@@ -57,6 +60,7 @@
 
 ### Removed
 - Subscription sign-in for ChatGPT, GitHub Copilot and Google Gemini (and the bundled pi-ai code for them, Antigravity and Claude Code identity headers). Each posed as another app (Codex CLI, VS Code Copilot Chat, Gemini CLI, Claude Code), which the providers forbid. Tabkyra takes API keys only, says the provider bills API use, and clears tokens the old sign-ins left. `docs/auth-policy.md` has the sources; `test/auth-policy.test.mjs` fails if any of it comes back.
+- `.github/workflows/build.yml` (the Sitegeist release job that built against unpinned upstream siblings and published unsigned `sitegeist.zip`).
 - Sitegeist's site content (orb, testimonials, preview videos, install page) and `site/run.sh deploy`'s upstream server target; deploy now refuses until Tabkyra has hosting.
 - The Sitegeist orb (three.js) and its icon generator page; the `three` dependency went with them.
 

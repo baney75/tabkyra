@@ -122,7 +122,25 @@ export interface HostPing {
 	type: "ping";
 }
 
-export type HostToExt = HostClientConnected | HostClientDisconnected | HostForwardedRequest | HostPing;
+/** What `tabkyra update --check` last found; the side panel shows "Update available". */
+export interface HostUpdateStatus {
+	type: "update_status";
+	available: boolean;
+	current: string;
+	latest?: string;
+	channel: string;
+	checkedAt: number;
+}
+
+/** chrome.storage.local key where the extension keeps the last HostUpdateStatus. */
+export const UPDATE_STATUS_KEY = "tabkyra.updateStatus";
+
+export type HostToExt =
+	| HostClientConnected
+	| HostClientDisconnected
+	| HostForwardedRequest
+	| HostPing
+	| HostUpdateStatus;
 
 /** Error codes the extension returns. */
 export const ERR = {

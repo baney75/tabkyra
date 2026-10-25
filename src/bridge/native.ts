@@ -32,6 +32,7 @@ import {
 	type HostToExt,
 	NATIVE_HOST_NAME,
 	PROTOCOL_VERSION,
+	UPDATE_STATUS_KEY,
 } from "./protocol.js";
 import { BridgeError, type HandlerContext, handlers } from "./tools.js";
 
@@ -253,6 +254,10 @@ function onHostMessage(message: HostToExt): void {
 			return;
 		case "client_disconnected":
 			void onClientDisconnected(message.clientId);
+			return;
+		case "update_status":
+			// The side panel reads this and shows a quiet "Update available". Nothing installs here.
+			void chrome.storage.local.set({ [UPDATE_STATUS_KEY]: message });
 			return;
 		case "request": {
 			if (message.method === "permission.respond") {

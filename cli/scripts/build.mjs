@@ -21,6 +21,8 @@ await build({
 	// from a global link or npx without a node_modules next to dist.
 	packages: "bundle",
 	sourcemap: true,
+	// keys/tabkyra-release.pub is bundled as text: the key that verifies releases ships inside the CLI.
+	loader: { ".pub": "text" },
 	logLevel: "info",
 });
 chmodSync(join(outDir, "index.js"), 0o755);
