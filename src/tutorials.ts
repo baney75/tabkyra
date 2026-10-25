@@ -1,7 +1,7 @@
 export const tutorials = [
 	{
-		label: "What is Sitegeist?",
-		prompt: `You are about to help a non-technical user understand Sitegeist through an interactive tutorial. Guide them step-by-step through Sitegeist's capabilities.
+		label: "What is Tabkyra?",
+		prompt: `You are about to help a non-technical user understand Tabkyra through an interactive tutorial. Guide them step-by-step through Tabkyra's capabilities.
 
 **CRITICAL RULES:**
 - Keep explanations SHORT (2-3 sentences max)
@@ -86,8 +86,8 @@ STOP.
 Explain where data is stored and who gets what:
 - **Settings & API keys**: Stored locally on your computer only
 - **Sessions & attachments**: Stored locally on your computer only
-- **When you send messages**: All text and attachments in the chat session are sent to the LLM provider (default: Anthropic). They're configured to not retain your data or use it for training
-- **CORS proxy** (on by default): If enabled in settings, requests to the LLM go through the proxy due to CORS restrictions when using an Anthropic OAuth token, or using Z-AI. Default is https://proxy.mariozechner.at/proxy which does not retain or log data. Use your own proxy or a service like corsproxy.io if preferred
+- **When you send messages**: All text and attachments in the chat session are sent to the LLM provider you picked. Its own data retention policy applies
+- **CORS proxy** (off by default): CORS is handled inside the extension. Turn on a proxy in settings only if a provider needs one, and use one you run or trust
 
 STOP.
 
