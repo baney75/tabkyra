@@ -30,8 +30,14 @@ for (const [path, fix] of [
 	[join(cli), "cd cli && npm install && npm run build"],
 	[join(extensionDir, "manifest.json"), "npm run build"],
 	[fonts, "cd site && npm install"],
+	[chromium.executablePath(), "cd cli && npx playwright-core install chromium"],
 ]) {
 	if (!existsSync(path)) throw new Error(`${path} is missing. Run: ${fix}`);
+}
+try {
+	execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
+} catch {
+	throw new Error("ffmpeg is missing. Install it (macOS: brew install ffmpeg).");
 }
 
 // A small library catalog: search, place a hold, confirm. Plain HTML, served locally.
@@ -101,30 +107,32 @@ async function record(work) {
 		res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
 		res.end(PAGE);
 	});
-	await new Promise((r) => server.listen(0, "127.0.0.1", r));
-	const url = `http://127.0.0.1:${server.address().port}/`;
-
-	execFileSync(process.execPath, [cli, "install"], { env, stdio: "ignore" });
-	// Headless, with a mock keychain: no window and no macOS keychain prompt on screen.
-	const browser = spawn(
-		chromium.executablePath(),
-		[
-			`--user-data-dir=${profile}`,
-			"--headless=new",
-			"--no-first-run",
-			"--no-default-browser-check",
-			"--use-mock-keychain",
-			"--password-store=basic",
-			`--disable-extensions-except=${extensionDir}`,
-			`--load-extension=${extensionDir}`,
-			"about:blank",
-		],
-		{ env, stdio: "ignore" },
-	);
 	const mcp = new Client({ name: "tabkyra-demo", version: "0.0.0" });
 	const frames = [];
 	let group = "Tabkyra";
+	let browser;
+	// Everything that can fail sits inside the try, so the socket dir, server and browser
+	// are always cleaned up.
 	try {
+		await new Promise((r) => server.listen(0, "127.0.0.1", r));
+		const url = `http://127.0.0.1:${server.address().port}/`;
+		execFileSync(process.execPath, [cli, "install"], { env, stdio: "ignore" });
+		// Headless, with a mock keychain: no window and no macOS keychain prompt on screen.
+		browser = spawn(
+			chromium.executablePath(),
+			[
+				`--user-data-dir=${profile}`,
+				"--headless=new",
+				"--no-first-run",
+				"--no-default-browser-check",
+				"--use-mock-keychain",
+				"--password-store=basic",
+				`--disable-extensions-except=${extensionDir}`,
+				`--load-extension=${extensionDir}`,
+				"about:blank",
+			],
+			{ env, stdio: "ignore" },
+		);
 		await mcp.connect(
 			new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env, stderr: "ignore" }),
 		);
@@ -202,7 +210,7 @@ async function record(work) {
 		group = JSON.parse(await call("status")).tabGroup;
 	} finally {
 		await mcp.close().catch(() => {});
-		browser.kill();
+		browser?.kill();
 		server.close();
 		rmSync(socketDir, { recursive: true, force: true });
 	}

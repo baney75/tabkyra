@@ -48,10 +48,11 @@
 
 		<section class="start" id="start">
 			<h2><span class="num">60s</span> To your first agent-driven tab</h2>
-			<p class="section-lede">Node 20+, git and a Chromium browser: Helium, Chrome, Brave, Edge, Arc, Vivaldi or Chromium 141+. A fresh clone reached "Connected" in 45 seconds on a Mac with a warm npm cache; a cold first install takes longer.</p>
+			<p class="section-lede">Node 20+, git and a Chromium browser: Helium, Chrome, Brave, Edge, Arc, Vivaldi or Chromium 141+. Clone into a folder of its own: the first build puts pi-mono and mini-lit beside it. A fresh clone reached "Connected" in 45 seconds on a Mac with a warm npm cache; a cold first install takes longer.</p>
 			<div class="term">
-				<div class="term-bar"><span></span><span></span><span></span><button class="copy" data-copy="git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra&#10;(cd cli &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link)&#10;tabkyra setup">Copy</button></div>
-<pre><code><span class="p">$</span> git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra
+				<div class="term-bar"><span></span><span></span><span></span><button class="copy" data-copy="mkdir tabkyra-src &amp;&amp; cd tabkyra-src&#10;git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra&#10;(cd cli &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link)&#10;tabkyra setup">Copy</button></div>
+<pre><code><span class="p">$</span> mkdir tabkyra-src &amp;&amp; cd tabkyra-src
+<span class="p">$</span> git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra
 <span class="p">$</span> (cd cli &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link)
 <span class="p">$</span> tabkyra setup
 <span class="b">Tabkyra</span> <span class="d">setup 0.1.0</span>
@@ -69,7 +70,8 @@
 <span class="d">│</span>    and click <span class="w">Load unpacked</span>.                                <span class="d">│</span>
 <span class="d">│</span> <span class="b">2</span>  Pick this folder:                                       <span class="d">│</span>
 <span class="d">│</span>    <span class="c">/path/to/tabkyra/dist-chrome</span>                            <span class="d">│</span>
-<span class="d">│</span> <span class="b">3</span>  Click <span class="w">Details</span> on Tabkyra and turn on <span class="w">Allow user scripts</span>. <span class="d">│</span>
+<span class="d">│</span> <span class="b">3</span>  Optional: click <span class="w">Details</span> on Tabkyra and turn on          <span class="d">│</span>
+<span class="d">│</span>    <span class="w">Allow user scripts</span> (faster page scripts).               <span class="d">│</span>
 <span class="d">╰────────────────────────────────────────────────────────────╯</span>
   <span class="g">✓</span> Connected. Tabkyra can reach your browser <span class="d">(1.1.8)</span>.</code></pre>
 			</div>
@@ -90,7 +92,7 @@
 				</article>
 				<article>
 					<h3>Page text is data</h3>
-					<p>Every agent is told that page content is untrusted, that it must ask you before sending, buying, posting or deleting under your sign-in, and that it never types passwords or payment details. That's guidance to the model, not a lock; the site permission is the lock.</p>
+					<p>Every agent is told that page content is untrusted, that it must ask you before sending, buying, posting or deleting under your sign-in, and that it never types passwords or payment details. That's guidance to the model, not a lock. The lock is the site permission, and it limits where an agent goes, not what it does on a site you allowed.</p>
 				</article>
 				<article>
 					<h3>Its own tab group</h3>

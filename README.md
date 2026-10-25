@@ -37,10 +37,15 @@ You need Node 20+, git, and a Chromium browser (Helium, Chrome, Brave, Edge, Arc
 Vivaldi or Chromium 141+).
 
 ```bash
+mkdir tabkyra-src && cd tabkyra-src        # setup puts two build dependencies beside the clone
 git clone https://github.com/baney75/tabkyra && cd tabkyra
 (cd cli && npm install && npm run build && npm link)
 tabkyra setup
 ```
+
+The first build clones [pi-mono](https://github.com/badlogic/pi-mono) (pinned and patched)
+and [mini-lit](https://github.com/badlogic/mini-lit) next to the `tabkyra` folder, which is
+why the clone goes in a folder of its own.
 
 On a Mac with a warm npm cache, a fresh clone reached "Connected" in 45 seconds with
 `tabkyra setup --yes`. A first install with a cold cache downloads more and can take a few
@@ -57,7 +62,8 @@ browser makes you do by hand:
 │    and click Load unpacked.                                    │
 │ 2  Pick this folder:                                           │
 │    /path/to/tabkyra/dist-chrome                                │
-│ 3  Click Details on Tabkyra and turn on Allow user scripts.    │
+│ 3  Optional: click Details on Tabkyra and turn on              │
+│    Allow user scripts (faster page scripts).                   │
 ╰────────────────────────────────────────────────────────────────╯
   ✓ Connected. Tabkyra can reach your browser (1.1.8).
 ```
@@ -143,8 +149,10 @@ Your browser is signed in as you, so the defaults are conservative.
   sending, posting, buying, deleting or changing settings. It also tells the agent never
   to type passwords or payment details. For a sign-in or a captcha, it brings the tab to
   you. These are instructions to the model, not enforcement: a hostile page can still
-  attempt prompt injection. The site permission is the hard limit. For high-stakes
-  accounts, run agents in a separate browser profile that isn't signed in to them.
+  attempt prompt injection. The site permission limits which sites an agent can open.
+  It doesn't limit what the agent does on a site you've allowed, including running
+  scripts there with `run_js`. Allow only sites you'd let the agent act on, and for
+  high-stakes accounts, run agents in a separate browser profile that isn't signed in.
 - **Agents stay in their own tab group** ("Tabkyra · claude", "Tabkyra · codex"). Their
   tabs open in the background, they can't see your other tabs, and popups from their
   tabs don't steal focus. `tabs_show` is the only tool that changes what you see.
@@ -199,9 +207,10 @@ which one.
 Vivaldi and Opera, on macOS and Linux. Windows registry entries are written too but
 haven't been tested.
 
-**Does it send my data anywhere?** No. Nothing is collected or tracked. The side panel
-talks only to the model provider you configure, and the bridge never leaves your
-machine.
+**Does it send my data anywhere?** Tabkyra itself collects nothing and has no server; the
+bridge never leaves your machine. But whatever an agent reads through it (page text,
+screenshots) goes to that agent's model provider, as with any tool the agent uses. The
+side panel likewise talks to the provider you configure.
 
 ## Development
 
