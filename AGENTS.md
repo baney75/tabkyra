@@ -17,7 +17,8 @@ If the user did not give you a concrete task, read README.md first.
 ## Dependencies
 - `@mariozechner/mini-lit` (0.2.1), `@mariozechner/pi-ai`, `@mariozechner/pi-web-ui`, `@mariozechner/pi-agent-core` (0.60.0) come from npm at exact versions. No sibling checkouts are needed.
 - pi-mono later renamed its packages to `@earendil-works/*` and dropped `web-ui`, so do not bump past 0.60.x without porting.
-- To patch upstream code, check out pi-mono at tag `v0.60.0` next to this repo, build with `npx tsgo -p tsconfig.build.json` in `packages/{tui,ai,agent,web-ui}` (its `npm run build` regenerates the model list from the network), and point the dependency at it with `file:` locally. Do not commit `file:` paths.
+- `overrides` in package.json pins pi-tui and the provider SDKs that pi-ai pulls in (@google/genai, ajv, zod-to-json-schema, undici, Bedrock) to the versions pi-mono's own lockfile used at `ff1ea1232`. Keep them unless you mean to upgrade.
+- To patch upstream code, check out pi-mono at tag `v0.60.0` next to this repo, run `npm ci` at its root, then build with `npx tsgo -p tsconfig.build.json` in `packages/{tui,ai,agent,web-ui}` (its `npm run build` regenerates the model list from the network). The tsgo build emits ES class fields while the published package emits constructor assignments; Lit reactive properties need the latter, so treat a tsgo build as a local experiment only. Point the dependency at it with `file:` locally and do not commit `file:` paths.
 
 ## Changelog
 Location: `CHANGELOG.md`
