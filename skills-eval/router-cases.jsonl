@@ -278,3 +278,203 @@
 {"task": "Don’t use the tabkyra skill; fetch the URL directly", "skill": "none"}
 {"task": "Don’t apply the osint skill, just tell me what you know about the landlord", "skill": "none"}
 {"task": "Don't use the `osint` skill; do a background check on this landlord.", "skill": "none"}
+{"task": "Mark up this screenshot of our checkout page with numbered callouts for each bug I listed", "skill": "annotation"}
+{"task": "Highlight the three paragraphs on page 4 of contract.pdf that mention termination and add comments", "skill": "annotation"}
+{"task": "Can you circle the broken button on the staging homepage and give me notes I can paste into Jira?", "skill": "annotation"}
+{"task": "Annotate this wireframe PNG: number every element that doesn't match the spec", "skill": "annotation"}
+{"task": "Put redlines on the landing page draft at staging.acme.dev so the designer knows what to fix", "skill": "annotation"}
+{"task": "I need review notes pinned to specific spots on this slide export, numbered 1 through 6", "skill": "annotation"}
+{"task": "Draw a box around the error message in error.png and label it so my mom can follow along", "skill": "annotation"}
+{"task": "Highlight the key findings in this research PDF and export my notes as markdown", "skill": "annotation"}
+{"task": "Make an annotated version of this app screenshot for the tutorial, with arrows or numbers on each step", "skill": "annotation"}
+{"task": "Mark up the competitor's pricing page so I can show my team what they do differently", "skill": "annotation"}
+{"task": "Trim the first 12 seconds off intro.mp4 and cut everything after 3:40", "skill": "video-editing"}
+{"task": "Join these four clips into one video in order and export it for YouTube", "skill": "video-editing"}
+{"task": "Burn these captions from captions.srt into my talk recording", "skill": "video-editing"}
+{"task": "Turn my 16:9 podcast video into a vertical 9:16 short for TikTok", "skill": "video-editing"}
+{"task": "Add this b-roll clip as a picture-in-picture in the bottom right from 0:30 to 0:45", "skill": "video-editing"}
+{"task": "My video is 2 GB, compress it so I can email it without it looking terrible", "skill": "video-editing"}
+{"task": "Make a GIF from seconds 5 to 10 of demo.mov", "skill": "video-editing"}
+{"task": "Plan the edit for my 10 minute vlog: here are my clips and what I want to happen", "skill": "video-editing"}
+{"task": "Normalize the audio on my lecture recordings, some are way too quiet", "skill": "video-editing"}
+{"task": "Check that my exported video actually has audio and is 1080p before I upload it", "skill": "video-editing"}
+{"task": "I need a 3.3V regulator for a USB powered board, something I can hand solder", "skill": "pcb-design"}
+{"task": "Run DRC on my KiCad board and help me fix the clearance errors", "skill": "pcb-design"}
+{"task": "Is this footprint right for the TPS63020? Compare it to the datasheet land pattern", "skill": "pcb-design"}
+{"task": "Find an in-stock alternative to the CH340G on Mouser or LCSC", "skill": "pcb-design"}
+{"task": "Generate gerbers and a drill file for JLCPCB from my KiCad project", "skill": "pcb-design"}
+{"task": "What decoupling caps does the ESP32-S3 datasheet recommend and where should they go on the layout?", "skill": "pcb-design"}
+{"task": "Help me pick a USB-C connector and check the pinout before I lay out the PCB", "skill": "pcb-design"}
+{"task": "My ERC says power input not driven, what does that mean in KiCad?", "skill": "pcb-design"}
+{"task": "Make a BOM with Digikey part numbers and prices for 10 boards", "skill": "pcb-design"}
+{"task": "What are JLCPCB's minimum trace and space so I can set my design rules?", "skill": "pcb-design"}
+{"task": "My Gmail inbox has 8,000 emails, help me clean it up", "skill": "email-organization"}
+{"task": "Create a filter that labels all my receipts and skips the inbox", "skill": "email-organization"}
+{"task": "Triage my Proton Mail inbox and tell me what actually needs a reply", "skill": "email-organization"}
+{"task": "Set up folders and rules in Outlook so newsletters stop cluttering my inbox", "skill": "email-organization"}
+{"task": "Find all the promotional emails older than a month and archive them", "skill": "email-organization"}
+{"task": "Which senders send me the most email? I want to unsubscribe from the junk", "skill": "email-organization"}
+{"task": "Organize my school email into labels by class", "skill": "email-organization"}
+{"task": "Make a Gmail label for each of my clients and filter their mail into it", "skill": "email-organization"}
+{"task": "Go through my unread emails from this week and sort them by urgency", "skill": "email-organization"}
+{"task": "Build me a Sieve filter in Proton that moves GitHub notifications to a folder", "skill": "email-organization"}
+{"task": "Write an email to my landlord asking him to fix the heater this week", "skill": "writing"}
+{"task": "Proofread my cover letter and tighten it up", "skill": "writing"}
+{"task": "Turn these meeting notes into a one page summary for my boss", "skill": "writing"}
+{"task": "Rewrite this paragraph so it's clearer, it's too wordy", "skill": "writing"}
+{"task": "Draft a project proposal for a community garden, about two pages", "skill": "writing"}
+{"task": "Help me write instructions for my coworkers on how to submit expense reports", "skill": "writing"}
+{"task": "Make this announcement shorter, it's going out to the whole company", "skill": "writing"}
+{"task": "Edit my essay on the causes of World War I for structure and clarity", "skill": "writing"}
+{"task": "Write a polite email declining the job offer", "skill": "writing"}
+{"task": "Can you make this report sound less stiff and more direct?", "skill": "writing"}
+{"task": "Learn how I write from my sent emails so your drafts sound like me", "skill": "writing-voice"}
+{"task": "Write this reply in my voice, like I'd actually write it", "skill": "writing-voice"}
+{"task": "Update my writing style profile from my last month of sent mail", "skill": "writing-voice"}
+{"task": "Read a few of my Google Docs essays and figure out my writing style", "skill": "writing-voice"}
+{"task": "Draft a thank you note that sounds like me, not like a robot", "skill": "writing-voice"}
+{"task": "Does this draft sound like me? Compare it with how I usually write", "skill": "writing-voice"}
+{"task": "Pick up my style from my Proton sent folder and keep a short profile", "skill": "writing-voice"}
+{"task": "Make your emails match how I talk to clients", "skill": "writing-voice"}
+{"task": "I want every draft you write for me to use my usual sign-off and tone", "skill": "writing-voice"}
+{"task": "Study my blog posts and write the next one in the same style", "skill": "writing-voice"}
+{"task": "How long does it take to drive from Columbus to Cincinnati if I leave at 5pm?", "skill": "maps"}
+{"task": "What's the nearest pharmacy open right now near Evanston?", "skill": "maps"}
+{"task": "Give me transit directions from Union Station to the Art Institute", "skill": "maps"}
+{"task": "How far is it from my office to the airport by bike?", "skill": "maps"}
+{"task": "Find three coffee shops near downtown Madison with good ratings", "skill": "maps"}
+{"task": "Plan a route from Chicago to Milwaukee with a stop in Kenosha", "skill": "maps"}
+{"task": "Send me a Google Maps link for directions to the stadium", "skill": "maps"}
+{"task": "Is there a gas station along I-70 between Indianapolis and Dayton?", "skill": "maps"}
+{"task": "What time does the hardware store on Main Street close today?", "skill": "maps"}
+{"task": "Walking directions from my hotel to the convention center please", "skill": "maps"}
+{"task": "Geocode this list of 50 store addresses into latitude and longitude", "skill": "map-data"}
+{"task": "Give me a GeoJSON of all the bike racks in Evanston from OpenStreetMap", "skill": "map-data"}
+{"task": "Write an Overpass query for every hospital in Ohio", "skill": "map-data"}
+{"task": "Convert this CSV of coordinates into GeoJSON I can load in Leaflet", "skill": "map-data"}
+{"task": "Reverse geocode these GPS points from my hike into addresses", "skill": "map-data"}
+{"task": "Export all drinking water fountains in downtown Chicago as a CSV with coordinates", "skill": "map-data"}
+{"task": "My GeoJSON points show up in the ocean, what's wrong with it?", "skill": "map-data"}
+{"task": "Get the OSM data for every school in this bounding box and make a KML", "skill": "map-data"}
+{"task": "What are the coordinates of the Eiffel Tower to six decimals?", "skill": "map-data"}
+{"task": "Pull all the parks in Portland from OpenStreetMap with their names and areas", "skill": "map-data"}
+{"task": "What's Japan's life expectancy right now? Cite the source", "skill": "world-data"}
+{"task": "Compare GDP per capita for the US, Germany and China over the last 20 years", "skill": "world-data"}
+{"task": "Find the latest population of Kenya from the World Bank", "skill": "world-data"}
+{"task": "What does Our World in Data say about CO2 emissions per person in India?", "skill": "world-data"}
+{"task": "Get US county poverty rates from Data Commons for Franklin County, Ohio", "skill": "world-data"}
+{"task": "Make a chart of global child mortality since 1950 with sources", "skill": "world-data"}
+{"task": "Is it true that literacy in Brazil is over 90 percent? Check the numbers", "skill": "world-data"}
+{"task": "What are the UN population projections for Nigeria in 2050?", "skill": "world-data"}
+{"task": "Which country has the highest renewable electricity share? Use real data with dates", "skill": "world-data"}
+{"task": "Pull unemployment rates for the EU countries for my economics paper", "skill": "world-data"}
+{"task": "What's the integral of x e^x from 0 to 1?", "skill": "mathematics"}
+{"task": "Solve x^2 - 5x + 6 = 0 and check the answer", "skill": "mathematics"}
+{"task": "Check my homework: I got 42 for the derivative of 3x^2 + 6x at x = 6", "skill": "mathematics"}
+{"task": "Prove that the sum of the first n odd numbers is n squared", "skill": "mathematics"}
+{"task": "Graph y = sin(x)/x in Desmos and tell me where it crosses zero", "skill": "mathematics"}
+{"task": "What's the probability of getting at least two sixes in five dice rolls?", "skill": "mathematics"}
+{"task": "Find the eigenvalues of the matrix [[2,1],[1,2]]", "skill": "mathematics"}
+{"task": "A train leaves at 60 mph and another at 75 mph two hours later, when does the second catch up?", "skill": "mathematics"}
+{"task": "Simplify (x^3 - 8)/(x - 2) and say where it's undefined", "skill": "mathematics"}
+{"task": "Use WolframAlpha to check this limit: lim x->0 of (1 - cos x)/x^2", "skill": "mathematics"}
+{"task": "How many grams of NaOH do I need for 250 mL of 0.10 M solution?", "skill": "chemistry"}
+{"task": "What's the molar mass and SMILES of caffeine?", "skill": "chemistry"}
+{"task": "Is bleach mixed with vinegar dangerous? What does the SDS say?", "skill": "chemistry"}
+{"task": "Balance this equation: C3H8 + O2 -> CO2 + H2O", "skill": "chemistry"}
+{"task": "Find the GHS hazards for acetone and how to store it", "skill": "chemistry"}
+{"task": "What's the boiling point of ethanol and where's the source?", "skill": "chemistry"}
+{"task": "How do I dilute 12 M HCl to make 500 mL of 1 M?", "skill": "chemistry"}
+{"task": "Look up the CAS number for isopropyl alcohol", "skill": "chemistry"}
+{"task": "What PPE do I need for handling sodium hydroxide pellets?", "skill": "chemistry"}
+{"task": "Calculate the theoretical yield of aspirin from 2.0 g of salicylic acid", "skill": "chemistry"}
+{"task": "What does the p53 protein do in humans and how big is it?", "skill": "biology"}
+{"task": "What's the full taxonomy of the zebrafish?", "skill": "biology"}
+{"task": "BLAST this DNA sequence and tell me what organism it's from", "skill": "biology"}
+{"task": "Get the UniProt entry for human insulin and its sequence", "skill": "biology"}
+{"task": "Is there a crystal structure of hemoglobin in the PDB?", "skill": "biology"}
+{"task": "What domains does the EGFR protein have?", "skill": "biology"}
+{"task": "Find the NCBI Gene record for the mouse Pax6 gene", "skill": "biology"}
+{"task": "What's the scientific name and classification of the monarch butterfly?", "skill": "biology"}
+{"task": "Show me the AlphaFold prediction for P04637", "skill": "biology"}
+{"task": "Explain what the lac operon genes do in E. coli with database sources for my bio class", "skill": "biology"}
+{"task": "My DNA report lists rs429358 C, what is that?", "skill": "genetics"}
+{"task": "What does ClinVar say about the BRCA1 185delAG variant?", "skill": "genetics"}
+{"task": "Where is the CFTR gene located and what's the most common mutation?", "skill": "genetics"}
+{"task": "How common is the MTHFR C677T variant in the population?", "skill": "genetics"}
+{"task": "Look up rs1801133 in dbSNP", "skill": "genetics"}
+{"task": "What does 'conflicting classifications of pathogenicity' mean in ClinVar?", "skill": "genetics"}
+{"task": "Get the Ensembl coordinates for BRCA2 on GRCh38", "skill": "genetics"}
+{"task": "My 23andMe raw data has a variant in APOE, explain the records", "skill": "genetics"}
+{"task": "Is the Factor V Leiden variant pathogenic according to ClinVar and how sure are they?", "skill": "genetics"}
+{"task": "What genes are associated with hereditary hemochromatosis?", "skill": "genetics"}
+{"task": "Save a note in Obsidian about the spacing effect and link it to my study notes", "skill": "notes"}
+{"task": "Add these meeting notes to my Notion team page", "skill": "notes"}
+{"task": "File everything in my Obsidian inbox folder into the right subject folders", "skill": "notes"}
+{"task": "Find my note about the Roman Empire in my vault", "skill": "notes"}
+{"task": "Rename my Obsidian note 'Bio' to 'Biology 101' without breaking links", "skill": "notes"}
+{"task": "Create a daily note for today in Obsidian with my tasks", "skill": "notes"}
+{"task": "Capture this article's main points into my Notion reading list database", "skill": "notes"}
+{"task": "Tag all my Obsidian notes about chemistry with #chem", "skill": "notes"}
+{"task": "Link my new note on photosynthesis to related notes in my vault", "skill": "notes"}
+{"task": "Make a Notion page for my trip and add a checklist", "skill": "notes"}
+{"task": "Make a Google Sheet of my subscriptions with monthly cost and a total", "skill": "office-docs"}
+{"task": "Create a Google Doc with this outline and format the headings", "skill": "office-docs"}
+{"task": "Build a 5 slide Google Slides deck from these bullet points", "skill": "office-docs"}
+{"task": "Export my Google Doc report as a PDF", "skill": "office-docs"}
+{"task": "Fill in the Word template on OneDrive with my name and the project dates", "skill": "office-docs"}
+{"task": "Add a SUM formula and a chart to my Excel online budget", "skill": "office-docs"}
+{"task": "Download my Google Sheet as CSV", "skill": "office-docs"}
+{"task": "Make a PowerPoint online presentation with a title slide and three content slides", "skill": "office-docs"}
+{"task": "Format this Google Doc so all section titles are Heading 2", "skill": "office-docs"}
+{"task": "Put this table into a new Google Sheet and bold the header row", "skill": "office-docs"}
+{"task": "Make a view-only Proton Drive link for my Taxes 2025 folder", "skill": "proton"}
+{"task": "Find the email from my dentist in Proton Mail", "skill": "proton"}
+{"task": "What's on my Proton Calendar this week?", "skill": "proton"}
+{"task": "Add a dentist appointment to my Proton Calendar on Friday at 3pm", "skill": "proton"}
+{"task": "Which Proton Pass item has my Netflix login?", "skill": "proton"}
+{"task": "Share my resume PDF from Proton Drive with a link that expires in a week", "skill": "proton"}
+{"task": "Search my Proton Mail for the flight confirmation", "skill": "proton"}
+{"task": "Find the file called budget.xlsx in my Proton Drive", "skill": "proton"}
+{"task": "Summarize the last five emails in my Proton inbox", "skill": "proton"}
+{"task": "Do I have anything on my Proton calendar Thursday afternoon?", "skill": "proton"}
+{"task": "Save this palette as Harbor: navy 1F3A5F, sand F4EFE6, orange E07A2F", "skill": "design-library"}
+{"task": "What palettes do I have saved in my design library?", "skill": "design-library"}
+{"task": "Store this button component so I can reuse it in my next project", "skill": "design-library"}
+{"task": "Apply my usual house style to this new landing page", "skill": "design-library"}
+{"task": "Save the font pairing I used on my portfolio for later", "skill": "design-library"}
+{"task": "Pull up the brand kit for my bakery from my library", "skill": "design-library"}
+{"task": "Add this card layout to my design library with tags", "skill": "design-library"}
+{"task": "Check my saved palettes for text contrast", "skill": "design-library"}
+{"task": "Reuse my favorite color scheme for this slide deck", "skill": "design-library"}
+{"task": "Keep this icon set in my personal design folder", "skill": "design-library"}
+{"task": "Find design inspiration for a minimalist bakery website and make a mood board", "skill": "reference"}
+{"task": "Can I use this photo I found on Google Images on my business site?", "skill": "reference"}
+{"task": "Make my site look like Apple's, but legally", "skill": "reference"}
+{"task": "Collect references for a retro 70s poster style with links and licenses", "skill": "reference"}
+{"task": "Is this font free for commercial use?", "skill": "reference"}
+{"task": "I found a code snippet on GitHub, can I use it in my closed-source app?", "skill": "reference"}
+{"task": "Show me examples of good SaaS pricing page layouts I can learn from", "skill": "reference"}
+{"task": "What credit line do I need for this CC BY image from Wikimedia Commons?", "skill": "reference"}
+{"task": "Gather inspiration for a dark mode dashboard with sources", "skill": "reference"}
+{"task": "Can I use the Nike swoosh style in my gym logo?", "skill": "reference"}
+{"task": "Name and brand my home bakery in Ohio", "skill": "branding"}
+{"task": "Help me come up with a name for my app and check that it isn't trademarked", "skill": "branding"}
+{"task": "Create a brand kit for my landscaping business: colors, fonts and logo direction", "skill": "branding"}
+{"task": "Write a positioning line and tagline for my coffee roastery", "skill": "branding"}
+{"task": "Is the name Hearthward taken as a trademark?", "skill": "branding"}
+{"task": "I'm rebranding my consulting firm, give me a full identity", "skill": "branding"}
+{"task": "Pick brand colors and fonts for my podcast", "skill": "branding"}
+{"task": "Plan a logo for my nonprofit and write the usage rules", "skill": "branding"}
+{"task": "Check if my startup name is available as a .com and a trademark", "skill": "branding"}
+{"task": "Build a brand from scratch for my new clothing line", "skill": "branding"}
+{"task": "What's the weather like in Chicago today?", "skill": "none"}
+{"task": "Fix the failing unit test in src/parser.ts", "skill": "none"}
+{"task": "Tell me a joke about cats", "skill": "none"}
+{"task": "Rename all the .jpeg files in this folder to .jpg", "skill": "none"}
+{"task": "What year did the Berlin Wall fall?", "skill": "none"}
+{"task": "Set a timer for 10 minutes", "skill": "none"}
+{"task": "Refactor this Python function to use a list comprehension", "skill": "none"}
+{"task": "Explain how a for loop works in JavaScript", "skill": "none"}
+{"task": "Translate 'good morning' into Spanish", "skill": "none"}
+{"task": "Recommend a good sci-fi novel", "skill": "none"}
