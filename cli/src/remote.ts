@@ -11,7 +11,7 @@
  */
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -77,20 +77,55 @@ function hash(token: string): string {
 	return createHash("sha256").update(token).digest("hex");
 }
 
+/** Serialize changes to tokens.json across processes (create and revoke) with an exclusive lock file. */
+function withTokensLock<T>(fn: () => T): T {
+	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+	const lock = `${tokensFile()}.lock`;
+	const deadline = Date.now() + 10_000;
+	for (;;) {
+		try {
+			writeFileSync(lock, String(process.pid), { flag: "wx" });
+			break;
+		} catch {
+			let stale = false;
+			try {
+				stale = Date.now() - statSync(lock).mtimeMs > 30_000;
+			} catch {
+				/* gone */
+			}
+			if (stale) rmSync(lock, { force: true });
+			else if (Date.now() > deadline) throw new Error(`tokens.json is locked (${lock}).`);
+			else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+		}
+	}
+	try {
+		return fn();
+	} finally {
+		rmSync(lock, { force: true });
+	}
+}
+
 /** A new token for `name` with exactly `scopes`. The secret is returned once and never stored. */
 export function createToken(name: string, scopes: string[]): { record: TokenRecord; token: string } {
 	if (!/^[\w.-]{1,40}$/.test(name)) throw new Error("Token name: letters, digits, dot, dash or underscore, up to 40.");
 	if (/^[0-9a-f]{8}$/.test(name)) throw new Error("A token name can't look like a token id (8 hex characters).");
-	if (loadTokens().some((t) => t.name === name && !t.revokedAt)) throw new Error(`An active token is already named ${name}. Revoke it or pick another name.`);
+
 	if (scopes.length === 0) throw new Error(`Name at least one scope: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
-	for (const s of scopes) if (!SCOPES[s]) throw new Error(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
-	const token = `tkr_${randomBytes(32).toString("base64url")}`;
-	const record: TokenRecord = { id: randomUUID().slice(0, 8), name, scopes: [...new Set(scopes)], sha256: hash(token), createdAt: new Date().toISOString() };
-	saveTokens([...loadTokens(), record]);
-	return { record, token };
+	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) throw new Error(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
+	return withTokensLock(() => {
+		if (loadTokens().some((t) => t.name === name && !t.revokedAt)) throw new Error(`An active token is already named ${name}. Revoke it or pick another name.`);
+		const token = `tkr_${randomBytes(32).toString("base64url")}`;
+		const record: TokenRecord = { id: randomUUID().slice(0, 8), name, scopes: [...new Set(scopes)], sha256: hash(token), createdAt: new Date().toISOString() };
+		saveTokens([...loadTokens(), record]);
+		return { record, token };
+	});
 }
 
 export function revokeToken(idOrName: string): number {
+	return withTokensLock(() => revokeLocked(idOrName));
+}
+
+function revokeLocked(idOrName: string): number {
 	const tokens = loadTokens();
 	let n = 0;
 	for (const t of tokens) {
@@ -154,7 +189,7 @@ export function authenticate(header: string | undefined): TokenRecord | undefine
 }
 
 export function toolsFor(scopes: string[]): Set<string> {
-	return new Set(scopes.flatMap((s) => SCOPES[s]?.tools ?? []));
+	return new Set(scopes.flatMap((s) => (Object.hasOwn(SCOPES, s) ? SCOPES[s].tools : [])));
 }
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -170,6 +205,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 	if (!LOOPBACK.has(options.host)) throw new Error(`tabkyra serve binds to loopback only (got ${options.host}). Use tabkyra tunnel to reach it from another device over TLS.`);
 	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string; lastSeen: number }>();
 	const IDLE_MS = 30 * 60_000;
+	const pending = new Map<string, number>();
 	const MAX_SESSIONS_PER_TOKEN = 8;
 	// Close sessions that went quiet or whose token was revoked; a client that vanished without
 	// a DELETE would otherwise hold a server and a tab group forever.
@@ -237,9 +273,16 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		}
 		// Only an initialize request creates a server; anything else would leak one per request.
 		if (!isInitializeRequest(body)) return deny(res, 400, "Start a session with an initialize request.");
-		if ([...sessions.values()].filter((s) => s.tokenId === token.id).length >= MAX_SESSIONS_PER_TOKEN) {
-			return deny(res, 429, `This token already has ${MAX_SESSIONS_PER_TOKEN} open sessions. Close one first.`);
-		}
+		// Count sessions being set up too, so parallel initializes can't pass the cap together.
+		const open = [...sessions.values()].filter((s) => s.tokenId === token.id).length + (pending.get(token.id) ?? 0);
+		if (open >= MAX_SESSIONS_PER_TOKEN) return deny(res, 429, `This token already has ${MAX_SESSIONS_PER_TOKEN} open sessions. Close one first.`);
+		pending.set(token.id, (pending.get(token.id) ?? 0) + 1);
+		let reserved = true;
+		const release = () => {
+			if (!reserved) return;
+			reserved = false;
+			pending.set(token.id, Math.max(0, (pending.get(token.id) ?? 1) - 1));
+		};
 		const allowed = toolsFor(token.scopes);
 		// Each session gets its own browser session (its own tab group), even under one token.
 		const { server, client } = createMcpServer({
@@ -252,14 +295,20 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			sessionIdGenerator: () => randomUUID(),
 			onsessioninitialized: (id) => {
 				sessions.set(id, { transport, tokenId: token.id, lastSeen: Date.now() });
+				release();
 			},
 		});
 		transport.onclose = () => {
 			if (transport.sessionId) sessions.delete(transport.sessionId);
 			client.close?.();
 		};
-		await server.connect(transport);
-		await transport.handleRequest(req, res, body);
+		try {
+			await server.connect(transport);
+			await transport.handleRequest(req, res, body);
+		} finally {
+			// Initialization failed or never happened: give the slot back.
+			release();
+		}
 		recordUse(token.id);
 	}
 

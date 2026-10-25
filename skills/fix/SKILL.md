@@ -31,7 +31,8 @@ For a small lesson from your own work, use `rsi` instead.
 3. **Pick the reference run.** Use, in this order of preference:
    - a recording the user made with Record (the exact clicks and pages);
    - the conversation where the user's corrections reached a good result;
-   - a run you do yourself now, if you are the stronger model.
+   - a run you do yourself now, if you are the stronger model, on a test page or as an
+     unsent draft: never a send, post, purchase, booking or deletion.
 4. **Find the cause.** Compare the failed run with the reference, step by step. Name the
    first step where they part ways. Typical causes: a choice the model couldn't make, a step
    with two actions, a missing example, a tool call with the wrong parameter, too much text.
@@ -42,7 +43,7 @@ For a small lesson from your own work, use `rsi` instead.
    `tabkyra skill print <name> --raw`. Write for the failing tier:
    - small: one action per step, exact calls with real parameters, a table instead of a
      judgment, one worked example copied from the reference run, nothing optional;
-   - mid or frontier: fix the cause from step 3 and add the reference as an example.
+   - mid or frontier: fix the cause from step 4 and add the reference as an example.
    If the original works well for large models and the fix would weaken it, make a new
    skill `<name>-lite` for the small tier instead of editing the original.
 7. **Keep it short.** The skill must stay under 150 lines. Cut words before adding
@@ -52,7 +53,7 @@ For a small lesson from your own work, use `rsi` instead.
 9. **Prove it on the failing model.** Run the task again with the model that failed,
    loading the draft, but only in a way that changes nothing: a test page, a draft that
    isn't sent, a form that isn't submitted. Never repeat a send, post, purchase, booking or
-   deletion to test a fix. Compare the result with "good" from step 1. If it falls
+   deletion to test a fix. Compare the result with "good" from step 2. If it falls
    short, go back to step 4 with the new run. After three failed tries, stop here: report
    which step still fails, and don't apply, keep or submit the draft. The rest of the
    steps are only for a draft that passed.

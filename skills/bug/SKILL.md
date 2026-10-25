@@ -27,7 +27,8 @@ Not for problems with a website itself, or with the user's own code.
    extension version, CLI version, browser, OS, and each doctor line that failed. Copy the
    exact error message from the tool result or terminal.
 4. **Scrub.** Remove from everything you will file: emails, names, phone numbers,
-   addresses, account and student IDs, page URLs past the domain, file paths under the
+   addresses, account and student IDs, page addresses (a signed-in site becomes a kind,
+   such as `[signed-in site: webmail]`; keep a domain only for public sites), file paths under the
    home folder, and anything that looks like a key or token. Replace each with a label in
    square brackets, such as `[email]`. Never include page text from the user's signed-in
    sites.

@@ -232,10 +232,31 @@ test("tailscale serve is refused while Funnel is on for 443; the cloudflare URL 
 	const cf = join(root, "bin-cf");
 	mkdirSync(cf, { recursive: true });
 	symlinkSync(process.execPath, join(cf, "node"));
-	writeFileSync(join(cf, "cloudflared"), `#!/bin/sh\necho 'failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": EOF'\nsleep 30\n`);
+	writeFileSync(join(cf, "cloudflared"), `#!/bin/sh\necho 'failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": EOF'\nexec /bin/sleep 30\n`);
 	chmodSync(join(cf, "cloudflared"), 0o755);
 	const res = cliRun(["tunnel", "cloudflare"], { PATH: cf, TABKYRA_TUNNEL_TIMEOUT_MS: "1500" });
 	assert.equal(res.code, 1, res.out);
 	assert.match(res.out, /printed no URL in time, so it was stopped/);
 	assert.doesNotMatch(res.out, /reachable at https:\/\/api\./);
+	// The live child was stopped, and nothing is left for --off to find.
+	const pidFile = join(env.HOME, ".config", "tabkyra", "cloudflared.pid");
+	assert.throws(() => readFileSync(pidFile, "utf8"), "the pid file is removed");
+});
+
+test("scopes named like Object.prototype members are refused", () => {
+	for (const scope of ["constructor", "toString", "__proto__"]) assert.equal(cliRun(["token", "create", `p-${scope.replace(/_/g, "")}`, "--scope", scope]).code, 2, scope);
+});
+
+test("tailscale changes nothing when serve status can't be read", () => {
+	const bin = join(root, "bin-status-fail");
+	mkdirSync(bin, { recursive: true });
+	writeFileSync(
+		join(bin, "tailscale"),
+		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.tail1234.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo 'warning: something' >&2; exit 1; fi\necho "$@" >> ${join(root, "status-fail.log")}\n`,
+	);
+	chmodSync(join(bin, "tailscale"), 0o755);
+	const r = cliRun(["tunnel", "tailscale"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /Couldn't read tailscale serve status/);
+	assert.throws(() => readFileSync(join(root, "status-fail.log"), "utf8"), "serve was never changed");
 });

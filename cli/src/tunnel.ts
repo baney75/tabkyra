@@ -52,15 +52,21 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 		/* reported below */
 	}
 	if (!dns) return { ok: false, message: "Tailscale isn't connected. Run tailscale up, then try again." };
-	const status443 = (() => {
-		try {
-			return JSON.parse(run(bin, ["serve", "status", "--json"]).out || "{}") as { AllowFunnel?: Record<string, boolean> };
-		} catch {
-			return undefined;
-		}
-	})();
-	if (!options.public && status443 && Object.entries(status443.AllowFunnel ?? {}).some(([hostPort, on]) => on && hostPort.endsWith(":443"))) {
-		return { ok: false, message: "Funnel is on for port 443 on this machine, so /tabkyra would be public. Run tabkyra tunnel tailscale --public --off (or tailscale funnel reset) first." };
+	// Read the current serve config first and fail closed: changing serve without knowing
+	// whether Funnel is on for :443 could make /tabkyra public by surprise.
+	const statusRun = spawnSync(bin, ["serve", "status", "--json"], { encoding: "utf8", timeout: 30_000 });
+	let status443: { AllowFunnel?: Record<string, boolean> } | undefined;
+	try {
+		if (statusRun.status === 0) status443 = JSON.parse(statusRun.stdout || "{}");
+	} catch {
+		status443 = undefined;
+	}
+	if (!status443 || typeof status443 !== "object") return { ok: false, message: "Couldn't read tailscale serve status, so nothing was changed." };
+	if (!options.public && Object.entries(status443.AllowFunnel ?? {}).some(([hostPort, on]) => on && hostPort.endsWith(":443"))) {
+		return {
+			ok: false,
+			message: "Funnel is on for port 443 on this machine, so /tabkyra would be public, not tailnet-only. Nothing was changed. Use --public if that's what you want, or turn Funnel off for port 443 in Tailscale first.",
+		};
 	}
 	if (options.public) {
 		// Funnel opens a whole host:port to the internet, not one path: refuse if anything else is served there.
@@ -95,8 +101,12 @@ function ourCloudflared(): number | "unknown" | undefined {
 	if (!existsSync(cloudflaredPidFile())) return undefined;
 	const pid = Number(readFileSync(cloudflaredPidFile(), "utf8"));
 	if (!Number.isInteger(pid) || pid <= 1) return undefined;
-	const check = run("ps", ["-p", String(pid), "-o", "command="]);
-	if (process.platform === "win32" || (check.code !== 0 && check.out === "" && !existsSync("/bin/ps"))) return "unknown";
+	if (process.platform === "win32") return "unknown";
+	const ps = existsSync("/bin/ps") ? "/bin/ps" : "ps";
+	const raw = spawnSync(ps, ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 10_000 });
+	// Couldn't run ps at all: the process can't be checked, which is not the same as "not ours".
+	if (raw.error || raw.status === null) return "unknown";
+	const check = { code: raw.status, out: `${raw.stdout ?? ""}`.trim() };
 	return /cloudflared/.test(check.out) && /tunnel/.test(check.out) && /--url http:\/\/127\.0\.0\.1:/.test(check.out) ? pid : undefined;
 }
 

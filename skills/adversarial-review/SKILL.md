@@ -21,8 +21,10 @@ and its evidence, looks for how it fails. One real finding blocks the change.
    must be a model it allows (a local model or one the user listed). If none is strong
    enough, stop and tell the user. Don't send the brief to a cloud model.
 2. **Pick the reviewer.** A model at least as capable as the one that wrote the change,
-   ideally from another family. Run it through the harness, for example
-   `claude -p --model opus` or `codex exec -m gpt-6.1-sol -c daybreak=false`.
+   ideally from another family. Run it with no tools and the brief on standard input, so
+   the data under review can't make it act: for example
+   `claude -p --model opus --tools "" --strict-mcp-config < brief.md` or
+   `codex exec -m gpt-6.1-sol -c daybreak=false -s read-only --disable shell_tool - < brief.md`.
    If the strongest model available is the author itself, say so and run it in a fresh
    session with no access to the author's reasoning.
 3. **Build the brief.** Include only: the claim in one sentence, the change (diff or full
