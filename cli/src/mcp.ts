@@ -7,7 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { BridgeClient, BridgeRpcError, NOT_CONNECTED } from "./client.ts";
+import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
 import { VERSION } from "./version.ts";
 
@@ -69,14 +69,10 @@ function errorMessage(err: unknown): string {
 }
 
 /** Socket-level failures all mean the same thing to the agent: no browser to talk to. */
-function isNotConnected(message: string): boolean {
-	return (
-		message === NOT_CONNECTED ||
-		message === "Bridge connection closed" ||
-		message === "Not connected" ||
-		message === "Bridge unavailable" ||
-		/ECONNREFUSED|ENOENT|EPIPE|ECONNRESET/.test(message)
-	);
+function isNotConnected(err: unknown): boolean {
+	if (err instanceof BridgeRpcError) return false;
+	const message = err instanceof Error ? err.message : String(err);
+	return message === "Bridge unavailable" || message.startsWith("The bridge at ") || isConnectionError(err);
 }
 
 function harnessName(): string {
@@ -177,8 +173,7 @@ export async function runMcpServer(): Promise<void> {
 	}
 
 	function errorResult(err: unknown): { content: Content[]; isError: true } {
-		const message = errorMessage(err);
-		return { content: text(isNotConnected(message) ? NOT_CONNECTED : message), isError: true };
+		return { content: text(isNotConnected(err) ? NOT_CONNECTED : errorMessage(err)), isError: true };
 	}
 
 	async function call(method: string, params: Record<string, unknown> = {}): Promise<{ content: Content[]; isError?: boolean }> {
@@ -205,16 +200,17 @@ export async function runMcpServer(): Promise<void> {
 			description:
 				"Check the browser connection before you start or after an error. Reports whether the Tabkyra extension is connected, " +
 				'the site permission mode ("ask": new sites need the user\'s approval; "allow_all": any site), the sites already allowed, ' +
-				"your tab group's name and the tabs in it. Never fails: when not connected it says how the user can fix it.",
+				"your tab group's name and the tabs in it. Never fails: when not connected it says how the user can fix it. Example: {}",
 			inputSchema: {},
 		},
 		async () => {
 			try {
-				const result = (await client.call("status", {}, 10000)) as Record<string, unknown>;
+				const result = (await client.call("status", {}, 10000, { retry: false })) as Record<string, unknown>;
 				return { content: text({ connected: true, ...result }) };
 			} catch (err) {
-				const message = errorMessage(err);
-				return { content: text({ connected: false, message: isNotConnected(message) ? NOT_CONNECTED : message }) };
+				if (isNotConnected(err)) return { content: text({ connected: false, message: NOT_CONNECTED }) };
+				// Reached the extension, but it refused or failed (e.g. the bridge is off in Settings).
+				return { content: text({ connected: true, error: errorMessage(err) }) };
 			}
 		},
 	);
@@ -224,7 +220,7 @@ export async function runMcpServer(): Promise<void> {
 			title: "List my tabs",
 			description:
 				"List the tabs in your own tab group: tabId, url, title, and which one is current. These are background tabs, separate " +
-				"from the user's; you cannot see the user's other tabs. A new session has none, and navigate opens the first.",
+				"from the user's; you cannot see the user's other tabs. A new session has none, and navigate opens the first. Example: {}",
 			inputSchema: {},
 		},
 		() => call("tabs.context"),
@@ -265,7 +261,7 @@ export async function runMcpServer(): Promise<void> {
 			title: "Show a tab to the user",
 			description:
 				"Bring one of your tabs in front of the user. This is the only tool that changes what the user sees. Use it only " +
-				"when they asked to see the page or must act themselves (sign in, solve a captcha, approve a payment).",
+				"when they asked to see the page or must act themselves (sign in, solve a captcha, approve a payment). Example: {\"tabId\":123}",
 			inputSchema: { tabId },
 		},
 		(args) => call("tabs.show", args),
@@ -358,7 +354,8 @@ export async function runMcpServer(): Promise<void> {
 			title: "Screenshot",
 			description:
 				"JPEG of your current tab's viewport. It works while the tab is hidden. Use it for layout, charts, canvas apps and " +
-				"visual checks. To read text, read_page and get_page_text are faster and cheaper. Pixel x/y in the image can be passed straight to click, drag, hover and scroll.",
+				"visual checks. To read text, read_page and get_page_text are faster and cheaper. Pixel x/y in the image can be passed straight to click, drag, hover and scroll. " +
+				'Example: {} or {"fullPage":true}',
 			inputSchema: {
 				tabId,
 				fullPage: z.boolean().optional().describe("Capture the whole page, not just the viewport"),
@@ -404,7 +401,7 @@ export async function runMcpServer(): Promise<void> {
 				'Click an element with real mouse events. Give a ref (best), a selector, or x/y from your latest screenshot. Example: {"ref":"e12"}',
 			inputSchema: {
 				...targetSchema,
-				button: z.enum(["left", "right", "middle"]).optional(),
+				button: z.enum(["left", "right", "middle"]).optional().describe('Mouse button (default "left")'),
 				clickCount: z.number().int().optional().describe("2 for a double click"),
 			},
 		},
@@ -455,7 +452,7 @@ export async function runMcpServer(): Promise<void> {
 				tabId,
 				dx: z.number().optional().describe("Horizontal pixels"),
 				dy: z.number().optional().describe("Vertical pixels; positive scrolls down"),
-				to: z.enum(["top", "bottom"]).optional(),
+				to: z.enum(["top", "bottom"]).optional().describe("Jump to the top or bottom of the page"),
 				ref,
 				selector,
 			},
@@ -469,7 +466,11 @@ export async function runMcpServer(): Promise<void> {
 			description:
 				"Press, move and release the mouse between two points in your latest screenshot's pixels. Use it to draw shapes, move items or connect " +
 				'arrows. Example: {"from":{"x":200,"y":200},"to":{"x":360,"y":300}}',
-			inputSchema: { tabId, from: z.object({ x: z.number(), y: z.number() }), to: z.object({ x: z.number(), y: z.number() }) },
+			inputSchema: {
+				tabId,
+				from: z.object({ x: z.number(), y: z.number() }).describe("Start point, in pixels of your latest screenshot"),
+				to: z.object({ x: z.number(), y: z.number() }).describe("End point, in pixels of your latest screenshot"),
+			},
 		},
 		(args) => call("drag", args),
 	);
@@ -517,7 +518,11 @@ export async function runMcpServer(): Promise<void> {
 				"Run JavaScript in the page and return its JSON value (the last expression, or a returned value). world \"user\" (default) " +
 				'is an isolated world with DOM access; "main" sees the page\'s own globals. Prefer read_page and the input tools; use this for data ' +
 				'the page does not show. Example: {"code":"document.querySelectorAll(\'tr\').length"}',
-			inputSchema: { code: z.string().describe("JavaScript source"), tabId, world: z.enum(["user", "main"]).optional() },
+			inputSchema: {
+				code: z.string().describe("JavaScript source"),
+				tabId,
+				world: z.enum(["user", "main"]).optional().describe('"user" (default): isolated, DOM only; "main": the page\'s own globals'),
+			},
 		},
 		(args) => call("evaluate", args),
 	);
@@ -547,10 +552,10 @@ export async function runMcpServer(): Promise<void> {
 				'Example: {"onlyErrors":true}',
 			inputSchema: {
 				tabId,
-				onlyErrors: z.boolean().optional(),
+				onlyErrors: z.boolean().optional().describe("Only errors and uncaught exceptions"),
 				pattern: z.string().optional().describe("Regex to filter messages"),
 				clear: z.boolean().optional().describe("Clear after reading"),
-				limit: z.number().int().optional(),
+				limit: z.number().int().optional().describe("Most recent messages to return (default 100)"),
 			},
 		},
 		(args) => call("console.read", args),
@@ -566,7 +571,7 @@ export async function runMcpServer(): Promise<void> {
 				tabId,
 				urlPattern: z.string().optional().describe("Substring or regex the URL must match"),
 				clear: z.boolean().optional().describe("Clear after reading"),
-				limit: z.number().int().optional(),
+				limit: z.number().int().optional().describe("Most recent requests to return (default 100)"),
 			},
 		},
 		(args) => call("network.read", args),

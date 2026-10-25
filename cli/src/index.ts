@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { BridgeClient, listSockets, NOT_CONNECTED } from "./client.ts";
+import { BridgeClient, BridgeRpcError, listSockets, NOT_CONNECTED } from "./client.ts";
 import { runDoctor } from "./doctor.ts";
 import { runNativeHost } from "./host.ts";
 import { hostStatus, install, isInstalled } from "./install.ts";
@@ -24,8 +24,9 @@ function help(): string {
 		section("Agents"),
 		cmd("mcp", "", "MCP server on stdio (what Claude Code, Codex, OpenCode run)"),
 		cmd("pi-extension", "", "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts"),
-		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- tabkyra mcp`,
-		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- tabkyra mcp`,
+		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
+		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
+		`  ${c.dim("(tabkyra setup adds these for you.)")}`,
 		section("Sites"),
 		cmd("allow", "<host>", "Let agents open a site (subdomains included)"),
 		cmd("ask", "", "Agents ask before opening a site not yet allowed (default)"),
@@ -45,6 +46,21 @@ function help(): string {
 const NOT_CONNECTED_HERE =
 	"Tabkyra isn't connected. Open Helium or Chrome with the Tabkyra extension loaded, or run `tabkyra doctor` to see why.";
 const forPeople = (message: string) => (message === NOT_CONNECTED ? NOT_CONNECTED_HERE : message);
+
+/** "https://GitHub.com/x" or "github.com" -> "github.com"; undefined for anything that isn't a host. */
+function siteHost(value: string | undefined): string | undefined {
+	if (!value || value.startsWith("-")) return undefined;
+	let host = value.trim().toLowerCase();
+	if (/^[a-z][a-z0-9+.-]*:\/\//.test(host)) {
+		try {
+			host = new URL(host).hostname;
+		} catch {
+			return undefined;
+		}
+	}
+	host = host.replace(/\/.*$/, "").replace(/:\d+$/, "");
+	return /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/.test(host) ? host : undefined;
+}
 
 /** Errors that end a command: say what went wrong and the next step. */
 class UsageError extends Error {}
@@ -97,15 +113,17 @@ async function status(json: boolean): Promise<number> {
 			try {
 				await client.connect(path);
 				if (!client.extensionConnected) continue;
-				const info = (await client.call("status", {}, 5000)) as {
+				const info = (await client.call("status", {}, 5000, { retry: false })) as {
 					extensionVersion: string;
 					permissionMode: string;
 					allowedHosts: string[];
 				};
-				Object.assign(report, { connected: true, ...info });
+				Object.assign(report, { connected: true, ...info, message: undefined });
 				break;
-			} catch {
-				/* try the next socket */
+			} catch (err) {
+				// Keep the reason; a later socket may still answer.
+				report.message =
+					err instanceof BridgeRpcError ? `The extension answered with an error: ${err.rpc.code}: ${err.rpc.message}` : err instanceof Error ? err.message : String(err);
 			} finally {
 				client.close();
 			}
@@ -158,9 +176,12 @@ async function main(): Promise<void> {
 			process.exitCode = await runDoctor({ json: flag("--json") });
 			return;
 		}
-		case "status":
+		case "status": {
+			const unknown = argv.slice(1).find((a) => a !== "--json");
+			if (unknown) throw new UsageError(`Unknown option "${unknown}". Usage: tabkyra status [--json]`);
 			process.exitCode = await status(flag("--json"));
 			return;
+		}
 		case "host":
 			runNativeHost();
 			return;
@@ -181,10 +202,11 @@ async function main(): Promise<void> {
 			return;
 		}
 		case "allow": {
-			const host = argv[1];
-			if (!host || host.startsWith("-")) throw new UsageError("Which site? Example: tabkyra allow github.com");
-			await withBridge("allow", (client) => client.call("permission.allow", { host }, 5000));
-			console.log(`${sym.ok} Agents may open ${c.bold(host)} and its subdomains.`);
+			const host = siteHost(argv[1]);
+			if (!host) throw new UsageError("Which site? Give a host name, for example: tabkyra allow github.com");
+			const result = await withBridge("allow", (client) => client.call("permission.allow", { host }, 5000));
+			const stored = (result as { allowed?: string }).allowed ?? host;
+			console.log(`${sym.ok} Agents may open ${c.bold(stored)} and its subdomains.`);
 			return;
 		}
 		case "allow-all":
@@ -212,7 +234,7 @@ async function main(): Promise<void> {
 			const dist = extensionDir();
 			const missing = EXTENSION_FILES.filter((f) => !existsSync(join(dist, f)));
 			if (existsSync(dist) && missing.length > 0) {
-				throw new UsageError(`dist-chrome is incomplete (missing ${missing.join(", ")}). Run \`npm run build\` in the repo first.`);
+				throw new Error(`dist-chrome is incomplete (missing ${missing.join(", ")}). Run \`npm run build\` in the repo first.`);
 			}
 			await withBridge("reload", (client) => client.call("bridge.reload", {}, 5000));
 			console.log(`${sym.ok} Reloading the extension. It reconnects in a few seconds.`);

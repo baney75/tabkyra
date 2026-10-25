@@ -46,12 +46,10 @@ test("lists every tool with a description and documented parameters", async () =
 		assert.match(tool.name, /^[a-z]+(_[a-z]+)*$/, `${tool.name} is not snake_case`);
 		assert.ok(tool.description && tool.description.length >= 40, `${tool.name} has a thin description`);
 		for (const [param, schema] of Object.entries(tool.inputSchema.properties ?? {})) {
-			if (["button", "to", "world", "onlyErrors", "limit", "from"].includes(param)) continue;
 			assert.ok(schema.description, `${tool.name}.${param} has no description`);
 		}
+		assert.match(tool.description, /Example:/, `${tool.name} shows no example`);
 	}
-	const withExample = tools.filter((t) => t.description.includes("Example:")).length;
-	assert.ok(withExample >= tools.length - 4, `only ${withExample} of ${tools.length} tools show an example`);
 });
 
 test("instructions state the safety rules", () => {

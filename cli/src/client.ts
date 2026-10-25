@@ -52,7 +52,7 @@ export function listSockets(): string[] {
 		.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
 }
 
-function isConnectionError(err: unknown): boolean {
+export function isConnectionError(err: unknown): boolean {
 	const message = err instanceof Error ? err.message : String(err);
 	const code = (err as { code?: string } | undefined)?.code;
 	return (
@@ -182,11 +182,18 @@ export class BridgeClient {
 	 * service worker restart, host respawn). The session key is stable, so the retry
 	 * lands on the same tabs. RPC errors from the extension are never retried.
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
+	async call<T = unknown>(
+		method: string,
+		params: Record<string, unknown> = {},
+		timeoutMs?: number,
+		options: { retry?: boolean } = {},
+	): Promise<T> {
 		try {
 			return await this.callOnce<T>(method, params, timeoutMs);
 		} catch (err) {
 			if (err instanceof BridgeRpcError || !isConnectionError(err)) throw err;
+			// Status checks report a drop as it is instead of waiting for a reconnect.
+			if (options.retry === false) throw new Error(NOT_CONNECTED);
 			// Nothing was ever reachable: say so now instead of polling for 40 s.
 			if (!this.everConnected) throw new Error(NOT_CONNECTED);
 			this.close();

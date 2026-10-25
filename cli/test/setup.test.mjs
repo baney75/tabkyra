@@ -186,6 +186,16 @@ test("setup and doctor reject unknown flags and bad timeouts", () => {
 	assert.equal(run(["setup", "--timeout", "0"]).code, 2);
 });
 
+test("allow and status validate their input before touching the bridge", () => {
+	assert.equal(run(["allow", "not a host!"]).code, 2);
+	assert.equal(run(["allow"]).code, 2);
+	assert.equal(run(["status", "--jsno"]).code, 2);
+	// A URL is reduced to its host; with no browser the command then fails with the next step.
+	const { code, out } = run(["allow", "https://GitHub.com/baney75"]);
+	assert.equal(code, 1);
+	assert.match(out, /isn't connected/);
+});
+
 test("color only when asked for, and NO_COLOR wins", () => {
 	// biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escapes
 	const ansi = /\x1b\[/;
