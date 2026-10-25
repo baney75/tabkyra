@@ -115,7 +115,41 @@ function localFile(name: string): string {
 	return join(localSkillDir(name), "SKILL.md");
 }
 
-const headings = (t: string) => [...t.matchAll(/^## (.+)$/gm)].map((m) => m[1].trim());
+/** Sections by `## ` heading, ignoring headings inside code fences. */
+function sections(text: string): Map<string, string[]> {
+	const out = new Map<string, string[]>();
+	let current: string[] | undefined;
+	let fence = "";
+	for (const line of text.split("\n")) {
+		const mark = /^ {0,3}(```+|~~~+)/.exec(line)?.[1];
+		if (mark && !fence) fence = mark;
+		else if (mark && fence && mark[0] === fence[0] && mark.length >= fence.length) fence = "";
+		const heading = !fence && !mark ? /^## (.+)$/.exec(line)?.[1]?.trim() : undefined;
+		if (heading !== undefined) {
+			current = [];
+			out.set(heading, current);
+		} else current?.push(line);
+	}
+	return out;
+}
+
+const headings = (t: string) => [...sections(t).keys()];
+
+/** Sections whose every line an edit must keep: safety rules, stop conditions, purpose checks. */
+const PROTECTED_SECTION = /safety|rules|done when|ethics|purpose check|limits|never/i;
+
+/** Lines a draft removed from a protected section of the current text. */
+function droppedProtectedLines(current: string, draft: string): string[] {
+	const before = sections(current);
+	const after = sections(draft);
+	const dropped: string[] = [];
+	for (const [heading, lines] of before) {
+		if (!PROTECTED_SECTION.test(heading)) continue;
+		const kept = new Set((after.get(heading) ?? []).map((l) => l.trim()));
+		for (const line of lines) if (line.trim() && !kept.has(line.trim())) dropped.push(`${heading}: ${line.trim()}`);
+	}
+	return dropped;
+}
 
 /** Why a local copy can't be used, or its text. */
 function localText(name: string): { text?: string; problem?: string } {
@@ -130,6 +164,8 @@ function localText(name: string): { text?: string; problem?: string } {
 	const bundled = SKILLS.get(name);
 	const missing = bundled === undefined ? [] : headings(bundled).filter((h) => !headings(text).includes(h));
 	if (missing.length) return { problem: `${file} drops the section "${missing[0]}"` };
+	const dropped = bundled === undefined ? [] : droppedProtectedLines(bundled, text);
+	if (dropped.length) return { problem: `${file} removes a protected line (${dropped[0].slice(0, 80)})` };
 	return { text };
 }
 
@@ -202,7 +238,7 @@ export function agentsSnippet(name = "tabkyra"): string {
 
 // --- Install -----------------------------------------------------------------------------
 
-export type InstallState = "written" | "current" | "kept" | "skipped";
+export type InstallState = "written" | "current" | "kept" | "linked" | "skipped";
 
 export interface InstallResult {
 	target: SkillTarget;
@@ -242,7 +278,7 @@ export function installSkills(options: { force: boolean; all: boolean; only?: st
 				continue;
 			}
 			if (isLink(file) || isLink(dirname(file))) {
-				results.push({ target, skill, file, state: "kept" });
+				results.push({ target, skill, file, state: "linked" });
 				continue;
 			}
 			const wanted = skillFile(skill);
@@ -321,6 +357,10 @@ export function planApply(path: string): ApplyPlan {
 	if (current !== undefined) {
 		const missing = headings(current).filter((h) => !headings(text).includes(h));
 		if (missing.length) throw new SkillError(`The edit drops section${missing.length > 1 ? "s" : ""} ${missing.map((h) => `"${h}"`).join(", ")}. Edits add or change; they don't remove sections.`);
+		const dropped = droppedProtectedLines(current, text);
+		if (dropped.length) {
+			throw new SkillError(`The edit removes lines from a protected section (safety, rules, done when). Add to those sections; don't take away:\n${dropped.map((d) => `  ${d}`).join("\n")}`);
+		}
 	}
 	return { name, text, current, diff: lineDiff(current ?? "", text) };
 }
@@ -333,8 +373,14 @@ export function applySkill(plan: ApplyPlan): { backup?: string; results: Install
 		mkdirSync(dirname(backup), { recursive: true });
 		writeFileSync(backup, plan.current);
 	}
+	for (const p of [configDir(), localSkillsDir(), localSkillDir(plan.name), localFile(plan.name)]) {
+		if (isLink(p)) throw new SkillError(`${p} is a symbolic link; Tabkyra won't write through it. Remove it by hand.`);
+	}
 	mkdirSync(localSkillDir(plan.name), { recursive: true });
-	writeFileSync(localFile(plan.name), plan.text);
+	// Temp file + rename replaces the path itself, never a file a link points at.
+	const tmp = `${localFile(plan.name)}.${process.pid}.tmp`;
+	writeFileSync(tmp, plan.text, { flag: "wx" });
+	renameSync(tmp, localFile(plan.name));
 	const index = readIndex();
 	const bundled = SKILLS.get(plan.name);
 	index[plan.name] = { baseSha256: bundled === undefined ? null : sha256(bundled), appliedAt: new Date().toISOString() };
@@ -384,6 +430,9 @@ function printInstall(results: InstallResult[]): void {
 		if (changed.length) console.log(`${sym.ok} ${target.name.padEnd(12)} wrote ${changed.join(", ")} ${c.dim(target.dir)}`);
 		if (current.length) console.log(`${sym.ok} ${target.name.padEnd(12)} current ${current.join(", ")}`);
 		for (const r of mine.filter((r) => r.backup)) console.log(`${sym.dot} ${target.name.padEnd(12)} replaced ${r.file}; the old file is in ${c.dim(r.backup ?? "")}`);
+		for (const r of mine.filter((r) => r.state === "linked")) {
+			console.log(`${sym.warn} ${target.name.padEnd(12)} left alone: ${c.dim(r.file)} is a symbolic link, and Tabkyra won't write through one. Replace the link by hand to install it.`);
+		}
 		for (const r of mine.filter((r) => r.state === "kept")) {
 			console.log(`${sym.warn} ${target.name.padEnd(12)} left alone: ${c.dim(r.file)} is not ours ${c.dim(`(tabkyra skill install ${r.skill} --force replaces it)`)}`);
 		}
@@ -436,7 +485,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: { force
 		console.log(`${sym.ok} Applied your edit of ${plan.name}.${backup ? ` Backup: ${backup}` : ""}`);
 		printInstall(results);
 		console.log(`${sym.arrow} Undo: tabkyra skill revert ${plan.name}`);
-		return results.some((r) => r.state === "kept") ? 1 : 0;
+		return results.some((r) => r.state === "kept" || r.state === "linked") ? 1 : 0;
 	}
 	if (sub === "revert") {
 		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill revert <name>");
@@ -465,5 +514,5 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: { force
 		console.log(`${sym.fail} No Claude Code, Codex or OpenCode found.`);
 		return 1;
 	}
-	return results.some((r) => r.state === "kept") ? 1 : 0;
+	return results.some((r) => r.state === "kept" || r.state === "linked") ? 1 : 0;
 }

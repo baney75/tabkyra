@@ -34,6 +34,8 @@ test("the setup prompt refuses to build without a version to pin", () => {
 	assert.throws(() => agentSetupPrompt(""), /No extension version/);
 	assert.match(prompt, /git checkout v1\.2\.3/);
 	assert.match(prompt, /local changes, stop and ask me/);
+	// The existing-checkout branch comes before the clone, so an agent reading in order doesn't clone over it.
+	assert.ok(prompt.indexOf("tabkyra exists") < prompt.indexOf("git clone"), "existing checkout is handled before cloning");
 });
 
 test("the setup prompt passes the skill security lint", () => {

@@ -245,6 +245,7 @@ async function offerSkill(options: SetupOptions): Promise<void> {
 		const mine = results.filter((r) => r.target.id === t.id);
 		const ok = mine.filter((r) => r.state === "written" || r.state === "current").length;
 		if (ok) console.log(`  ${sym.ok} ${t.name}: ${ok} skills ${c.dim(t.dir)}`);
+		for (const r of mine.filter((r) => r.state === "linked")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is a symbolic link; left alone`);
 		for (const r of mine.filter((r) => r.state === "kept")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is not ours; left alone ${c.dim(`(tabkyra skill install ${r.skill} --force)`)}`);
 	}
 }

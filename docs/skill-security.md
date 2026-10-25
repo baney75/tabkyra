@@ -38,9 +38,9 @@ these defenses:
 | `override-instructions` | "Ignore/disregard ... previous/system instructions" |
 | `role-hijack` | Fake `system:`, `developer:` or `user:` turns, role tags, "you are now", "developer mode" |
 | `conceal-from-user` | "Without telling the user", "without asking", "don't tell the user", "secretly", "quietly", "silently" |
-| `remote-code` | Downloads or decoded data piped, substituted (`$(curl ...)`, `<(curl ...)`) or `eval`ed into a shell or interpreter; `iex (irm ...)`; `npx ...@latest` |
+| `remote-code` | Downloads or decoded data piped, substituted (`$(curl ...)`, `<(curl ...)`) or `eval`ed into a shell or interpreter; a download saved as a script or executable; `iex (irm ...)`; `npx ...@latest` |
 | `remote-instructions` | Following instructions fetched from a URL at run time, in either word order |
-| `secret-exfiltration` | Printing, posting, saving or returning passwords, keys, tokens, cookies, card numbers |
+| `secret-exfiltration` | Printing, posting, saving or returning passwords, keys, tokens, cookies, card numbers; secret environment variables by name (`$OPENAI_API_KEY`); dumping the environment (`printenv`) |
 | `credential-files` | Reading `~/.ssh`, `~/.aws`, `.env`, browser cookie and login stores, keychain dumps |
 | `config-tamper` | Agent settings, hooks, MCP config, shell startup files, cron, launch agents; writing `rsi.json`, `skills-local`, `skill-history`, a harness's skills folder, `AGENTS.md` or `CLAUDE.md` |
 | `safety-bypass` | `--dangerously-*`, `--no-verify`, `tabkyra allow-all`, disabling prompts or sandboxes |
@@ -81,7 +81,10 @@ value, which YAML would read as a mapping or a comment.
 it backs up the current version to `~/.config/tabkyra/skill-history/`, keeps the edit in
 `~/.config/tabkyra/skills-local/` and installs it, leaving alone any same-name skill
 Tabkyra didn't write. A local copy is used only while `index.json` records it, it passes
-lint, it isn't a protected skill, and it keeps every section of the bundled text.
+lint, it isn't a protected skill, it keeps every section of the bundled text, and it
+keeps every line of the protected sections (safety, rules, ethics, purpose check, done
+when). Headings inside code fences don't count. Tabkyra never writes through a symbolic
+link, in skills-local or in a harness's skills folder.
 Skill names are checked before they reach a path. `tabkyra skill install` keeps using
 the edit while it passes lint, and warns when the bundled skill has changed since the edit
 was based on it. `tabkyra skill revert <name>` returns to the bundled text. By default the

@@ -103,6 +103,7 @@ const PATTERN_RULES: PatternRule[] = [
 				`\\beval\\b[^\\n]*${FETCHERS}\\b`,
 				`\\biex\\b[^\\n]*\\(\\s*(irm|iwr|invoke-webrequest|invoke-restmethod|new-object)\\b`,
 				`\\b${FETCHERS}\\b[^\\n]*(\\s-o\\s|\\s-O\\b|\\s--output\\b|>)[^\\n]*(&&|;|\\|\\|)\\s*(${RUNNER}\\b|chmod\\s+\\+x|\\./)`,
+				`\\b${FETCHERS}\\b[^\\n]*(\\s-o\\s*|\\s-O\\s*|\\s--output[= ]\\s*|>\\s*)\\S*\\.(sh|bash|zsh|fish|ps1|psm1|bat|cmd|command|py|js|mjs|rb|pl|php|exe|msi|pkg|dmg|appimage)\\b`,
 				`\\bbase64\\s+(-d|--decode|-D)\\b[^\\n]*\\|\\s*${RUNNER}\\b`,
 				`\\b(npx|pnpx|bunx|uvx|pipx run)\\s+(-y\\s+)?[\\w@/.-]+@latest\\b`,
 			].join("|"),
@@ -126,9 +127,22 @@ const PATTERN_RULES: PatternRule[] = [
 	},
 	{
 		rule: "secret-exfiltration",
-		pattern:
-			/\b(print|echo|cat|log|send|post|paste|upload|share|reveal|show|display|copy|email|include|return|output|type|write|save|store|forward|tell)\b(?:(?!\b(?:and|or|then|but)\b)[^.\n,;:]){0,40}?\b(passwords?|passphrases?|api[ _-]?keys?|access tokens?|bearer tokens?|auth tokens?|secrets?|private keys?|seed phrases?|recovery phrases?|mnemonic|credentials|session cookies?|cookies|card numbers?|cvv|cvc|2fa codes?|otp codes?|one-time codes?)\b/i,
+		pattern: new RegExp(
+			[
+				/\b(print|echo|cat|log|send|post|paste|upload|share|reveal|show|display|copy|email|include|return|output|type|write|save|store|forward|tell)\b(?:(?!\b(?:and|or|then|but)\b)[^.\n,;:]){0,40}?\b(passwords?|passphrases?|api[ _-]?keys?|tokens?|secrets?|private keys?|seed phrases?|recovery phrases?|mnemonic|credentials|session cookies?|cookies|card numbers?|cvv|cvc|2fa codes?|otp codes?|one-time codes?)\b/i.source,
+				/\bprintenv\b|\benv\s*(\||>)|\bset\s*\|\s*(grep|cat|tee)\b/.source,
+			].join("|"),
+			"i",
+		),
 		message: "Moves a secret into the model's output, a file or off the machine.",
+		negatable: true,
+	},
+	{
+		// Environment variables that hold secrets, by their upper-case names: case-sensitive, so prose doesn't match.
+		rule: "secret-exfiltration",
+		pattern:
+			/\b(print|echo|cat|log|send|post|paste|show|display|copy|output|printf|tell|share|Print|Echo|Show|Paste|Send|Post|Copy|Display|Output|Log|Tell|Share)\b[^\n]{0,40}\$?\{?\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|CREDENTIALS?)[A-Z0-9_]*\b/,
+		message: "Moves a secret held in an environment variable into the model's output, a file or off the machine.",
 		negatable: true,
 	},
 	{
@@ -241,27 +255,42 @@ interface LogicalLine {
 	lineAt(offset: number): number;
 }
 
+/** Per line: is it a fence line, and is it inside a fenced block. Tracked the way CommonMark does. */
+function fenceMap(lines: string[]): Array<{ fence: boolean; inside: boolean }> {
+	let open = "";
+	return lines.map((line) => {
+		const mark = FENCE.exec(line)?.[1];
+		if (mark && !open) {
+			open = mark;
+			return { fence: true, inside: true };
+		}
+		if (mark && open && mark[0] === open[0] && mark.length >= open.length) {
+			open = "";
+			return { fence: true, inside: true };
+		}
+		return { fence: false, inside: open !== "" };
+	});
+}
+
 /**
  * Join wrapped lines into the sentence a reader (and a model) sees. A new logical line
- * starts at a blank line, a heading, a list item, a table row, a quote or a fence; each
- * line inside a fence stands alone.
+ * starts at a blank line, a heading, a list item, a table row, a quote, a role line or a
+ * fence; each line inside a fence stands alone.
  */
-function logicalLines(lines: string[]): LogicalLine[] {
+function logicalLines(lines: string[], fences = fenceMap(lines)): LogicalLine[] {
 	const groups: Array<{ parts: string[]; starts: number[]; first: number }> = [];
 	let current: (typeof groups)[number] | undefined;
-	let inFence = false;
 	lines.forEach((raw, i) => {
 		const line = folded(raw);
-		const fence = FENCE.test(line);
-		const opens = fence || inFence || line.trim() === "" || /^\s*(#|[-*+]\s|\d+\.\s|\||>|(system|assistant|developer|user)\s*:)/i.test(line);
-		if (fence) inFence = !inFence;
+		const { inside } = fences[i];
+		const opens = inside || line.trim() === "" || /^\s*(#|[-*+]\s|\d+\.\s|\||>|(system|assistant|developer|user)\s*:)/i.test(line);
 		if (opens || !current) {
 			current = { parts: [], starts: [], first: i + 1 };
 			groups.push(current);
 		}
 		current.starts.push(current.parts.reduce((len, part) => len + part.length + 1, 0));
 		current.parts.push(line);
-		if (fence || inFence || line.trim() === "") current = undefined;
+		if (inside || line.trim() === "") current = undefined;
 	});
 	return groups.map((g) => ({
 		text: g.parts.join(" "),
@@ -341,22 +370,12 @@ export function lintText(file: string, text: string, options: { reference?: bool
 		}
 	}
 
-	let inFence = false;
-	let openFence = "";
+	const fences = fenceMap(lines);
 	lines.forEach((line, i) => {
 		const n = i + 1;
-		const fenceMark = FENCE.exec(line)?.[1];
-		let isFence = false;
-		if (fenceMark && !inFence) {
-			if (!CLEAN_FENCE.test(line)) add(n, "structure", "A fence line holds only the fence and one info word. Put text on its own line.");
-			inFence = true;
-			openFence = fenceMark;
-			isFence = true;
-		} else if (fenceMark && inFence && fenceMark[0] === openFence[0] && fenceMark.length >= openFence.length) {
-			if (!CLEAN_FENCE.test(line)) add(n, "structure", "A fence line holds only the fence and one info word. Put text on its own line.");
-			inFence = false;
-			isFence = true;
-		}
+		const isFence = fences[i].fence;
+		const inFence = fences[i].inside && !isFence;
+		if (isFence && !CLEAN_FENCE.test(line)) add(n, "structure", "A fence line holds only the fence and one info word. Put text on its own line.");
 
 		if (INVISIBLE.test(line)) add(n, "hidden-text", "Contains an invisible or text-reordering character.");
 		if (MIXED_SCRIPT.test(line)) add(n, "hidden-text", "A word mixes Latin with Cyrillic or Greek lookalike letters.");
@@ -379,11 +398,13 @@ export function lintText(file: string, text: string, options: { reference?: bool
 		if (/(^|[\s("'<[])\/\/[a-z0-9-]+\.[a-z]/i.test(line)) add(n, "suspicious-link", "Protocol-relative links (//host) hide which protocol loads. Use the full https URL.");
 
 	});
-	if (inFence) add(lines.length, "structure", "A code fence is never closed.");
+	if (lines.length && fences[lines.length - 1].inside && !(fences[lines.length - 1].fence && fences.filter((f) => f.fence).length % 2 === 0)) {
+		add(lines.length, "structure", "A code fence is never closed.");
+	}
 
 	// Instruction rules run on logical lines, so an attack wrapped across two lines is still one sentence.
 	const reported = new Set<string>();
-	for (const group of logicalLines(lines)) {
+	for (const group of logicalLines(lines, fences)) {
 		for (const r of PATTERN_RULES) {
 			const global = new RegExp(r.pattern.source, `${r.pattern.flags.replace("g", "")}g`);
 			for (const m of group.text.matchAll(global)) {

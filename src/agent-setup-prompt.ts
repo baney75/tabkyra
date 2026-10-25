@@ -9,12 +9,11 @@ export function agentSetupPrompt(version: string): string {
 	return `Set up Tabkyra (https://github.com/baney75/tabkyra) so you can use my browser. The Tabkyra extension ${version} is already loaded in my browser. Run each step yourself and show me any output you can't fix.
 
 1. Check that Node 20+ and git are installed: node -v && git --version
-2. If the tabkyra command is not on PATH, install the CLI that matches the extension:
-   mkdir -p ~/tabkyra-src && cd ~/tabkyra-src
-   git clone --depth 1 --branch v${version} https://github.com/baney75/tabkyra && cd tabkyra
-   If ~/tabkyra-src/tabkyra already exists, don't clone. cd into it; if git status shows local changes, stop and ask me. Otherwise run git fetch --tags && git checkout v${version}.
-   If the tag v${version} doesn't exist, use the default branch instead and tell me you did.
-   (cd cli && npm ci && npm run build && npm link)
+2. Install the CLI that matches the extension. If tabkyra is on PATH and tabkyra doctor reports no problems (it checks the build against the CLI), skip to step 5. Otherwise:
+   - If ~/tabkyra-src/tabkyra exists: cd into it. If git status shows local changes, stop and ask me. Otherwise run git fetch --tags && git checkout v${version}.
+   - If it doesn't exist: mkdir -p ~/tabkyra-src && cd ~/tabkyra-src && git clone --depth 1 --branch v${version} https://github.com/baney75/tabkyra && cd tabkyra
+   - If the tag v${version} doesn't exist, use the default branch instead and tell me you did.
+   - Then: (cd cli && npm ci && npm run build && npm link)
    If npm link fails with a permissions error, use "node ~/tabkyra-src/tabkyra/cli/dist/index.js" wherever these steps say "tabkyra".
 3. Run: tabkyra setup --yes
    It registers the browser connection and adds the MCP server to Claude Code and Codex.

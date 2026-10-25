@@ -120,9 +120,14 @@ not found" because the menu re-renders on hover.
 
 1. Lesson: "When a menu re-renders on hover, use `find` with the item's text right before
    `click`, because hover-driven menus replace their refs."
-2. Target: `~/.claude/skills/tabkyra/SKILL.md`, the "Stale refs" section.
-3. The draft adds one bullet. `tabkyra skill lint` prints `Clean.`
-4. Review is off, so show the user the one-line diff. They say yes.
-5. `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra --yes` prints the backup path.
-6. Tell the user: "Added a rule to the tabkyra skill for hover menus that drop their refs.
+2. Target: the tabkyra skill, its "Stale refs" section. Draft it:
+   `mkdir -p ~/.config/tabkyra/skill-drafts/tabkyra` then
+   `tabkyra skill print tabkyra --raw > ~/.config/tabkyra/skill-drafts/tabkyra/SKILL.md`,
+   and add one bullet to that section.
+3. `tabkyra skill lint ~/.config/tabkyra/skill-drafts/tabkyra` prints `Clean.`
+4. `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra` prints the one-line diff and
+   exits 3. Nothing has changed yet.
+5. Review is off, so show the user that diff. They say yes.
+6. `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra --yes` prints the backup path.
+7. Tell the user: "Added a rule to the tabkyra skill for hover menus that drop their refs.
    Undo with tabkyra skill revert tabkyra. Propose it upstream?"
