@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Dependencies `@mariozechner/pi-ai`, `pi-agent-core`, `pi-web-ui` (0.60.0) and `mini-lit` (0.2.1) now come from npm. A fresh clone builds with `npm install`; no sibling checkouts of pi-mono or mini-lit.
+- Compared with the previously pinned pi-mono commit (`ff1ea1232`, v0.60.0 plus 11 commits), the published 0.60.0 lacks: OpenRouter's nested `reasoning` request parameter, the `gpt-5.4-mini` entry for ChatGPT sign-in, Bedrock prompt caching for inference profiles and a Vertex placeholder-key fix. Bedrock and Vertex are hidden in Tabkyra. On OpenRouter, reasoning effort falls back to the plain `reasoning_effort` field.
+
 ## [1.0.0] - 2026-03-15
 
 ### Added
