@@ -1,16 +1,15 @@
 ---
 name: rsi
-description: Recursive self-improvement for skills - after real work, turn what went wrong or what was learned into a small, tested edit to a skill (or a new skill), pass it through `tabkyra skill lint`, the user's yes or an optional adversarial review by an equal or stronger model, apply it with `tabkyra skill apply` (backed up, reversible), and offer it upstream to the Tabkyra skill library. Use when the user types /rsi, says "improve your skills", "learn from this", "remember how to do this", after a task that needed retries or user corrections, or when a skill gave wrong or outdated steps.
+description: Recursive self-improvement for skills - after real work, turn what went wrong or what was learned into a small, tested edit to a skill (or a new skill), pass it through `tabkyra skill lint`, the user's yes or an optional adversarial review by an equal or stronger model, apply it with `tabkyra skill apply` (backed up, reversible), and offer it upstream to the Tabkyra skill library. Use when the user types /rsi, says "improve your skills", "learn from this", "remember how to do this", wants a lesson or workaround kept for next time, after a task that needed retries or user corrections, or when a skill gave wrong or outdated steps.
 license: AGPL-3.0
 ---
 
 # RSI: skills that get better with use
 
-Every task teaches something: a selector that changed, a step that was missing, a site
-that needs a different route. This loop writes that lesson into the skill so the next run,
-even on a smaller model, gets it right the first time. It is also the most dangerous thing
-an agent can do, because a bad edit runs in every future session. So every change is small,
-evidenced, linted, shown to the user or approved by a reviewer, backed up and reversible.
+Every task teaches something: a changed selector, a missing step, a site that needs another
+route. This loop writes the lesson into a skill so the next run, even on a smaller model,
+gets it right the first time. A bad edit runs in every future session, so every change is
+small, evidenced, linted, approved by the user or a reviewer, backed up and reversible.
 
 ## When to use
 
@@ -84,9 +83,8 @@ Only the user edits this file. Never change it yourself.
 9. **Get the go-ahead.** If `autoApply` and `adversarialReview` are both true and the
    reviewer said APPROVE, go on. Otherwise show the user that diff and the lesson, and
    wait for their yes.
-10. **Apply:** the same command with `--yes`. It backs up the current version, keeps your
-    edit across reinstalls and updates, leaves alone any same-name skill Tabkyra didn't
-    write, and warns later if the bundled skill changes underneath it.
+10. **Apply:** the same command with `--yes`. It backs up the current version and keeps
+    your edit across reinstalls and updates.
 11. **Tell the user** in one or two lines: which skill, what rule was added, the backup
     path it printed, and that `tabkyra skill revert <name>` undoes it.
 12. **Offer upstream,** when `submit` is `"ask"`: ask whether to propose the change to the
@@ -120,14 +118,11 @@ not found" because the menu re-renders on hover.
 
 1. Lesson: "When a menu re-renders on hover, use `find` with the item's text right before
    `click`, because hover-driven menus replace their refs."
-2. Target: the tabkyra skill, its "Stale refs" section. Draft it:
-   `mkdir -p ~/.config/tabkyra/skill-drafts/tabkyra` then
-   `tabkyra skill print tabkyra --raw > ~/.config/tabkyra/skill-drafts/tabkyra/SKILL.md`,
-   and add one bullet to that section.
-3. `tabkyra skill lint ~/.config/tabkyra/skill-drafts/tabkyra` prints `Clean.`
-4. `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra` prints the one-line diff and
-   exits 3. Nothing has changed yet.
-5. Review is off, so show the user that diff. They say yes.
-6. `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra --yes` prints the backup path.
-7. Tell the user: "Added a rule to the tabkyra skill for hover menus that drop their refs.
+2. Target: the tabkyra skill's "Stale refs" section. Draft it as in step 4 and add one
+   bullet there.
+3. Lint prints `Clean.` Then `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra`
+   prints the one-line diff and exits 3. Nothing has changed yet.
+4. Review is off, so show the user that diff. They say yes.
+5. The same command with `--yes` prints the backup path.
+6. Tell the user: "Added a rule to the tabkyra skill for hover menus that drop their refs.
    Undo with tabkyra skill revert tabkyra. Propose it upstream?"

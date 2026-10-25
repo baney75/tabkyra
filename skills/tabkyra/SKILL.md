@@ -1,6 +1,6 @@
 ---
 name: tabkyra
-description: Drive the user's real browser through the tabkyra MCP tools (navigate, read_page, click, type, fill). Use when a task needs a live web page - reading a site, filling a form, checking a web app you built, or anything behind the user's sign-in. Not for plain web search or fetching a public URL's text when a fetch tool works.
+description: Drive the user's real browser through the tabkyra MCP tools (navigate, read_page, click, type, fill). Use when a task needs a live web page or the user's own browser - opening and reading a site, clicking through it, scrolling, filling a form, taking a screenshot, testing a web app or local dev server you built, or anything in a tab behind the user's sign-in (mail, dashboards, feeds, a logged-in account). Not for plain web search or fetching a public URL's text when a fetch tool works.
 ---
 
 # Tabkyra: the user's browser, your own tabs

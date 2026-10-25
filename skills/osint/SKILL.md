@@ -1,6 +1,6 @@
 ---
 name: osint
-description: Research a person, company, domain or online account from public, lawful sources (official registries, court records, filings, archives, WHOIS/RDAP, certificate logs, public profiles), link identifiers carefully, grade confidence, and report with evidence. Use when the user asks for a background check, due diligence on a business or landlord, who is behind a website or account, whether a person or company is legitimate, or for OSINT.
+description: Research a person, company, domain or online account from public, lawful sources (official registries, court records, filings, archives, WHOIS/RDAP, certificate logs, public profiles), link identifiers carefully, grade confidence, and report with evidence. Use when the user asks for a background check, due diligence on a business or landlord, who is behind a website or account, who owns a company, LLC or property, whether a person, company or firm is legitimate or registered, or for OSINT.
 license: AGPL-3.0
 ---
 

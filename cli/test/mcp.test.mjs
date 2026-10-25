@@ -2,7 +2,7 @@
 // description, the safety rules are in the instructions, and a tool call fails fast
 // with the one not-connected message instead of hanging.
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -57,6 +57,26 @@ test("instructions state the safety rules", () => {
 	const instructions = mcp.getInstructions() ?? "";
 	assert.match(instructions, /untrusted data/);
 	assert.match(instructions, /Ask the user before you act under their sign-in/);
+});
+
+test("skill_match routes a task to one skill, or none, and skill_read returns that skill", async () => {
+	assert.match(mcp.getInstructions() ?? "", /call skill_match with the user's task first/);
+	const match = await mcp.callTool({ name: "skill_match", arguments: { task: "find peer-reviewed studies on sleep and memory" } });
+	assert.notEqual(match.isError, true);
+	const lines = match.content[0].text.split("\n");
+	assert.match(lines[0], /^academic-research \([\d.]+\): \S/);
+	assert.ok(lines.length <= 4, "top 3 plus the next step, nothing more");
+	assert.equal(lines.at(-1), 'Next: skill_read {"name":"academic-research"}');
+	const one = await mcp.callTool({ name: "skill_match", arguments: { task: "/rsi learn from this", top: 1 } });
+	assert.equal(one.content[0].text.split("\n").length, 2);
+	const none = await mcp.callTool({ name: "skill_match", arguments: { task: "write a haiku about autumn leaves" } });
+	assert.match(none.content[0].text, /^none: /);
+	const read = await mcp.callTool({ name: "skill_read", arguments: { name: "academic-research" } });
+	assert.equal(read.content[0].text, readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills", "academic-research", "SKILL.md"), "utf8"));
+	for (const name of ["../academic-research", "no-such-skill", "Academic-Research"]) {
+		const bad = await mcp.callTool({ name: "skill_read", arguments: { name } });
+		assert.equal(bad.isError, true, name);
+	}
 });
 
 test("a tool call without a browser fails fast with the not-connected message", async () => {

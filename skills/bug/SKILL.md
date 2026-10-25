@@ -1,6 +1,6 @@
 ---
 name: bug
-description: Write a Tabkyra bug report to a strict format - reproduce it, collect versions and the exact error, scrub personal data and secrets, check for a duplicate, then file it on GitHub or hand the user a ready issue. Use when the user types /bug, clicks Report in Tabkyra, or says something in Tabkyra is broken, crashed, hung or behaved wrong.
+description: Write a Tabkyra bug report to a strict format - reproduce it, collect versions and the exact error, scrub personal data and secrets, check for a duplicate, then file it on GitHub or hand the user a ready issue. Use when the user types /bug, clicks Report in Tabkyra, says something in Tabkyra is broken, crashed, hung or behaved wrong, or wants a Tabkyra problem reported or filed as an issue.
 license: AGPL-3.0
 ---
 

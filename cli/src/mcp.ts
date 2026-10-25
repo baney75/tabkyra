@@ -10,6 +10,7 @@ import { z } from "zod";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
 import { addSource, cite, search, summary } from "./library.ts";
+import { matchTask, readSkill } from "./skill.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -105,7 +106,7 @@ function sessionKey(): string {
 }
 
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
-const INSTRUCTION_TOOLS = ["status", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite"];
+const INSTRUCTION_TOOLS = ["status", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read"];
 
 function mentionedTools(sentence: string): string[] {
 	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
@@ -151,6 +152,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"Close tabs you no longer need with tabs_close. Prefer read_page/get_page_text over screenshots for reading.",
 				"Refs expire when the page changes; take a new read_page after navigation or big updates.",
 				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
+				"Skills: call skill_match with the user's task first. If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one. Reading only the chosen skill keeps your context small.",
 				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
 			]
 				// A scoped session hears only about the tools it has, so a small model isn't sent
@@ -695,6 +697,39 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			},
 		},
 		(args) => library(() => cite(args.citekey, args.style)),
+	);
+
+	// Skill tools read the bundled skills and the user's applied edits; no browser needed.
+	server.registerTool(
+		"skill_match",
+		{
+			title: "Find the skill for a task",
+			description:
+				"Which Tabkyra skill fits a task, best first, each with its one-line purpose, or none. Call it before reading any skill, then skill_read only the one you pick. " +
+				'Offline and instant. Example: {"task":"find peer-reviewed studies on sleep and memory"}',
+			inputSchema: {
+				task: z.string().min(1).max(2000).describe("The user's task, in their words"),
+				top: z.number().int().min(1).max(5).optional().describe("How many matches to return (default 3)"),
+			},
+		},
+		(args) =>
+			library(() => {
+				const matches = matchTask(args.task, args.top ?? 3);
+				if (matches.length === 0) return "none: no skill fits this task. Work without one.";
+				const lines = matches.map((m) => `${m.name} (${m.score}): ${m.description}`);
+				return [...lines, `Next: skill_read {"name":"${matches[0].name}"}`].join("\n");
+			}),
+	);
+	server.registerTool(
+		"skill_read",
+		{
+			title: "Read one skill",
+			description:
+				"The full SKILL.md of one skill: the user's applied edit if they made one, otherwise the bundled text. Read only the skill skill_match chose, then follow its steps. " +
+				'Example: {"name":"academic-research"}',
+			inputSchema: { name: z.string().describe("A skill name from skill_match, lowercase-kebab-case") },
+		},
+		(args) => library(() => readSkill(args.name)),
 	);
 
 	if (allowedTools) {

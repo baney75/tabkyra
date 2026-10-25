@@ -1,17 +1,22 @@
 /**
- * `tabkyra skill install|list|print|lint|apply|revert`: teach agents to use Tabkyra well.
+ * `tabkyra skill install|list|print|lint|apply|revert|match|eval|versions|rollback|edit`:
+ * teach agents to use Tabkyra well.
  * The skill texts live in skills/<name>/SKILL.md and are bundled into the CLI at build time
  * (skills-catalog.ts), so every harness gets the same words the tests check. The tabkyra
  * skill is tested against the MCP server's instructions (cli/test/skill.test.mjs); every
- * skill passes the lint in skill-lint.ts before it ships, installs or is applied.
+ * skill passes the lint in skill-lint.ts before it ships, installs or is applied. The router
+ * (skill-router.ts) picks the skill for a task; docs/skill-platform.md describes the whole.
  */
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { which } from "./harness.ts";
+import { EvalError, formatBaseline, parseBaseline, parseCases, runEval } from "./skill-eval.ts";
 import { formatFindings, lintPath, lintText, parseFrontmatter } from "./skill-lint.ts";
+import { buildRouterIndex, matchSkills, oneLine, type RouterIndex, type SkillMatch } from "./skill-router.ts";
 import { SKILLS } from "./skills-catalog.ts";
 import { banner, c, sym } from "./ui.ts";
 
@@ -24,7 +29,7 @@ const PROTECTED_SKILLS = new Set(["rsi", "kyraskillmaker"]);
 export class SkillError extends Error {}
 
 /** Every name reaches a path, so every name is checked first: no "..", no slashes. */
-function assertName(name: string): string {
+export function assertName(name: string): string {
 	if (!NAME.test(name) || name.length > 64) throw new SkillError(`"${name}" is not a skill name (lowercase-kebab-case).`);
 	return name;
 }
@@ -438,6 +443,180 @@ export function revertSkill(name: string): { removed: boolean; results: InstallR
 	return { removed: true, results: installSkills({ force: false, all: false, only: [name] }) };
 }
 
+// --- Router ------------------------------------------------------------------------------
+//
+// skill_match and `tabkyra skill match` route over the skills in use: the bundled ones and
+// the user's applied local copies. The index is built once per process and rebuilt only
+// when skills-local changes, which a few stat calls detect.
+
+let router: { key: string; index: RouterIndex } | undefined;
+
+/** Changes whenever an apply, revert or rollback changes the local skills. */
+function localStateKey(): string {
+	const dir = localSkillsDir();
+	if (!existsSync(dir)) return "";
+	const stat = (p: string) => {
+		try {
+			const s = lstatSync(p);
+			return `${s.mtimeMs}:${s.size}`;
+		} catch {
+			return "-";
+		}
+	};
+	return readdirSync(dir)
+		.sort()
+		.map((n) => `${n}=${stat(join(dir, n))}/${stat(join(dir, n, "SKILL.md"))}`)
+		.join(",");
+}
+
+function routerIndex(): RouterIndex {
+	const key = localStateKey();
+	if (!router || router.key !== key) router = { key, index: buildRouterIndex(allNames().map((name) => ({ name, text: skillText(name) }))) };
+	return router.index;
+}
+
+/** The best skills for a task, best first; empty when none fits. */
+export function matchTask(task: string, top = 3): SkillMatch[] {
+	return matchSkills(routerIndex(), task, top);
+}
+
+/** The SKILL.md text in use for `name`: the applied local copy, or the bundled skill. */
+export function readSkill(name: string): string {
+	assertName(name);
+	if (!allNames().includes(name)) throw new SkillError(`No skill named ${name}. Call skill_match, or run tabkyra skill list.`);
+	return skillText(name);
+}
+
+// --- Versions and rollback ---------------------------------------------------------------
+//
+// A version is the first 12 hex digits of the SHA-256 of a SKILL.md, so the same text has
+// the same version wherever it is: bundled, applied locally, or kept in skill-history.
+
+export function skillVersion(text: string): string {
+	return sha256(text).slice(0, 12);
+}
+
+export interface SkillVersion {
+	version: string;
+	source: "bundled" | "local" | "history";
+	/** ISO time the history file was written. */
+	at?: string;
+	/** Why it was kept: "backup" (before an apply), "reverted" or "<harness>-replaced". */
+	label?: string;
+	file?: string;
+	inUse: boolean;
+}
+
+const HISTORY_FILE = /^(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)(?:\.([a-z0-9-]+))?\.md$/;
+
+/** The ISO time a history stamp stands for (stamp() writes ":" and "." as "-"). */
+function stampTime(stamp: string): string {
+	return stamp.replace(/^(\d{4}-\d\d-\d\dT\d\d)-(\d\d)-(\d\d)-(\d{3}Z)$/, "$1:$2:$3.$4");
+}
+
+/** Every version of a skill: bundled, applied local copy, and each file in skill-history, oldest first. */
+export function skillVersions(name: string): SkillVersion[] {
+	assertName(name);
+	const usable = localText(name).text;
+	const out: SkillVersion[] = [];
+	const bundled = SKILLS.get(name);
+	if (bundled !== undefined) out.push({ version: skillVersion(bundled), source: "bundled", inUse: usable === undefined });
+	if (usable !== undefined) out.push({ version: skillVersion(usable), source: "local", file: localFile(name), inUse: true });
+	const dir = join(historyDir(), name);
+	assertNoLinks([configDir(), historyDir(), dir]);
+	if (existsSync(dir)) {
+		for (const entry of readdirSync(dir).sort()) {
+			const m = HISTORY_FILE.exec(entry);
+			const file = join(dir, entry);
+			if (!m || isLink(file) || !lstatSync(file).isFile()) continue;
+			const version = skillVersion(readFileSync(file, "utf8"));
+			out.push({ version, source: "history", at: stampTime(m[1]), label: m[2] ?? "backup", file, inUse: false });
+		}
+	}
+	if (out.length === 0) throw new SkillError(`No skill named ${name}, and no history for it. Run tabkyra skill list.`);
+	return out;
+}
+
+/**
+ * Check a rollback to a version kept in skill-history, named by version (6 or more hex
+ * digits) or by its time. The text goes through planApply, so a rollback meets every check
+ * an edit does: lint, protected skills and protected sections.
+ */
+export function planRollback(name: string, to: string): { plan: ApplyPlan; from: SkillVersion } {
+	const history = skillVersions(name).filter((v) => v.source === "history");
+	const wanted = to.trim().toLowerCase();
+	const hits = history.filter((v) => (/^[0-9a-f]{6,12}$/.test(wanted) && v.version.startsWith(wanted)) || v.at?.toLowerCase() === wanted || (v.file && basename(v.file).startsWith(`${to.trim()}.`)));
+	const versions = new Set(hits.map((v) => v.version));
+	if (versions.size === 0) {
+		const known = history.map((v) => `${v.version} (${v.at})`).join(", ") || "none";
+		throw new SkillError(`${name} has no version ${to} in its history. Versions in history: ${known}. Run tabkyra skill versions ${name}.`);
+	}
+	if (versions.size > 1) throw new SkillError(`${to} matches more than one version of ${name} (${[...versions].join(", ")}). Give more of the version.`);
+	const from = hits[hits.length - 1];
+	const work = mkdtempSync(join(tmpdir(), "tabkyra-rollback-"));
+	try {
+		const dir = join(work, name);
+		mkdirSync(dir);
+		writeFileSync(join(dir, "SKILL.md"), readFileSync(from.file ?? "", "utf8"));
+		return { plan: planApply(dir), from };
+	} finally {
+		rmSync(work, { recursive: true, force: true });
+	}
+}
+
+// --- Editor ------------------------------------------------------------------------------
+
+function draftsDir(): string {
+	return join(configDir(), "skill-drafts");
+}
+
+/**
+ * The draft folder for `name`, holding the exact source in use. A draft that already
+ * differs from the source is kept, so an unfinished edit is never overwritten.
+ */
+export function prepareDraft(name: string): { dir: string; file: string; resumed: boolean } {
+	assertName(name);
+	if (PROTECTED_SKILLS.has(name)) throw new SkillError(`The ${name} skill governs skill edits, so it changes only through a reviewed pull request.`);
+	const source = readSkill(name);
+	const root = resolve(draftsDir());
+	const dir = resolve(root, name);
+	if (relative(root, dir) !== name) throw new SkillError(`${name} resolves outside ${root}.`);
+	const file = join(dir, "SKILL.md");
+	assertNoLinks([configDir(), draftsDir(), dir, file]);
+	if (existsSync(file) && !lstatSync(file).isFile()) throw new SkillError(`${file} is not a file.`);
+	if (existsSync(file) && readFileSync(file, "utf8") !== source) return { dir, file, resumed: true };
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(file, source);
+	return { dir, file, resumed: false };
+}
+
+/** Open `file` in the user's editor; the editor string may carry arguments ("code --wait"). */
+function openEditor(editor: string, file: string): number {
+	const r =
+		process.platform === "win32"
+			? spawnSync(`${editor} "${file}"`, { stdio: "inherit", shell: true })
+			: spawnSync("/bin/sh", ["-c", `${editor} "$1"`, "sh", file], { stdio: "inherit" });
+	return r.status ?? 1;
+}
+
+/** One line from the terminal, read synchronously. */
+function askLine(question: string): string {
+	process.stdout.write(question);
+	const buf = Buffer.alloc(1);
+	let line = "";
+	for (;;) {
+		let n = 0;
+		try {
+			n = readSync(0, buf, 0, 1, null);
+		} catch {
+			break;
+		}
+		if (n === 0 || buf[0] === 10) break;
+		line += String.fromCharCode(buf[0]);
+	}
+	return line.trim();
+}
+
 // --- CLI ---------------------------------------------------------------------------------
 
 function printInstall(results: InstallResult[]): void {
@@ -462,17 +641,147 @@ function printInstall(results: InstallResult[]): void {
 	}
 }
 
-export function runSkill(sub: string | undefined, args: string[], flags: { force: boolean; all: boolean; raw?: boolean; yes?: boolean }): number {
+export interface SkillFlags {
+	force: boolean;
+	all: boolean;
+	raw?: boolean;
+	yes?: boolean;
+	json?: boolean;
+	updateBaseline?: boolean;
+	/** Values of --top, --to and --cases. */
+	top?: string;
+	to?: string;
+	cases?: string;
+}
+
+export function runSkill(sub: string | undefined, args: string[], flags: SkillFlags): number {
 	try {
 		return runSkillCommand(sub, args, flags);
 	} catch (err) {
-		if (!(err instanceof SkillError)) throw err;
+		if (!(err instanceof SkillError) && !(err instanceof EvalError)) throw err;
 		console.error(`${sym.fail} ${err.message}`);
 		return 1;
 	}
 }
 
-function runSkillCommand(sub: string | undefined, args: string[], flags: { force: boolean; all: boolean; raw?: boolean; yes?: boolean }): number {
+/** Print the outcome of an apply, the way `skill apply --yes` does. */
+function reportApplied(plan: ApplyPlan, what: string): number {
+	const { backup, results } = applySkill(plan);
+	console.log(`${sym.ok} ${what}${backup ? ` Backup: ${backup}` : ""}`);
+	printInstall(results);
+	console.log(`${sym.arrow} Undo: tabkyra skill revert ${plan.name}`);
+	return results.some((r) => r.state === "kept" || r.state === "linked") ? 1 : 0;
+}
+
+/** skills-eval/router-cases.jsonl in this folder or the nearest one above it. */
+function findCases(start: string): string | undefined {
+	for (let dir = resolve(start); ; dir = dirname(dir)) {
+		const file = join(dir, "skills-eval", "router-cases.jsonl");
+		if (existsSync(file)) return file;
+		if (dirname(dir) === dir) return undefined;
+	}
+}
+
+function runEvalCommand(flags: SkillFlags): number {
+	const casesFile = flags.cases ? resolve(flags.cases) : findCases(process.cwd());
+	if (!casesFile || !existsSync(casesFile)) throw new SkillError("No skills-eval/router-cases.jsonl here or above. Run this in a Tabkyra checkout, or pass --cases <file>.");
+	const baselineFile = join(dirname(casesFile), "baseline.json");
+	const cases = parseCases(readFileSync(casesFile, "utf8"));
+	const skills = [...SKILLS].map(([name, text]) => ({ name, text }));
+	let baseline = existsSync(baselineFile) ? parseBaseline(readFileSync(baselineFile, "utf8")) : undefined;
+	if (flags.updateBaseline) {
+		writeFileSync(baselineFile, formatBaseline(runEval(skills, cases)));
+		baseline = parseBaseline(readFileSync(baselineFile, "utf8"));
+	}
+	const report = runEval(skills, cases, baseline);
+	if (flags.json) {
+		console.log(JSON.stringify(report, null, "\t"));
+		return report.ok ? 0 : 1;
+	}
+	const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+	console.log(`${c.bold("Skill router")} ${report.skills} skills, ${report.cases} cases (${report.positives} positive, ${report.negatives} none) ${c.dim(casesFile)}`);
+	for (const [name, s] of Object.entries(report.perSkill)) {
+		const base = s.baseline === undefined ? "" : c.dim(` baseline ${pct(s.baseline)}`);
+		console.log(`  ${name.padEnd(20)} ${pct(s.accuracy).padStart(6)}  ${String(s.correct).padStart(3)}/${s.cases}${base}`);
+	}
+	for (const m of report.misses) console.log(`  ${sym.dot} ${c.dim(`expected ${m.expected}, got ${m.got}:`)} ${m.task}`);
+	for (const k of report.skipped) console.log(`  ${sym.warn} line ${k.line}: no bundled skill named ${k.skill}; skipped`);
+	for (const g of report.gates) console.log(`${g.ok ? sym.ok : sym.fail} ${g.gate.padEnd(16)} ${g.detail}`);
+	if (flags.updateBaseline) console.log(`${sym.arrow} Wrote ${baselineFile}. Commit it with the change that moved the numbers.`);
+	return report.ok ? 0 : 1;
+}
+
+function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFlags): number {
+	if (sub === "match") {
+		const task = args.join(" ").trim();
+		if (!task) throw new SkillError('Usage: tabkyra skill match "<task>" [--json] [--top N]');
+		const top = flags.top === undefined ? 3 : Number(flags.top);
+		if (!Number.isInteger(top) || top < 1 || top > 20) throw new SkillError("--top takes a whole number from 1 to 20.");
+		const matches = matchTask(task, top);
+		if (flags.json) console.log(JSON.stringify(matches.length ? matches : [{ name: "none", score: 0, description: "No skill fits this task." }]));
+		else if (matches.length === 0) console.log(`${sym.dot} none: no skill fits this task.`);
+		else for (const m of matches) console.log(`${c.bold(m.name.padEnd(20))} ${String(m.score).padStart(6)}  ${m.description}`);
+		return 0;
+	}
+	if (sub === "eval") return runEvalCommand(flags);
+	if (sub === "versions") {
+		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill versions <name> [--json]");
+		const versions = skillVersions(args[0]);
+		if (flags.json) {
+			console.log(JSON.stringify(versions));
+			return 0;
+		}
+		for (const v of versions) {
+			const where = v.source === "history" ? `history  ${v.at} ${c.dim(`${v.label} ${v.file}`)}` : v.source === "local" ? `local    ${c.dim(v.file ?? "")}` : "bundled";
+			console.log(`${v.inUse ? sym.ok : sym.dot} ${c.bold(v.version)}  ${where}${v.inUse ? " (in use)" : ""}`);
+		}
+		if (versions.some((v) => v.source === "history")) console.log(`${sym.arrow} Restore one: tabkyra skill rollback ${args[0]} --to <version>`);
+		return 0;
+	}
+	if (sub === "rollback") {
+		if (args.length !== 1 || !flags.to) throw new SkillError("Usage: tabkyra skill rollback <name> --to <version|time> [--yes]");
+		const { plan, from } = planRollback(args[0], flags.to);
+		if (plan.current === plan.text) {
+			console.log(`${sym.ok} ${plan.name} is already at version ${from.version}.`);
+			return 0;
+		}
+		console.log(`${c.bold(`Roll ${plan.name} back to ${from.version} (${from.at}):`)}\n${plan.diff}\n`);
+		if (!flags.yes) {
+			console.log(`${sym.arrow} Lint passed. Nothing changed yet. Show this to the user; run again with --yes once they approve.`);
+			return 3;
+		}
+		return reportApplied(plan, `Rolled ${plan.name} back to ${from.version}.`);
+	}
+	if (sub === "edit") {
+		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill edit <name> [--yes]");
+		const { dir, file, resumed } = prepareDraft(args[0]);
+		const name = basename(dir);
+		const source = readSkill(name);
+		const editor = process.env.VISUAL || process.env.EDITOR;
+		const later = `tabkyra skill apply ${dir}`;
+		console.log(`${sym.ok} ${resumed ? "Your earlier draft" : "Draft"} of ${name}: ${file}`);
+		if (!process.stdin.isTTY || !process.stdout.isTTY || !editor) {
+			if (process.stdin.isTTY && !editor) console.log(`${sym.dot} Set $VISUAL or $EDITOR to open it from here.`);
+			console.log(`${sym.arrow} Edit it, then check it with: ${c.bold(later)} (add --yes to apply)`);
+			return 0;
+		}
+		const status = openEditor(editor, file);
+		if (status !== 0) {
+			console.log(`${sym.fail} The editor exited with ${status}. Nothing applied; the draft is kept at ${file}.`);
+			return 1;
+		}
+		if (readFileSync(file, "utf8") === source) {
+			console.log(`${sym.dot} No changes.`);
+			return 0;
+		}
+		const plan = planApply(dir);
+		console.log(`${c.bold(`Change to ${plan.name}:`)}\n${plan.diff}\n`);
+		if (!flags.yes && !/^y(es)?$/i.test(askLine("Apply? [y/N] "))) {
+			console.log(`${sym.dot} Not applied. The draft is kept; apply it later with ${c.bold(later)} --yes`);
+			return 3;
+		}
+		return reportApplied(plan, `Applied your edit of ${plan.name}.`);
+	}
 	if (sub === "print") {
 		const name = assertName(args[0] ?? "tabkyra");
 		if (!allNames().includes(name)) throw new SkillError(`No skill named ${name}. Run tabkyra skill list.`);
@@ -482,9 +791,17 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: { force
 	}
 	if (sub === "list") {
 		const local = new Set(localNames().filter((n) => localText(n).text !== undefined));
+		if (flags.json) {
+			const list = allNames().map((name) => {
+				const text = skillText(name);
+				return { name, description: /^description: (.*)$/m.exec(text)?.[1] ?? "", version: skillVersion(text), source: local.has(name) ? "local" : "bundled" };
+			});
+			console.log(JSON.stringify(list));
+			return 0;
+		}
 		for (const name of allNames()) {
 			const description = /^description: (.*)$/m.exec(skillText(name))?.[1] ?? "";
-			console.log(`${c.bold(name.padEnd(18))} ${description.split(". ")[0]}.${local.has(name) ? c.dim(" (your edit)") : ""}`);
+			console.log(`${c.bold(name.padEnd(18))} ${oneLine(description)}${local.has(name) ? c.dim(" (your edit)") : ""}`);
 		}
 		for (const w of localWarnings()) console.log(`${sym.warn} ${w}`);
 		return 0;
@@ -504,11 +821,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: { force
 			console.log(`${sym.arrow} Lint passed. Nothing changed yet. Show this to the user; run again with --yes once they approve.`);
 			return 3;
 		}
-		const { backup, results } = applySkill(plan);
-		console.log(`${sym.ok} Applied your edit of ${plan.name}.${backup ? ` Backup: ${backup}` : ""}`);
-		printInstall(results);
-		console.log(`${sym.arrow} Undo: tabkyra skill revert ${plan.name}`);
-		return results.some((r) => r.state === "kept" || r.state === "linked") ? 1 : 0;
+		return reportApplied(plan, `Applied your edit of ${plan.name}.`);
 	}
 	if (sub === "revert") {
 		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill revert <name>");

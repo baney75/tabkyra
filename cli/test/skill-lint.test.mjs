@@ -161,6 +161,39 @@ for (const [label, text, rule] of ATTACKS) {
 	});
 }
 
+test("budget: a SKILL.md over 150 lines or 8,000 characters fails, and one at the limit passes", () => {
+	const lines = (n) => Array.from({ length: n }, (_, i) => `- Plain step note ${i}.`).join("\n");
+	const base = `---\nname: example\ndescription: Does an example task. Use when the user asks for an example.\n---\n${GOOD_BODY}`;
+	const write = (text) => {
+		const dir = join(root, `budget-${Math.random().toString(36).slice(2)}`, "example");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "SKILL.md"), text);
+		return dir;
+	};
+	const baseLines = base.split("\n").length - 1;
+	const atLimit = `${base}${lines(150 - baseLines)}\n`;
+	assert.equal(atLimit.split("\n").length - 1, 150);
+	assert.equal(lint(write(atLimit)).code, 0, "150 lines is within budget");
+	const over = lint(write(`${base}${lines(151 - baseLines)}\n`));
+	assert.equal(over.code, 1, over.out);
+	assert.match(over.out, /budget.*151 lines/);
+	const prose = (n) => `${"Plain words for padding the text. ".repeat(Math.ceil(n / 34)).slice(0, n)}\n`;
+	const charsAt = (n) => `${base}${prose(n - [...base].length - 1)}`;
+	assert.equal([...charsAt(8000)].length, 8000);
+	assert.equal(lint(write(charsAt(8000))).code, 0, "8,000 characters is within budget");
+	const long = lint(write(charsAt(8001)));
+	assert.equal(long.code, 1, long.out);
+	assert.match(long.out, /budget.*8001 characters/);
+});
+
+test("skill apply refuses an edit that blows the budget", () => {
+	const home = mkdtempSync(join(root, "budget-apply-"));
+	const draft = draftOf(home, "dorks", (t) => t.replace("## Done when", `${Array.from({ length: 60 }, (_, i) => `- Note ${i}.`).join("\n")}\n\n## Done when`));
+	const r = runIn(home, "skill", "apply", draft);
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /budget/);
+});
+
 test("a negated rule is guidance, not an attack, even when the sentence wraps", () => {
 	const r = lint(skill("example", "\n- Never print a password, and never paste an API key\n  into chat. Don't read ~/.ssh either.\n"));
 	assert.equal(r.code, 0, r.out);

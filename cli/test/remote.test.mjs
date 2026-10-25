@@ -89,6 +89,30 @@ test("a session lists and calls only the tools its scopes grant", async () => {
 	}
 });
 
+test("skills.read grants skill_match and skill_read, and only that scope does", async () => {
+	const withSkills = await connect(token("skill-reader", "skills.read"));
+	try {
+		const names = (await withSkills.listTools()).tools.map((t) => t.name).sort();
+		assert.deepEqual(names, ["skill_match", "skill_read"]);
+		const match = await withSkills.callTool({ name: "skill_match", arguments: { task: "background check on a roofing contractor" } });
+		assert.notEqual(match.isError, true, JSON.stringify(match));
+		assert.match(match.content[0].text, /^osint /);
+		const read = await withSkills.callTool({ name: "skill_read", arguments: { name: "osint" } });
+		assert.match(read.content[0].text, /^---\nname: osint\n/);
+	} finally {
+		await withSkills.close();
+	}
+	const without = await connect(token("browser-only", "browser.read,library.read"));
+	try {
+		const names = (await without.listTools()).tools.map((t) => t.name);
+		assert.ok(!names.includes("skill_match") && !names.includes("skill_read"), names.join(","));
+		const denied = await without.callTool({ name: "skill_read", arguments: { name: "osint" } }).catch((e) => ({ isError: true, content: [{ text: String(e) }] }));
+		assert.equal(denied.isError, true);
+	} finally {
+		await without.close();
+	}
+});
+
 test("a revoked token is refused at once, and another token can't reuse a session", async () => {
 	const a = token("alpha", "browser.read");
 	const b = token("beta", "library.read");
