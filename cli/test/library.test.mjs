@@ -56,7 +56,7 @@ let server;
 let env;
 const requests = [];
 /** Switches the tests flip: checks that fail, and DOIs retracted after they were added. */
-const mock = { failChecks: false, retractedNow: new Set() };
+const mock = { failChecks: false, retractedNow: new Set(), openalexMissing: new Set(), doiDown: false };
 Object.assign(RECORDS, {
 	"10.1000/later": { type: "journal-article", title: "Fine at first", author: [{ family: "Later", given: "L." }], issued: { "date-parts": [[2019]] }, DOI: "10.1000/later" },
 	"10.1000/a#b": { type: "journal-article", title: "Hash in the suffix", author: [{ family: "Hash", given: "H." }], issued: { "date-parts": [[2018]] }, DOI: "10.1000/a#b" },
@@ -67,6 +67,12 @@ Object.assign(RECORDS, {
 		issued: { "date-parts": [[2021]] },
 		DOI: "10.1000/escapes",
 	},
+	"10.1000/oaonly": { type: "journal-article", title: "Flagged by OpenAlex only", author: [{ family: "Oa", given: "O." }], issued: { "date-parts": [[2016]] }, DOI: "10.1000/oaonly" },
+	"10.1000/many-notices": { type: "journal-article", title: "Many notices", author: [{ family: "Many", given: "M." }], issued: { "date-parts": [[2015]] }, DOI: "10.1000/many-notices" },
+	"10.1000/alias2": { type: "journal-article", title: "Alias of a retracted work", author: [{ family: "Alias", given: "B." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary-retracted" },
+	"10.1000/primary-retracted": { type: "journal-article", title: "Primary", author: [{ family: "Alias", given: "B." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary-retracted" },
+	"10.1000/marker": { type: "journal-article", title: "A title with tabkyra-generated: inside it", author: [{ family: "Marker", given: "M." }], issued: { "date-parts": [[2013]] }, DOI: "10.1000/marker" },
+	"10.1000/percent": { type: "journal-article", title: "Vaccine outcomes %% hidden", author: [{ literal: "World Health Organization" }], issued: { "date-parts": [[2012]] }, DOI: "10.1000/percent" },
 	"10.1000/alias": { type: "journal-article", title: "Alias target", author: [{ family: "Alias", given: "A." }], issued: { "date-parts": [[2017]] }, DOI: "10.9999/someone-else" },
 });
 
@@ -82,6 +88,7 @@ before(async () => {
 			res.writeHead(200, { "content-type": "text/html" });
 			return res.end("<html>publisher landing page</html>");
 		}
+		if (url.pathname.startsWith("/doi/") && mock.doiDown) return json(503, {});
 		if (url.pathname.startsWith("/doi/")) {
 			const doi = decodeURIComponent(url.pathname.slice(5));
 			const record = RECORDS[doi];
@@ -95,14 +102,15 @@ before(async () => {
 		if (url.pathname.startsWith("/openalex/works/doi:")) {
 			if (mock.failChecks) return json(503, {});
 			const doi = decodeURIComponent(url.pathname.slice("/openalex/works/doi:".length));
-			if (!RECORDS[doi]) return json(404, {});
-			return json(200, { is_retracted: false, cited_by_count: 42, open_access: { oa_url: "https://example.org/files/My%20Paper.pdf" } });
+			if (!RECORDS[doi] || mock.openalexMissing.has(doi)) return json(404, {});
+			return json(200, { is_retracted: doi === "10.1000/oaonly", cited_by_count: 42, open_access: { oa_url: "https://example.org/files/My%20Paper.pdf" } });
 		}
 		if (url.pathname === "/crossref/works") {
 			if (mock.failChecks) return json(429, {});
 			const doi = (url.searchParams.get("filter") ?? "").replace(/^updates:/, "");
-			const retracted = doi === "10.1000/retracted" || mock.retractedNow.has(doi);
+			const retracted = doi === "10.1000/retracted" || doi === "10.1000/primary-retracted" || mock.retractedNow.has(doi);
 			const items = retracted ? [{ DOI: "10.1000/notice", "update-to": [{ type: "retraction", DOI: doi }] }] : [];
+			if (doi === "10.1000/many-notices") return json(200, { message: { "total-results": 1500, items: [] } });
 			return json(200, { message: { items } });
 		}
 		json(404, {});
@@ -335,4 +343,122 @@ test("obsidian never writes through a link, never makes folders outside, and kee
 	const again = await lib("obsidian", vault);
 	assert.match(again.out, /kept .*wakefield1998bad\.md/);
 	assert.match(readFileSync(mine, "utf8"), /My own notes\./);
+});
+
+test("cite and exports keep a # in the DOI, and mark sources not fully checked", async () => {
+	const key = items().find((i) => i.DOI === "10.1000/a#b").id;
+	requests.length = 0;
+	assert.equal((await lib("cite", key)).code, 0);
+	assert.ok(requests.includes("/doi/10.1000/a%23b"), requests.join(" "));
+	const bib = (await lib("export", "--format", "bibtex")).out;
+	assert.match(bib, /url = \{https:\/\/doi\.org\/10\.1000\/a%23b\}/);
+	mock.failChecks = true;
+	try {
+		await lib("add", "10.1000/marker");
+	} finally {
+		mock.failChecks = false;
+	}
+	const marker = items().find((i) => i.DOI === "10.1000/marker");
+	assert.match((await lib("cite", marker.id)).out, /^\[RETRACTION CHECK INCOMPLETE\]/);
+	assert.match((await lib("export", "--format", "ris")).out, /N1 {2}- RETRACTION CHECK INCOMPLETE/);
+	assert.match((await lib("search", "marker")).out, /marker/);
+});
+
+test("an OpenAlex-only retraction survives a later OpenAlex 404", async () => {
+	assert.equal((await lib("add", "10.1000/oaonly")).code, 3);
+	mock.openalexMissing.add("10.1000/oaonly");
+	try {
+		const key = items().find((i) => i.DOI === "10.1000/oaonly").id;
+		assert.equal((await lib("verify", key)).code, 3);
+		assert.equal(items().find((i) => i.id === key).tabkyra.verified.retracted, true);
+	} finally {
+		mock.openalexMissing.delete("10.1000/oaonly");
+	}
+});
+
+test("more update notices than one page leaves the check incomplete", async () => {
+	assert.equal((await lib("add", "10.1000/many-notices")).code, 4);
+});
+
+test("an alias DOI is checked under its primary DOI too", async () => {
+	const r = await lib("add", "10.1000/alias2");
+	assert.equal(r.code, 3, r.out);
+	assert.ok(items().some((i) => i.DOI === "10.1000/alias2"));
+});
+
+test("doi.org being down isn't reported as registered or made up; a bare % doesn't crash", async () => {
+	mock.doiDown = true;
+	try {
+		const r = await lib("add", "10.1000/new-while-down");
+		assert.equal(r.code, 1, r.out);
+		assert.match(r.out, /doi\.org couldn't answer/);
+		assert.doesNotMatch(r.out, /registered|made up/);
+	} finally {
+		mock.doiDown = false;
+	}
+	const pct = await lib("add", "10.1000/100%");
+	assert.doesNotMatch(pct.out, /URI malformed/);
+	assert.match(pct.out, /not registered/);
+});
+
+test("notes escape Obsidian comment markers, place the hash on its own line, and corporate authors stay one name", async () => {
+	assert.equal((await lib("add", "10.1000/percent")).code, 0);
+	const vault = join(root, "vault-r2");
+	mkdirSync(vault);
+	assert.equal((await lib("obsidian", vault)).code, 0);
+	const pct = items().find((i) => i.DOI === "10.1000/percent").id;
+	// The body renders as Markdown, where %% opens a comment; frontmatter is YAML and doesn't.
+	const body = readFileSync(join(vault, "Sources", `${pct}.md`), "utf8").split("\n---\n")[1];
+	assert.doesNotMatch(body, /(?<!\\)%(?<!\\)%/);
+	const again = await lib("obsidian", vault);
+	const marker = items().find((i) => i.DOI === "10.1000/marker").id;
+	assert.doesNotMatch(again.out, new RegExp(`kept .*${marker}`), "a title with the marker text doesn't break the hash");
+	assert.match((await lib("export", "--format", "bibtex")).out, /author = \{\{World Health Organization\}\}/);
+});
+
+test("a kept note whose source is retracted is reported, and the export exits 3", async () => {
+	const vault = join(root, "vault-stale");
+	mkdirSync(vault);
+	await lib("obsidian", vault);
+	const key = items().find((i) => i.DOI === "10.1000/later").id;
+	const note = join(vault, "Sources", `${key}.md`);
+	writeFileSync(note, `${readFileSync(note, "utf8")}\nmine\n`);
+	mock.retractedNow.add("10.1000/later");
+	try {
+		await lib("verify", key);
+		const r = await lib("obsidian", vault);
+		assert.equal(r.code, 3, r.out);
+		assert.match(r.out, /NOT UPDATED, RETRACTED/);
+	} finally {
+		mock.retractedNow.delete("10.1000/later");
+	}
+});
+
+test("unknown options are refused, a linked vault root works, and a dead process's lock is taken over", async () => {
+	assert.equal((await lib("add", "10.1000/good", "--qoute", "x")).code, 2);
+	const real = join(root, "real-vault");
+	mkdirSync(real);
+	symlinkSync(real, join(root, "linked-vault"));
+	assert.equal((await lib("obsidian", join(root, "linked-vault"))).code !== 1, true);
+	const lock = join(env.TABKYRA_LIBRARY_DIR, "library.json.lock");
+	mkdirSync(lock);
+	writeFileSync(join(lock, "pid"), "999999");
+	assert.equal((await lib("remove", "nosuchkey")).code, 1, "ran under a lock taken from a dead owner");
+	assert.equal(existsSync(lock), false);
+});
+
+test("library_add returns a flat summary with the documented fields", async () => {
+	const mcp = new Client({ name: "tabkyra-library-test2", version: "0.0.0" });
+	await mcp.connect(
+		new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env: { ...env, TABKYRA_SOCKET_DIR: join(root, "sock2") }, stderr: "ignore" }),
+	);
+	try {
+		const r = await mcp.callTool({ name: "library_add", arguments: { id: "10.1000/good" } });
+		const out = JSON.parse(r.content[0].text);
+		assert.equal(out.citekey, "cepeda2006spacing");
+		assert.equal(out.retracted, false);
+		assert.equal(out.complete, true);
+	} finally {
+		await mcp.close();
+	}
 });

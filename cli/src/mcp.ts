@@ -9,7 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
-import { addSource, cite, search } from "./library.ts";
+import { addSource, cite, search, summary } from "./library.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -618,7 +618,7 @@ export async function runMcpServer(): Promise<void> {
 			description:
 				"Save a scholarly source to the user's Tabkyra library by DOI, doi.org link or arXiv id. Tabkyra fetches the record from the DOI registry, " +
 				"checks OpenAlex and Crossref for retractions, and returns the citekey and verification. A DOI that doesn't resolve is refused: " +
-				"never cite it. A retracted source is saved but flagged retracted; don't cite it as support. If verified.complete is false, the retraction check didn't finish: say so, and verify again before citing. Add the sentence you rely on as quote, " +
+				"never cite it. A retracted source is saved but flagged retracted; don't cite it as support. The result has citekey, retracted, complete and notices. If complete is false, the retraction check didn't finish: say so, and verify again before citing. Add the sentence you rely on as quote, " +
 				'with its page or section as location. Example: {"id":"10.1037/0033-2909.132.3.354","quote":"...","location":"p. 354"}',
 			inputSchema: {
 				id: z.string().describe("DOI, https://doi.org/... link, or arXiv id such as arXiv:1706.03762"),
@@ -628,7 +628,7 @@ export async function runMcpServer(): Promise<void> {
 				tags: z.array(z.string()).optional().describe("Tags, e.g. the project or question"),
 			},
 		},
-		(args) => library(async () => (await addSource(args.id, { quote: args.quote, location: args.location, note: args.note, tags: args.tags })).item),
+		(args) => library(async () => summary((await addSource(args.id, { quote: args.quote, location: args.location, note: args.note, tags: args.tags })).item)),
 	);
 	server.registerTool(
 		"library_search",
@@ -641,14 +641,7 @@ export async function runMcpServer(): Promise<void> {
 		},
 		(args) =>
 			library(() =>
-				search(args.query).map((i) => ({
-					citekey: i.id,
-					title: i.title,
-					year: i.issued?.["date-parts"]?.[0]?.[0],
-					doi: i.DOI,
-					retracted: i.tabkyra.verified.retracted,
-					quote: i.tabkyra.quote,
-				})),
+				search(args.query).map(summary),
 			),
 	);
 	server.registerTool(

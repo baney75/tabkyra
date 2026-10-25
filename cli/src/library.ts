@@ -9,7 +9,7 @@
  * are generated here from [a-z0-9] only.
  */
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -78,10 +78,21 @@ export function loadLibrary(): Library {
 	return data;
 }
 
+function pidAlive(pid: number): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
 /**
  * Run `fn` holding the library lock, so two processes (a shell and the MCP server, or two
- * agents) can't read the same copy and overwrite each other's additions. A lock older than
- * 30 seconds belongs to a process that died and is cleared.
+ * agents) can't read the same copy and overwrite each other's additions. The lock is a
+ * directory (mkdir is atomic) holding the owner's pid. A lock whose owner has died is taken
+ * over by renaming it away first, which only one waiter can do.
  */
 function withLock<T>(fn: () => T): T {
 	const lock = `${libraryFile()}.lock`;
@@ -89,19 +100,37 @@ function withLock<T>(fn: () => T): T {
 	const deadline = Date.now() + 10_000;
 	for (;;) {
 		try {
-			writeFileSync(lock, String(process.pid), { flag: "wx" });
+			mkdirSync(lock);
+			writeFileSync(join(lock, "pid"), String(process.pid));
 			break;
-		} catch {
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+			let owner = Number.NaN;
+			try {
+				owner = Number(readFileSync(join(lock, "pid"), "utf8"));
+			} catch {
+				/* the owner hasn't written its pid yet, or the lock just went away */
+			}
 			const st = lstatSync(lock, { throwIfNoEntry: false });
-			if (st && Date.now() - st.mtimeMs > 30_000) rmSync(lock, { force: true });
-			else if (Date.now() > deadline) throw new Error(`The library is locked by another process (${lock}).`);
-			else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+			const abandoned = Number.isNaN(owner) ? Boolean(st && Date.now() - st.mtimeMs > 30_000) : !pidAlive(owner);
+			if (abandoned) {
+				const stolen = `${lock}.stale-${process.pid}-${Date.now()}`;
+				try {
+					renameSync(lock, stolen);
+					rmSync(stolen, { recursive: true, force: true });
+				} catch {
+					/* another waiter took it first */
+				}
+				continue;
+			}
+			if (Date.now() > deadline) throw new Error(`The library is locked by process ${owner} (${lock}).`);
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
 		}
 	}
 	try {
 		return fn();
 	} finally {
-		rmSync(lock, { force: true });
+		rmSync(lock, { recursive: true, force: true });
 	}
 }
 
@@ -131,7 +160,13 @@ export function toDoi(input: string): string | undefined {
 	const arxiv = /^(?:arxiv:|https?:\/\/arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(v\d+)?(?:\.pdf)?$/i.exec(s);
 	if (arxiv) return `10.48550/arXiv.${arxiv[1]}`;
 	const doi = /(?:^doi:|^https?:\/\/(?:dx\.)?doi\.org\/|^)(10\.\d{4,9}\/\S+)$/i.exec(s);
-	return doi ? decodeURIComponent(doi[1]) : undefined;
+	if (!doi) return undefined;
+	try {
+		return decodeURIComponent(doi[1]);
+	} catch {
+		// A bare "%" is legal in a DOI; keep it as typed.
+		return doi[1];
+	}
 }
 
 // --- Fetching ----------------------------------------------------------------------------
@@ -190,6 +225,9 @@ async function fetchCsl(doi: string): Promise<Record<string, unknown>> {
 	const finalHost = res.url ? new URL(res.url).host : doiHost;
 	// Only doi.org itself answering 404 means the DOI isn't registered.
 	if (res.status === 404 && finalHost === doiHost) throw new Error(`DOI ${doi} is not registered (doi.org returned 404). It may be mistyped or made up.`);
+	if ((res.status === 429 || res.status >= 500) && finalHost === doiHost) {
+		throw new Error(`doi.org couldn't answer for ${doi} (HTTP ${res.status}). Nothing was checked; try again later.`);
+	}
 	const type = res.headers.get("content-type") ?? "";
 	if (!res.ok || !/json/i.test(type)) {
 		throw new Error(`DOI ${doi} is registered, but its agency returned no citation metadata (${res.status} ${type || "no type"} from ${finalHost}). Check it by hand before citing.`);
@@ -224,11 +262,15 @@ async function verify(doi: string, previous?: Verification): Promise<Verificatio
 		/* left as failed */
 	}
 	try {
-		const res = await get(`${base.crossref()}/works?filter=updates:${encodeURIComponent(doi)}&select=DOI,update-to&rows=20`, "application/json");
+		const res = await get(`${base.crossref()}/works?filter=updates:${encodeURIComponent(doi)}&select=DOI,update-to&rows=1000`, "application/json");
 		if (res.ok) {
-			const body = (await res.json()) as { message?: { items?: Array<{ DOI?: string; "update-to"?: Array<{ type?: string; DOI?: string }> }> } };
+			const body = (await res.json()) as {
+				message?: { "total-results"?: number; items?: Array<{ DOI?: string; "update-to"?: Array<{ type?: string; DOI?: string }> }> };
+			};
 			v.sources.push("crossref-updates");
-			checks.crossref = "ok";
+			// Every notice must be in hand; more than one page leaves the check incomplete.
+			const total = body.message?.["total-results"] ?? 0;
+			if (total <= (body.message?.items?.length ?? 0)) checks.crossref = "ok";
 			for (const item of body.message?.items ?? []) {
 				for (const u of item["update-to"] ?? []) {
 					if (u.DOI?.toLowerCase() !== doi.toLowerCase()) continue;
@@ -242,12 +284,7 @@ async function verify(doi: string, previous?: Verification): Promise<Verificatio
 		/* left as failed */
 	}
 	v.complete = checks.openalex !== "failed" && checks.crossref === "ok";
-	// Evidence of a retraction is kept until a complete check says otherwise.
-	if (previous?.retracted && !v.retracted && !v.complete) {
-		v.retracted = true;
-		v.notices = previous.notices;
-	}
-	return v;
+	return previous ? keepRetraction(v, previous) : v;
 }
 
 /** Crossref sometimes answers with its own type names; map them to CSL's. */
@@ -305,8 +342,11 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 	const known = loadLibrary().items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
 	// Network first; the library is read and written only after, so a parallel add isn't lost.
 	const csl = known ? undefined : await fetchCsl(doi);
-	const verified = await verify(doi, known?.tabkyra.verified);
+	let verified = await verify(doi, known?.tabkyra.verified);
 	const record = csl;
+	// An alias DOI answers with its primary DOI; notices attach to the primary, so check both.
+	const primary = toDoi(clean(record?.DOI, 300));
+	if (primary && primary.toLowerCase() !== doi.toLowerCase()) verified = mergeVerification(verified, await verify(primary, known?.tabkyra.verified));
 	return updateLibrary((library) => {
 		const existing = library.items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
 		if (existing) {
@@ -330,7 +370,7 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 			page: clean(record.page, 50) || undefined,
 			// The requested DOI is the identity: it is what was verified and what the URL points at.
 			DOI: doi,
-			URL: `https://doi.org/${doi}`,
+			URL: `https://doi.org/${doiPath(doi)}`,
 		};
 		const item: LibraryItem = {
 			id: citekey(draft, new Set(library.items.map((i) => i.id))),
@@ -343,9 +383,25 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 	});
 }
 
-/** A recorded retraction survives an incomplete re-check. */
+/**
+ * A recorded retraction is cleared only when both sources answered and neither flags it.
+ * An OpenAlex 404 ("not-found") isn't enough: the work may have been merged or re-keyed.
+ */
 function keepRetraction(next: Verification, previous: Verification): Verification {
-	return previous.retracted && !next.retracted && !next.complete ? { ...next, retracted: true, notices: previous.notices } : next;
+	const bothAnswered = next.checks?.openalex === "ok" && next.checks?.crossref === "ok";
+	return previous.retracted && !next.retracted && !bothAnswered ? { ...next, retracted: true, notices: previous.notices } : next;
+}
+
+/** Combine checks of two DOIs for one work (an alias and its primary). */
+function mergeVerification(a: Verification, b: Verification): Verification {
+	return {
+		...a,
+		retracted: a.retracted || b.retracted,
+		notices: [...a.notices, ...b.notices],
+		sources: [...new Set([...a.sources, ...b.sources])],
+		complete: Boolean(a.complete && b.complete),
+		oaUrl: a.oaUrl ?? b.oaUrl,
+	};
 }
 
 function mergeAnnotations(item: LibraryItem, options: AddOptions): void {
@@ -402,11 +458,26 @@ export async function cite(key: string, style = "apa"): Promise<string> {
 	const csl = STYLE_ALIASES[style] ?? style;
 	if (!STYLES.has(csl)) throw new Error(`Unknown style ${style}. Use apa, mla, chicago, ieee, harvard or vancouver.`);
 	if (!item.DOI) throw new Error(`${key} has no DOI to format.`);
-	const res = await get(`${base.doi()}/${encodeURI(item.DOI)}`, `text/x-bibliography; style=${csl}; locale=en-US`);
-	if (!res.ok) throw new Error(`doi.org returned ${res.status} formatting ${key}.`);
+	const res = await get(`${base.doi()}/${doiPath(item.DOI)}`, `text/x-bibliography; style=${csl}; locale=en-US`);
+	const type = res.headers.get("content-type") ?? "";
+	if (!res.ok || /html/i.test(type) || !/text\/(x-bibliography|plain)/i.test(type)) {
+		throw new Error(`doi.org returned no formatted reference for ${key} (${res.status} ${type || "no type"}). Format it from the saved record instead.`);
+	}
 	// The formatter leaves an empty "edited by ," when a record has no editors.
 	const text = clean(await res.text(), 3000).replace(/,? edited by ,/g, ",");
-	return item.tabkyra.verified.retracted ? `[RETRACTED] ${text}` : text;
+	return `${warningPrefix(item)}${text}`;
+}
+
+/** The mark every output carries for a source that is retracted or not fully checked. */
+function warning(item: LibraryItem): string | undefined {
+	if (item.tabkyra.verified.retracted) return "RETRACTED";
+	if (item.tabkyra.verified.complete === false) return "RETRACTION CHECK INCOMPLETE";
+	return undefined;
+}
+
+function warningPrefix(item: LibraryItem): string {
+	const w = warning(item);
+	return w ? `[${w}] ` : "";
 }
 
 // --- Export ------------------------------------------------------------------------------
@@ -430,6 +501,13 @@ function bibEscape(s: string): string {
 	return s.replace(/[\\{}&%$#_~^]/g, (c) => BIB_SPECIAL[c] ?? `\\${c}`);
 }
 
+/** BibTeX authors; a corporate or literal name is braced so it stays one name. */
+function bibNames(item: LibraryItem): string {
+	return (item.author ?? [])
+		.map((a) => (a.family ? bibEscape(a.given ? `${a.family}, ${a.given}` : a.family) : `{${bibEscape(a.literal ?? "")}}`))
+		.join(" and ");
+}
+
 function names(item: LibraryItem, sepBy: string): string {
 	return (item.author ?? []).map((a) => (a.family ? (a.given ? `${a.family}, ${a.given}` : a.family) : (a.literal ?? ""))).join(sepBy);
 }
@@ -443,7 +521,7 @@ export function toBibtex(items: LibraryItem[]): string {
 		.map((i) => {
 			const fields: Array<[string, string | undefined]> = [
 				["title", i.title],
-				["author", names(i, " and ")],
+				["author", bibNames(i)],
 				["year", year(i)],
 				[i.type === "article-journal" ? "journal" : "booktitle", i["container-title"]],
 				["publisher", i.publisher],
@@ -451,12 +529,12 @@ export function toBibtex(items: LibraryItem[]): string {
 				["number", i.issue],
 				["pages", i.page?.replace(/-/g, "--")],
 				["doi", i.DOI],
-				["url", i.URL],
-				["note", i.tabkyra.verified.retracted ? "RETRACTED" : undefined],
+				["url", i.DOI ? `https://doi.org/${doiPath(i.DOI)}` : i.URL],
+				["note", warning(i)],
 			];
 			const body = fields
 				.filter(([, v]) => v)
-				.map(([k, v]) => `  ${k} = {${k === "doi" || k === "url" ? (v as string).replace(/[{}\\]/g, "") : bibEscape(v as string)}}`)
+				.map(([k, v]) => `  ${k} = {${k === "doi" || k === "url" ? (v as string).replace(/[{}\\]/g, "") : k === "author" ? v : bibEscape(v as string)}}`)
 				.join(",\n");
 			return `@${BIBTEX_TYPE[i.type] ?? "misc"}{${i.id},\n${body}\n}`;
 		})
@@ -491,8 +569,8 @@ export function toRis(items: LibraryItem[]): string {
 				ep ? `EP  - ${ep}` : "",
 				i.publisher ? `PB  - ${i.publisher}` : "",
 				i.DOI ? `DO  - ${i.DOI}` : "",
-				i.URL ? `UR  - ${i.URL}` : "",
-				i.tabkyra.verified.retracted ? "N1  - RETRACTED" : "",
+				i.DOI ? `UR  - https://doi.org/${doiPath(i.DOI)}` : i.URL ? `UR  - ${i.URL}` : "",
+				warning(i) ? `N1  - ${warning(i)}` : "",
 				"ER  - ",
 			];
 			return lines.filter(Boolean).join("\n");
@@ -504,7 +582,11 @@ export function toRis(items: LibraryItem[]): string {
 export function toCslJson(items: LibraryItem[]): string {
 	return `${JSON.stringify(
 		// A retracted source keeps a visible mark in every format, CSL included.
-		items.map(({ tabkyra, ...csl }) => (tabkyra.verified.retracted ? { ...csl, note: "RETRACTED" } : csl)),
+		items.map((i) => {
+			const { tabkyra: _t, ...csl } = i;
+			const w = warning(i);
+			return { ...csl, ...(i.DOI ? { URL: `https://doi.org/${doiPath(i.DOI)}` } : {}), ...(w ? { note: w } : {}) };
+		}),
 		null,
 		2,
 	)}\n`;
@@ -518,7 +600,7 @@ function yamlText(value: unknown): string {
 
 /** Text safe inside a Markdown line: no wikilink, embed or HTML syntax from fetched metadata. */
 function md(s: string): string {
-	return s.replace(/[\\[\]<>`|*_!]/g, (c) => `\\${c}`);
+	return s.replace(/[\\[\]<>`|*_!%$=~^#&]/g, (c) => `\\${c}`);
 }
 
 const GENERATED = "tabkyra-generated";
@@ -532,8 +614,9 @@ function sha(text: string): string {
  * walked one segment at a time and a symbolic link anywhere stops it, before anything is
  * created. A note is replaced only if Tabkyra wrote it and nobody edited it since.
  */
-export function writeObsidian(vault: string, folder = "Sources"): { written: string[]; kept: string[] } {
-	if (!existsSync(vault) || !lstatSync(vault).isDirectory()) throw new Error(`${vault} is not a folder.`);
+export function writeObsidian(vault: string, folder = "Sources"): { written: string[]; kept: string[]; stale: string[] } {
+	// The vault itself may be a link (iCloud, Dropbox); folders inside it may not.
+	if (!existsSync(vault) || !statSync(vault).isDirectory()) throw new Error(`${vault} is not a folder.`);
 	const root = realpathSync(vault);
 	let dir = root;
 	for (const segment of folder.split(/[/\\]+/).filter(Boolean)) {
@@ -546,6 +629,8 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 	}
 	const written: string[] = [];
 	const kept: string[] = [];
+	/** Kept notes whose source is now retracted or not fully checked: the note shows no warning. */
+	const stale: string[] = [];
 	for (const i of loadLibrary().items) {
 		if (!/^[a-z0-9]+$/.test(i.id)) continue;
 		const file = join(dir, `${i.id}.md`);
@@ -553,6 +638,7 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 		const st = lstatSync(file, { throwIfNoEntry: false });
 		if (st && !st.isFile()) {
 			kept.push(file);
+			if (warning(i)) stale.push(`${warning(i)}: ${file}`);
 			continue;
 		}
 		if (st) {
@@ -560,6 +646,7 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 			const m = new RegExp(`^${GENERATED}: ([0-9a-f]{16})$`, "m").exec(old);
 			if (!m || m[1] !== sha(old.replace(m[0], `${GENERATED}: `))) {
 				kept.push(file);
+				if (warning(i)) stale.push(`${warning(i)}: ${file}`);
 				continue;
 			}
 		}
@@ -597,14 +684,17 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 			i.tabkyra.note ? `\n## Notes\n\n${md(i.tabkyra.note)}` : "",
 		].filter((l) => l !== "");
 		const draft = `${front.join("\n")}\n\n${body.join("\n\n")}\n`;
-		const text = draft.replace(`${GENERATED}: `, `${GENERATED}: ${sha(draft)}`);
+		// Set the hash on the marker line itself; fetched text elsewhere can't move it.
+		const lines = draft.split("\n");
+		lines[lines.indexOf(`${GENERATED}: `)] = `${GENERATED}: ${sha(draft)}`;
+		const text = lines.join("\n");
 		// Temp file + rename never writes through a link planted at the note's path.
 		const tmp = join(dir, `.${i.id}.${process.pid}.tmp`);
 		writeFileSync(tmp, text, { flag: "wx" });
 		renameSync(tmp, file);
 		written.push(file);
 	}
-	return { written, kept };
+	return { written, kept, stale };
 }
 
 // --- CLI ---------------------------------------------------------------------------------
@@ -638,8 +728,41 @@ function parse(args: string[]): { positional: string[]; opts: Record<string, str
 	return { positional, opts, tags };
 }
 
+/** Options each subcommand reads; any other option is a usage error, not silently ignored. */
+const LIBRARY_OPTIONS: Record<string, string[]> = {
+	add: ["--quote", "--location", "--note", "--tag"],
+	list: ["--json"],
+	search: [],
+	verify: [],
+	cite: ["--style"],
+	export: ["--format", "--out"],
+	obsidian: ["--folder"],
+	remove: [],
+};
+
+/** A flat summary of a saved source, with the field names the tools and skills document. */
+export function summary(item: LibraryItem): Record<string, unknown> {
+	const v = item.tabkyra.verified;
+	return {
+		citekey: item.id,
+		title: item.title,
+		year: item.issued?.["date-parts"]?.[0]?.[0],
+		doi: item.DOI,
+		retracted: v.retracted,
+		complete: v.complete !== false,
+		checks: v.checks,
+		notices: v.notices,
+		citedBy: v.citedBy,
+		oaUrl: v.oaUrl,
+		quote: item.tabkyra.quote,
+	};
+}
+
 export async function runLibrary(args: string[]): Promise<number> {
 	const [sub, ...rest] = args;
+	const allowed = sub ? LIBRARY_OPTIONS[sub] : undefined;
+	const unknown = rest.find((a) => a.startsWith("--") && !(allowed ?? []).includes(a.split("=")[0]));
+	if (allowed && unknown) throw new Error(`tabkyra library ${sub} doesn't take ${unknown}. ${LIBRARY_USAGE}`);
 	const { positional, opts, tags } = parse(rest);
 	switch (sub) {
 		case "add": {
@@ -698,10 +821,12 @@ export async function runLibrary(args: string[]): Promise<number> {
 		}
 		case "obsidian": {
 			if (positional.length !== 1) throw new Error(LIBRARY_USAGE);
-			const { written, kept } = writeObsidian(positional[0], opts.folder);
+			const { written, kept, stale } = writeObsidian(positional[0], opts.folder);
 			console.log(`Wrote ${written.length} notes to ${join(positional[0], opts.folder ?? "Sources")}`);
 			for (const k of kept) console.log(`  kept ${k}: you edited it, or Tabkyra didn't write it`);
-			return 0;
+			// A kept note can't show a new warning, so say it here, loudly.
+			for (const x of stale) console.log(`  NOT UPDATED, ${x}. Add the warning to that note yourself.`);
+			return stale.length ? 3 : 0;
 		}
 		case "remove": {
 			if (positional.length !== 1) throw new Error(LIBRARY_USAGE);
