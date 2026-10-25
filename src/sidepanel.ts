@@ -52,7 +52,7 @@ import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { refreshDiscoveredModels } from "./models/registry.js";
 import { installBugCapture } from "./privacy/capture.js";
-import { PRIVATE_MODE_KEY, privateModel } from "./privacy/private-mode.js";
+import { assertPrivateProxy, PRIVATE_MODE_KEY, privateModel, TRUSTED_HOSTS_KEY } from "./privacy/private-mode.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { Recorder } from "./recording/recorder.js";
 import { TabkyraAppStorage } from "./storage/app-storage.js";
@@ -518,7 +518,16 @@ function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(
 		// A removed subscription sign-in must not run, whatever left the model selected.
 		if (isBlockedModel(model)) throw new RemovedSignInError(model.provider);
 		// Private mode: only zero-data-retention OpenRouter routes and local models.
-		if (await storage.settings.get<boolean>(PRIVATE_MODE_KEY)) model = privateModel(model);
+		if (await storage.settings.get<boolean>(PRIVATE_MODE_KEY)) {
+			const trusted = (await storage.settings.get<string[]>(TRUSTED_HOSTS_KEY)) ?? [];
+			// The CORS proxy would see every prompt, so it must be on the user's own machines too.
+			assertPrivateProxy(
+				await storage.settings.get<boolean>("proxy.enabled"),
+				await storage.settings.get<string>("proxy.url"),
+				trusted,
+			);
+			model = privateModel(model, trusted);
+		}
 		if (model.api === "openai-completions") {
 			const custom = await storage.customProviders.getAll().catch(() => []);
 			if (custom.some((p) => p.name === model.provider)) {

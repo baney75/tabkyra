@@ -4,7 +4,7 @@ import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { html } from "lit";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { helmMark } from "../components/HelmMark.js";
-import { BUG_REPORTS_KEY } from "../privacy/bug-reports.js";
+import { setBugReports } from "../privacy/capture.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 
 /**
@@ -48,7 +48,7 @@ export class WelcomeSetupDialog extends DialogBase {
 						<input
 							type="checkbox"
 							class="mt-0.5"
-							@change=${(e: Event) => void getTabkyraStorage().settings.set(BUG_REPORTS_KEY, (e.target as HTMLInputElement).checked)}
+							@change=${(e: Event) => void setBugReports(getTabkyraStorage(), (e.target as HTMLInputElement).checked)}
 						/>
 						<span>Keep error reports I can choose to send (optional, off by default; Settings &gt; Privacy)</span>
 					</label>

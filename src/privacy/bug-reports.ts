@@ -1,14 +1,15 @@
 /**
  * Bug reports are off unless the user turns them on. While on, errors from the side panel
  * are kept locally, redacted, in a short ring buffer. Nothing leaves the browser on its own:
- * "Review and send" shows the redacted report and opens a prefilled GitHub issue the user
- * submits themselves.
+ * the user reviews and edits the report in Tabkyra, copies it, and pastes it into a GitHub
+ * issue they open and submit themselves.
  */
 
 export const BUG_REPORTS_KEY = "privacy.bugReports";
 export const BUG_LOG_KEY = "privacy.bugLog";
 const MAX_ENTRIES = 20;
-const ISSUE_URL = "https://github.com/baney75/tabkyra/issues/new";
+/** A blank new-issue page: the report travels by the clipboard, never in the URL. */
+export const NEW_ISSUE_URL = "https://github.com/baney75/tabkyra/issues/new?labels=bug-report";
 
 export interface BugEntry {
 	at: string;
@@ -16,10 +17,15 @@ export interface BugEntry {
 	stack?: string;
 }
 
-/** Strip what could identify the user or leak a secret: query strings, emails, key-like strings, home paths. */
+/**
+ * Strip what could identify the user or leak a secret. Web addresses become `[url]`
+ * (paths and hosts can name people, records or accounts); Tabkyra's own extension scripts
+ * keep only the file name, which is what a maintainer needs from a stack trace.
+ */
 export function redact(text: string): string {
 	return text
-		.replace(/\b([a-z][\w+.-]*:\/\/[^\s?#"')]+)[?#][^\s"')]*/gi, "$1?[redacted]")
+		.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)/gi, "ext:/$1")
+		.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>)]+/gi, "[url]")
 		.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
 		.replace(/\b(sk|pk|rk|ghp|gho|ghu|ghs|github_pat|xox[abprs]|AKIA|AIza|ya29|eyJ)[\w-]{10,}/g, "[secret]")
 		.replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[long-token]")
@@ -38,21 +44,17 @@ export function addEntry(log: BugEntry[], error: unknown, now = new Date()): Bug
 	return [...log, entry].slice(-MAX_ENTRIES);
 }
 
-export function issueUrl(version: string, log: BugEntry[], userAgent: string): string {
-	const body = [
+/** The report text the user reviews and edits before anything is shared. */
+export function reportText(version: string, log: BugEntry[], userAgent: string): string {
+	return [
 		`Tabkyra ${version}`,
 		`Browser: ${redact(userAgent)}`,
 		"",
 		"What were you doing?",
 		"",
-		"Recent errors (redacted; edit before submitting):",
+		"Recent errors (redacted):",
 		"```",
 		...log.slice(-5).map((e) => `${e.at} ${e.message}${e.stack ? `\n${e.stack}` : ""}`),
 		"```",
 	].join("\n");
-	const url = new URL(ISSUE_URL);
-	url.searchParams.set("title", `Bug report: ${log.at(-1)?.message.slice(0, 80) ?? "describe the problem"}`);
-	url.searchParams.set("body", body.slice(0, 6000));
-	url.searchParams.set("labels", "bug-report");
-	return url.toString();
 }
