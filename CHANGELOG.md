@@ -17,7 +17,7 @@
 - Browser sessions: every chat owns its own tab group and works in the background. Tabs open inactive, tools act on the session's current tab, and the agent never sees the user's other tabs. The tab the side panel is opened on becomes the session's first tab (the group appears immediately); a "share this tab" button hands over further tabs; `navigate { showTab }` is the only way the agent brings a tab forward.
 - Screenshots and trusted input events go through `chrome.debugger` (works on hidden tabs; focus emulation keeps requestAnimationFrame and lazy loading alive off-screen).
 - Foreground guard: popups opened by agent tabs no longer steal focus.
-- Dynamic model discovery: provider model lists are fetched at runtime (Anthropic, OpenAI, ChatGPT/Codex, Gemini, GitHub Copilot, OpenRouter, Mistral, Groq, xAI, Cerebras, Hugging Face), enriched from the generated table and models.dev, cached in IndexedDB.
+- Dynamic model discovery: provider model lists are fetched at runtime (Anthropic, OpenAI, Gemini, OpenRouter, Mistral, Groq, xAI, Cerebras, Hugging Face), enriched from the generated table and models.dev, cached in IndexedDB.
 - Bridge for external agents: `cli/` ships the `sitegeist` command (`sitegeist mcp`, `install`, `status`, `allow`, `reload`, `debug`, `pi-extension`). Harnesses reach the browser through a native messaging host and a user-only unix socket; each harness gets its own tab group. Settings > Bridge controls site permissions.
 
 ### Changed
@@ -56,6 +56,7 @@
 - Manifest: fixed extension `key` (stable id `kenehmggpggpiolepbjojeenmeapgfoc`, checked by the e2e test), new permissions `tabGroups`, `nativeMessaging`, `alarms`.
 
 ### Removed
+- Subscription sign-in for ChatGPT, GitHub Copilot and Google Gemini (and the bundled pi-ai code for them, Antigravity and Claude Code identity headers). Each posed as another app (Codex CLI, VS Code Copilot Chat, Gemini CLI, Claude Code), which the providers forbid. Tabkyra takes API keys only, says the provider bills API use, and clears tokens the old sign-ins left. `docs/auth-policy.md` has the sources; `test/auth-policy.test.mjs` fails if any of it comes back.
 - Sitegeist's site content (orb, testimonials, preview videos, install page) and `site/run.sh deploy`'s upstream server target; deploy now refuses until Tabkyra has hosting.
 - The Sitegeist orb (three.js) and its icon generator page; the `three` dependency went with them.
 

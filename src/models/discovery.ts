@@ -7,7 +7,6 @@
  */
 
 import type { Api } from "@mariozechner/pi-ai";
-import { getGitHubCopilotBaseUrl } from "../oauth/github-copilot.js";
 
 export interface DiscoveredModel {
 	id: string;
@@ -23,10 +22,8 @@ export interface DiscoveredModel {
 }
 
 export interface DiscoveryCredential {
-	/** API key or OAuth access token, already refreshed. */
+	/** The provider API key. */
 	token: string;
-	/** OAuth account id, when the provider needs it (ChatGPT). */
-	accountId?: string;
 }
 
 type Adapter = (credential: DiscoveryCredential, signal: AbortSignal) => Promise<DiscoveredModel[]>;
@@ -92,7 +89,7 @@ interface AnthropicListResponse {
 }
 
 const anthropic: Adapter = async ({ token }, signal) => {
-	// API keys only: Claude subscription tokens are not supported in third-party apps.
+	// API keys only: see docs/auth-policy.md.
 	const headers: Record<string, string> = { "anthropic-version": "2023-06-01", "x-api-key": token };
 	const out: DiscoveredModel[] = [];
 	let after: string | undefined;
@@ -158,79 +155,6 @@ const google: Adapter = async ({ token }, signal) => {
 		pageToken = data.nextPageToken;
 	}
 	return out;
-};
-
-interface CodexListResponse {
-	models: Array<{
-		slug: string;
-		display_name?: string;
-		visibility?: string;
-		supported_reasoning_levels?: Array<{ effort: string }>;
-		input_modalities?: string[];
-	}>;
-}
-
-const openaiCodex: Adapter = async ({ token, accountId }, signal) => {
-	const url = "https://chatgpt.com/backend-api/codex/models?client_version=0.154.0";
-	const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-	if (accountId) headers["chatgpt-account-id"] = accountId;
-	const data = await getJson<CodexListResponse>(url, headers, signal);
-	return data.models
-		.filter((m) => m.visibility !== "hidden")
-		.map((m) => ({
-			id: m.slug,
-			name: m.display_name,
-			api: "openai-codex-responses",
-			baseUrl: "https://chatgpt.com/backend-api",
-			reasoning: (m.supported_reasoning_levels?.length ?? 0) > 0,
-			input: m.input_modalities?.includes("image") === false ? ["text"] : ["text", "image"],
-		}));
-};
-
-interface CopilotListResponse {
-	data: Array<{
-		id: string;
-		name?: string;
-		model_picker_enabled?: boolean;
-		capabilities?: {
-			type?: string;
-			supports?: { tool_calls?: boolean; vision?: boolean; streaming?: boolean };
-			limits?: { max_context_window_tokens?: number; max_output_tokens?: number };
-		};
-	}>;
-}
-
-const COPILOT_HEADERS = {
-	"User-Agent": "GitHubCopilotChat/0.35.0",
-	"Editor-Version": "vscode/1.107.0",
-	"Editor-Plugin-Version": "copilot-chat/0.35.0",
-	"Copilot-Integration-Id": "vscode-chat",
-};
-
-const githubCopilot: Adapter = async ({ token }, signal) => {
-	const baseUrl = getGitHubCopilotBaseUrl(token);
-	const data = await getJson<CopilotListResponse>(
-		`${baseUrl}/models`,
-		{ Authorization: `Bearer ${token}`, ...COPILOT_HEADERS },
-		signal,
-	);
-	return data.data
-		.filter((m) => m.capabilities?.type === "chat" && m.capabilities?.supports?.tool_calls !== false)
-		.map((m) => {
-			const isClaude4 = /^claude-(haiku|sonnet|opus)-4([.-]|$)/.test(m.id);
-			const needsResponses = m.id.startsWith("gpt-5") || m.id.startsWith("oswe");
-			const api: Api = isClaude4 ? "anthropic-messages" : needsResponses ? "openai-responses" : "openai-completions";
-			return {
-				id: m.id,
-				name: m.name,
-				api,
-				baseUrl,
-				input: m.capabilities?.supports?.vision ? ["text", "image"] : ["text"],
-				contextWindow: m.capabilities?.limits?.max_context_window_tokens,
-				maxTokens: m.capabilities?.limits?.max_output_tokens,
-				headers: { ...COPILOT_HEADERS },
-			} satisfies DiscoveredModel;
-		});
 };
 
 interface OpenRouterListResponse {
@@ -299,9 +223,7 @@ const mistral: Adapter = async ({ token }, signal) => {
 export const DISCOVERY_ADAPTERS: Record<string, Adapter> = {
 	anthropic,
 	openai: openAiCompatible("https://api.openai.com/v1", "openai-responses"),
-	"openai-codex": openaiCodex,
 	google,
-	"github-copilot": githubCopilot,
 	openrouter,
 	mistral,
 	groq: openAiCompatible("https://api.groq.com/openai/v1", "openai-completions"),

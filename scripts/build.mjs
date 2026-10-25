@@ -12,7 +12,8 @@ const staticDir = join(packageRoot, "static");
 
 // Chrome only
 const targetBrowser = "chrome";
-const outDir = join(packageRoot, "dist-chrome");
+// TABKYRA_OUT_DIR builds elsewhere (test/auth-policy.test.mjs builds a throwaway copy).
+const outDir = process.env.TABKYRA_OUT_DIR || join(packageRoot, "dist-chrome");
 
 const entryPoints = {
 	sidepanel: join(packageRoot, "src/sidepanel.ts"),
@@ -23,7 +24,116 @@ const entryPoints = {
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
+// ============================================================================
+// REMOVED SIGN-INS (docs/auth-policy.md)
+// ============================================================================
+// pi-ai ships providers for ChatGPT, Gemini CLI and Copilot subscriptions that pose as
+// Codex CLI, Gemini CLI and VS Code. Tabkyra never offers them, so their code and the
+// models that carry their headers are left out of the bundle, not just hidden.
+const REMOVED_PROVIDERS = ["github-copilot", "google-antigravity", "google-gemini-cli", "openai-codex"];
+const refuse = (name) =>
+	`export const ${name} = () => { throw new Error("Subscription sign-in was removed from Tabkyra; see docs/auth-policy.md"); };`;
+const piAiStubs = {
+	"providers/openai-codex-responses.ts": [
+		refuse("streamOpenAICodexResponses"),
+		refuse("streamSimpleOpenAICodexResponses"),
+	].join("\n"),
+	"providers/google-gemini-cli.ts": [refuse("streamGoogleGeminiCli"), refuse("streamSimpleGoogleGeminiCli")].join(
+		"\n",
+	),
+	"providers/github-copilot-headers.ts": [
+		"export const inferCopilotInitiator = () => 'user';",
+		"export const hasCopilotVisionInput = () => false;",
+		"export const buildCopilotDynamicHeaders = () => ({});",
+	].join("\n"),
+};
+
+/** Drop the removed providers' top-level blocks from models.generated.ts. */
+function stripRemovedModels(source) {
+	const lines = source.split(/\r?\n/);
+	const out = [];
+	const found = new Set();
+	let skipping = false;
+	for (const line of lines) {
+		const bare = line.trimEnd();
+		const opens = REMOVED_PROVIDERS.find((p) => bare === `\t"${p}": {`);
+		if (!skipping && opens) {
+			found.add(opens);
+			skipping = true;
+			continue;
+		}
+		if (skipping) {
+			if (bare === "\t},") skipping = false;
+			continue;
+		}
+		out.push(line);
+	}
+	if (skipping) throw new Error("models.generated.ts: a removed provider block never closed");
+	const missing = REMOVED_PROVIDERS.filter((p) => !found.has(p));
+	if (missing.length) throw new Error(`models.generated.ts changed upstream: no block for ${missing.join(", ")}`);
+	return out.join("\n");
+}
+
+/**
+ * pi-ai's Anthropic provider treats an sk-ant-oat token as a Claude subscription and
+ * sends Claude Code's identity headers with it. Tabkyra refuses those tokens earlier
+ * (src/auth/policy.ts); here the branch itself goes, so no build can pose as Claude Code.
+ */
+function stripClaudeCodeIdentity(source) {
+	const edits = [
+		[
+			/function isOAuthToken\(apiKey: string\): boolean \{[^}]*\}/,
+			"function isOAuthToken(_apiKey: string): boolean {\n\treturn false;\n}",
+		],
+		[/\s*"user-agent": `claude-cli\/\$\{claudeCodeVersion\}`,/, ""],
+		[/\s*"x-app": "cli",/, ""],
+		[/claude-code-\d{8},oauth-\d{4}-\d\d-\d\d,/, ""],
+		[/"You are Claude\s+Code, Anthropic's official CLI for Claude\."/, '""'],
+	];
+	let out = source;
+	for (const [pattern, replacement] of edits) {
+		if (!pattern.test(out))
+			throw new Error(`anthropic.ts changed upstream: ${pattern} not found; re-check docs/auth-policy.md`);
+		out = out.replace(pattern, replacement);
+	}
+	return out;
+}
+
+const stripRemovedSignIns = {
+	name: "strip-removed-sign-ins",
+	setup(b) {
+		// Every transform must run on every build; a path that no longer matches would ship
+		// the borrowed identities silently, so a miss fails the build instead.
+		const expected = [...Object.keys(piAiStubs), "models.generated.ts", "providers/anthropic.ts"];
+		const applied = new Set();
+		b.onStart(() => applied.clear());
+		// Match on the path tail: esbuild hands over real paths, which differ from packageRoot
+		// when pi-mono or the checkout sits behind a symlink (macOS /tmp is /private/tmp).
+		b.onLoad({ filter: /[\\/]packages[\\/]ai[\\/]src[\\/].*\.ts$/ }, (args) => {
+			const rel = args.path.replaceAll("\\", "/").match(/\/packages\/ai\/src\/(.+)$/)?.[1];
+			if (!rel || !expected.includes(rel)) return undefined;
+			applied.add(rel);
+			if (piAiStubs[rel]) return { contents: piAiStubs[rel], loader: "ts" };
+			const source = readFileSync(args.path, "utf8");
+			if (rel === "models.generated.ts") return { contents: stripRemovedModels(source), loader: "ts" };
+			return { contents: stripClaudeCodeIdentity(source), loader: "ts" };
+		});
+		b.onEnd((result) => {
+			if (result.errors.length) return;
+			const missed = expected.filter((rel) => !applied.has(rel));
+			if (missed.length) {
+				return {
+					errors: [
+						{ text: `Removed sign-in code was not stripped (${missed.join(", ")}); see docs/auth-policy.md` },
+					],
+				};
+			}
+		});
+	},
+};
+
 const buildOptions = {
+	plugins: [stripRemovedSignIns],
 	absWorkingDir: packageRoot,
 	entryPoints,
 	bundle: true,
@@ -186,7 +296,7 @@ const run = async () => {
 		copyStatic();
 		// The stylesheet is generated by Tailwind; without it the side panel renders unstyled.
 		// `npm run build` also runs this step, but a direct invocation must produce a complete bundle.
-		execSync("npx tailwindcss -i ./src/app.css -o ./dist-chrome/app.css --minify", {
+		execSync(`npx tailwindcss -i ./src/app.css -o ${JSON.stringify(join(outDir, "app.css"))} --minify`, {
 			cwd: packageRoot,
 			stdio: "inherit",
 		});

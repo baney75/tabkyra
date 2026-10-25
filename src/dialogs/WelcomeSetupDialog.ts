@@ -6,7 +6,7 @@ import { helmMark } from "../components/HelmMark.js";
 
 /**
  * Shown on first launch when no API keys are configured.
- * Blocks until user clicks OK, then opens the API Keys & OAuth settings.
+ * Blocks until user clicks OK, then opens the API Keys settings.
  */
 export class WelcomeSetupDialog extends DialogBase {
 	private resolvePromise?: () => void;
@@ -37,9 +37,9 @@ export class WelcomeSetupDialog extends DialogBase {
 						title: "Welcome to Tabkyra",
 					})}
 					<p class="text-sm text-foreground">
-						To get started, you need to connect at least one AI provider.
-						You can either log in with an existing subscription (ChatGPT, GitHub Copilot, or Google Gemini)
-						or enter an API key.
+						To get started, add an API key for at least one AI provider. API use is billed by the
+						provider. Tabkyra has no subscription sign-in, because the providers' terms forbid
+						third-party apps from using them.
 					</p>
 					<div class="flex justify-end">
 						${Button({

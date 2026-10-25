@@ -19,8 +19,8 @@ Extension:
 - Opening the side panel puts the tab you opened it on into the session's tab group
   right away, so the group exists from the start. The side panel only reacts to URL
   changes on its own tabs. A link icon in the header shares further tabs with the agent.
-- `src/models/`: runtime model discovery for Anthropic, OpenAI, ChatGPT/Codex, Gemini,
-  GitHub Copilot, OpenRouter, Mistral, Groq, xAI, Cerebras, Hugging Face; metadata from
+- `src/models/`: runtime model discovery for Anthropic, OpenAI, Gemini,
+  OpenRouter, Mistral, Groq, xAI, Cerebras, Hugging Face; metadata from
   the generated table and models.dev; cached in IndexedDB (`discovered-models` store).
   Providers without a list endpoint keep the static table. `registerModels` was added to
   `pi-ai` (`../pi-mono/packages/ai/src/models.ts`).

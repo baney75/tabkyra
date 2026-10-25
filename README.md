@@ -165,9 +165,11 @@ Your browser is signed in as you, so the defaults are conservative.
 - **Only this extension can make the browser start the host.** The host manifest's `allowed_origins`
   names one fixed extension id, `kenehmggpggpiolepbjojeenmeapgfoc`, derived from the
   manifest `key` (the e2e test checks it).
-- **No Claude subscription login.** Anthropic doesn't allow Claude Pro or Max
-  subscriptions in third-party apps, so the side panel takes Anthropic API keys only.
-  ChatGPT, GitHub Copilot and Gemini sign-in still work, as does any API key.
+- **API keys only, no subscription sign-in.** The ChatGPT, GitHub Copilot and Gemini
+  sign-ins this fork inherited worked by posing as Codex CLI, VS Code and Gemini CLI.
+  Their terms forbid that, and accounts get suspended for it, so they're gone, along with
+  Claude Pro/Max login. The side panel takes API keys, which each provider bills. The
+  sources and dates are in [docs/auth-policy.md](docs/auth-policy.md).
 
 ## How it works
 
