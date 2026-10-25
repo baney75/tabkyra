@@ -16,7 +16,11 @@ import { banner, c, sym } from "./ui.ts";
 import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
 import { VERSION } from "./version.ts";
 
-const cmd = (name: string, args: string, what: string) => `  ${c.bold(`tabkyra ${name}`)}${args ? ` ${args}` : ""}`.padEnd(40) + what;
+/** One help row. Padding counts visible characters, so color codes don't shift the column. */
+const cmd = (name: string, args: string, what: string) => {
+	const usage = `tabkyra ${name}${args ? ` ${args}` : ""}`;
+	return `  ${c.bold(`tabkyra ${name}`)}${args ? ` ${args}` : ""}${" ".repeat(Math.max(2, 48 - usage.length))}${what}`;
+};
 
 function help(): string {
 	const section = (title: string) => `\n${c.brass(title)}`;
@@ -35,20 +39,22 @@ function help(): string {
 		cmd("skill lint", "[path...]", "Check skills for hidden text, injection and missing structure"),
 		cmd("skill apply", "<folder> [--yes]", "Check and show an edited skill; --yes backs up and installs it (/rsi)"),
 		cmd("skill revert", "<name>", "Drop your edit and go back to the bundled skill"),
-		section("Remote"),
-		cmd("serve", "[--port 8787]", "MCP over HTTP on loopback, for tunnels; every request needs a token"),
-		cmd("token create", "<name> --scope a,b", "A scoped, revocable token (tabkyra token scopes lists them)"),
-		cmd("token list|revoke", "", "See and end tokens"),
-		cmd("tunnel tailscale", "[--public] [--off]", "Reach serve from your tailnet over HTTPS"),
-		cmd("tunnel cloudflare", "[--off]", "A free cloudflared quick tunnel"),
-		section("Library"),
-		cmd("library add", "<doi|arxiv>", "Save a source, verified against its registry, OpenAlex and retractions"),
-		cmd("library search|list|cite", "", "Find sources and format a reference (apa, mla, chicago, ieee)"),
-		cmd("library export", "--format bibtex|ris|csl", "For Zotero, Word and LaTeX"),
-		cmd("library obsidian", "<vault>", "One note per source in <vault>/Sources"),
 		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("(tabkyra setup adds these for you.)")}`,
+		section("Remote"),
+		cmd("serve", "[--port 8787]", "MCP over HTTP on loopback, for tunnels; every request needs a token"),
+		cmd("token create", "<name> --scope a,b", "A scoped, revocable token (tabkyra token scopes lists them)"),
+		cmd("token list|revoke|scopes", "", "See tokens, end one, or list the scopes"),
+		cmd("tunnel tailscale", "[--public] [--off]", "Reach serve from your tailnet over HTTPS (--port N)"),
+		cmd("tunnel cloudflare", "[--off]", "A free cloudflared quick tunnel"),
+		section("Library"),
+		cmd("library add", "<doi|arxiv>", "Save a source, verified against its registry, OpenAlex and retractions"),
+		cmd("library search|list|cite", "", "Find sources and format a reference (apa, mla, chicago, ieee, ...)"),
+		cmd("library export", "--format bibtex|ris|csl", "For Zotero, Word and LaTeX"),
+		cmd("library obsidian", "<vault>", "One note per source in <vault>/Sources"),
+		cmd("library verify", "[key...]", "Re-run the registry and retraction checks"),
+		cmd("library remove", "<key>", "Drop a source from the library"),
 		section("Sites"),
 		cmd("allow", "<host>", "Let agents open a site (subdomains included)"),
 		cmd("ask", "", "Agents ask before opening a site not yet allowed (default)"),
