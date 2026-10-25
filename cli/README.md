@@ -1,7 +1,7 @@
 # tabkyra (CLI)
 
 Bridge between coding harnesses and the Tabkyra browser extension. Any MCP client
-(Claude Code, Codex, omp) and pi can drive a Chromium browser through it. Each harness
+(Claude Code, Codex, OpenCode, Cursor, OMP) and pi can drive a Chromium browser through it. Each harness
 gets its own tab group and works in the background while you keep using your tabs.
 
 ```
@@ -44,6 +44,19 @@ it needs no extra step. Reload the extension once after the first install.
 | `tabkyra reload` | reload the extension (after rebuilding `dist-chrome`) |
 | `tabkyra debug` | bridge state, recent request timings, Chrome API benchmark |
 | `tabkyra pi-extension` | write `~/.pi/agent/extensions/tabkyra.ts` for pi |
+| `tabkyra skill install [name...] [--all] [--force]` | install the bundled skills into Claude Code, Codex and OpenCode; a same-name skill Tabkyra didn't write is left alone without `--force` |
+| `tabkyra skill list` | the bundled skills and what each is for |
+| `tabkyra skill print [name] [--raw]` | a skill as an AGENTS.md section (default `tabkyra`); `--raw` is the exact SKILL.md |
+| `tabkyra skill lint [path...]` | check skills for hidden text, injection, remote code, secret handling and structure ([rules](../docs/skill-security.md)) |
+| `tabkyra skill apply <folder> [--yes]` | lint and diff an edited skill; `--yes` backs up the current one and installs the edit |
+| `tabkyra skill revert <name>` | drop your edit and go back to the bundled skill |
+| `tabkyra library add <doi\|arxiv> [--quote] [--location] [--note] [--tag]` | save a source, verified against its registry, OpenAlex and Crossref retraction notices |
+| `tabkyra library list\|search\|verify\|cite\|export\|obsidian\|remove` | find, re-check, cite (apa, mla, chicago, ieee, harvard, vancouver), export (bibtex, ris, csl) or write Obsidian notes |
+| `tabkyra serve [--port 8787]` | MCP over Streamable HTTP at `/mcp`, loopback only; every request needs a token |
+| `tabkyra token create <name> --scope a,b` | a scoped, revocable token, shown once (`token list`, `token revoke <id\|name>`, `token scopes`) |
+| `tabkyra tunnel tailscale [--port N] [--public] [--off]` | reach `serve` over HTTPS through your tailnet (`--public` uses Funnel) |
+| `tabkyra tunnel cloudflare [--port N] [--off]` | reach `serve` through a cloudflared quick tunnel |
+| `tabkyra update [--check] [--rollback] [--channel stable\|nightly]` | install the latest signed release ([docs/updates.md](../docs/updates.md)) |
 
 Output is colored only on a terminal; `NO_COLOR` turns it off. Usage errors exit 2, and
 other failures exit 1 with the next step to take.
@@ -94,6 +107,8 @@ mode to "allow any site" there. pi: set `TABKYRA_AUTO_ALLOW=1` to auto-approve.
 | `read_page`, `find`, `get_page_text`, `get_page_html`, `screenshot` | read the page |
 | `click`, `hover`, `type`, `press`, `fill`, `scroll`, `drag`, `actions` | act on it |
 | `run_js`, `wait`, `read_console`, `read_network` | scripts, waits and debugging |
+| `handle_dialog` | answer an alert, confirm or prompt box; while one is open, other calls fail at once with `dialog_open` |
+| `library_add`, `library_search`, `library_cite` | the source library (`tabkyra library`) |
 
 Every tool documents its parameters and includes an example in its description. The server's instructions tell the
 agent that page text is untrusted data and that it must ask before acting under the

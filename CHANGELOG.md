@@ -31,6 +31,8 @@
 - Foreground guard: popups opened by agent tabs no longer steal focus.
 - Dynamic model discovery: provider model lists are fetched at runtime (Anthropic, OpenAI, Gemini, OpenRouter, Mistral, Groq, xAI, Cerebras, Hugging Face), enriched from the generated table and models.dev, cached in IndexedDB.
 - Bridge for external agents: `cli/` ships the `sitegeist` command (`sitegeist mcp`, `install`, `status`, `allow`, `reload`, `debug`, `pi-extension`). Harnesses reach the browser through a native messaging host and a user-only unix socket; each harness gets its own tab group. Settings > Bridge controls site permissions.
+- Repository docs for users and contributors: `CONTRIBUTING.md`, `SECURITY.md` (private reporting, scope), `CLAUDE.md` (points to `AGENTS.md`), `docs/README.md` (an index of every doc), issue forms for bug reports (the `/bug` sections), skill proposals and feature requests, a pull request template and `.github/FUNDING.yml`. The README covers skills, the lint, the library, private mode, bug reports and remote MCP, and `AGENTS.md` covers skills, testing and review.
+- Brand: `media/brand/build.mjs` also renders a light README hero (`hero-light.png`, shown through `<picture>` on light themes) and a 1280x640 GitHub social preview (`social.png`). The site's `og.png` uses the same card layout.
 
 ### Changed
 - `tabkyra setup` and `tabkyra skill install` now install every bundled skill, not only `tabkyra`. A skill of the same name that Tabkyra didn't write is still left alone; `--force` replaces only the skills named on the command line (or `tabkyra` when none are).
@@ -68,6 +70,8 @@
 - The side panel no longer requires the "Allow User Scripts" toggle: page injection (`browserjs()`, overlay, element picker, image extraction) runs through `userScripts` when available and through the debugger's `Runtime.evaluate` otherwise, with a CDP-binding shim standing in for `chrome.runtime.sendMessage` (`src/browser/inject.ts`). `userScripts` moved to `optional_permissions`.
 - Type errors in `CustomProviderEditDialog` (missing i18n keys) and `CustomProvidersTab` (`remove` shadowed `HTMLElement.remove`).
 - Manifest: fixed extension `key` (stable id `kenehmggpggpiolepbjojeenmeapgfoc`, checked by the e2e test), new permissions `tabGroups`, `nativeMessaging`, `alarms`.
+- `tabkyra --help` lines up its descriptions (long commands ran into them), lists the Claude Code and Codex commands under Agents instead of Library, and shows `library verify`, `library remove` and `token scopes`.
+- The site's social card no longer wraps its line onto a second row.
 
 ### Removed
 - Subscription sign-in for ChatGPT, GitHub Copilot and Google Gemini (and the bundled pi-ai code for them, Antigravity and Claude Code identity headers). Each posed as another app (Codex CLI, VS Code Copilot Chat, Gemini CLI, Claude Code), which the providers forbid. Tabkyra takes API keys only, says the provider bills API use, and clears tokens the old sign-ins left. `docs/auth-policy.md` has the sources; `test/auth-policy.test.mjs` fails if any of it comes back.
