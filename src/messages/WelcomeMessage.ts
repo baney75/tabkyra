@@ -3,7 +3,7 @@ import type { AgentInterface, MessageRenderer } from "@mariozechner/pi-web-ui";
 import { registerMessageRenderer } from "@mariozechner/pi-web-ui";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import "../components/OrbAnimation.js";
+import { helmMark } from "../components/HelmMark.js";
 
 export interface TutorialPrompt {
 	label: string;
@@ -28,28 +28,8 @@ export class WelcomeMessageElement extends LitElement {
 	@property({ attribute: false }) agentInterface!: AgentInterface;
 	@property({ attribute: false }) message!: WelcomeMessage;
 
-	private taglineWords = ["automate", "write", "transform", "research", "scrape", "create"];
-	private currentWordIndex = 0;
-	private intervalId?: number;
-
 	protected createRenderRoot() {
 		return this;
-	}
-
-	override connectedCallback() {
-		super.connectedCallback();
-		// Rotate tagline word every 2 seconds
-		this.intervalId = window.setInterval(() => {
-			this.currentWordIndex = (this.currentWordIndex + 1) % this.taglineWords.length;
-			this.requestUpdate();
-		}, 2000);
-	}
-
-	override disconnectedCallback() {
-		super.disconnectedCallback();
-		if (this.intervalId) {
-			clearInterval(this.intervalId);
-		}
 	}
 
 	private async selectTutorial(prompt: string) {
@@ -63,23 +43,11 @@ export class WelcomeMessageElement extends LitElement {
 
 	override render(): TemplateResult {
 		return html`
-			<div class="welcome-orb-container my-8 flex flex-col items-center justify-center">
-				<!-- Title and tagline first -->
-				<div class="text-center mb-8">
-					<h1 class="text-5xl font-bold mb-4">Tabkyra</h1>
-					<p class="text-xl text-muted-foreground">
-						Your AI companion for the web to
-						<span
-							class="rotating-word inline-block min-w-[120px] text-left font-semibold text-foreground"
-							key=${this.currentWordIndex}
-							>${this.taglineWords[this.currentWordIndex]}</span
-						>
-					</p>
-				</div>
-
-				<!-- Three.js Orb Animation -->
-				<div class="flex items-center justify-center -my-8 mb-4">
-					<orb-animation></orb-animation>
+			<div class="welcome-container my-10 flex flex-col items-center justify-center">
+				<div class="flex flex-col items-center text-center mb-8 px-6">
+					${helmMark(72, "tile", "mb-5 rounded-[17px] shadow-[0_10px_30px_-12px_rgba(227,169,59,0.55)]")}
+					<h1 class="text-3xl font-semibold tracking-tight mb-2">Tabkyra</h1>
+					<p class="text-base text-muted-foreground max-w-xs">You steer. Tabkyra works the tabs.</p>
 				</div>
 
 				<!-- Tutorial pills -->

@@ -14,6 +14,27 @@
 /* biome-ignore lint/correctness/noInvalidPositionAtImportRule: fuck you */
 @import "tailwindcss";
 
+/* Tabkyra palette (media/brand/BRAND.md): brass on ink. Dark mode leans toward ink. */
+:root {
+	--tk-brass: #e3a93b;
+	--tk-brass-deep: #a8761c;
+	--tk-ink: #0f1b24;
+	--tk-tide: #43b3a0;
+	--ring: var(--tk-brass-deep);
+}
+
+.dark {
+	--background: oklch(0.17 0.015 240);
+	--card: oklch(0.21 0.017 240);
+	--popover: oklch(0.25 0.018 240);
+	--secondary: oklch(0.26 0.018 240);
+	--muted: oklch(0.26 0.018 240);
+	--accent: oklch(0.31 0.02 240);
+	--border: oklch(0.29 0.018 240);
+	--input: oklch(0.33 0.018 240);
+	--ring: var(--tk-brass);
+}
+
 body {
 	font-size: 16px;
 	-webkit-font-smoothing: antialiased;
@@ -88,25 +109,9 @@ body {
 	}
 }
 
-.welcome-orb-container {
+.welcome-container {
 	position: relative;
 	animation: fadeInUp 0.8s ease-out;
-}
-
-.orb-container {
-	background-color: var(--background);
-	/* Responsive sizing: scale with viewport height, capped at 400px */
-	width: min(400px, 30vh);
-	height: min(400px, 30vh);
-	display: block;
-	/* Ensure it maintains aspect ratio */
-	aspect-ratio: 1 / 1;
-}
-
-.orb-container canvas {
-	background-color: var(--background);
-	width: 100%;
-	height: 100%;
 }
 
 .rotating-word {
@@ -117,8 +122,8 @@ body {
 	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 	position: relative;
 	overflow: hidden;
-	background: linear-gradient(135deg, rgba(217, 79, 0, 0.15), rgba(255, 107, 0, 0.15), rgba(212, 165, 0, 0.15));
-	border: 1px solid rgba(255, 107, 0, 0.3);
+	background: linear-gradient(135deg, rgba(227, 169, 59, 0.15), rgba(227, 169, 59, 0.15), rgba(67, 179, 160, 0.15));
+	border: 1px solid rgba(227, 169, 59, 0.3);
 	backdrop-filter: blur(10px);
 }
 
@@ -129,7 +134,7 @@ body {
 	left: 0;
 	right: 0;
 	bottom: 0;
-	background: linear-gradient(90deg, transparent, rgba(255, 107, 0, 0.4), transparent);
+	background: linear-gradient(90deg, transparent, rgba(227, 169, 59, 0.4), transparent);
 	background-size: 200% 100%;
 	animation: shimmer 3s ease-in-out infinite;
 	opacity: 0;
@@ -142,9 +147,9 @@ body {
 
 .tutorial-pill:hover {
 	transform: translateY(-2px) scale(1.03);
-	background: linear-gradient(135deg, rgba(217, 79, 0, 0.25), rgba(255, 107, 0, 0.25), rgba(212, 165, 0, 0.25));
-	box-shadow: 0 8px 20px -4px rgba(255, 107, 0, 0.5);
-	border-color: rgba(255, 107, 0, 0.5);
+	background: linear-gradient(135deg, rgba(227, 169, 59, 0.25), rgba(227, 169, 59, 0.25), rgba(67, 179, 160, 0.25));
+	box-shadow: 0 8px 20px -4px rgba(227, 169, 59, 0.5);
+	border-color: rgba(227, 169, 59, 0.5);
 }
 
 .tutorial-pill:active {
@@ -155,8 +160,8 @@ body {
 .user-message-container {
 	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	position: relative;
-	background: linear-gradient(135deg, rgba(217, 79, 0, 0.12), rgba(255, 107, 0, 0.12), rgba(212, 165, 0, 0.12));
-	border: 1px solid rgba(255, 107, 0, 0.25);
+	background: linear-gradient(135deg, rgba(227, 169, 59, 0.12), rgba(227, 169, 59, 0.12), rgba(67, 179, 160, 0.12));
+	border: 1px solid rgba(227, 169, 59, 0.25);
 	backdrop-filter: blur(10px);
 	max-width: 100%;
 }

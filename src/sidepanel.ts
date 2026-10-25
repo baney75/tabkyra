@@ -27,6 +27,7 @@ import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
 import { dispatchToSandbox, setCdpMessageHandler } from "./browser/inject.js";
 import { BrowserSession, listSessions, sessionIdForTab, sessionOwningTab } from "./browser/session.js";
+import { helmMark } from "./components/HelmMark.js";
 import { Toast } from "./components/Toast.js";
 import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyOrOAuthDialog } from "./dialogs/ApiKeyOrOAuthDialog.js";
@@ -835,7 +836,11 @@ const renderApp = () => {
 		<div class="w-full h-full flex flex-col bg-background text-foreground overflow-hidden">
 			<!-- Header -->
 			<div class="flex items-center justify-between border-b border-border shrink-0">
-				<div class="flex items-center gap-2 px-3 py-2">
+				<div class="flex items-center gap-2 px-3 py-2 min-w-0">
+					<span class="flex items-center gap-1.5 pr-1 select-none" title="Tabkyra">
+						${helmMark(18)}
+						${currentTitle ? "" : html`<span class="text-sm font-semibold tracking-tight">Tabkyra</span>`}
+					</span>
 					${Button({
 						variant: "ghost",
 						size: "sm",
@@ -1198,6 +1203,8 @@ async function initApp() {
 	if (agent) {
 		const welcomeMessage = createWelcomeMessage(tutorials);
 		agent.appendMessage(welcomeMessage);
+		// appendMessage emits no event, so the already-rendered chat would not show it.
+		chatPanel.agentInterface?.requestUpdate();
 	}
 
 	renderApp();

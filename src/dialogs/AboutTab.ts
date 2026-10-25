@@ -2,7 +2,11 @@ import { i18n } from "@mariozechner/mini-lit/dist/i18n.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement } from "lit/decorators.js";
+import { helmMark } from "../components/HelmMark.js";
 import "../utils/i18n-extension.js";
+
+const link = (href: string, label: string) =>
+	html`<a href=${href} target="_blank" rel="noopener" class="text-foreground underline decoration-border underline-offset-2 hover:decoration-current">${label}</a>`;
 
 @customElement("about-tab")
 export class AboutTab extends SettingsTab {
@@ -14,28 +18,37 @@ export class AboutTab extends SettingsTab {
 		const version = chrome.runtime.getManifest().version;
 
 		return html`
-			<div class="flex flex-col gap-4">
-				<div class="space-y-2">
-					<h3 class="text-lg font-semibold text-foreground">Tabkyra</h3>
-					<p class="text-sm text-muted-foreground">${i18n("AI-powered browser extension for web navigation and interaction")}</p>
+			<div class="flex flex-col gap-5">
+				<div class="flex items-center gap-3">
+					${helmMark(44, "tile", "rounded-[10px]")}
+					<div>
+						<h3 class="text-lg font-semibold tracking-tight text-foreground leading-tight">Tabkyra</h3>
+						<p class="text-sm text-muted-foreground">${i18n("Version:")} ${version}</p>
+					</div>
 				</div>
 
-				<div class="text-sm">
-					<span class="font-medium text-foreground">${i18n("Version:")}</span>
-					<span class="text-muted-foreground ml-2">${version}</span>
+				<p class="text-sm text-muted-foreground">
+					An AI agent in your side panel, and a browser your coding agents can drive. You steer; it works the tabs.
+					The name joins <em>tab</em> and <em>kyra</em>, from Greek <em>kybernētēs</em>, "helmsman".
+				</p>
+
+				<div class="rounded-lg border border-border p-3 text-sm space-y-2">
+					<p class="font-medium text-foreground">Built on the work of</p>
+					<p class="text-muted-foreground">
+						${link("https://github.com/0xSero", "0xSero")}
+						(${link("https://github.com/0xSero/sitegeist", "0xSero/sitegeist")}): the agent bridge, the CLI and MCP server,
+						agent tab groups, per-tab side panels and the foreground guard.
+					</p>
+					<p class="text-muted-foreground">
+						${link("https://github.com/badlogic", "Mario Zechner")}
+						(${link("https://github.com/badlogic/sitegeist", "badlogic/sitegeist")}): the original Sitegeist extension and the
+						pi agent libraries it runs on.
+					</p>
 				</div>
 
 				<p class="text-xs text-muted-foreground">
-					Built on Sitegeist by Mario Zechner and the agent bridge by 0xSero. AGPL-3.0.
+					${link("https://github.com/baney75/tabkyra", "github.com/baney75/tabkyra")} · AGPL-3.0
 				</p>
-
-				<div class="text-xs text-muted-foreground space-x-3">
-					<a href="https://github.com/baney75/tabkyra" target="_blank" class="text-primary hover:underline">Tabkyra</a>
-					<span>·</span>
-					<a href="https://github.com/badlogic/sitegeist" target="_blank" class="text-primary hover:underline">Sitegeist</a>
-					<span>·</span>
-					<a href="https://github.com/0xSero/sitegeist" target="_blank" class="text-primary hover:underline">0xSero fork</a>
-				</div>
 			</div>
 		`;
 	}
