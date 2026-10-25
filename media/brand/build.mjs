@@ -7,7 +7,7 @@
 // Rendering uses the CLI's Playwright Chromium, headless, with a mock keychain.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "../../cli/node_modules/playwright-core/index.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -49,7 +49,7 @@ export const SVG = {
 	// pointer blur together at that size.
 	"icon-16": svg(
 		"0 0 16 16",
-		`<rect width="16" height="16" rx="3.6" fill="${brass}"/><circle cx="8" cy="8" r="3.3" fill="none" stroke="${ink}" stroke-width="1.7"/>${pegs(8, 8, 3.3, 6.2, 6, 0.7, 1.3, ink)}<circle cx="8" cy="8" r="1.3" fill="${ink}"/>`,
+		`<rect width="16" height="16" rx="3.75" fill="${brass}"/><circle cx="8" cy="8" r="3.3" fill="none" stroke="${ink}" stroke-width="1.7"/>${pegs(8, 8, 3.3, 6.2, 6, 0.7, 1.3, ink)}<circle cx="8" cy="8" r="1.3" fill="${ink}"/>`,
 	),
 };
 
@@ -119,4 +119,5 @@ async function main() {
 	}
 }
 
-await main();
+// Importing this module for PALETTE or SVG must not re-render every asset.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();

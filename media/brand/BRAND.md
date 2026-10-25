@@ -4,7 +4,8 @@
 "cybernetics". You steer and it works the tabs. The brand should feel calm and capable,
 with the human in command. It is not an "autonomous AI agent".
 
-Line: **You steer. Your agents work the tabs.**
+Line: **You steer. Your agents work the tabs.** Inside the extension, where Tabkyra itself
+is the agent, the line is **You steer. Tabkyra works the tabs.**
 
 ## Mark
 
@@ -26,7 +27,7 @@ by hand.
 
 Rules:
 
-- Keep the tile corner radius at 15/64 of the side. Don't add outlines, gradients or shadows
+- Keep the tile corner radius at 15/64 of the side (3.75 px at 16 px). Don't add outlines, gradients or shadows
   to the mark itself (a soft brass glow under the tile in the UI is fine).
 - Give the mark clear space of at least one peg length on every side.
 - Don't rotate the mark. The pointer always points up and to the left.

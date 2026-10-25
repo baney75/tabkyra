@@ -1,9 +1,11 @@
+import { i18n } from "@mariozechner/mini-lit/dist/i18n.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import type { AgentInterface, MessageRenderer } from "@mariozechner/pi-web-ui";
 import { registerMessageRenderer } from "@mariozechner/pi-web-ui";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { helmMark } from "../components/HelmMark.js";
+import "../utils/i18n-extension.js";
 
 export interface TutorialPrompt {
 	label: string;
@@ -47,7 +49,7 @@ export class WelcomeMessageElement extends LitElement {
 				<div class="flex flex-col items-center text-center mb-8 px-6">
 					${helmMark(72, "tile", "mb-5 rounded-[17px] shadow-[0_10px_30px_-12px_rgba(227,169,59,0.55)]")}
 					<h1 class="text-3xl font-semibold tracking-tight mb-2">Tabkyra</h1>
-					<p class="text-base text-muted-foreground max-w-xs">You steer. Tabkyra works the tabs.</p>
+					<p class="text-base text-muted-foreground max-w-xs">${i18n("You steer. Tabkyra works the tabs.")}</p>
 				</div>
 
 				<!-- Tutorial pills -->

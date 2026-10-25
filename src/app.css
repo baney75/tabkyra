@@ -87,19 +87,6 @@ body {
 	}
 }
 
-@keyframes fadeInOut {
-	0% {
-		opacity: 0;
-	}
-	15%,
-	85% {
-		opacity: 1;
-	}
-	100% {
-		opacity: 0;
-	}
-}
-
 @keyframes shimmer {
 	0% {
 		background-position: -200% center;
@@ -114,15 +101,11 @@ body {
 	animation: fadeInUp 0.8s ease-out;
 }
 
-.rotating-word {
-	animation: fadeInOut 2s ease-in-out infinite;
-}
-
 .tutorial-pill {
 	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 	position: relative;
 	overflow: hidden;
-	background: linear-gradient(135deg, rgba(227, 169, 59, 0.15), rgba(227, 169, 59, 0.15), rgba(67, 179, 160, 0.15));
+	background: linear-gradient(135deg, rgba(227, 169, 59, 0.15), rgba(227, 169, 59, 0.15), rgba(168, 118, 28, 0.15));
 	border: 1px solid rgba(227, 169, 59, 0.3);
 	backdrop-filter: blur(10px);
 }
@@ -147,7 +130,7 @@ body {
 
 .tutorial-pill:hover {
 	transform: translateY(-2px) scale(1.03);
-	background: linear-gradient(135deg, rgba(227, 169, 59, 0.25), rgba(227, 169, 59, 0.25), rgba(67, 179, 160, 0.25));
+	background: linear-gradient(135deg, rgba(227, 169, 59, 0.25), rgba(227, 169, 59, 0.25), rgba(168, 118, 28, 0.25));
 	box-shadow: 0 8px 20px -4px rgba(227, 169, 59, 0.5);
 	border-color: rgba(227, 169, 59, 0.5);
 }
@@ -160,7 +143,7 @@ body {
 .user-message-container {
 	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	position: relative;
-	background: linear-gradient(135deg, rgba(227, 169, 59, 0.12), rgba(227, 169, 59, 0.12), rgba(67, 179, 160, 0.12));
+	background: linear-gradient(135deg, rgba(227, 169, 59, 0.12), rgba(227, 169, 59, 0.12), rgba(168, 118, 28, 0.12));
 	border: 1px solid rgba(227, 169, 59, 0.25);
 	backdrop-filter: blur(10px);
 	max-width: 100%;
