@@ -2,9 +2,13 @@ import { statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 
-/** Socket directory: per user, outside $TMPDIR so every process finds the same path. */
+/**
+ * Socket directory: per user, outside $TMPDIR so every process finds the same path.
+ * TABKYRA_SOCKET_DIR overrides it (tests run a private bridge this way).
+ */
 export function socketDir(): string {
 	if (process.platform === "win32") return `\\\\.\\pipe\\tabkyra-bridge-${userInfo().username}`;
+	if (process.env.TABKYRA_SOCKET_DIR) return process.env.TABKYRA_SOCKET_DIR;
 	return `/tmp/tabkyra-bridge-${userInfo().username}`;
 }
 
