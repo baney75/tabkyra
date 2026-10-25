@@ -5,7 +5,7 @@ import { customElement, state } from "lit/decorators.js";
 import { Toast } from "../components/Toast.js";
 import { BUG_LOG_KEY, BUG_REPORTS_KEY, type BugEntry, NEW_ISSUE_URL, reportText } from "../privacy/bug-reports.js";
 import { setBugReports } from "../privacy/capture.js";
-import { PRIVATE_MODE_KEY, TRUSTED_HOSTS_KEY } from "../privacy/private-mode.js";
+import { hostOf, PRIVATE_MODE_KEY, TRUSTED_HOSTS_KEY } from "../privacy/private-mode.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 
 /** Settings > Privacy: private mode, the hosts the user trusts as their own, and opt-in bug reports. */
@@ -37,10 +37,15 @@ export class PrivacyTab extends SettingsTab {
 	}
 
 	private async saveTrustedHosts(text: string) {
-		const hosts = text
-			.split(/[\s,]+/)
-			.map((h) => h.trim().toLowerCase())
-			.filter((h) => /^[a-z0-9.-]+$/.test(h));
+		// Names, IPs, URLs and host:port all reduce to the host; anything else is dropped.
+		const hosts = [
+			...new Set(
+				text
+					.split(/[\s,]+/)
+					.map(hostOf)
+					.filter((h): h is string => Boolean(h)),
+			),
+		];
 		await getTabkyraStorage().settings.set(TRUSTED_HOSTS_KEY, hosts);
 		this.trustedHosts = hosts.join(", ");
 	}
@@ -83,12 +88,13 @@ export class PrivacyTab extends SettingsTab {
 					</label>
 					<p class="text-xs text-muted-foreground">
 						The side panel agent then runs only OpenRouter models, sent with zero data retention required and no
-						fallback to other endpoints, and models on this computer, your local network or the hosts you list below.
+						fallback to other endpoints, and models on this computer or on the hosts you list below (a LAN or tailnet
+						machine counts only once you list it).
 						Other providers, and a CORS proxy that isn't on those machines, are refused. This covers the side panel
 						agent; an outside agent using the Bridge follows its own settings.
 					</p>
 					<label class="flex flex-col gap-1 text-xs text-muted-foreground">
-						<span>Your own machines (for example tailnet names like mac.tail1234.ts.net), comma-separated</span>
+						<span>Your own machines: names, IPs or URLs, comma-separated (for example 192.168.1.20, mac.tail1234.ts.net)</span>
 						<input
 							class="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
 							.value=${this.trustedHosts}

@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { addEntry, NEW_ISSUE_URL, redact, reportText } from "../src/privacy/bug-reports.ts";
-import { assertPrivateProxy, isLocalBaseUrl, OPENROUTER_PRIVATE_ROUTING, PrivateModeError, privateModel } from "../src/privacy/private-mode.ts";
+import { assertPrivateProxy, hostOf, isLocalBaseUrl, OPENROUTER_PRIVATE_ROUTING, PrivateModeError, privateModel } from "../src/privacy/private-mode.ts";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const openrouter = { provider: "openrouter", api: "openai-completions", baseUrl: "https://openrouter.ai/api/v1" };
@@ -26,6 +26,7 @@ test("OpenRouter on an adapter that wouldn't send the routing is refused, and so
 	}
 	assert.throws(() => privateModel({ ...openrouter, baseUrl: "https://openrouter.ai.evil.example.com/v1" }), PrivateModeError);
 	assert.throws(() => privateModel({ ...openrouter, provider: "custom" }), PrivateModeError);
+	assert.throws(() => privateModel({ ...openrouter, baseUrl: "http://openrouter.ai/api/v1" }), PrivateModeError, "plain HTTP");
 });
 
 test("hosted providers are refused; local models pass; tailnet hosts only when the user lists them", () => {
@@ -39,13 +40,24 @@ test("hosted providers are refused; local models pass; tailnet hosts only when t
 	]) {
 		assert.throws(() => privateModel({ provider, baseUrl }), PrivateModeError, `${provider} ${baseUrl}`);
 	}
-	for (const baseUrl of ["http://localhost:11434/v1", "http://127.0.0.1:1234/v1", "http://[::1]:8080", "http://192.168.1.20:8000", "http://10.0.0.5/v1", "http://172.20.1.1/v1", "http://studio.local:1234"]) {
-		assert.ok(isLocalBaseUrl(baseUrl), baseUrl);
+	for (const baseUrl of ["http://localhost:11434/v1", "http://127.0.0.1:1234/v1", "http://[::1]:8080"]) assert.ok(isLocalBaseUrl(baseUrl), baseUrl);
+	// LAN and mDNS hosts count only once listed: at a hotel the same address is someone else's.
+	for (const baseUrl of ["http://192.168.1.20:8000", "http://10.0.0.5/v1", "http://172.20.1.1/v1", "http://studio.local:1234"]) {
+		assert.equal(isLocalBaseUrl(baseUrl), false, baseUrl);
 	}
+	assert.ok(isLocalBaseUrl("http://192.168.1.20:8000", ["192.168.1.20"]));
 	assert.ok(isLocalBaseUrl("https://gpu.tail1234.ts.net/v1", ["gpu.tail1234.ts.net"]));
 	const m = { provider: "custom", baseUrl: "https://gpu.tail1234.ts.net/v1" };
 	assert.equal(privateModel(m, ["gpu.tail1234.ts.net"]), m);
 	for (const baseUrl of ["http://172.32.0.1", "http://192.169.0.1", "not a url"]) assert.equal(isLocalBaseUrl(baseUrl), false, baseUrl);
+});
+
+test("the trusted-hosts field accepts names, IPs, URLs and host:port", () => {
+	assert.equal(hostOf("https://mac.tail1234.ts.net"), "mac.tail1234.ts.net");
+	assert.equal(hostOf("mac.tail1234.ts.net:11434"), "mac.tail1234.ts.net");
+	assert.equal(hostOf("fd7a:115c:a1e0::1"), "fd7a:115c:a1e0::1");
+	assert.equal(hostOf("192.168.1.20"), "192.168.1.20");
+	assert.equal(hostOf(""), undefined);
 });
 
 test("a CORS proxy off the user's machines is refused in private mode", () => {
@@ -61,6 +73,10 @@ test("bug reports drop web addresses, emails, keys and home paths, and never tra
 	assert.doesNotMatch(text, /mail\.example|patient-records|ada@example|ABCDEFGHIJKLMNOP|donovan|\\ada\\|kenehmggpggpiolepbjojeenmeapgfoc/);
 	assert.match(text, /\[url\]/);
 	assert.match(text, /ext:\/sidepanel\.js/);
+	const more = redact(
+		"chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/sidepanel.html?session=abc&q=jdoe data:image/png;base64,iVBORw0K/a+b blob:https://x.example/1 at 203.0.113.9:8080",
+	);
+	assert.doesNotMatch(more, /jdoe|session=|iVBOR|x\.example|203\.0\.113/);
 	const log = Array.from({ length: 30 }, (_, i) => i).reduce((l, i) => addEntry(l, new Error(`e${i}`)), []);
 	assert.equal(log.length, 20, "the log is a short ring buffer");
 	assert.match(reportText("1.2.3", log, "Mozilla/5.0"), /e29/);
@@ -79,7 +95,7 @@ test("bug reports are off by default; turning them off clears the log through th
 	const input = welcome.slice(welcome.indexOf("<input"), welcome.indexOf("/>", welcome.indexOf("<input")));
 	assert.ok(input.includes('type="checkbox"'), "found the welcome checkbox");
 	// A checked attribute or a .checked binding (reading e.target.checked in the handler is fine).
-	assert.doesNotMatch(input, /(^|\s)\.?checked(\s*=|\s*$|\s)/m, "the welcome checkbox has no checked attribute or binding");
+	assert.doesNotMatch(input, /(^|\s)[.?]?checked(\s*=|\s*$|\s)/m, "the welcome checkbox has no checked attribute or binding");
 	assert.match(welcome, /setBugReports\(getTabkyraStorage\(\)/, "the welcome box goes through the shared queue");
 });
 

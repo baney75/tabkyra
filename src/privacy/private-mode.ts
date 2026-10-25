@@ -36,9 +36,10 @@ function ipv4(host: string): number[] | undefined {
 }
 
 /**
- * A base URL on this machine, the local network, or a host the user listed as their own.
- * `*.ts.net` and 100.64.0.0/10 are not trusted on their own: Funnel publishes `*.ts.net`
- * names to the internet, and 100.64.0.0/10 is also ISPs' carrier-grade NAT space.
+ * A base URL on this machine, or a host the user listed as their own. Nothing else is
+ * trusted on its own: a LAN range at home is a stranger's network at a hotel, `.local`
+ * names can be answered by anyone on the network, Funnel publishes `*.ts.net` names to the
+ * internet, and 100.64.0.0/10 is also ISPs' carrier-grade NAT space.
  */
 export function isLocalBaseUrl(baseUrl: string, trustedHosts: string[] = []): boolean {
 	let host: string;
@@ -48,11 +49,8 @@ export function isLocalBaseUrl(baseUrl: string, trustedHosts: string[] = []): bo
 		return false;
 	}
 	if (trustedHosts.some((t) => t.trim().toLowerCase() === host)) return true;
-	if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "::1") return true;
-	const ip = ipv4(host);
-	if (!ip) return false;
-	const [a, b] = ip;
-	return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+	if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
+	return ipv4(host)?.[0] === 127;
 }
 
 export interface RoutableModel {
@@ -65,15 +63,18 @@ export interface RoutableModel {
 /** The model to send in private mode, with ZDR routing added; throws for a provider that isn't allowed. */
 export function privateModel<M extends RoutableModel>(model: M, trustedHosts: string[] = []): M {
 	if (isLocalBaseUrl(model.baseUrl, trustedHosts)) return model;
-	let host = "";
+	let url: URL | undefined;
 	try {
-		host = new URL(model.baseUrl).hostname;
+		url = new URL(model.baseUrl);
 	} catch {
 		/* not a URL: refused below */
 	}
+	const host = url?.hostname ?? "";
+	// HTTPS only: the prompts and the key would otherwise cross the network in the clear.
 	if (
 		model.provider === "openrouter" &&
 		model.api === ROUTING_API &&
+		url?.protocol === "https:" &&
 		(host === "openrouter.ai" || host.endsWith(".openrouter.ai"))
 	) {
 		const compat = (model.compat ?? {}) as { openRouterRouting?: object };
@@ -86,6 +87,21 @@ export function privateModel<M extends RoutableModel>(model: M, trustedHosts: st
 		};
 	}
 	throw new PrivateModeError(model.provider);
+}
+
+/** A host as the user typed it: a name, an IP, a URL or host:port; undefined if it isn't one. */
+export function hostOf(entry: string): string | undefined {
+	const e = entry.trim();
+	if (!e) return undefined;
+	try {
+		const bare = /^[0-9a-f:]+$/i.test(e) && e.includes(":") ? `[${e}]` : e;
+		return (
+			new URL(bare.includes("://") ? bare : `http://${bare}`).hostname.toLowerCase().replace(/^\[|\]$/g, "") ||
+			undefined
+		);
+	} catch {
+		return undefined;
+	}
 }
 
 /** A CORS proxy would see every prompt, so private mode allows only one on the user's own machines. */

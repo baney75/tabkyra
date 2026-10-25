@@ -23,15 +23,20 @@ export interface BugEntry {
  * keep only the file name, which is what a maintainer needs from a stack trace.
  */
 export function redact(text: string): string {
-	return text
-		.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)/gi, "ext:/$1")
-		.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>)]+/gi, "[url]")
-		.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
-		.replace(/\b(sk|pk|rk|ghp|gho|ghu|ghs|github_pat|xox[abprs]|AKIA|AIza|ya29|eyJ)[\w-]{10,}/g, "[secret]")
-		.replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[long-token]")
-		.replace(/\/(Users|home)\/[^/\s]+/g, "/$1/[user]")
-		.replace(/[A-Z]:\\Users\\[^\\\s]+/g, "C:\\Users\\[user]")
-		.slice(0, 2000);
+	return (
+		text
+			.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)(?:[?#][^\s"'<>)]*)?/gi, "ext:/$1")
+			.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>)]+/gi, "[url]")
+			// Addresses without "//": data, blob, about and javascript URLs carry page content.
+			.replace(/\b(?:data|blob|about|javascript):[^\s"'<>)]+/gi, "[url]")
+			.replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, "[ip]")
+			.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
+			.replace(/\b(sk|pk|rk|ghp|gho|ghu|ghs|github_pat|xox[abprs]|AKIA|AIza|ya29|eyJ)[\w-]{10,}/g, "[secret]")
+			.replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[long-token]")
+			.replace(/\/(Users|home)\/[^/\s]+/g, "/$1/[user]")
+			.replace(/[A-Z]:\\Users\\[^\\\s]+/g, "C:\\Users\\[user]")
+			.slice(0, 2000)
+	);
 }
 
 export function addEntry(log: BugEntry[], error: unknown, now = new Date()): BugEntry[] {
