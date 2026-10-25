@@ -32,6 +32,11 @@ want to chat with a page directly.
 *Tabkyra* is *tab* plus *kyra*, from Greek *kybernētēs*, "helmsman". You steer, and it
 works the tabs.
 
+<p align="center">
+  <a href="media/demo.mp4"><img src="media/demo-poster.jpg" alt="Tabkyra demo video: the agent asks before a new site, works in its own tab group, fills a form, checks sources and lints skills" width="760"></a>
+  <br><sub><a href="media/demo.mp4">Watch the 85-second demo</a> (MP4, no sound needed). Recorded from a real run by <code>scripts/demo/capture-video.mjs</code>; source in <a href="media/video"><code>media/video</code></a>.</sub>
+</p>
+
 **Credit where it's due.** The agent bridge is the work of **[0xSero](https://github.com/0xSero)**
 ([0xSero/sitegeist](https://github.com/0xSero/sitegeist)). That covers the native
 messaging bridge, the CLI and MCP server, agent tab groups, per-tab side panels and the

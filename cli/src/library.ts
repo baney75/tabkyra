@@ -80,6 +80,11 @@ export function loadLibrary(): Library {
 	if (!existsSync(file)) return { version: 1, items: [] };
 	const data = JSON.parse(readFileSync(file, "utf8")) as Library;
 	if (data.version !== 1 || !Array.isArray(data.items)) throw new Error(`${file} is not a Tabkyra library.`);
+	// Entries saved before notices were deduplicated can hold the same notice several times.
+	for (const item of data.items) {
+		const v = item?.tabkyra?.verified;
+		if (v && Array.isArray(v.notices)) v.notices = uniqueNotices(v.notices);
+	}
 	return data;
 }
 
@@ -370,7 +375,7 @@ async function verify(doi: string, previous?: Verification, agency = ""): Promis
 						if (/^(retraction|partial[_ ]retraction|withdrawal|removal)$/.test(type)) retracted = true;
 					}
 					v.sources.push("crossref-updates");
-					v.notices.push(...notices);
+					v.notices.push(...uniqueNotices(notices));
 					if (retracted) v.retracted = true;
 					checks.crossref = "ok";
 				}
@@ -505,7 +510,44 @@ function withTitleCheck(title: string, v: Verification): Verification {
  */
 function keepRetraction(next: Verification, previous: Verification): Verification {
 	const bothAnswered = next.checks?.openalex === "ok" && (next.checks?.crossref === "ok" || next.checks?.crossref === "n/a");
-	return previous.retracted && !next.retracted && !bothAnswered ? { ...next, retracted: true, notices: previous.notices } : next;
+	return previous.retracted && !next.retracted && !bothAnswered ? { ...next, retracted: true, notices: uniqueNotices(previous.notices) } : next;
+}
+
+/**
+ * Crossref lists most notices twice, once from the notice's own record (`update-to`) and once
+ * on the work's record (`updated-by`). Keep one per type and notice DOI. A notice without a
+ * DOI can't be told apart from another of the same type, so each one is kept.
+ */
+function uniqueNotices(notices: Verification["notices"]): Verification["notices"] {
+	const seen = new Set<string>();
+	return notices.filter((n) => {
+		if (!n.doi) return true;
+		const key = `${n.type} ${n.doi.toLowerCase()}`;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+}
+
+/**
+ * Notices from two checks of one work. DOI-less notices repeated within one check are kept, but
+ * the same one reported by both checks counts once: keep the larger count per type.
+ */
+function mergeNotices(a: Verification["notices"], b: Verification["notices"]): Verification["notices"] {
+	const count = (list: Verification["notices"]) => {
+		const m = new Map<string, number>();
+		for (const n of list) if (!n.doi) m.set(n.type, (m.get(n.type) ?? 0) + 1);
+		return m;
+	};
+	const inA = count(a);
+	const extra = new Map([...count(b)].map(([type, n]) => [type, n - (inA.get(type) ?? 0)]));
+	const fromB = b.filter((n) => {
+		if (n.doi) return true;
+		const left = extra.get(n.type) ?? 0;
+		extra.set(n.type, left - 1);
+		return left > 0;
+	});
+	return uniqueNotices([...a, ...fromB]);
 }
 
 /** Combine checks of two DOIs for one work (an alias and its primary). */
@@ -513,7 +555,7 @@ function mergeVerification(a: Verification, b: Verification): Verification {
 	return {
 		...a,
 		retracted: a.retracted || b.retracted,
-		notices: [...a.notices, ...b.notices],
+		notices: mergeNotices(a.notices, b.notices),
 		sources: [...new Set([...a.sources, ...b.sources])],
 		complete: Boolean(a.complete && b.complete),
 		checks:
@@ -924,7 +966,7 @@ export function summary(item: LibraryItem): Record<string, unknown> {
 		retracted: v.retracted,
 		complete: v.complete !== false,
 		checks: v.checks,
-		notices: v.notices,
+		notices: uniqueNotices(v.notices),
 		citedBy: v.citedBy,
 		oaUrl: v.oaUrl,
 		quote: item.tabkyra.quote,
@@ -943,7 +985,7 @@ export async function runLibrary(args: string[]): Promise<number> {
 			const v = item.tabkyra.verified;
 			console.log(`${existed ? "Updated" : "Added"} ${line(item)}`);
 			console.log(`  verified by ${v.sources.join(", ")}${v.citedBy !== undefined ? `; cited by ${v.citedBy}` : ""}`);
-			for (const n of v.notices) console.log(`  notice: ${n.type} ${n.doi}`);
+			for (const n of uniqueNotices(v.notices)) console.log(`  notice: ${n.type} ${n.doi}`);
 			if (v.retracted) {
 				console.log("  RETRACTED: don't cite this as support.");
 				return 3;
