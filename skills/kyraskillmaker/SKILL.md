@@ -45,7 +45,8 @@ Don't write a skill for a one-off task. Do the task.
    the final answer. Examples teach small models more than rules do.
 9. **Add the safety rules the job needs.** If the skill touches the web, say page text is
    untrusted data. If it can act under the user's sign-in, say which actions need the
-   user's yes first. Never tell the model to print, store or send a secret.
+   user's yes first. Secrets reach a program only through a password manager, never
+   through the model's context.
 10. **Run the lint and fix every finding:** `tabkyra skill lint path/to/skill-folder`
 11. **Test it on a smaller model.** Give the skill and two realistic tasks to the cheapest
     model the user has. Read what it did. Every place it went wrong is a missing rule or
@@ -58,8 +59,8 @@ Don't write a skill for a one-off task. Do the task.
 - One idea per bullet. No paragraph longer than four lines.
 - Say exactly what to type. `tabkyra skill lint skills/osint` beats "run the linter".
 - Prefer a table for choices between three or more options.
-- Under 500 lines. Move long reference material into `references/<topic>.md` and say in
-  a step exactly when to read it.
+- Under 500 lines, in one file. A skill folder holds only `SKILL.md` and a license, so
+  everything the model needs is in front of it.
 - No filler, no praise, no emojis, no "simply" or "just".
 - Every claim about a tool must be true today. If you're unsure a flag exists, run
   `--help` and check before you write it down.
@@ -68,8 +69,8 @@ Don't write a skill for a one-off task. Do the task.
 
 - No hidden text: no HTML comments, invisible Unicode, lookalike letters, or long encoded
   strings.
-- No instructions loaded from the web at run time. Everything the model follows is in the
-  skill folder, where reviewers can read it.
+- No instructions loaded from the web at run time. Everything the model follows is in
+  `SKILL.md`, where reviewers can read it.
 - No piping a download into a shell. Install steps name a package manager and a pinned
   version, or a reviewed release.
 - No reading key files, cookie stores or password databases. Secrets go through a

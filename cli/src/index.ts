@@ -28,9 +28,9 @@ function help(): string {
 		cmd("pi-extension", "", "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts"),
 		cmd("skill install", "[name...] [--all]", "Install the bundled skills into Claude Code, Codex and OpenCode"),
 		cmd("skill list", "", "The bundled skills and what each is for"),
-		cmd("skill print", "[name]", "A skill as text for AGENTS.md or any other agent"),
+		cmd("skill print", "[name] [--raw]", "A skill as text for AGENTS.md; --raw is the exact SKILL.md"),
 		cmd("skill lint", "[path...]", "Check skills for hidden text, injection and missing structure"),
-		cmd("skill apply", "<folder>", "Lint, back up and install your edit of a skill (used by /rsi)"),
+		cmd("skill apply", "<folder> [--yes]", "Check and show an edited skill; --yes backs up and installs it (/rsi)"),
 		cmd("skill revert", "<name>", "Drop your edit and go back to the bundled skill"),
 		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
@@ -221,7 +221,7 @@ const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
 	debug: { flags: [], positional: 0 },
 	mcp: { flags: [], positional: 0 },
 	"pi-extension": { flags: [], positional: 1 },
-	skill: { flags: ["--force", "--all"], positional: 64 },
+	skill: { flags: ["--force", "--all", "--raw", "--yes"], positional: 64 },
 };
 
 function checkArgs(command: string, args: string[]): void {
@@ -325,9 +325,9 @@ async function main(): Promise<void> {
 		case "skill": {
 			const [sub, ...rest] = argv.slice(1).filter((a) => !a.startsWith("-"));
 			if (!sub || !["install", "list", "print", "lint", "apply", "revert"].includes(sub)) {
-				throw new UsageError("Usage: tabkyra skill install [name...] [--all] [--force] | list | print [name] | lint [path...] | apply <folder> | revert <name>");
+				throw new UsageError("Usage: tabkyra skill install [name...] [--all] [--force] | list | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name>");
 			}
-			process.exitCode = runSkill(sub, rest, { force: flag("--force"), all: flag("--all") });
+			process.exitCode = runSkill(sub, rest, { force: flag("--force"), all: flag("--all"), raw: flag("--raw"), yes: flag("--yes") });
 			return;
 		}
 		case "pi-extension":

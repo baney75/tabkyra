@@ -15,9 +15,10 @@ on:
 permissions:
   contents: read
 
+# Only superseded pull request runs are cancelled; every commit on main finishes its checks.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   skills:

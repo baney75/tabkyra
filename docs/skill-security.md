@@ -18,8 +18,9 @@ these defenses:
    way `rsi` changes a skill), at install time for local edits, and on demand. The lint has no allowlist and no per-file exceptions.
 3. **Red-team tests prove the lint still catches each attack** (`cli/test/skill-lint.test.mjs`).
    Weakening a rule turns CI red.
-4. **Skills hold Markdown only.** Scripts and binaries are refused, so a skill can't carry
-   code that bypasses review.
+4. **A skill is one Markdown file.** Folders hold `SKILL.md` and a license only; scripts,
+   binaries, extra files and symlinks are refused, so nothing outside the reviewed text
+   reaches the model.
 5. **Agents never see secrets.** The `proton-pass` skill routes credentials through the
    password manager's own injection (`pass-cli run`, `op run`, `bws run`). A model that
    holds only `pass://` references has nothing to leak.
@@ -33,29 +34,34 @@ these defenses:
 
 | Rule | Catches |
 | --- | --- |
-| `hidden-text` | Invisible format characters, bidi overrides, Unicode tag characters, filler characters, carriage returns, lookalike letters mixing scripts, HTML comments and any HTML tag outside code |
+| `hidden-text` | Invisible format characters, bidi overrides, Unicode tag characters, filler characters, carriage returns, lookalike letters (mixed scripts, fullwidth, mathematical, stacked accents), HTML comments and any HTML tag outside code |
 | `override-instructions` | "Ignore/disregard ... previous/system instructions" |
 | `role-hijack` | Fake `system:`, `developer:` or `user:` turns, role tags, "you are now", "developer mode" |
 | `conceal-from-user` | "Without telling the user", "without asking", "don't tell the user", "secretly", "quietly", "silently" |
 | `remote-code` | Downloads or decoded data piped, substituted (`$(curl ...)`, `<(curl ...)`) or `eval`ed into a shell or interpreter; `iex (irm ...)`; `npx ...@latest` |
-| `remote-instructions` | Following instructions fetched from a URL at run time |
-| `secret-exfiltration` | Printing, posting or returning passwords, keys, tokens, cookies, card numbers |
+| `remote-instructions` | Following instructions fetched from a URL at run time, in either word order |
+| `secret-exfiltration` | Printing, posting, saving or returning passwords, keys, tokens, cookies, card numbers |
 | `credential-files` | Reading `~/.ssh`, `~/.aws`, `.env`, browser cookie and login stores, keychain dumps |
-| `config-tamper` | Writing agent settings, hooks, MCP config, shell startup files, cron, launch agents |
+| `config-tamper` | Agent settings, hooks, MCP config, shell startup files, cron, launch agents; writing `rsi.json`, `skills-local`, `skill-history`, a harness's skills folder, `AGENTS.md` or `CLAUDE.md` |
 | `safety-bypass` | `--dangerously-*`, `--no-verify`, `tabkyra allow-all`, disabling prompts or sandboxes |
 | `encoded-blob` | Base64 or similar strings of 100+ characters |
 | `remote-image` | Any image that isn't a relative path inside the skill, including reference-style images |
 | `suspicious-link` | Plain http, raw IPs, link shorteners, punycode, protocol-relative `//host`, `data:`/`javascript:`/`file:` URLs, credentials in URLs |
 | `structure` | Missing `## When to use`, numbered `## Steps`, `## Done when`; an unclosed fence; text on a fence line |
 | `frontmatter` | Any line that isn't `key: value` for `name`, `description` or `license`; quoted values; duplicates; a name not matching its folder; a missing "Use when" |
-| `file-type` | Anything in a skill folder besides `SKILL.md`, `references/*.md` and a license; any symbolic link |
+| `file-type` | Anything in a skill folder besides `SKILL.md` and a license; loose files beside skill folders; any symbolic link |
 
 Rules that name a dangerous act (`secret-exfiltration`, `remote-code`, `credential-files`,
-`config-tamper`, `safety-bypass`, `remote-instructions`) allow a clause that starts by
+`config-tamper`, `safety-bypass`, `remote-instructions`) allow a clause that opens by
 forbidding it: "Never print the password", "Don't read ~/.ssh". Only "never", "don't",
-"do not", "must not" and "refuse to" count, only at the start of the clause that holds
-the match, and every match on the line must be forbidden. Clauses end at punctuation and
-at "but", "then", "if", "when", "unless", "otherwise" and "instead".
+"do not", "must not" and "refuse to" count, with at most three words before the act and
+none that turns the prohibition around ("Don't hesitate to ..."). Every match is checked
+on its own. Clauses end at punctuation and at "and", "or", "but", "then", "if", "when",
+"so", "unless", "otherwise" and "instead".
+
+The instruction rules read logical lines: a sentence wrapped across lines is checked as
+one sentence, after folding fullwidth and mathematical letters to plain ones and dropping
+stacked accents.
 
 Every line is checked, including fence lines and code blocks. A model reads the raw file,
 so a fence doesn't change what it will follow. Skills describe attacks; they never quote
@@ -64,10 +70,14 @@ quotes, no YAML syntax, no duplicates.
 
 ## Local edits
 
-`tabkyra skill apply <folder>` is the only way the `rsi` loop changes a skill. It lints
-the draft, refuses edits to `rsi` and `kyraskillmaker`, refuses an edit that drops a
-section, backs up the current version to `~/.config/tabkyra/skill-history/`, keeps the edit
-in `~/.config/tabkyra/skills-local/` and installs it. `tabkyra skill install` keeps using
+`tabkyra skill apply <folder>` is the only way the `rsi` loop changes a skill. Without
+`--yes` it changes nothing: it lints the draft, refuses edits to `rsi` and
+`kyraskillmaker`, refuses an edit that drops a section, and prints the diff. With `--yes`
+it backs up the current version to `~/.config/tabkyra/skill-history/`, keeps the edit in
+`~/.config/tabkyra/skills-local/` and installs it, leaving alone any same-name skill
+Tabkyra didn't write. A local copy is used only while `index.json` records it, it passes
+lint, it isn't a protected skill, and it keeps every section of the bundled text.
+Skill names are checked before they reach a path. `tabkyra skill install` keeps using
 the edit while it passes lint, and warns when the bundled skill has changed since the edit
 was based on it. `tabkyra skill revert <name>` returns to the bundled text. By default the
 `rsi` loop shows the user each diff first. It applies a change on its own only when the
@@ -77,8 +87,14 @@ user has turned on both adversarial review and auto-apply, and the reviewer appr
 
 - CODEOWNERS asks for a maintainer's review on the paths that control skills. It blocks a
   merge only if branch protection requires code-owner review.
-- The skills CI job also lints with the base branch's lint whenever the base has one. A
-  pull request that weakens the lint must still pass the old lint with its own skills.
+- The skills CI job also lints with the base branch's lint whenever the base has one, so a
+  pull request that weakens the lint must still pass the old lint. That step lives in the
+  pull request's own copy of `ci.yml`, so it is only as strong as the CODEOWNERS review of
+  `.github/`. A ruleset with a required workflow the pull request can't edit would close
+  that gap.
+- An agent with a shell runs as the user and can write any file the user can, skills
+  included. `tabkyra skill apply` and the lint stop a skill's text from telling an agent
+  to do that; the harness's own permission prompts are what stop a hijacked agent.
 
 ## Sources studied
 

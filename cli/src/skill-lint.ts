@@ -38,12 +38,16 @@ const MAX_DESCRIPTION = 1024;
 const INSTALL_MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
 
 /**
- * A clause that starts with a direct prohibition ("Never print the password") is guidance,
- * not an attack. Only these words count, only at the start of the clause that holds the
- * match, and clauses end at punctuation and at "but", "then" and "and then".
+ * A clause that starts with a direct prohibition of the act ("Never print the password",
+ * "Don't read ~/.ssh") is guidance, not an attack. Only these words count, only at the start
+ * of the clause that holds the match, with at most three words between them and the match,
+ * none of which turns the prohibition around ("Don't hesitate to print ...").
  */
-const DIRECTIVE_NEGATION = /^\s*(?:[-*>]\s+|\d+\.\s+)?(?:\*\*)?\s*(never|don't|do not|must not|mustn't|refuse to)\b/i;
-const CLAUSE_BREAK = /[.;:!?,()]|\bbut\b|\bthen\b|\botherwise\b|\binstead\b|\bunless\b|\bif\b|\bwhen\b/gi;
+const DIRECTIVE_NEGATION = /^\s*(?:[-*>]\s+|\d+\.\s+)?(?:\*\*)?\s*(?:never|don't|do not|must not|mustn't|refuse to)\b((?:\s+[\w'~/.*`-]+){0,3})\s*\**\s*$/i;
+const REVERSAL = /\b(hesitate|forget|fail|neglect|stop|skip|avoid|wait|delay|bother|miss|omit)\b/i;
+const CLAUSE_BREAK = /[.;:!?,()]|\b(but|and|or|then|otherwise|instead|unless|if|when|so)\b/gi;
+/** Between a verb and its object: no clause break, so "print X and post Y" is two matches. */
+const GAP = "(?:(?!\\b(?:and|or|then|but)\\b)[^.\\n,;:]){0,40}?";
 
 interface PatternRule {
 	rule: string;
@@ -54,6 +58,8 @@ interface PatternRule {
 }
 
 const SHELLS = "(?:sh|bash|zsh|fish|dash|ksh|python3?|node|deno|bun|ruby|perl|php|iex|pwsh|powershell)";
+/** After a pipe or &&: optional sudo, a path prefix and env, then the interpreter. */
+const RUNNER = `(?:sudo\\s+)?(?:\\S*/)?(?:env\\s+)?(?:-\\w+\\s+)?${SHELLS}`;
 const FETCHERS = "(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)";
 
 const PATTERN_RULES: PatternRule[] = [
@@ -82,12 +88,13 @@ const PATTERN_RULES: PatternRule[] = [
 		rule: "remote-code",
 		pattern: new RegExp(
 			[
-				`\\b${FETCHERS}\\b[^|\\n]*\\|\\s*(sudo\\s+)?(-?\\w+\\s+)?${SHELLS}\\b`,
+				`\\b${FETCHERS}\\b[^\\n]*\\|\\s*${RUNNER}\\b`,
 				`\\b${SHELLS}\\b[^\\n]*\\$\\(\\s*${FETCHERS}\\b`,
 				`<\\(\\s*${FETCHERS}\\b`,
 				`\\beval\\b[^\\n]*${FETCHERS}\\b`,
 				`\\biex\\b[^\\n]*\\(\\s*(irm|iwr|invoke-webrequest|invoke-restmethod|new-object)\\b`,
-				`\\bbase64\\s+(-d|--decode|-D)\\b[^|\\n]*\\|\\s*${SHELLS}\\b`,
+				`\\b${FETCHERS}\\b[^\\n]*(\\s-o\\s|\\s-O\\b|\\s--output\\b|>)[^\\n]*(&&|;|\\|\\|)\\s*(${RUNNER}\\b|chmod\\s+\\+x|\\./)`,
+				`\\bbase64\\s+(-d|--decode|-D)\\b[^\\n]*\\|\\s*${RUNNER}\\b`,
 				`\\b(npx|pnpx|bunx|uvx|pipx run)\\s+(-y\\s+)?[\\w@/.-]+@latest\\b`,
 			].join("|"),
 			"i",
@@ -97,15 +104,21 @@ const PATTERN_RULES: PatternRule[] = [
 	},
 	{
 		rule: "remote-instructions",
-		pattern:
-			/\b(follow|obey|execute|apply|load|adopt|read and do|do what)\b[^.\n]{0,25}\b(instructions?|steps|commands|rules|prompt|says)\b[^.\n]{0,25}\b(from|at|in|on)\b[^.\n]{0,15}(https?:\/\/|the (url|page|link|site|website|gist|pastebin|issue|comment))/i,
+		pattern: new RegExp(
+			[
+				`\\b(follow|obey|execute|apply|load|adopt|read and do|do what)\\b${GAP}\\b(instructions?|steps|commands|rules|prompt|says)\\b[^.\\n]{0,25}\\b(from|at|in|on)\\b[^.\\n]{0,15}(https?:\\/\\/|the (url|page|link|site|website|gist|pastebin|issue|comment))`,
+				`https?:\\/\\/\\S+[^.\\n]{0,40}\\b(follow|obey|execute|apply|adopt|do what)\\b`,
+				`\\bdo what (it|the page|the site|the file) (says|tells)\\b`,
+			].join("|"),
+			"i",
+		),
 		message: "Pulls instructions from the web at run time, where nobody reviewed them.",
 		negatable: true,
 	},
 	{
 		rule: "secret-exfiltration",
 		pattern:
-			/\b(print|echo|cat|log|send|post|paste|upload|share|reveal|show|display|copy|email|include|return|output|type|write|save|store|forward|tell)\b[^.\n]{0,40}\b(passwords?|passphrases?|api[ _-]?keys?|access tokens?|bearer tokens?|auth tokens?|secrets?|private keys?|seed phrases?|recovery phrases?|mnemonic|credentials|session cookies?|cookies|card numbers?|cvv|cvc|2fa codes?|otp codes?|one-time codes?)\b/i,
+			/\b(print|echo|cat|log|send|post|paste|upload|share|reveal|show|display|copy|email|include|return|output|type|write|save|store|forward|tell)\b(?:(?!\b(?:and|or|then|but)\b)[^.\n,;:]){0,40}?\b(passwords?|passphrases?|api[ _-]?keys?|access tokens?|bearer tokens?|auth tokens?|secrets?|private keys?|seed phrases?|recovery phrases?|mnemonic|credentials|session cookies?|cookies|card numbers?|cvv|cvc|2fa codes?|otp codes?|one-time codes?)\b/i,
 		message: "Moves a secret into the model's output, a file or off the machine.",
 		negatable: true,
 	},
@@ -118,8 +131,17 @@ const PATTERN_RULES: PatternRule[] = [
 	},
 	{
 		rule: "config-tamper",
-		pattern:
-			/(\.claude[/\\]settings(\.local)?\.json|\.claude\.json\b|\.codex[/\\]config\.toml|\bmcp\.json\b|\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile\b|\bcrontab\b|LaunchAgents|LaunchDaemons|systemctl\s+(--user\s+)?enable|\bgit config --global\b|\bhooks?\.json\b)/i,
+		pattern: new RegExp(
+			[
+				/(\.claude[/\\]settings(\.local)?\.json|\.claude\.json\b|\.codex[/\\]config\.toml|\bmcp\.json\b|\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile\b|\bcrontab\b|LaunchAgents|LaunchDaemons|systemctl\s+(--user\s+)?enable|\bgit config --global\b|\bhooks?\.json\b)/
+					.source,
+				// Writing a skill or agent instructions directly skips `tabkyra skill apply` and its checks.
+				/\b(write|edit|append|set|copy|put|add|modify|change|overwrite|replace|create|delete|remove|save|move|mv|cp|tee)\b[^\n]{0,60}(\.config[/\\]tabkyra[/\\](rsi\.json|skills-local|skill-history)|\.(claude|codex)[/\\]skills|opencode[/\\]skills|\bAGENTS\.md\b|\bCLAUDE\.md\b)/
+					.source,
+				/>>?\s*\S*(AGENTS|CLAUDE)\.md\b/.source,
+			].join("|"),
+			"i",
+		),
 		message: "Changes agent, shell or startup config, which outlives the task.",
 		negatable: true,
 	},
@@ -135,6 +157,8 @@ const PATTERN_RULES: PatternRule[] = [
 /** Characters that render as nothing or reorder text: hidden instructions live here. */
 const INVISIBLE = /[\p{Cf}\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u2028\u2029\u00AD\u115F\u1160\u3164\uFFA0]/u;
 /** A word mixing Latin with Cyrillic or Greek letters: a lookalike that dodges review and filters. */
+/** Fullwidth and mathematical letters, and accents stacked on Latin letters: models read them as plain words. */
+const LOOKALIKE = /[\uFF01-\uFF5E\u{1D400}-\u{1D7FF}\u{1F130}-\u{1F189}\u24B6-\u24E9]|\p{Script=Latin}\p{Mn}/u;
 const MIXED_SCRIPT = /(?=[\p{L}]*\p{Script=Latin})(?=[\p{L}]*[\p{Script=Cyrillic}\p{Script=Greek}])[\p{L}]{2,}/u;
 const BLOB = /[A-Za-z0-9+/_-]{100,}={0,2}/;
 const URL_RE = /\b(?:https?|ftp|data|javascript|file|vbscript):[^\s)>\]"'`]*/gi;
@@ -184,15 +208,53 @@ function clauseBefore(text: string, index: number): string {
 	return head.slice(start);
 }
 
-/** True when every match of the rule on this line sits in a clause that starts by forbidding it. */
-function everyMatchNegated(line: string, pattern: RegExp): boolean {
-	const global = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
-	let any = false;
-	for (const m of line.matchAll(global)) {
-		any = true;
-		if (!DIRECTIVE_NEGATION.test(clauseBefore(line, m.index ?? 0))) return false;
-	}
-	return any;
+/** The match at `index` sits in a clause that opens by forbidding it. */
+function negated(text: string, index: number): boolean {
+	const m = DIRECTIVE_NEGATION.exec(clauseBefore(text, index));
+	return m !== null && !REVERSAL.test(m[1] ?? "");
+}
+
+/** Text the rules read: compatibility forms folded (fullwidth to ASCII) and stacked accents dropped. */
+function folded(line: string): string {
+	// Decompose first, so an accent NFKC would fuse into one letter can be dropped.
+	return line.normalize("NFKD").replace(/\p{Mn}/gu, "").normalize("NFKC");
+}
+
+interface LogicalLine {
+	text: string;
+	lineAt(offset: number): number;
+}
+
+/**
+ * Join wrapped lines into the sentence a reader (and a model) sees. A new logical line
+ * starts at a blank line, a heading, a list item, a table row, a quote or a fence; each
+ * line inside a fence stands alone.
+ */
+function logicalLines(lines: string[]): LogicalLine[] {
+	const groups: Array<{ parts: string[]; starts: number[]; first: number }> = [];
+	let current: (typeof groups)[number] | undefined;
+	let inFence = false;
+	lines.forEach((raw, i) => {
+		const line = folded(raw);
+		const fence = FENCE.test(line);
+		const opens = fence || inFence || line.trim() === "" || /^\s*(#|[-*+]\s|\d+\.\s|\||>)/.test(line);
+		if (fence) inFence = !inFence;
+		if (opens || !current) {
+			current = { parts: [], starts: [], first: i + 1 };
+			groups.push(current);
+		}
+		current.starts.push(current.parts.reduce((len, part) => len + part.length + 1, 0));
+		current.parts.push(line);
+		if (fence || inFence || line.trim() === "") current = undefined;
+	});
+	return groups.map((g) => ({
+		text: g.parts.join(" "),
+		lineAt(offset: number) {
+			let k = 0;
+			while (k + 1 < g.starts.length && g.starts[k + 1] <= offset) k++;
+			return g.first + k;
+		},
+	}));
 }
 
 export interface SkillMeta {
@@ -238,9 +300,9 @@ export function lintText(file: string, text: string, options: { reference?: bool
 	const findings: Finding[] = [];
 	const add = (line: number, rule: string, message: string, severity: Severity = "error") => findings.push({ file, line, rule, severity, message });
 
-	if (Buffer.byteLength(text) > MAX_BYTES) add(1, "size", `Over ${MAX_BYTES} bytes. Move detail into references/*.md.`);
+	if (Buffer.byteLength(text) > MAX_BYTES) add(1, "size", `Over ${MAX_BYTES} bytes. Cut it down: a skill is one file under 500 lines.`);
 	const lines = text.split("\n");
-	if (lines.length > MAX_LINES) add(MAX_LINES, "size", `Over ${MAX_LINES} lines. Move detail into references/*.md.`);
+	if (lines.length > MAX_LINES) add(MAX_LINES, "size", `Over ${MAX_LINES} lines. Cut it down: a skill is one file under 500 lines.`);
 	if (text.includes("\r")) add(1, "hidden-text", "Carriage returns can hide text in some viewers. Use \\n line endings.");
 
 	if (!options.reference) {
@@ -272,6 +334,7 @@ export function lintText(file: string, text: string, options: { reference?: bool
 
 		if (INVISIBLE.test(line)) add(n, "hidden-text", "Contains an invisible or text-reordering character.");
 		if (MIXED_SCRIPT.test(line)) add(n, "hidden-text", "A word mixes Latin with Cyrillic or Greek lookalike letters.");
+		if (LOOKALIKE.test(line)) add(n, "hidden-text", "Fullwidth, mathematical or accent-stacked letters read as plain words to a model. Use plain letters.");
 		// Outside a fence, markup renders: it can hide text from a reviewer or load content.
 		if (!inFence && !FENCE.test(line)) {
 			const visible = withoutInlineCode(line);
@@ -289,18 +352,30 @@ export function lintText(file: string, text: string, options: { reference?: bool
 		}
 		if (/(^|[\s("'<[])\/\/[a-z0-9-]+\.[a-z]/i.test(line)) add(n, "suspicious-link", "Protocol-relative links (//host) hide which protocol loads. Use the full https URL.");
 
-		for (const r of PATTERN_RULES) {
-			if (!r.pattern.test(line)) continue;
-			if (r.negatable && everyMatchNegated(line, r.pattern)) continue;
-			add(n, r.rule, r.message);
-		}
 	});
 	if (inFence) add(lines.length, "structure", "A code fence is never closed.");
+
+	// Instruction rules run on logical lines, so an attack wrapped across two lines is still one sentence.
+	const reported = new Set<string>();
+	for (const group of logicalLines(lines)) {
+		for (const r of PATTERN_RULES) {
+			const global = new RegExp(r.pattern.source, `${r.pattern.flags.replace("g", "")}g`);
+			for (const m of group.text.matchAll(global)) {
+				const at = m.index ?? 0;
+				if (r.negatable && negated(group.text, at)) continue;
+				const n = group.lineAt(at);
+				const key = `${n}:${r.rule}`;
+				if (reported.has(key)) continue;
+				reported.add(key);
+				add(n, r.rule, r.message);
+			}
+		}
+	}
 	return findings;
 }
 
 /** Files a skill folder may hold. Scripts need a code review path of their own, so they're refused here. */
-const ALLOWED_FILES = /^(SKILL\.md|references\/[\w.-]+\.md|LICENSE(\.md|\.txt)?)$/;
+const ALLOWED_FILES = /^(SKILL\.md|LICENSE(\.md|\.txt)?)$/;
 
 function symlinkFinding(file: string): Finding {
 	return { file, line: 0, rule: "file-type", severity: "error", message: "Symbolic links are refused: they let a file outside review change the skill." };
@@ -321,6 +396,7 @@ export function lintPath(path: string): Finding[] {
 		const sub = join(path, entry);
 		const s = lstatSync(sub);
 		if (s.isSymbolicLink()) findings.push(symlinkFinding(sub));
+		else if (s.isFile()) findings.push({ file: sub, line: 0, rule: "file-type", severity: "error", message: "A skills folder holds skill folders only." });
 		else if (s.isDirectory()) {
 			findings.push(
 				...(existsSync(join(sub, "SKILL.md")) || isLink(join(sub, "SKILL.md"))
@@ -360,7 +436,7 @@ function lintSkillDir(dir: string): Finding[] {
 			continue;
 		}
 		if (!ALLOWED_FILES.test(rel)) {
-			findings.push({ file, line: 0, rule: "file-type", severity: "error", message: "Skill folders hold SKILL.md, references/*.md and a LICENSE only." });
+			findings.push({ file, line: 0, rule: "file-type", severity: "error", message: "Skill folders hold SKILL.md and a LICENSE only. Everything the model follows goes in SKILL.md." });
 			continue;
 		}
 		if (extname(rel) !== ".md") continue;

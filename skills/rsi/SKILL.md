@@ -56,10 +56,11 @@ Only the user edits this file. Never change it yourself.
 3. **Pick the target skill.** Run `tabkyra skill list` and choose the skill the lesson
    belongs in. If none fits and the task recurs, write a new skill with the
    `kyraskillmaker` skill instead, then continue at step 5.
-4. **Write the smallest edit.** Copy the current text (`tabkyra skill print <name>` shows
-   the body; the installed file has the frontmatter) into
-   `~/.config/tabkyra/skill-drafts/<name>/SKILL.md` and change only what the lesson needs:
-   a numbered step, a row in the failure table, or a worked example.
+4. **Write the smallest edit.** Start from the exact current text:
+   `mkdir -p ~/.config/tabkyra/skill-drafts/<name>` then
+   `tabkyra skill print <name> --raw > ~/.config/tabkyra/skill-drafts/<name>/SKILL.md`.
+   Change only what the lesson needs: a numbered step, a row in the failure table, or a
+   worked example.
 5. **Lint the draft:** `tabkyra skill lint ~/.config/tabkyra/skill-drafts/<name>`.
    It must print `Clean.`
 6. **Replay check.** Re-read the draft as if you were a small model starting the original
@@ -77,15 +78,18 @@ Only the user edits this file. Never change it yourself.
 
    On REJECT, drop the change. If review is on but `reviewCommand` is missing, stop and
    tell the user.
-8. **Get the go-ahead.** If `autoApply` and `adversarialReview` are both true and the
-   reviewer said APPROVE, go on. Otherwise show the user the diff and the lesson, and
+8. **Check the change:** `tabkyra skill apply ~/.config/tabkyra/skill-drafts/<name>`.
+   Without `--yes` it changes nothing: it lints again, refuses a dropped section or a
+   protected skill, and prints the diff (exit code 3 means ready).
+9. **Get the go-ahead.** If `autoApply` and `adversarialReview` are both true and the
+   reviewer said APPROVE, go on. Otherwise show the user that diff and the lesson, and
    wait for their yes.
-9. **Apply:** `tabkyra skill apply ~/.config/tabkyra/skill-drafts/<name>`. It lints again,
-   backs up the current version, keeps your edit across reinstalls and updates, and warns
-   later if the bundled skill changes underneath it.
-10. **Tell the user** in one or two lines: which skill, what rule was added, the backup
+10. **Apply:** the same command with `--yes`. It backs up the current version, keeps your
+    edit across reinstalls and updates, leaves alone any same-name skill Tabkyra didn't
+    write, and warns later if the bundled skill changes underneath it.
+11. **Tell the user** in one or two lines: which skill, what rule was added, the backup
     path it printed, and that `tabkyra skill revert <name>` undoes it.
-11. **Offer upstream,** when `submit` is `"ask"`: ask whether to propose the change to the
+12. **Offer upstream,** when `submit` is `"ask"`: ask whether to propose the change to the
     Tabkyra skill library. Only on an explicit yes, open a pull request to
     `baney75/tabkyra` that changes `skills/<name>/SKILL.md`, with the evidence in the
     description. The library's CI lints it and a maintainer reviews it before anyone else
@@ -119,6 +123,6 @@ not found" because the menu re-renders on hover.
 2. Target: `~/.claude/skills/tabkyra/SKILL.md`, the "Stale refs" section.
 3. The draft adds one bullet. `tabkyra skill lint` prints `Clean.`
 4. Review is off, so show the user the one-line diff. They say yes.
-5. `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra` prints the backup path.
+5. `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra --yes` prints the backup path.
 6. Tell the user: "Added a rule to the tabkyra skill for hover menus that drop their refs.
    Undo with tabkyra skill revert tabkyra. Propose it upstream?"

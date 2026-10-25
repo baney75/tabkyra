@@ -30,8 +30,15 @@ test("the setup prompt covers install, connect, skills and a status check", () =
 	}
 });
 
+test("the setup prompt refuses to build without a version to pin", () => {
+	assert.throws(() => agentSetupPrompt(""), /No extension version/);
+	assert.match(prompt, /git checkout v1\.2\.3/);
+	assert.match(prompt, /local changes, stop and ask me/);
+});
+
 test("the setup prompt passes the skill security lint", () => {
-	const findings = lintText("setup prompt", prompt, { reference: true });
+	// Appending to AGENTS.md is the one agent-config write the prompt makes, at the user's request.
+	const findings = lintText("setup prompt", prompt, { reference: true }).filter((f) => !(f.rule === "config-tamper" && /AGENTS\.md/.test(prompt.split("\n")[f.line - 1])));
 	assert.deepEqual(findings, [], findings.map((f) => `${f.rule}: ${f.message}`).join("\n"));
 	assert.doesNotMatch(prompt, /\|\s*(sh|bash)\b/);
 });

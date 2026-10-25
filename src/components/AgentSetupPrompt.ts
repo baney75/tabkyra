@@ -12,8 +12,15 @@ function extensionVersion(): string {
 }
 
 async function copy(): Promise<void> {
+	let prompt: string;
 	try {
-		await navigator.clipboard.writeText(agentSetupPrompt(extensionVersion()));
+		prompt = agentSetupPrompt(extensionVersion());
+	} catch (err) {
+		Toast.error(`Couldn't build the setup prompt: ${err instanceof Error ? err.message : String(err)}`);
+		return;
+	}
+	try {
+		await navigator.clipboard.writeText(prompt);
 		Toast.success("Setup prompt copied. Paste it into your agent.");
 	} catch {
 		Toast.error("Couldn't copy. Click the side panel first, then try again.");

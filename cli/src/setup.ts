@@ -13,6 +13,7 @@ import { harnesses, launcherValid, runCommand, shellJoin, tabkyraBinary, which }
 import { browserDirs, install } from "./install.ts";
 import { extensionDir, repoRoot } from "./paths.ts";
 import { installSkills, skillTargets } from "./skill.ts";
+import { SKILLS } from "./skills-catalog.ts";
 import { banner, box, c, confirm, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 
@@ -234,7 +235,8 @@ async function offerSkill(options: SetupOptions): Promise<void> {
 	const targets = skillTargets().filter((t) => t.detected);
 	if (targets.length === 0) return;
 	const names = targets.map((t) => t.name).join(", ");
-	if (!(await confirm(`  ${sym.dot} Teach ${names} how to use Tabkyra well? ${c.dim("(tabkyra skill install)")}`, { assumeYes: options.yes }))) {
+	const skills = [...SKILLS.keys()].join(", ");
+	if (!(await confirm(`  ${sym.dot} Install the Tabkyra skills (${skills}) for ${names}? ${c.dim("(tabkyra skill install)")}`, { assumeYes: options.yes }))) {
 		console.log(`    ${c.dim("Later:")} tabkyra skill install`);
 		return;
 	}
