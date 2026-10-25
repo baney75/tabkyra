@@ -119,8 +119,10 @@ export class PrivacyTab extends SettingsTab {
 										${Button({
 											size: "sm",
 											variant: "secondary",
-											disabled: this.log.length === 0,
-											onClick: () => {
+
+											onClick: async () => {
+												// Read the log fresh: errors may have arrived while this tab was open.
+												this.log = (await getTabkyraStorage().settings.get<BugEntry[]>(BUG_LOG_KEY)) ?? [];
 												this.draft = reportText(version, this.log, navigator.userAgent);
 											},
 											children: "Review report",
