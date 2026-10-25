@@ -12,6 +12,10 @@ import { encodeFrame, FrameParser } from "./framing.ts";
 import { assertSecurePath, socketDir } from "./paths.ts";
 import { VERSION } from "./version.ts";
 
+/** What every tool says when no browser is reachable: the agent can only ask the user. */
+export const NOT_CONNECTED =
+	"Tabkyra isn't connected. Ask the user to open Helium/Chrome with the Tabkyra extension loaded, or run `tabkyra doctor`.";
+
 export class BridgeRpcError extends Error {
 	constructor(readonly rpc: RpcError) {
 		super(rpc.message);
@@ -48,13 +52,13 @@ export function listSockets(): string[] {
 		.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
 }
 
-function isConnectionError(err: unknown): boolean {
+export function isConnectionError(err: unknown): boolean {
 	const message = err instanceof Error ? err.message : String(err);
 	const code = (err as { code?: string } | undefined)?.code;
 	return (
 		message === "Bridge connection closed" ||
 		message === "Not connected" ||
-		message.startsWith("No tabkyra browser bridge") ||
+		message === NOT_CONNECTED ||
 		code === "ECONNREFUSED" ||
 		code === "ENOENT" ||
 		code === "EPIPE" ||
@@ -68,6 +72,8 @@ export class BridgeClient {
 	private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 	clientId?: string;
 	extensionConnected = false;
+	/** Set once the extension has been connected; only a bridge that once worked is worth waiting for. */
+	private everConnected = false;
 
 	constructor(private readonly options: ClientOptions) {}
 
@@ -82,9 +88,7 @@ export class BridgeClient {
 		// extension is connected, the same socket `tabkyra doctor` and `setup` report on.
 		const sockets = listSockets();
 		if (sockets.length === 0) {
-			throw new Error(
-				"No tabkyra browser bridge is running. Make sure the tabkyra extension is loaded in a Chromium browser and that `tabkyra install` has been run.",
-			);
+			throw new Error(NOT_CONNECTED);
 		}
 		let fallback: string | undefined;
 		let lastError: unknown;
@@ -132,6 +136,7 @@ export class BridgeClient {
 						clearTimeout(timer);
 						this.clientId = msg.clientId;
 						this.extensionConnected = msg.extensionConnected;
+						if (msg.extensionConnected) this.everConnected = true;
 						resolve();
 					} else this.onMessage(msg);
 				}
@@ -168,6 +173,7 @@ export class BridgeClient {
 			this.options.onEvent?.(msg.event, msg.data);
 		} else if (msg.type === "extension_status") {
 			this.extensionConnected = msg.connected;
+			if (msg.connected) this.everConnected = true;
 			this.options.onExtensionStatus?.(msg.connected);
 		}
 	}
@@ -177,13 +183,34 @@ export class BridgeClient {
 	 * service worker restart, host respawn). The session key is stable, so the retry
 	 * lands on the same tabs. RPC errors from the extension are never retried.
 	 */
-	async call<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
+	async call<T = unknown>(
+		method: string,
+		params: Record<string, unknown> = {},
+		timeoutMs?: number,
+		options: { retry?: boolean } = {},
+	): Promise<T> {
 		try {
 			return await this.callOnce<T>(method, params, timeoutMs);
 		} catch (err) {
 			if (err instanceof BridgeRpcError || !isConnectionError(err)) throw err;
+			// Status checks report a drop as it is instead of waiting for a reconnect.
+			if (options.retry === false) throw new Error(NOT_CONNECTED);
+			// Nothing was ever reachable: say so now instead of polling for 40 s.
+			if (!this.everConnected) throw new Error(NOT_CONNECTED);
 			this.close();
-			await this.reconnect(40000);
+			try {
+				await this.reconnect(40000);
+			} catch {
+				// The drop outlasted the wait: report it, and don't wait again on the next call.
+				this.everConnected = false;
+				throw new Error(NOT_CONNECTED);
+			}
+			// A host came back but the extension didn't: a request now would only time out.
+			if (!this.extensionConnected) {
+				this.everConnected = false;
+				this.close();
+				throw new Error(NOT_CONNECTED);
+			}
 			return this.callOnce<T>(method, params, timeoutMs);
 		}
 	}

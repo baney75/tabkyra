@@ -55,7 +55,7 @@ Requires Chromium 141 or newer.
   changes what you see, and popups from agent tabs do not steal focus.
 - **Site permissions.** By default an agent must ask before it opens a new site. Claude
   Code and Codex show the prompt inline; otherwise answer it in the side panel under
-  Settings > Bridge or run `tabkyra allow <host>`. `tabkyra yolo` allows any site and
+  Settings > Bridge or run `tabkyra allow <host>`. `tabkyra allow-all` allows any site and
   `tabkyra ask` turns prompting back on.
 - **No Claude subscription login.** Anthropic does not allow Claude Pro/Max subscriptions
   in third-party apps, so Tabkyra takes Anthropic API keys only.

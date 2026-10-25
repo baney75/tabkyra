@@ -37,6 +37,7 @@ import {
 	waitForLoad,
 } from "../browser/page.js";
 import type { BrowserSession } from "../browser/session.js";
+import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR, type RpcError } from "./protocol.js";
 
 export class BridgeError extends Error {
@@ -146,6 +147,22 @@ function normalizeStep(step: Params, i: number): [string, Params] {
 }
 
 export const handlers: Record<string, Handler> = {
+	/** For the MCP `status` tool: what this session may open and where its tabs are. */
+	status: async (ctx) => {
+		const [permissionMode, allowedHosts, tabs] = await Promise.all([
+			getPermissionMode(),
+			getAllowedHosts(),
+			ctx.session.tabs(),
+		]);
+		return {
+			extensionVersion: chrome.runtime.getManifest().version,
+			permissionMode,
+			allowedHosts,
+			tabGroup: ctx.session.groupName,
+			tabs: tabs.map((t) => ({ tabId: t.id, url: t.url, title: t.title, current: t.current })),
+		};
+	},
+
 	"tabs.context": async (ctx) => {
 		const tabs = await ctx.session.tabs();
 		return {

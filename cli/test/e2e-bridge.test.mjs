@@ -165,6 +165,12 @@ test("open a page, snapshot, type, click and read back through MCP", async () =>
 	);
 	assert.match(nav, /Tabkyra e2e/);
 
+	const status = JSON.parse(await tool("status"));
+	assert.equal(status.connected, true);
+	assert.equal(status.tabGroup, "Tabkyra · e2e");
+	assert.equal(status.permissionMode, "ask");
+	assert.ok(status.tabs.some((t) => t.current && t.url.startsWith(pageUrl)), JSON.stringify(status.tabs));
+
 	const snapshot = await tool("read_page", { filter: "interactive" });
 	const inputRef = snapshot.match(/\[(e\d+)\][^\n]*textbox/i)?.[1] ?? snapshot.match(/(e\d+)[^\n]*(textbox|input)/i)?.[1];
 	const buttonRef = snapshot.match(/\[(e\d+)\][^\n]*Greet/)?.[1] ?? snapshot.match(/(e\d+)[^\n]*Greet/)?.[1];

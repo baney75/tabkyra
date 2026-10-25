@@ -59,8 +59,10 @@ test("install registers the host for Helium and Chrome, skips absent browsers", 
 });
 
 test("status reports each browser's host state", () => {
-	const out = run("status");
-	assert.match(out, /native host manifest: installed/);
-	assert.match(out, /Helium\s+current/);
-	assert.match(out, /Chrome\s+current/);
+	const report = JSON.parse(run("status", "--json"));
+	assert.equal(report.connected, false);
+	const state = Object.fromEntries(report.hosts.map((h) => [h.browser, h.state]));
+	assert.equal(state.Helium, "current");
+	assert.equal(state.Chrome, "current");
+	assert.match(run("status"), /Helium\s+host registered/);
 });
