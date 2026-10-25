@@ -11,7 +11,9 @@ const skillsDir = join(cli, "..", "skills");
 const names = readdirSync(skillsDir)
 	.filter((n) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(n) && existsSync(join(skillsDir, n, "SKILL.md")))
 	.sort((a, b) => (a === "tabkyra" ? -1 : b === "tabkyra" ? 1 : a.localeCompare(b)));
-const constant = (n) => n.toUpperCase().replace(/-/g, "_");
+// SKILL_ plus the name: always a valid identifier ("1password" -> SKILL_1PASSWORD), and never
+// SKILLS, the export below. Names are lowercase-kebab-case, so no two map to the same one.
+const constant = (n) => `SKILL_${n.toUpperCase().replace(/-/g, "_")}`;
 const imports = [...names].sort().map((n) => `import ${constant(n)} from "../../skills/${n}/SKILL.md";`);
 const text = `/**
  * Every skill the CLI ships, bundled as text at build time (cli/scripts/build.mjs). A test

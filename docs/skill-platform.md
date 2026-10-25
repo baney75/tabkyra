@@ -37,10 +37,23 @@ three order signals:
 
 Sentences that send the reader elsewhere ("Not for ...", "For news, use `news-research`")
 are left out, quoted phrases in them included, and backticked mentions of other skills are
-dropped, so they don't pull in the tasks they exclude. A skill the task asks to change
-(a verb such as fix, repair, edit, update, rewrite, improve or review in the task, or a
-slash command before the name: "fix the osint skill", `/fix news-research`) doesn't score
-on its own name. Instead the task counts as evidence for the skills whose job is skills.
+dropped, so they don't pull in the tasks they exclude. "Use `x` ..." counts as a redirect
+only when `x` is a skill; "Use `pass-cli run` when ..." is a trigger and stays.
+
+How a task names a skill ("<name> skill") decides what the name does:
+
+- **Changed:** an edit verb (fix, repair, edit, update, rewrite, improve, review, change,
+  correct, port...) governs the mention, as in "fix the osint skill", "rewrite my old dorks
+  skill", "edit to the osint skill" or "the osint skill failed, repair it", or a slash
+  command is the first token (`/fix news-research`). The name doesn't score for itself, and
+  the task counts as evidence for the skills whose job is skills. An edit-like word elsewhere
+  ("the latest updates", "review what you find") doesn't count.
+- **Ruled out:** a negation comes before it in the same clause ("don't use the osint skill",
+  "instead of the dorks skill", "skip the tabkyra skill", "without the osint skill"). That
+  skill is never returned for the task.
+- **The CLI:** `tabkyra skill install` (or another subcommand) is the Tabkyra CLI, read as
+  "tabkyra cli", not a request for the tabkyra skill.
+- **Requested:** otherwise ("use the osint skill on this landlord"), +6 for that skill.
 
 A skill matches when it scores at least 2.5 and has two pieces of evidence (specific words,
 word pairs, a phrase or a command), or one piece and a score of 4.5. Otherwise the answer is
@@ -64,7 +77,8 @@ copies (`tabkyra skill apply`). The index is built once per process and rebuilt 
 - Remote sessions (`tabkyra serve`) see both tools only with the `skills.read` token scope.
   They match and read the bundled skills only, never the user's local skills or edits: a
   remote session can be a cloud agent off the user's devices, and personal skills stay on
-  them (D6).
+  them (D6). Any session created with a tool scope (`allowedTools`) gets the same, whether
+  or not it is marked remote.
 
 ## Eval and the regression cases
 
@@ -115,11 +129,14 @@ to `skills-eval/accepted-drops.json`, which a maintainer reviews (CODEOWNERS):
 ```
 
 An entry the base branch already had doesn't count again, so every drop is accepted once,
-by name, with a reason.
+by name, with a reason. An added entry must name a skill that exists, carry exactly that
+skill's new value in `baseline.json`, and sit below the base branch's value. The accepted value
+then becomes the skill's floor with no tolerance, in `skill eval` and in the base-code eval:
+it means "at least this", not "anything".
 
-Measured on 2026-10-25 (13 skills): on the tuned set of 258 cases, top-1 90.7% (195 of 215)
-and false invokes 0% (0 of 43); on the 49 held-out cases, top-1 94.9% (37 of 39) and false
-invokes 10% (1 of 10). The top-1 gate needs 194 of 215, so the margin is one case. Matching takes about 0.2 ms at p95 and the index build about 20 ms on
+Measured on 2026-10-25 (13 skills): on the tuned set of 270 cases, top-1 91.5% (204 of 223)
+and false invokes 0% (0 of 47); on the 49 held-out cases, top-1 94.9% (37 of 39) and false
+invokes 10% (1 of 10). The top-1 gate needs 201 of 223, so the margin is three cases. Matching takes about 0.2 ms at p95 and the index build about 20 ms on
 the CI runner (about 0.1 ms and under 10 ms on an Apple-silicon Mac).
 
 ## CI gates
@@ -141,10 +158,12 @@ scripts and runs:
    - lowered a skill's value in `baseline.json` below the base branch's, or dropped it,
      without an accepted drop;
    - loosened a threshold in `cli/src/skill-eval.ts` (each may only move the strict way);
+   - has an accepted-drops entry that isn't valid (see above);
    - has skills that, under the base code, route the base cases worse than the base
-     baseline (no tolerance, except accepted drops) or fail the base gates. Skills the
-     pull request adds are indexed but need no base cases or baseline; the pull request's
-     own eval covers them.
+     baseline (no tolerance; an accepted drop's value is the floor instead) or fail the base
+     gates;
+   - adds skills that fail the base code's cases-per-skill or baseline gates on the pull
+     request's own cases and baseline. New skills need no base cases.
 
    The scorer's own constants in `skill-router.ts` may change in a pull request; that is how
    routing improves, and the gates measure the result. `.github/CODEOWNERS` also requires a
@@ -179,7 +198,9 @@ pinning a local copy that would stop bundled updates.
 in `skill-drafts/.bases/<name>`. An unfinished draft taken from the current version is
 resumed. A draft taken from an older version (an apply or rollback happened since) would
 undo those changes, so it is moved to `skill-drafts/.backups/<name>/`, with a warning, and a
-fresh draft is started.
+fresh draft is started. A draft that differs from the version it was taken from is always
+moved there before a fresh one replaces it, even when its text matches the current source;
+only an untouched draft is refreshed in place.
 
 - In a terminal with `$VISUAL` or `$EDITOR` set, it opens the draft, then shows the diff
   through the same checks as `skill apply`, asks `Apply? [y/N]`, and applies with a backup

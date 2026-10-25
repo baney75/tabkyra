@@ -269,10 +269,10 @@ test("every shipped skill passes lint, from disk and as bundled", () => {
 test("every folder under skills/ is bundled, and every bundled skill has a folder", () => {
 	const folders = readdirSync(skillsDir).filter((n) => existsSync(join(skillsDir, n, "SKILL.md"))).sort();
 	const catalog = readFileSync(join(here, "..", "src", "skills-catalog.ts"), "utf8");
-	const bundled = [...catalog.matchAll(/\["([a-z0-9-]+)", [A-Z_]+\]/g)].map((m) => m[1]).sort();
+	const bundled = [...catalog.matchAll(/\["([a-z0-9-]+)", [A-Z0-9_]+\]/g)].map((m) => m[1]).sort();
 	assert.deepEqual(bundled, folders);
 	// Each entry imports its own folder's SKILL.md, so a bundled skill can't come from elsewhere.
-	for (const [, name, constant] of catalog.matchAll(/\["([a-z0-9-]+)", ([A-Z_]+)\]/g)) {
+	for (const [, name, constant] of catalog.matchAll(/\["([a-z0-9-]+)", ([A-Z0-9_]+)\]/g)) {
 		assert.match(catalog, new RegExp(`import ${constant} from "\\.\\./\\.\\./skills/${name}/SKILL\\.md";`), `${name} must import skills/${name}/SKILL.md`);
 	}
 	const list = spawnSync(process.execPath, [cli, "skill", "list"], { encoding: "utf8", env: { HOME: lintHome, PATH: dirname(process.execPath), NO_COLOR: "1" } });

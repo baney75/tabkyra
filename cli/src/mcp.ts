@@ -699,7 +699,10 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		(args) => library(() => cite(args.citekey, args.style)),
 	);
 
-	// Skill tools read the bundled skills and the user's applied edits; no browser needed.
+	// Skill tools read the bundled skills and the user's applied edits; no browser needed. A
+	// remote or scoped session gets the bundled skills only: local skills stay on the user's
+	// devices (D6), even if a caller forgets to say the session is remote.
+	const bundledOnly = Boolean(options.remote || allowedTools);
 	server.registerTool(
 		"skill_match",
 		{
@@ -714,7 +717,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		(args) =>
 			library(() => {
-				const matches = matchTask(args.task, args.top ?? 3, Boolean(options.remote));
+				const matches = matchTask(args.task, args.top ?? 3, bundledOnly);
 				if (matches.length === 0) return "none: no skill fits this task. Work without one.";
 				const lines = matches.map((m) => `${m.name} (${m.score}): ${m.description}`);
 				return [...lines, `Next: skill_read {"name":"${matches[0].name}"}`].join("\n");
@@ -729,7 +732,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				'Example: {"name":"academic-research"}',
 			inputSchema: { name: z.string().describe("A skill name from skill_match, lowercase-kebab-case") },
 		},
-		(args) => library(() => readSkill(args.name, Boolean(options.remote))),
+		(args) => library(() => readSkill(args.name, bundledOnly)),
 	);
 
 	if (allowedTools) {

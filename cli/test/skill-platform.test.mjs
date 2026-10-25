@@ -192,6 +192,26 @@ test("edit resumes a draft only if it was taken from the current version; a stal
 	assert.equal(readFileSync(draft, "utf8"), landed);
 });
 
+test("a stale draft the user edited is moved aside even when it matches the current text", () => {
+	const home = newHome();
+	const drafts = join(home, ".config", "tabkyra", "skill-drafts");
+	const draft = join(drafts, "dorks", "SKILL.md");
+	assert.equal(run(home, ["skill", "edit", "dorks"]).code, 0);
+	// The user edits the draft; then the very same text lands through another apply.
+	const typed = addLesson("same text.")(bundled("dorks"));
+	writeFileSync(draft, typed);
+	applyEdit(home, "dorks", () => typed);
+	const r = run(home, ["skill", "edit", "dorks"]);
+	assert.match(r.out, /older version of dorks/);
+	const kept = readdirSync(join(drafts, ".backups", "dorks"));
+	assert.equal(kept.length, 1, "the typed draft is kept, not replaced silently");
+	assert.equal(readFileSync(join(drafts, ".backups", "dorks", kept[0]), "utf8"), typed);
+	assert.equal(readFileSync(draft, "utf8"), typed);
+	// An untouched draft of the current version is refreshed in place, with nothing to keep.
+	assert.equal(run(home, ["skill", "edit", "dorks"]).code, 0);
+	assert.equal(readdirSync(join(drafts, ".backups", "dorks")).length, 1);
+});
+
 test("edit refuses protected skills, unknown skills and names that reach outside", () => {
 	const home = newHome();
 	for (const [name, pattern] of [

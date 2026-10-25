@@ -2,7 +2,8 @@
 // description, the safety rules are in the instructions, and a tool call fails fast
 // with the one not-connected message instead of hanging.
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -145,5 +146,56 @@ test("a host with no extension behind it is reported as not connected, at once",
 	} finally {
 		await client.close().catch(() => {});
 		server.close();
+	}
+});
+
+test("a scoped session reads bundled skills only, even when created without remote:true", async () => {
+	// Bundle the MCP server module itself, to create it the way a future caller might.
+	const { build } = await import("esbuild");
+	const out = join(root, "mcp-bundle.mjs");
+	await build({ entryPoints: [join(dirname(fileURLToPath(import.meta.url)), "..", "src", "mcp.ts")], bundle: true, platform: "node", format: "esm", outfile: out, loader: { ".md": "text", ".pub": "text" }, logLevel: "silent" });
+	const { createMcpServer } = await import(out);
+	const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+	// A local edit of dorks and a local-only skill, in a config folder of their own.
+	const home = join(root, "scoped-home");
+	mkdirSync(home, { recursive: true });
+	const env = { HOME: home, PATH: dirname(process.execPath), NO_COLOR: "1" };
+	const skills = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills");
+	const dorks = join(home, "drafts", "dorks");
+	mkdirSync(dorks, { recursive: true });
+	writeFileSync(join(dorks, "SKILL.md"), readFileSync(join(skills, "dorks", "SKILL.md"), "utf8").replace("## Done when", "- Private local note.\n\n## Done when"));
+	const own = join(home, "drafts", "invoice-triage");
+	mkdirSync(own, { recursive: true });
+	writeFileSync(
+		join(own, "SKILL.md"),
+		"---\nname: invoice-triage\ndescription: Sort supplier invoices into paid, due and disputed. Use when the user asks to triage, sort or reconcile supplier invoices.\n---\n# Invoice triage\n\n## When to use\n\n- The user has a pile of supplier invoices to sort.\n\n## Steps\n\n1. **List them.** Read each invoice.\n2. **Sort them.** Paid, due or disputed.\n\n## Done when\n\n- Every invoice has a status.\n",
+	);
+	for (const dir of [dorks, own]) assert.equal(spawnSync(process.execPath, [cli, "skill", "apply", dir, "--yes"], { env }).status, 0);
+	const before = process.env.TABKYRA_CONFIG_DIR;
+	process.env.TABKYRA_CONFIG_DIR = join(home, ".config", "tabkyra");
+	const open = async (options) => {
+		const { server } = createMcpServer(options);
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		await server.connect(a);
+		const client = new Client({ name: "scoped-test", version: "0.0.0" });
+		await client.connect(b);
+		return client;
+	};
+	try {
+		const scoped = await open({ name: "scoped", session: "scoped", allowedTools: new Set(["skill_match", "skill_read"]) });
+		const read = await scoped.callTool({ name: "skill_read", arguments: { name: "dorks" } });
+		assert.doesNotMatch(read.content[0].text, /Private local note/);
+		const match = await scoped.callTool({ name: "skill_match", arguments: { task: "triage my supplier invoices", top: 5 } });
+		assert.doesNotMatch(match.content[0].text, /invoice-triage/);
+		assert.equal((await scoped.callTool({ name: "skill_read", arguments: { name: "invoice-triage" } })).isError, true);
+		await scoped.close();
+		// The local stdio server, which runs as the user, does see them.
+		const local = await open({ name: "local", session: "local" });
+		assert.match((await local.callTool({ name: "skill_read", arguments: { name: "dorks" } })).content[0].text, /Private local note/);
+		assert.match((await local.callTool({ name: "skill_match", arguments: { task: "triage my supplier invoices" } })).content[0].text, /^invoice-triage /);
+		await local.close();
+	} finally {
+		if (before === undefined) delete process.env.TABKYRA_CONFIG_DIR;
+		else process.env.TABKYRA_CONFIG_DIR = before;
 	}
 });

@@ -4,33 +4,33 @@
  * every entry passes `tabkyra skill lint` before it can merge.
  */
 
-import ACADEMIC_RESEARCH from "../../skills/academic-research/SKILL.md";
-import ADVERSARIAL_REVIEW from "../../skills/adversarial-review/SKILL.md";
-import ARTIFACTS from "../../skills/artifacts/SKILL.md";
-import AUTORESEARCH from "../../skills/autoresearch/SKILL.md";
-import BUG from "../../skills/bug/SKILL.md";
-import DORKS from "../../skills/dorks/SKILL.md";
-import FIX from "../../skills/fix/SKILL.md";
-import KYRASKILLMAKER from "../../skills/kyraskillmaker/SKILL.md";
-import NEWS_RESEARCH from "../../skills/news-research/SKILL.md";
-import OSINT from "../../skills/osint/SKILL.md";
-import PROTON_PASS from "../../skills/proton-pass/SKILL.md";
-import RSI from "../../skills/rsi/SKILL.md";
-import TABKYRA from "../../skills/tabkyra/SKILL.md";
+import SKILL_ACADEMIC_RESEARCH from "../../skills/academic-research/SKILL.md";
+import SKILL_ADVERSARIAL_REVIEW from "../../skills/adversarial-review/SKILL.md";
+import SKILL_ARTIFACTS from "../../skills/artifacts/SKILL.md";
+import SKILL_AUTORESEARCH from "../../skills/autoresearch/SKILL.md";
+import SKILL_BUG from "../../skills/bug/SKILL.md";
+import SKILL_DORKS from "../../skills/dorks/SKILL.md";
+import SKILL_FIX from "../../skills/fix/SKILL.md";
+import SKILL_KYRASKILLMAKER from "../../skills/kyraskillmaker/SKILL.md";
+import SKILL_NEWS_RESEARCH from "../../skills/news-research/SKILL.md";
+import SKILL_OSINT from "../../skills/osint/SKILL.md";
+import SKILL_PROTON_PASS from "../../skills/proton-pass/SKILL.md";
+import SKILL_RSI from "../../skills/rsi/SKILL.md";
+import SKILL_TABKYRA from "../../skills/tabkyra/SKILL.md";
 
 /** Name to SKILL.md text. `tabkyra` first: it's the one every other skill builds on. */
 export const SKILLS: ReadonlyMap<string, string> = new Map([
-	["tabkyra", TABKYRA],
-	["academic-research", ACADEMIC_RESEARCH],
-	["adversarial-review", ADVERSARIAL_REVIEW],
-	["artifacts", ARTIFACTS],
-	["autoresearch", AUTORESEARCH],
-	["bug", BUG],
-	["dorks", DORKS],
-	["fix", FIX],
-	["kyraskillmaker", KYRASKILLMAKER],
-	["news-research", NEWS_RESEARCH],
-	["osint", OSINT],
-	["proton-pass", PROTON_PASS],
-	["rsi", RSI],
+	["tabkyra", SKILL_TABKYRA],
+	["academic-research", SKILL_ACADEMIC_RESEARCH],
+	["adversarial-review", SKILL_ADVERSARIAL_REVIEW],
+	["artifacts", SKILL_ARTIFACTS],
+	["autoresearch", SKILL_AUTORESEARCH],
+	["bug", SKILL_BUG],
+	["dorks", SKILL_DORKS],
+	["fix", SKILL_FIX],
+	["kyraskillmaker", SKILL_KYRASKILLMAKER],
+	["news-research", SKILL_NEWS_RESEARCH],
+	["osint", SKILL_OSINT],
+	["proton-pass", SKILL_PROTON_PASS],
+	["rsi", SKILL_RSI],
 ]);

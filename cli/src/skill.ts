@@ -615,7 +615,9 @@ export function prepareDraft(name: string): { dir: string; file: string; resumed
 		const draft = readFileSync(file, "utf8");
 		const base = existsSync(baseFile) ? readFileSync(baseFile, "utf8").trim() : undefined;
 		if (draft !== source && base === current) return { dir, file, resumed: true };
-		if (draft !== source) {
+		// Anything the user typed (the draft differs from the version it was taken from, or from
+		// the current source) is moved aside, never replaced.
+		if (draft !== source || (base !== undefined && skillVersion(draft) !== base)) {
 			mkdirSync(backupsDir, { recursive: true });
 			stale = join(backupsDir, `${stamp()}.md`);
 			renameSync(file, stale);
@@ -736,13 +738,14 @@ function runEvalCommand(flags: SkillFlags): number {
 	if (flags.base) return runBaseCommand(flags, skills, casesFile, heldoutText);
 	const cases = parseCases(readFileSync(casesFile, "utf8"));
 	const heldout = heldoutText === undefined ? undefined : parseCases(heldoutText, "router-heldout.jsonl");
-	parseDrops(readIfExists(join(dir, "accepted-drops.json")));
+	// Each accepted drop is that skill's floor, with no tolerance (the last entry for a skill wins).
+	const floors = new Map(parseDrops(readIfExists(join(dir, "accepted-drops.json"))).map((d) => [d.skill, d.value]));
 	let baseline = existsSync(baselineFile) ? parseBaseline(readFileSync(baselineFile, "utf8")) : undefined;
 	if (flags.updateBaseline) {
 		writeFileSync(baselineFile, formatBaseline(runEval(skills, cases)));
 		baseline = parseBaseline(readFileSync(baselineFile, "utf8"));
 	}
-	const report = runEval(skills, cases, baseline, heldout);
+	const report = runEval(skills, cases, baseline, heldout, { floors });
 	if (flags.json) {
 		console.log(JSON.stringify(report, null, "\t"));
 		return report.ok ? 0 : 1;
