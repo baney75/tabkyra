@@ -1,0 +1,32 @@
+{
+  "name": "tabkyra-demo-video",
+  "version": "1.0.0",
+  "description": "The Tabkyra demo video (media/demo.mp4), composed in Remotion from a real recorded run",
+  "license": "AGPL-3.0",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.538",
+    "@remotion/fonts": "4.0.538",
+    "@remotion/transitions": "4.0.538",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.538"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "check": "tsc",
+    "render": "remotion render Demo out/demo.mp4 --codec=h264 --crf=20 && remotion still Poster out/poster.png && ffmpeg -loglevel error -y -i out/poster.png -q:v 3 out/demo-poster.jpg",
+    "publish-media": "cp out/demo.mp4 ../demo.mp4 && cp out/demo-poster.jpg ../demo-poster.jpg"
+  },
+  "allowScripts": {
+    "esbuild": false
+  }
+}

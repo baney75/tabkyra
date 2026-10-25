@@ -12,3 +12,6 @@ version.json
 docs/*.html
 cli/node_modules
 cli/dist
+
+# The demo video and its poster are published assets.
+!media/demo.mp4
