@@ -14,9 +14,9 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { which } from "./harness.ts";
-import { EvalError, formatBaseline, parseBaseline, parseCases, runEval } from "./skill-eval.ts";
+import { EvalError, formatBaseline, parseBaseline, parseCases, runBaseCheck, runEval } from "./skill-eval.ts";
 import { formatFindings, lintPath, lintText, parseFrontmatter } from "./skill-lint.ts";
-import { buildRouterIndex, matchSkills, oneLine, type RouterIndex, type SkillMatch } from "./skill-router.ts";
+import { buildRouterIndex, matchSkills, oneLine, type RouterIndex, type RouterSkill, type SkillMatch } from "./skill-router.ts";
 import { SKILLS } from "./skills-catalog.ts";
 import { banner, c, sym } from "./ui.ts";
 
@@ -590,10 +590,13 @@ function draftsDir(): string {
 }
 
 /**
- * The draft folder for `name`, holding the exact source in use. A draft that already
- * differs from the source is kept, so an unfinished edit is never overwritten.
+ * The draft folder for `name`, holding the exact source in use. The version a draft was
+ * taken from is kept in skill-drafts/.bases/<name>, outside the skill folder. A draft that
+ * differs from the current source is resumed only when it was taken from that source; a
+ * draft taken from an older version (an apply or rollback has happened since) would drop
+ * those changes, so it is moved to skill-drafts/.backups/<name>/ and a fresh draft started.
  */
-export function prepareDraft(name: string): { dir: string; file: string; resumed: boolean } {
+export function prepareDraft(name: string): { dir: string; file: string; resumed: boolean; stale?: string } {
 	assertName(name);
 	if (PROTECTED_SKILLS.has(name)) throw new SkillError(`The ${name} skill governs skill edits, so it changes only through a reviewed pull request.`);
 	const source = readSkill(name);
@@ -601,12 +604,28 @@ export function prepareDraft(name: string): { dir: string; file: string; resumed
 	const dir = resolve(root, name);
 	if (relative(root, dir) !== name) throw new SkillError(`${name} resolves outside ${root}.`);
 	const file = join(dir, "SKILL.md");
-	assertNoLinks([configDir(), draftsDir(), dir, file]);
+	const basesDir = join(root, ".bases");
+	const baseFile = join(basesDir, name);
+	const backupsDir = join(root, ".backups", name);
+	assertNoLinks([configDir(), draftsDir(), dir, file, basesDir, baseFile, join(root, ".backups"), backupsDir]);
 	if (existsSync(file) && !lstatSync(file).isFile()) throw new SkillError(`${file} is not a file.`);
-	if (existsSync(file) && readFileSync(file, "utf8") !== source) return { dir, file, resumed: true };
+	const current = skillVersion(source);
+	let stale: string | undefined;
+	if (existsSync(file)) {
+		const draft = readFileSync(file, "utf8");
+		const base = existsSync(baseFile) ? readFileSync(baseFile, "utf8").trim() : undefined;
+		if (draft !== source && base === current) return { dir, file, resumed: true };
+		if (draft !== source) {
+			mkdirSync(backupsDir, { recursive: true });
+			stale = join(backupsDir, `${stamp()}.md`);
+			renameSync(file, stale);
+		}
+	}
 	mkdirSync(dir, { recursive: true });
+	mkdirSync(basesDir, { recursive: true });
 	writeFileSync(file, source);
-	return { dir, file, resumed: false };
+	writeFileSync(baseFile, `${current}\n`);
+	return { dir, file, resumed: false, stale };
 }
 
 /** Open `file` in the user's editor; the editor string may carry arguments ("code --wait"). */
@@ -667,10 +686,11 @@ export interface SkillFlags {
 	yes?: boolean;
 	json?: boolean;
 	updateBaseline?: boolean;
-	/** Values of --top, --to and --cases. */
+	/** Values of --top, --to, --cases and --base. */
 	top?: string;
 	to?: string;
 	cases?: string;
+	base?: string;
 }
 
 export function runSkill(sub: string | undefined, args: string[], flags: SkillFlags): number {
@@ -701,18 +721,26 @@ function findCases(start: string): string | undefined {
 	}
 }
 
+function readIfExists(file: string): string | undefined {
+	return existsSync(file) ? readFileSync(file, "utf8") : undefined;
+}
+
 function runEvalCommand(flags: SkillFlags): number {
 	const casesFile = flags.cases ? resolve(flags.cases) : findCases(process.cwd());
 	if (!casesFile || !existsSync(casesFile)) throw new SkillError("No skills-eval/router-cases.jsonl here or above. Run this in a Tabkyra checkout, or pass --cases <file>.");
-	const baselineFile = join(dirname(casesFile), "baseline.json");
-	const cases = parseCases(readFileSync(casesFile, "utf8"));
+	const dir = dirname(casesFile);
+	const baselineFile = join(dir, "baseline.json");
+	const heldoutText = readIfExists(join(dir, "router-heldout.jsonl"));
 	const skills = [...SKILLS].map(([name, text]) => ({ name, text }));
+	if (flags.base) return runBaseCommand(flags, skills, casesFile, heldoutText);
+	const cases = parseCases(readFileSync(casesFile, "utf8"));
+	const heldout = heldoutText === undefined ? undefined : parseCases(heldoutText, "router-heldout.jsonl");
 	let baseline = existsSync(baselineFile) ? parseBaseline(readFileSync(baselineFile, "utf8")) : undefined;
 	if (flags.updateBaseline) {
 		writeFileSync(baselineFile, formatBaseline(runEval(skills, cases)));
 		baseline = parseBaseline(readFileSync(baselineFile, "utf8"));
 	}
-	const report = runEval(skills, cases, baseline);
+	const report = runEval(skills, cases, baseline, heldout);
 	if (flags.json) {
 		console.log(JSON.stringify(report, null, "\t"));
 		return report.ok ? 0 : 1;
@@ -724,10 +752,33 @@ function runEvalCommand(flags: SkillFlags): number {
 		console.log(`  ${name.padEnd(20)} ${pct(s.accuracy).padStart(6)}  ${String(s.correct).padStart(3)}/${s.cases}${base}`);
 	}
 	for (const m of report.misses) console.log(`  ${sym.dot} ${c.dim(`expected ${m.expected}, got ${m.got}:`)} ${m.task}`);
+	if (report.heldout) {
+		console.log(`${c.bold("Held-out")} ${report.heldout.cases} cases the scorer was never tuned on: top-1 ${pct(report.heldout.top1)}, false invokes ${pct(report.heldout.falseInvoke)}`);
+		for (const m of report.heldout.misses) console.log(`  ${sym.dot} ${c.dim(`expected ${m.expected}, got ${m.got}:`)} ${m.task}`);
+	}
 	for (const k of report.skipped) console.log(`  ${sym.warn} line ${k.line}: no bundled skill named ${k.skill}; skipped`);
 	for (const g of report.gates) console.log(`${g.ok ? sym.ok : sym.fail} ${g.gate.padEnd(16)} ${g.detail}`);
 	if (flags.updateBaseline) console.log(`${sym.arrow} Wrote ${baselineFile}. Commit it with the change that moved the numbers.`);
 	return report.ok ? 0 : 1;
+}
+
+/**
+ * `skill eval --base <checkout>`: run by the base branch's build, with the pull request's
+ * skills bundled, from the pull request's checkout. The pull request's eval source sits at
+ * cli/src/skill-eval.ts beside its skills-eval folder.
+ */
+function runBaseCommand(flags: SkillFlags, skills: RouterSkill[], casesFile: string, heldoutText: string | undefined): number {
+	const baseDir = join(resolve(flags.base ?? ""), "skills-eval");
+	if (!existsSync(baseDir)) throw new SkillError(`No skills-eval folder in ${flags.base}.`);
+	const headRoot = dirname(dirname(casesFile));
+	const { ok, gates } = runBaseCheck(
+		skills,
+		{ cases: readFileSync(casesFile, "utf8"), heldout: heldoutText, baseline: readIfExists(join(dirname(casesFile), "baseline.json")), evalSource: readIfExists(join(headRoot, "cli", "src", "skill-eval.ts")) },
+		{ cases: readIfExists(join(baseDir, "router-cases.jsonl")), heldout: readIfExists(join(baseDir, "router-heldout.jsonl")), baseline: readIfExists(join(baseDir, "baseline.json")) },
+	);
+	if (flags.json) console.log(JSON.stringify({ ok, gates }, null, "\t"));
+	else for (const g of gates) console.log(`${g.ok ? sym.ok : sym.fail} ${g.gate.padEnd(16)} ${g.detail}`);
+	return ok ? 0 : 1;
 }
 
 function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFlags): number {
@@ -773,11 +824,12 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 	}
 	if (sub === "edit") {
 		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill edit <name> [--yes]");
-		const { dir, file, resumed } = prepareDraft(args[0]);
+		const { dir, file, resumed, stale } = prepareDraft(args[0]);
 		const name = basename(dir);
 		const source = readSkill(name);
 		const editor = process.env.VISUAL || process.env.EDITOR;
 		const later = `tabkyra skill apply ${dir}`;
+		if (stale) console.log(`${sym.warn} Your earlier draft was taken from an older version of ${name}, so it would undo changes made since. It is kept at ${stale}; starting a fresh draft.`);
 		console.log(`${sym.ok} ${resumed ? "Your earlier draft" : "Draft"} of ${name}: ${file}`);
 		if (!process.stdin.isTTY || !process.stdout.isTTY || !editor) {
 			if (process.stdin.isTTY && !editor) console.log(`${sym.dot} Set $VISUAL or $EDITOR to open it from here.`);

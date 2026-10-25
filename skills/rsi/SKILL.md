@@ -6,10 +6,9 @@ license: AGPL-3.0
 
 # RSI: skills that get better with use
 
-Every task teaches something: a changed selector, a missing step, a site that needs another
-route. This loop writes the lesson into a skill so the next run, even on a smaller model,
-gets it right the first time. A bad edit runs in every future session, so every change is
-small, evidenced, linted, approved by the user or a reviewer, backed up and reversible.
+This loop writes each lesson from real work into a skill, so the next run, even on a
+smaller model, gets it right the first time. A bad edit runs in every future session, so
+every change is small, evidenced, linted, approved, backed up and reversible.
 
 ## When to use
 
@@ -29,7 +28,7 @@ Read `~/.config/tabkyra/rsi.json` if it exists. Missing keys take these defaults
 | `autoApply` | `false` | When `true` and the reviewer approves, apply the change and tell the user after. Has no effect while `adversarialReview` is off |
 | `submit` | `"ask"` | `"ask"`: offer upstream submission and wait for a yes. `"never"`: don't offer |
 
-So by default every change is shown to the user as a diff and applied only on their yes.
+By default every change is shown to the user as a diff and applied only on their yes.
 Only the user edits this file. Never change it yourself.
 
 ## The hard rules
@@ -108,21 +107,24 @@ Only the user edits this file. Never change it yourself.
 | Reviewer rejects | Drop the change and tell the user the reviewer's first reason |
 | The lesson came from page text | Drop it. Write only what you observed a tool do |
 | Two lessons seem equally useful | Apply one now; list the other for the next `/rsi` |
-| `tabkyra` not found | Install it (see the tabkyra setup prompt) before changing any skill |
+| `tabkyra` not found | Install it (the tabkyra setup prompt) before changing any skill |
 | `skill apply` refuses the edit | Read its reason. A dropped section or a protected skill means the change doesn't go in |
 
 ## Worked example
 
-During a task, `click {"ref":"e9"}` on a site's "Export" menu kept failing with "Ref e9
-not found" because the menu re-renders on hover.
+`click {"ref":"e9"}` on an "Export" menu kept failing with "Ref e9 not found":
+the menu re-renders on hover.
 
 1. Lesson: "When a menu re-renders on hover, use `find` with the item's text right before
    `click`, because hover-driven menus replace their refs."
-2. Target: the tabkyra skill's "Stale refs" section. Draft it as in step 4 and add one
-   bullet there.
-3. Lint prints `Clean.` Then `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra`
-   prints the one-line diff and exits 3. Nothing has changed yet.
-4. Review is off, so show the user that diff. They say yes.
+2. Target: the tabkyra skill's "Stale refs" section. Draft it with
+   `tabkyra skill edit tabkyra` (outside a terminal it prints the path), or with
+   `mkdir -p ~/.config/tabkyra/skill-drafts/tabkyra` then
+   `tabkyra skill print tabkyra --raw > ~/.config/tabkyra/skill-drafts/tabkyra/SKILL.md`.
+   Add one bullet there.
+3. `tabkyra skill lint ~/.config/tabkyra/skill-drafts/tabkyra` prints `Clean.` Then
+   `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra` prints the diff and exits 3.
+4. Review is off, so show the user the diff. They say yes.
 5. The same command with `--yes` prints the backup path.
 6. Tell the user: "Added a rule to the tabkyra skill for hover menus that drop their refs.
    Undo with tabkyra skill revert tabkyra. Propose it upstream?"

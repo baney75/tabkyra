@@ -4,8 +4,10 @@
 #                     red-team tests that prove the lint still catches each attack. No
 #                     install scripts run.
 #   skill-regression: the skill router's gates (docs/skill-platform.md): the size budget,
-#                     top-1 accuracy, false invokes, latency, and no skill more than 10
-#                     points below skills-eval/baseline.json.
+#                     top-1 accuracy, false invokes, latency, the held-out floors, and no
+#                     skill more than 10 points below skills-eval/baseline.json. On a pull
+#                     request the base branch's build checks the pull request's skills and
+#                     files too, so a pull request can't lower its own bar.
 #   check:            the full build, format, type and test pass that a release runs.
 # Nothing here gets a write token or a secret, so a pull request from a fork can't use CI
 # to reach anything.
@@ -101,13 +103,34 @@ jobs:
       - name: Lint and budget-check every skill
         run: node cli/dist/index.js skill lint skills
 
-      # Top-1 accuracy, false invokes, cases per skill, p95 latency, and the baseline snapshot.
+      # Top-1 accuracy, false invokes, cases per skill, p95 latency, the baseline snapshot and
+      # the held-out floors.
       - name: Router eval and regression snapshot
         run: node cli/dist/index.js skill eval
 
       - name: Router, version, rollback and editor tests
         working-directory: cli
         run: node --test test/skill-router.test.mjs test/skill-platform.test.mjs
+
+      # The base branch's eval code, built around the pull request's skills, checks that the
+      # pull request kept every base case, didn't lower a baseline more than the regression
+      # threshold or loosen a threshold, and that its skills pass the base gates.
+      - name: Router gates from the base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth 1 origin "$BASE_SHA"
+          git worktree add --detach ../base "$BASE_SHA"
+          if [ ! -f ../base/cli/src/skill-eval.ts ]; then
+            echo "The base branch has no skill eval yet."
+            exit 0
+          fi
+          git worktree add --detach ../base-code "$BASE_SHA"
+          rm -rf ../base-code/skills
+          cp -R skills ../base-code/skills
+          (cd ../base-code/cli && npm ci --ignore-scripts --no-audit --no-fund && node node_modules/esbuild/install.js && npm run build)
+          node ../base-code/cli/dist/index.js skill eval --base ../base
 
   check:
     runs-on: ubuntu-24.04

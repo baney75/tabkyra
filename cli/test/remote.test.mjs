@@ -293,11 +293,29 @@ test("remote sessions read bundled skills only, never the user's local edits", a
 	writeFileSync(join(draft, "SKILL.md"), text.replace("## When something goes wrong", "## When something goes wrong\n\n| Private local note | Only on this machine |"));
 	const applied = cliRun(["skill", "apply", draft, "--yes"]);
 	assert.equal(applied.code, 0, applied.out);
+	// A local-only skill, which only exists on this machine.
+	const own = join(root, "drafts", "invoice-triage");
+	mkdirSync(own, { recursive: true });
+	writeFileSync(
+		join(own, "SKILL.md"),
+		"---\nname: invoice-triage\ndescription: Sort supplier invoices into paid, due and disputed. Use when the user asks to triage, sort or reconcile supplier invoices.\n---\n# Invoice triage\n\n## When to use\n\n- The user has a pile of supplier invoices to sort.\n\n## Steps\n\n1. **List them.** Read each invoice.\n2. **Sort them.** Paid, due or disputed.\n\n## Done when\n\n- Every invoice has a status.\n",
+	);
+	const ownApplied = cliRun(["skill", "apply", own, "--yes"]);
+	assert.equal(ownApplied.code, 0, ownApplied.out);
+	const task = "triage my supplier invoices";
+	assert.match(cliRun(["skill", "match", task]).out, /^invoice-triage\s/, "the local router sees it, so the remote check below means something");
 	const client = await connect(token("skills-reader", "skills.read"));
 	try {
 		const r = await client.callTool({ name: "skill_read", arguments: { name: "dorks" } });
 		assert.doesNotMatch(r.content[0].text, /Private local note/);
 		assert.equal(r.content[0].text.trim(), text.trim());
+		for (const top of [1, 5]) {
+			const m = await client.callTool({ name: "skill_match", arguments: { task, top } });
+			assert.doesNotMatch(m.content[0].text, /invoice-triage/);
+		}
+		const hidden = await client.callTool({ name: "skill_read", arguments: { name: "invoice-triage" } });
+		assert.equal(hidden.isError, true);
+		assert.doesNotMatch(hidden.content[0].text, /supplier invoices/);
 	} finally {
 		await client.close();
 	}

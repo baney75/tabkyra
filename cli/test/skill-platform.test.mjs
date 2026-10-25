@@ -158,6 +158,33 @@ test("edit outside a terminal writes the exact source as a draft, prints the app
 	assert.equal(existsSync(local(home, "dorks")), false);
 });
 
+test("edit resumes a draft only if it was taken from the current version; a stale draft is kept aside and redrafted", () => {
+	const home = newHome();
+	const drafts = join(home, ".config", "tabkyra", "skill-drafts");
+	const draft = join(drafts, "dorks", "SKILL.md");
+	assert.equal(run(home, ["skill", "edit", "dorks"]).code, 0);
+	assert.equal(readFileSync(join(drafts, ".bases", "dorks"), "utf8").trim(), version(bundled("dorks")));
+	// An unfinished edit on the current version is resumed.
+	writeFileSync(draft, addLesson("unfinished.")(readFileSync(draft, "utf8")));
+	assert.match(run(home, ["skill", "edit", "dorks"]).out, /earlier draft/);
+	assert.match(readFileSync(draft, "utf8"), /unfinished\./);
+	// Another edit lands, so the draft's base is stale: resuming it would drop that edit.
+	const landed = applyEdit(home, "dorks", addLesson("landed elsewhere."));
+	const r = run(home, ["skill", "edit", "dorks"]);
+	assert.equal(r.code, 0, r.out);
+	assert.match(r.out, /older version of dorks/);
+	assert.equal(readFileSync(draft, "utf8"), landed, "the fresh draft is the current source, with the other edit");
+	assert.equal(readFileSync(join(drafts, ".bases", "dorks"), "utf8").trim(), version(landed));
+	const kept = readdirSync(join(drafts, ".backups", "dorks"));
+	assert.equal(kept.length, 1);
+	assert.match(readFileSync(join(drafts, ".backups", "dorks", kept[0]), "utf8"), /unfinished\./, "the stale draft is kept");
+	// A draft with no recorded base (from before this change) is treated as stale too.
+	writeFileSync(draft, addLesson("no base.")(landed));
+	rmSync(join(drafts, ".bases", "dorks"));
+	assert.match(run(home, ["skill", "edit", "dorks"]).out, /older version/);
+	assert.equal(readFileSync(draft, "utf8"), landed);
+});
+
 test("edit refuses protected skills, unknown skills and names that reach outside", () => {
 	const home = newHome();
 	for (const [name, pattern] of [
