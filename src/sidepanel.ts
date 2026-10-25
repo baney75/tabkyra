@@ -23,6 +23,7 @@ import {
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
 import { Circle, Download, History, Link, Plus, Settings, Square } from "lucide";
+import { isBlockedModel, purgeRemovedSignIns, RemovedSignInError, resolveApiKey } from "./auth/policy.js";
 import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
 import { dispatchToSandbox, setCdpMessageHandler } from "./browser/inject.js";
@@ -30,8 +31,8 @@ import { BrowserSession, listSessions, sessionIdForTab, sessionOwningTab } from 
 import { helmMark } from "./components/HelmMark.js";
 import { Toast } from "./components/Toast.js";
 import { AboutTab } from "./dialogs/AboutTab.js";
-import { ApiKeyOrOAuthDialog } from "./dialogs/ApiKeyOrOAuthDialog.js";
-import { ApiKeysOAuthTab } from "./dialogs/ApiKeysOAuthTab.js";
+import { ApiKeyDialog } from "./dialogs/ApiKeyDialog.js";
+import { ApiKeysTab } from "./dialogs/ApiKeysTab.js";
 import { BridgeTab } from "./dialogs/BridgeTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
 import { CustomProvidersTab } from "./dialogs/CustomProvidersTab.js";
@@ -49,7 +50,6 @@ import {
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { refreshDiscoveredModels } from "./models/registry.js";
-import { resolveApiKey } from "./oauth/index.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { Recorder } from "./recording/recorder.js";
 import { TabkyraAppStorage } from "./storage/app-storage.js";
@@ -287,10 +287,7 @@ const DEFAULT_MODELS: Record<string, string> = {
 	anthropic: "claude-sonnet-4-6",
 	"azure-openai-responses": "gpt-5.2",
 	cerebras: "zai-glm-4.6",
-	"github-copilot": "gpt-4o",
 	google: "gemini-2.5-flash",
-	"google-antigravity": "gemini-3.1-pro-high",
-	"google-gemini-cli": "gemini-2.5-pro",
 	"google-vertex": "gemini-3-pro-preview",
 	groq: "openai/gpt-oss-20b",
 	huggingface: "moonshotai/Kimi-K2.5",
@@ -299,7 +296,6 @@ const DEFAULT_MODELS: Record<string, string> = {
 	"minimax-cn": "MiniMax-M2.1",
 	mistral: "devstral-medium-latest",
 	openai: "gpt-4o-mini",
-	"openai-codex": "gpt-5.5",
 	opencode: "claude-opus-4-6",
 	"opencode-go": "kimi-k2.5",
 	openrouter: "openai/gpt-5.1-codex",
@@ -369,7 +365,7 @@ function openApiKeysDialog(): Promise<void> {
 	return new Promise((resolve) => {
 		SettingsDialog.open(
 			[
-				new ApiKeysOAuthTab(),
+				new ApiKeysTab(),
 				new CustomProvidersTab(),
 				new CostsTab(),
 				new SkillsTab(),
@@ -513,6 +509,8 @@ const updateUrl = (sessionId: string) => {
  */
 function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(inner: F): F {
 	return (async (model: Model<any>, ...rest: any[]) => {
+		// A removed subscription sign-in must not run, whatever left the model selected.
+		if (isBlockedModel(model)) throw new RemovedSignInError(model.provider);
 		if (model.api === "openai-completions") {
 			const custom = await storage.customProviders.getAll().catch(() => []);
 			if (custom.some((p) => p.name === model.provider)) {
@@ -556,7 +554,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	let defaultModel: Model<any> | undefined;
 	if (!initialState?.model) {
 		const savedModel = await storage.settings.get<Model<any>>("lastUsedModel");
-		if (savedModel) {
+		if (savedModel && !isBlockedModel(savedModel)) {
 			defaultModel = savedModel;
 		} else {
 			// Try to find a default model for a provider the user already has a key for
@@ -598,9 +596,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		getApiKey: async (provider: string) => {
 			const stored = await storage.providerKeys.get(provider);
 			if (!stored) return undefined;
-			const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
-			const proxyUrl = proxyEnabled ? (await storage.settings.get<string>("proxy.url")) || undefined : undefined;
-			return resolveApiKey(stored, provider, storage.providerKeys, proxyUrl);
+			return resolveApiKey(stored, provider);
 		},
 	});
 
@@ -656,7 +652,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return chrome.runtime.getURL("sandbox.html");
 		},
 		onApiKeyRequired: async (provider: string) => {
-			return await ApiKeyOrOAuthDialog.prompt(provider);
+			return await ApiKeyDialog.prompt(provider);
 		},
 		onModelSelect: async () => {
 			const providers = await getProvidersWithKeys();
@@ -953,7 +949,7 @@ const renderApp = () => {
 						children: icon(Settings, "sm"),
 						onClick: () =>
 							SettingsDialog.open([
-								new ApiKeysOAuthTab(),
+								new ApiKeysTab(),
 								new CustomProvidersTab(),
 								new CostsTab(),
 								new SkillsTab(),
@@ -1208,6 +1204,12 @@ async function initApp() {
 	}
 
 	renderApp();
+
+	// Tokens from the removed subscription sign-ins only worked through borrowed clients.
+	const cleared = await purgeRemovedSignIns(storage.providerKeys).catch(() => []);
+	if (cleared.length > 0) {
+		Toast.error(`Removed subscription sign-in for ${cleared.join(", ")}. Add an API key in Settings.`);
+	}
 
 	// If no API keys configured, show welcome dialog, open settings, then auto-select model
 	if (!(await hasAnyApiKey())) {

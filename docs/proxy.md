@@ -1,5 +1,7 @@
 # Proxy Architecture
 
+> Tabkyra no longer accepts Anthropic OAuth tokens (`sk-ant-oat-*`); see `auth-policy.md`. The OAuth notes below describe the upstream design.
+
 ## Overview
 
 Sitegeist uses a **CORS Proxy** to handle Cross-Origin Resource Sharing restrictions for:

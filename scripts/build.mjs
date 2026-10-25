@@ -23,7 +23,92 @@ const entryPoints = {
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
+// ============================================================================
+// REMOVED SIGN-INS (docs/auth-policy.md)
+// ============================================================================
+// pi-ai ships providers for ChatGPT, Gemini CLI and Copilot subscriptions that pose as
+// Codex CLI, Gemini CLI and VS Code. Tabkyra never offers them, so their code and the
+// models that carry their headers are left out of the bundle, not just hidden.
+const REMOVED_PROVIDERS = ["github-copilot", "google-antigravity", "google-gemini-cli", "openai-codex"];
+const refuse = (name) =>
+	`export const ${name} = () => { throw new Error("Subscription sign-in was removed from Tabkyra; see docs/auth-policy.md"); };`;
+const piAiStubs = {
+	"providers/openai-codex-responses.ts": [
+		refuse("streamOpenAICodexResponses"),
+		refuse("streamSimpleOpenAICodexResponses"),
+	].join("\n"),
+	"providers/google-gemini-cli.ts": [refuse("streamGoogleGeminiCli"), refuse("streamSimpleGoogleGeminiCli")].join(
+		"\n",
+	),
+	"providers/github-copilot-headers.ts": [
+		"export const inferCopilotInitiator = () => 'user';",
+		"export const hasCopilotVisionInput = () => false;",
+		"export const buildCopilotDynamicHeaders = () => ({});",
+	].join("\n"),
+};
+
+/** Drop the removed providers' top-level blocks from models.generated.ts. */
+function stripRemovedModels(source) {
+	const lines = source.split("\n");
+	const out = [];
+	let skipping = false;
+	for (const line of lines) {
+		if (!skipping && REMOVED_PROVIDERS.some((p) => line === `\t"${p}": {`)) {
+			skipping = true;
+			continue;
+		}
+		if (skipping) {
+			if (line === "\t},") skipping = false;
+			continue;
+		}
+		out.push(line);
+	}
+	if (skipping) throw new Error("models.generated.ts: a removed provider block never closed");
+	return out.join("\n");
+}
+
+/**
+ * pi-ai's Anthropic provider treats an sk-ant-oat token as a Claude subscription and
+ * sends Claude Code's identity headers with it. Tabkyra refuses those tokens earlier
+ * (src/auth/policy.ts); here the branch itself goes, so no build can pose as Claude Code.
+ */
+function stripClaudeCodeIdentity(source) {
+	const edits = [
+		[
+			/function isOAuthToken\(apiKey: string\): boolean \{[^}]*\}/,
+			"function isOAuthToken(_apiKey: string): boolean {\n\treturn false;\n}",
+		],
+		[/\s*"user-agent": `claude-cli\/\$\{claudeCodeVersion\}`,/, ""],
+		[/\s*"x-app": "cli",/, ""],
+		[/claude-code-\d{8},oauth-\d{4}-\d\d-\d\d,/, ""],
+	];
+	let out = source;
+	for (const [pattern, replacement] of edits) {
+		if (!pattern.test(out))
+			throw new Error(`anthropic.ts changed upstream: ${pattern} not found; re-check docs/auth-policy.md`);
+		out = out.replace(pattern, replacement);
+	}
+	return out;
+}
+
+const stripRemovedSignIns = {
+	name: "strip-removed-sign-ins",
+	setup(b) {
+		const aiSrc = join(packageRoot, "../pi-mono/packages/ai/src/");
+		b.onLoad({ filter: /pi-mono[\\/]packages[\\/]ai[\\/]src[\\/].*\.ts$/ }, (args) => {
+			const rel = args.path.slice(aiSrc.length).replaceAll("\\", "/");
+			if (piAiStubs[rel]) return { contents: piAiStubs[rel], loader: "ts" };
+			if (rel === "models.generated.ts")
+				return { contents: stripRemovedModels(readFileSync(args.path, "utf8")), loader: "ts" };
+			if (rel === "providers/anthropic.ts")
+				return { contents: stripClaudeCodeIdentity(readFileSync(args.path, "utf8")), loader: "ts" };
+			return undefined;
+		});
+	},
+};
+
 const buildOptions = {
+	plugins: [stripRemovedSignIns],
 	absWorkingDir: packageRoot,
 	entryPoints,
 	bundle: true,

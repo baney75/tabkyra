@@ -69,7 +69,7 @@ src/
   browser/              # Tab sessions (tab group per agent), CDP screenshots/input, page primitives
   bridge/               # Native-messaging bridge for external harnesses, site permissions
   models/               # Runtime model discovery per provider
-  oauth/                # Browser OAuth flows (Anthropic, OpenAI, GitHub, Gemini)
+  auth/                 # Sign-in policy: API keys only (docs/auth-policy.md)
   dialogs/              # Settings tabs, API key dialogs, welcome setup
   tools/                # Agent tools (navigate, REPL, extract-image, skills, debugger)
   messages/             # Custom message types (navigation, welcome)

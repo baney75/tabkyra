@@ -9,7 +9,7 @@
  */
 
 import { type Api, getGeneratedModels, type Model, registerModels, resetProviderModels } from "@mariozechner/pi-ai";
-import { isOAuthCredentials, parseOAuthCredentials, resolveApiKey } from "../oauth/index.js";
+import { REMOVED_SIGN_IN_PROVIDERS, resolveApiKey } from "../auth/policy.js";
 import type { TabkyraAppStorage } from "../storage/app-storage.js";
 import { canDiscover, type DiscoveredModel, discoverProviderModels } from "./discovery.js";
 
@@ -30,8 +30,6 @@ type ModelsDevData = Record<string, { models?: Record<string, ModelsDevModel> }>
 
 /** models.dev uses slightly different provider keys for a few providers. */
 const MODELS_DEV_KEYS: Record<string, string[]> = {
-	"openai-codex": ["openai"],
-	"github-copilot": ["github-copilot"],
 	huggingface: ["huggingface"],
 };
 
@@ -121,9 +119,8 @@ function merge(
 async function credentialFor(storage: TabkyraAppStorage, provider: string) {
 	const stored = await storage.providerKeys.get(provider);
 	if (!stored) return undefined;
-	const token = await resolveApiKey(stored, provider, storage.providerKeys);
-	const accountId = isOAuthCredentials(stored) ? parseOAuthCredentials(stored).accountId : undefined;
-	return { token, accountId };
+	if (REMOVED_SIGN_IN_PROVIDERS.has(provider)) return undefined;
+	return { token: resolveApiKey(stored, provider) };
 }
 
 /** Register the cached discovery result for a provider, if any. */
