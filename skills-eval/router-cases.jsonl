@@ -245,3 +245,14 @@
 {"task": "What's new in Python 3.13?", "skill": "none"}
 {"task": "What's going on with my Docker build?", "skill": "none"}
 {"task": "Fix the artifact upload in my GitHub Actions workflow", "skill": "none"}
+{"task": "Use the osint skill on the landlord at 12 Elm St", "skill": "osint"}
+{"task": "Run the dorks skill to find PDFs about flood maps", "skill": "dorks"}
+{"task": "Use the tabkyra skill to fill in the signup form", "skill": "tabkyra"}
+{"task": "Follow the proton-pass skill to give the deploy its token", "skill": "proton-pass"}
+{"task": "Apply the news-research skill to today's rail strike", "skill": "news-research"}
+{"task": "Invoke the artifacts skill for these quarterly numbers", "skill": "artifacts"}
+{"task": "Rewrite the osint skill so a small model follows it", "skill": "kyraskillmaker"}
+{"task": "Copy the build output to /artifacts in the container", "skill": "none"}
+{"task": "cat /bug/report.txt", "skill": "none"}
+{"task": "ls /fix", "skill": "none"}
+{"task": "Move the logs into ./rsi/old before the next run", "skill": "none"}

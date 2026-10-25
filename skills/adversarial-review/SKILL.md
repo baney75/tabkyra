@@ -1,6 +1,6 @@
 ---
 name: adversarial-review
-description: Have a separate model, at least as capable as the author, attack a change before it is accepted - a skill edit, a fix, code, a plan or a research claim - and block it on a real finding. Use when the user asks for an adversarial or second-opinion review, or wants another model to critique, challenge or poke holes in a change, plan or argument, when rsi or fix has review turned on, or before shipping anything that runs with the user's sign-in.
+description: Have a separate model, at least as capable as the author, attack a change before it is accepted - a skill edit, a fix, code, a plan or a research claim - and block it on a real finding. Use when the user asks for an adversarial or second-opinion review, or wants a different model to critique, challenge or poke holes in a change, plan or argument, when rsi or fix has review turned on, or before shipping anything that runs with the user's sign-in.
 license: AGPL-3.0
 ---
 

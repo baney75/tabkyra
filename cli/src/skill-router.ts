@@ -52,8 +52,9 @@ export interface RouterIndex {
 	docs: Doc[];
 	idf: Map<string, number>;
 	avg: Record<Field, number>;
-	/** Per skill: "<name> skill" and "/command <name>", where the name is the object, not the job. */
-	references: RegExp[];
+	/** Per skill, the pattern for "<name> skill" (or "<name> skills"), hyphen or space. */
+	named: Array<{ name: string; pattern: RegExp }>;
+	names: ReadonlySet<string>;
 }
 
 /** Field weights, BM25 constants and bonuses, calibrated on skills-eval/router-cases.jsonl. */
@@ -268,11 +269,8 @@ export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 	for (const d of docs) for (const p of d.phrases) p.strong = terms(p.seq.join(" ")).some((t) => (idf.get(t) ?? 0) >= EVIDENCE_IDF);
 	const mean = (f: Field) => (n ? docs.reduce((s, d) => s + d.len[f], 0) / n : 1) || 1;
 	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern.
-	const references = [...names].flatMap((name) => {
-		const spelled = name.replace(/-/g, "[- ]?");
-		return [new RegExp(`\\b${spelled}(?=\\s+skills?\\b)`, "g"), new RegExp(`((?:^|\\s)/[a-z0-9-]+\\s+)${spelled}\\b`, "g")];
-	});
-	return { docs, idf, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, references };
+	const named = [...names].map((name) => ({ name, pattern: new RegExp(`\\b${name.replace(/-/g, "[- ]?")}\\s+skills?\\b`, "g") }));
+	return { docs, idf, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names };
 }
 
 function containsSequence(haystack: string[], needle: string[]): boolean {
@@ -283,15 +281,59 @@ function containsSequence(haystack: string[], needle: string[]): boolean {
 	return false;
 }
 
+/** Words that make a task about changing a skill rather than using it. */
+const EDIT_VERB = /\b(fix(es|ed|ing)?|repair\w*|edit\w*|updat\w*|rewrit\w*|rewrote|improv\w*|review\w*|chang\w*|correct\w*|tweak\w*|shorten\w*|port(s|ed|ing)?|debug\w*|refin\w*|lint\w*)\b/;
+
+interface ReadTask {
+	/** A slash command naming a skill, as the task's first token. */
+	command?: string;
+	/** Skills the task asks to use by name ("use the osint skill"). */
+	invoked: Set<string>;
+	/** The task is about changing a skill it names ("fix the osint skill", "/fix osint"). */
+	changesSkill: boolean;
+	/** The text left to score. */
+	content: string;
+}
+
 /**
- * Skills the task names as an object ("the osint skill", "/fix news-research") rather than
- * as the job to do. Their names are taken out of the task: they say which skill to work
- * on, not what kind of work it is.
+ * Read what a task says about skills before scoring its words.
+ * - A slash command counts only as the first token ("/rsi", "/fix osint"), and only when it
+ *   isn't followed by "/" or ".": "ls /fix" and "cat /bug/report.txt" are paths.
+ * - Path-like words (starting with "/", "./", "../" or "~/") are data, not intent, and are
+ *   dropped.
+ * - "<name> skill" in a task about changing it ("fix the osint skill", "/fix news-research")
+ *   names the object: the name is dropped so it doesn't score for itself. Otherwise ("use
+ *   the osint skill on this landlord") it is a request for that skill.
  */
-function withoutReferences(task: string, references: RegExp[]): string {
-	let out = task.toLowerCase();
-	for (const pattern of references) out = out.replace(pattern, (_whole, before?: string) => `${typeof before === "string" ? before : ""} `);
-	return out;
+function readTask(index: RouterIndex, task: string): ReadTask {
+	let text = task.toLowerCase();
+	let command: string | undefined;
+	let changesSkill = false;
+	const lead = /^\s*\/([a-z0-9-]+)(?=$|[\s:,;!?])/.exec(text);
+	if (lead && index.names.has(lead[1])) {
+		command = lead[1];
+		text = text.slice(lead[0].length);
+		// "/fix news-research": the skill after a command is its object.
+		const object = /^\s+([a-z0-9-]+)\b/.exec(text);
+		if (object && index.names.has(object[1])) {
+			text = text.slice(object[0].length);
+			changesSkill = true;
+		}
+	}
+	text = text.replace(/(^|\s)(~|\.{1,2})?\/\S*/g, "$1 ");
+	const invoked = new Set<string>();
+	const mentions = index.named.filter((n) => text.search(n.pattern) >= 0);
+	if (mentions.length) {
+		let rest = text;
+		for (const n of mentions) rest = rest.replace(n.pattern, " ");
+		const editing = command !== undefined || EDIT_VERB.test(rest);
+		for (const n of mentions) {
+			if (editing) text = text.replace(n.pattern, " skill ");
+			else invoked.add(n.name);
+		}
+		changesSkill ||= editing;
+	}
+	return { command, invoked, changesSkill, content: text };
 }
 
 export interface RawScore {
@@ -303,8 +345,8 @@ export interface RawScore {
 
 /** Every skill's unfiltered score for a task, best first. */
 export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
-	const commands = new Set([...task.toLowerCase().matchAll(/(?:^|\s)\/([a-z0-9-]+)\b/g)].map((m) => m[1]));
-	const content = withoutReferences(task, index.references);
+	const { command, invoked, changesSkill, content } = readTask(index, task);
+	const skillTerm = stem("skill");
 	const query = [...new Set(terms(content))];
 	const seq = words(content);
 	const queryPairs = pairsOf(content);
@@ -325,10 +367,12 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 				if (idf >= EVIDENCE_IDF) evidence++;
 			}
 		}
-		if (commands.has(d.name)) {
+		if (command === d.name || invoked.has(d.name)) {
 			score += COMMAND_BONUS;
 			evidence += 2;
 		}
+		// A task about changing a named skill is evidence for the skills whose job is skills.
+		if (changesSkill && d.tf.what.has(skillTerm)) evidence++;
 		for (const p of queryPairs) {
 			if (d.pairs.has(p)) {
 				score += PAIR_BONUS;
@@ -346,9 +390,13 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 	return out.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
 
-/** Whether a raw score counts as a match. One ordinary shared word ("fix the test", "a bug in my code") is a coincidence. */
+/**
+ * Whether a raw score counts as a match: two pieces of evidence, or one that reaches
+ * SINGLE_SCORE. Common words alone never match, however many there are, and one ordinary
+ * shared word ("fix the test", "a bug in my code") is a coincidence.
+ */
 export function isMatch(s: RawScore): boolean {
-	return s.score >= MIN_SCORE && (s.evidence >= 2 || s.score >= SINGLE_SCORE);
+	return s.score >= MIN_SCORE && (s.evidence >= 2 || (s.evidence >= 1 && s.score >= SINGLE_SCORE));
 }
 
 /** Ranked matches for a task, best first; an empty list means no skill fits. */
