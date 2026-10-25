@@ -5,8 +5,9 @@ could fail passed; the record is linked), `deployed`, `published`. An item is on
 `verified` when its own DC Check ran. A narrower test that passed is noted under
 Evidence, and the item stays `prepared`. Decisions are in [../decisions.md](../decisions.md).
 
-Updated 2026-10-25. Branches: #13 skills, lint and CI; #14 library; #15 private mode and
-bug reports. None is merged yet.
+Updated 2026-10-25. #13 (skills, lint, CI), #14 (library) and #15 (private mode, bug
+reports) are merged to main (published). Merged code is still `prepared` against its DC
+item until that item's own Check runs. Review records are in each PR's Review block.
 
 | ID | Item | Label | Evidence or gap |
 | --- | --- | --- | --- |
