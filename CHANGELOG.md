@@ -53,7 +53,7 @@
 - MCP token use: `read_page` and `find` return one line per element instead of pretty JSON (roughly a quarter of the tokens), `read_page` text defaults to 3000 characters, snapshots list in-viewport elements first so long pages are not cut above the fold, and tool descriptions spell out the tab-group workflow.
 - The side panel no longer requires the "Allow User Scripts" toggle: page injection (`browserjs()`, overlay, element picker, image extraction) runs through `userScripts` when available and through the debugger's `Runtime.evaluate` otherwise, with a CDP-binding shim standing in for `chrome.runtime.sendMessage` (`src/browser/inject.ts`). `userScripts` moved to `optional_permissions`.
 - Type errors in `CustomProviderEditDialog` (missing i18n keys) and `CustomProvidersTab` (`remove` shadowed `HTMLElement.remove`).
-- Manifest: fixed extension `key` (stable id `bbkgpflnkggdfabgjhofdmdopgjopamc`), new permissions `tabGroups`, `nativeMessaging`, `alarms`.
+- Manifest: fixed extension `key` (stable id `kenehmggpggpiolepbjojeenmeapgfoc`, checked by the e2e test), new permissions `tabGroups`, `nativeMessaging`, `alarms`.
 
 ### Removed
 - Sitegeist's site content (orb, testimonials, preview videos, install page) and `site/run.sh deploy`'s upstream server target; deploy now refuses until Tabkyra has hosting.

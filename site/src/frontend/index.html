@@ -7,8 +7,6 @@
 	<meta name="description" content="Let Claude Code, Codex or any MCP agent drive your real Chromium browser in its own tab group, with your approval for every new site. One command to set up.">
 	<meta property="og:title" content="Tabkyra">
 	<meta property="og:description" content="You steer. Your agents work the tabs.">
-	<meta property="og:image" content="img/og.png">
-	<meta name="twitter:card" content="summary_large_image">
 	<link rel="icon" href="img/favicon.svg" type="image/svg+xml">
 	<link rel="stylesheet" href="app.css">
 </head>
@@ -43,31 +41,37 @@
 				</p>
 			</div>
 			<figure class="hero-demo">
-				<img src="img/demo.gif" alt="An agent searches a library catalog, places a hold and reads the confirmation through Tabkyra's MCP tools" width="960" height="464">
-				<figcaption>A real run, recorded headless. Every frame is the agent's own screenshot.</figcaption>
+				<img src="img/demo.gif" alt="A scripted MCP client searches a library catalog, places a hold and reads the confirmation through Tabkyra's tools" width="960" height="464">
+				<figcaption>A scripted MCP client driving the real stack, recorded headless. Every frame is its own screenshot.</figcaption>
 			</figure>
 		</section>
 
 		<section class="start" id="start">
 			<h2><span class="num">60s</span> To your first agent-driven tab</h2>
-			<p class="section-lede">Node 20+, git and a Chromium browser: Helium, Chrome, Brave, Edge, Arc, Vivaldi or Chromium 141+.</p>
+			<p class="section-lede">Node 20+, git and a Chromium browser: Helium, Chrome, Brave, Edge, Arc, Vivaldi or Chromium 141+. A fresh clone reached "Connected" in 45 seconds on a Mac with a warm npm cache; a cold first install takes longer.</p>
 			<div class="term">
 				<div class="term-bar"><span></span><span></span><span></span><button class="copy" data-copy="git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra&#10;(cd cli &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link)&#10;tabkyra setup">Copy</button></div>
 <pre><code><span class="p">$</span> git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra
 <span class="p">$</span> (cd cli &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link)
 <span class="p">$</span> tabkyra setup
+<span class="b">Tabkyra</span> <span class="d">setup 0.1.0</span>
 
-<span class="b">Tabkyra</span> <span class="d">setup</span>
-<span class="b">1.</span> Build the extension            <span class="g">✓</span>
-<span class="b">2.</span> Register the native host       <span class="g">✓</span> <span class="d">Helium, Chrome</span>
-<span class="b">3.</span> Connect your coding agents     <span class="g">✓</span> <span class="d">Claude Code, Codex</span>
+<span class="b">1.</span> Build the extension
+  <span class="g">✓</span> Extension built <span class="d">(1.1.8)</span>
+<span class="b">2.</span> Register the native host with your browsers
+  <span class="g">✓</span> Helium        <span class="d">registered</span>
+<span class="b">3.</span> Connect your coding agents
+  <span class="g">✓</span> Claude Code is set up.
+  <span class="g">✓</span> Codex is set up.
 <span class="b">4.</span> Load the extension
-<span class="d">╭─ One step in your browser ──────────────────────────────╮</span>
-<span class="d">│</span> <span class="b">1</span>  Open chrome://extensions, click <span class="w">Load unpacked</span>        <span class="d">│</span>
-<span class="d">│</span> <span class="b">2</span>  Pick <span class="c">/path/to/tabkyra/dist-chrome</span>                    <span class="d">│</span>
-<span class="d">│</span> <span class="b">3</span>  Details → turn on <span class="w">Allow user scripts</span>                 <span class="d">│</span>
-<span class="d">╰─────────────────────────────────────────────────────────╯</span>
-   <span class="g">✓</span> Connected. Tabkyra can reach your browser.</code></pre>
+<span class="d">╭─ One step in your browser ─────────────────────────────────╮</span>
+<span class="d">│</span> <span class="b">1</span>  Open chrome://extensions, turn on <span class="w">Developer mode</span>,       <span class="d">│</span>
+<span class="d">│</span>    and click <span class="w">Load unpacked</span>.                                <span class="d">│</span>
+<span class="d">│</span> <span class="b">2</span>  Pick this folder:                                       <span class="d">│</span>
+<span class="d">│</span>    <span class="c">/path/to/tabkyra/dist-chrome</span>                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">3</span>  Click <span class="w">Details</span> on Tabkyra and turn on <span class="w">Allow user scripts</span>. <span class="d">│</span>
+<span class="d">╰────────────────────────────────────────────────────────────╯</span>
+  <span class="g">✓</span> Connected. Tabkyra can reach your browser <span class="d">(1.1.8)</span>.</code></pre>
 			</div>
 			<ol class="steps">
 				<li><b>Setup does the work.</b> It builds the extension, registers it with every Chromium browser it finds, and offers to add Tabkyra to Claude Code and Codex. For OpenCode, Cursor and OMP it prints the config to paste.</li>
@@ -86,7 +90,7 @@
 				</article>
 				<article>
 					<h3>Page text is data</h3>
-					<p>Every agent is told that page content is untrusted, that it must ask you before sending, buying, posting or deleting under your sign-in, and that it never types passwords or payment details.</p>
+					<p>Every agent is told that page content is untrusted, that it must ask you before sending, buying, posting or deleting under your sign-in, and that it never types passwords or payment details. That's guidance to the model, not a lock; the site permission is the lock.</p>
 				</article>
 				<article>
 					<h3>Its own tab group</h3>
@@ -94,7 +98,7 @@
 				</article>
 				<article>
 					<h3>Nothing on the network</h3>
-					<p>The browser starts a native host that only your user account can reach, through a private Unix socket. Only the Tabkyra extension id can connect to it.</p>
+					<p>The browser starts a native host that talks over a Unix socket other users can't open. Only the Tabkyra extension can start it. Programs running as you can reach it, as they can your shell.</p>
 				</article>
 			</div>
 		</section>

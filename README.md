@@ -42,6 +42,10 @@ git clone https://github.com/baney75/tabkyra && cd tabkyra
 tabkyra setup
 ```
 
+On a Mac with a warm npm cache, a fresh clone reached "Connected" in 45 seconds with
+`tabkyra setup --yes`. A first install with a cold cache downloads more and can take a few
+minutes.
+
 `tabkyra setup` builds the extension, registers the native host with every Chromium
 browser it finds, and offers to add Tabkyra to Claude Code and Codex. For OpenCode,
 Cursor and OMP it prints the config block to paste. Then it shows the one step the
@@ -55,7 +59,7 @@ browser makes you do by hand:
 │    /path/to/tabkyra/dist-chrome                                │
 │ 3  Click Details on Tabkyra and turn on Allow user scripts.    │
 ╰────────────────────────────────────────────────────────────────╯
-  ✓ Connected. Tabkyra can reach your browser.
+  ✓ Connected. Tabkyra can reach your browser (1.1.8).
 ```
 
 Then ask your agent something like:
@@ -63,19 +67,21 @@ Then ask your agent something like:
 > Use tabkyra to open news.ycombinator.com and list the top five stories.
 
 If anything is off, `tabkyra doctor` checks each piece and prints the exact command
-that fixes it.
+that fixes it. For the side panel agent, press `Cmd+Shift+S` (`Ctrl+Shift+S`) and add a
+provider.
 
 <p align="center">
-  <img src="media/demo.gif" alt="An agent searches a library catalog, places a hold and reads the confirmation, all through Tabkyra's MCP tools" width="860">
-  <br><sub>A real run, recorded headless by <code>scripts/demo/capture.mjs</code>: the agent opens a page, reads it, searches, fills a form and confirms.
-  Each frame is the agent's own <code>screenshot</code>. <a href="media/demo-steps.png">Still frames</a>.</sub>
+  <img src="media/demo.gif" alt="A scripted MCP client searches a library catalog, places a hold and reads the confirmation through Tabkyra's tools" width="860">
+  <br><sub>Recorded headless by <code>scripts/demo/capture.mjs</code>: a scripted MCP client drives the real stack (MCP server, native host, extension).
+  The local site was allowed first with <code>tabkyra allow</code>. Each frame is the client's own <code>screenshot</code>. <a href="media/demo-steps.png">Still frames</a>.</sub>
 </p>
 
 ## Connect your agent
 
-`tabkyra setup` does this for you. `tabkyra install` writes a launcher at
-`~/.config/tabkyra/tabkyra` that pins Node by absolute path, so an agent started from a
-GUI app doesn't need `node` on its PATH. Point your harness at it:
+`tabkyra setup` does this for you and prints the exact paths for your machine.
+`tabkyra install` writes a launcher at `~/.config/tabkyra/tabkyra` that pins Node by
+absolute path, so an agent started from a GUI app doesn't need `node` on its PATH. Point
+your harness at it (JSON configs need the full path, not `~`):
 
 **Claude Code**
 
@@ -95,10 +101,16 @@ codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp
 { "mcp": { "tabkyra": { "type": "local", "command": ["/Users/you/.config/tabkyra/tabkyra", "mcp"], "enabled": true } } }
 ```
 
-**Cursor** (`~/.cursor/mcp.json`) and **OMP** (`~/.omp/agent/mcp.json`)
+**Cursor** (`~/.cursor/mcp.json`)
 
 ```json
 { "mcpServers": { "tabkyra": { "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"] } } }
+```
+
+**OMP** (`~/.omp/agent/mcp.json`)
+
+```json
+{ "mcpServers": { "tabkyra": { "type": "stdio", "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"], "enabled": true } } }
 ```
 
 **pi** has no MCP client, so `tabkyra pi-extension` writes a native pi extension instead.
@@ -116,8 +128,7 @@ Any other MCP client can run the stdio server with `~/.config/tabkyra/tabkyra mc
 | `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits and debugging |
 | `tabs_show` | Bring a tab in front of you, when you need to sign in or see it |
 
-The tool names match Claude in Chrome's, so prompts written for it carry over. Every
-tool's description includes its parameters and an example.
+Every tool's description documents its parameters and includes an example.
 
 ## Safety model
 
@@ -131,15 +142,19 @@ Your browser is signed in as you, so the defaults are conservative.
   content is untrusted and that it must ask you before acting under your sign-in:
   sending, posting, buying, deleting or changing settings. It also tells the agent never
   to type passwords or payment details. For a sign-in or a captcha, it brings the tab to
-  you.
+  you. These are instructions to the model, not enforcement: a hostile page can still
+  attempt prompt injection. The site permission is the hard limit. For high-stakes
+  accounts, run agents in a separate browser profile that isn't signed in to them.
 - **Agents stay in their own tab group** ("Tabkyra · claude", "Tabkyra · codex"). Their
   tabs open in the background, they can't see your other tabs, and popups from their
   tabs don't steal focus. `tabs_show` is the only tool that changes what you see.
 - **Nothing listens on the network.** The browser starts the native host, which relays
   frames over a Unix socket in `/tmp/tabkyra-bridge-<user>/` (0700 directory, 0600
-  socket). The client refuses sockets that another user owns.
-- **Only this extension can reach the host.** The host manifest's `allowed_origins`
-  names one fixed extension id, `kenehmggpggpiolepbjojeenmeapgfoc`.
+  socket). Other users can't reach it, and the client refuses sockets another user owns.
+  Any program running as you can, which is the same trust level as your shell.
+- **Only this extension can start the host.** The host manifest's `allowed_origins`
+  names one fixed extension id, `kenehmggpggpiolepbjojeenmeapgfoc`, derived from the
+  manifest `key` (the e2e test checks it).
 - **No Claude subscription login.** Anthropic doesn't allow Claude Pro or Max
   subscriptions in third-party apps, so the side panel takes Anthropic API keys only.
   ChatGPT, GitHub Copilot and Gemini sign-in still work, as does any API key.
@@ -209,8 +224,9 @@ applies `patches/pi-mono.patch`, builds the declarations and installs everything
 ./check.sh                              # biome + tsc for the extension and the site
 (cd cli && npm run check && npm test)   # CLI typecheck, build, setup/doctor/MCP tests
 (cd cli && npm run test:e2e)            # extension + host + MCP in a throwaway headless Chromium
+                                        # (first time: cd cli && npx playwright-core install chromium)
 node media/brand/build.mjs              # regenerate icons and brand art from media/brand
-node scripts/demo/capture.mjs           # re-record the README demo
+node scripts/demo/capture.mjs           # re-record the README demo (needs ffmpeg and `cd site && npm install`)
 ```
 
 The brand (mark, palette, type, voice) is documented in
