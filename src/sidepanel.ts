@@ -65,6 +65,7 @@ import { downloadChatMarkdown } from "./utils/export-chat.js";
 import * as port from "./utils/port.js";
 import "./utils/i18n-extension.js";
 import "./utils/live-reload.js";
+import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tutorials } from "./tutorials.js";
 
 // Register custom message renderers
@@ -967,6 +968,8 @@ const renderApp = () => {
 				</div>
 			</div>
 
+			${updateNotice()}
+
 			<!-- Chat Panel -->
 			${chatPanel}
 		</div>
@@ -1216,6 +1219,7 @@ async function initApp() {
 	}
 
 	renderApp();
+	void watchUpdateStatus(renderApp).catch(() => {});
 
 	// If no API keys configured, show welcome dialog, open settings, then auto-select model
 	if (!(await hasAnyApiKey())) {

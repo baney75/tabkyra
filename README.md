@@ -171,6 +171,20 @@ Your browser is signed in as you, so the defaults are conservative.
   Claude Pro/Max login. The side panel takes API keys, which each provider bills. The
   sources and dates are in [docs/auth-policy.md](docs/auth-policy.md).
 
+## Updating
+
+```sh
+tabkyra update --check   # exit 0 up to date, 100 update available
+tabkyra update           # download, verify the signature and checksum, swap in, keep the last version
+tabkyra update --rollback
+```
+
+Releases are signed with minisign. The update refuses a bad signature, a signature made
+for another version, or a wrong checksum, and leaves the installed copy as it was. The
+side panel shows a quiet "Update available" line, but nothing updates without you. Use
+`--channel nightly` for prereleases. Details, and the one-time key setup for releases, are
+in [docs/updates.md](docs/updates.md).
+
 ## How it works
 
 ```mermaid

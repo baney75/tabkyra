@@ -9,6 +9,7 @@ import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { runSetup, type SetupOptions } from "./setup.ts";
 import { banner, c, sym } from "./ui.ts";
+import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
 import { VERSION } from "./version.ts";
 
 const cmd = (name: string, args: string, what: string) => `  ${c.bold(`tabkyra ${name}`)}${args ? ` ${args}` : ""}`.padEnd(40) + what;
@@ -33,6 +34,7 @@ function help(): string {
 		cmd("allow-all", "", "Agents may open any site without asking"),
 		section("Troubleshoot"),
 		cmd("doctor", "[--json]", "Check everything; one fix per problem"),
+		cmd("update", "[--check] [--rollback]", "Install the latest signed release (--channel stable|nightly)"),
 		cmd("install", "[--force]", "Re-register the native host with every browser"),
 		cmd("reload", "", "Reload the extension after rebuilding dist-chrome"),
 		cmd("debug", "", "Bridge state, request timings and a benchmark"),
@@ -172,6 +174,33 @@ async function status(json: boolean): Promise<number> {
 	return report.connected ? 0 : 1;
 }
 
+const UPDATE_USAGE = "Usage: tabkyra update [--check] [--json] [--rollback] [--yes] [--channel stable|nightly] [--auto-check on|off]";
+
+/** Parse `update` flags strictly, like setup. */
+function parseUpdateArgs(args: string[]): UpdateOptions | string {
+	const options: UpdateOptions = { check: false, rollback: false, json: false, yes: false };
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		const value = (name: string) => (arg === name ? args[++i] : arg.slice(name.length + 1));
+		if (arg === "--check") options.check = true;
+		else if (arg === "--rollback") options.rollback = true;
+		else if (arg === "--json") options.json = true;
+		else if (arg === "--yes" || arg === "-y") options.yes = true;
+		else if (arg === "--channel" || arg.startsWith("--channel=")) {
+			const channel = value("--channel");
+			if (channel !== "stable" && channel !== "nightly") return `--channel is stable or nightly, got "${channel ?? ""}".`;
+			options.channel = channel as Channel;
+		} else if (arg === "--auto-check" || arg.startsWith("--auto-check=")) {
+			const v = value("--auto-check");
+			if (v !== "on" && v !== "off") return `--auto-check is on or off, got "${v ?? ""}".`;
+			options.autoCheck = v === "on";
+		} else return `Unknown option "${arg}".`;
+	}
+	if (options.rollback && options.check) return "--rollback and --check don't go together.";
+	if (options.json && !options.check) return "--json goes with --check.";
+	return options;
+}
+
 /** Options each command accepts; anything else is a usage error. `setup` parses its own. */
 const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
 	doctor: { flags: ["--json"], positional: 0 },
@@ -218,6 +247,12 @@ async function main(): Promise<void> {
 		case "doctor":
 			process.exitCode = await runDoctor({ json: flag("--json") });
 			return;
+		case "update": {
+			const parsed = parseUpdateArgs(argv.slice(1));
+			if (typeof parsed === "string") throw new UsageError(`${parsed} ${UPDATE_USAGE}`);
+			process.exitCode = await runUpdate(parsed);
+			return;
+		}
 		case "status":
 			process.exitCode = await status(flag("--json"));
 			return;
@@ -301,6 +336,6 @@ async function main(): Promise<void> {
 main().catch((err) => {
 	const message = err instanceof Error ? err.message : String(err);
 	console.error(`${sym.fail} ${forPeople(message)}`);
-	if (!(err instanceof UsageError) && message !== NOT_CONNECTED) console.error(`${sym.arrow} Run ${c.bold("tabkyra doctor")} to find the cause.`);
+	if (!(err instanceof UsageError) && !(err instanceof UpdateError) && message !== NOT_CONNECTED) console.error(`${sym.arrow} Run ${c.bold("tabkyra doctor")} to find the cause.`);
 	process.exit(err instanceof UsageError ? 2 : 1);
 });
