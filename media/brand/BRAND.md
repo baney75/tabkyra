@@ -18,12 +18,15 @@ hand on the wheel. The app icon sets it in ink on a brass tile.
 | `icon-16.svg` | 16 px icon on its own grid, with six pegs and a solid hub, because the pointer doesn't read at that size. |
 | `mark.svg` | Bare helm in ink, for light backgrounds. |
 | `mark-brass.svg` | Bare helm in brass, for dark backgrounds. |
-| `hero.png` | README hero (1280×400 @2x). |
+| `hero.png` | README hero on ink, for dark themes and the default (1280×400 @2x). |
+| `hero-light.png` | README hero on paper, for light themes. The line is set in brass deep (1280×400 @2x). |
+| `social.png` | GitHub social preview (1280×640). Upload it in the repository's Settings > General > Social preview. |
 
 Everything is generated from the geometry in `build.mjs`. To change the mark, edit that
 file and run `node media/brand/build.mjs`. It rewrites the SVGs, `static/icon-{16,32,48,128}.png`,
-`src/components/helm-svg.ts`, the hero and the site's social card. Don't edit the outputs
-by hand.
+`src/components/helm-svg.ts`, both heroes, the GitHub social preview and the site's
+social card (`site/src/frontend/public/img/og.png`, same layout at 1200×630). Don't edit
+the outputs by hand.
 
 Rules:
 
@@ -31,7 +34,8 @@ Rules:
   to the mark itself (a soft brass glow under the tile in the UI is fine).
 - Give the mark clear space of at least one peg length on every side.
 - Don't rotate the mark. The pointer always points up and to the left. The one exception
-  is the hero's background watermark: the bare brass helm at 7% opacity, turned 11°, cropped off the edge.
+  is the background watermark on the heroes and social cards: the bare brass helm turned
+  11° and cropped off the edge, at 7% opacity on ink and 14% on paper (where 7% disappears).
 - Never pair it with the Sitegeist orb or badlogic's marks. Tabkyra credits them in words,
   not in pictures.
 
