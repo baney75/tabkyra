@@ -164,6 +164,24 @@ hidden text, instruction overrides, piped remote code, secret handling and confi
 tampering, and it requires the structure a small model needs. The threat model and every
 rule are in [docs/skill-security.md](docs/skill-security.md).
 
+### Library
+
+A local source library in the spirit of Zotero. Every source is fetched from its DOI's
+registry and checked against OpenAlex and Crossref's retraction notices before it's saved. When a
+check can't finish, the source is saved marked "retraction check incomplete" until `tabkyra library verify`
+completes it.
+
+```bash
+tabkyra library add 10.1037/0033-2909.132.3.354 --quote "..." --location "p. 354"
+tabkyra library cite cepeda2006distributed --style apa
+tabkyra library export --format bibtex --out refs.bib   # or ris, csl: Zotero, Word, LaTeX
+tabkyra library obsidian ~/Vault                         # one note per source in Sources/
+```
+
+Agents get the same through the `library_add`, `library_search` and `library_cite` MCP
+tools. An unregistered DOI is refused, and a retracted source is flagged everywhere it
+appears.
+
 ## What your agent can do
 
 | Tools | |

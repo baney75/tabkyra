@@ -9,6 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
+import { addSource, cite, search, summary } from "./library.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -126,6 +127,7 @@ export async function runMcpServer(): Promise<void> {
 				"Reuse your current tab for step-by-step browsing; tabs_create only when two pages must stay open.",
 				"Close tabs you no longer need with tabs_close. Prefer read_page/get_page_text over screenshots for reading.",
 				"Refs expire when the page changes; take a new read_page after navigation or big updates.",
+				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
 				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
 			].join(" "),
 		},
@@ -599,6 +601,62 @@ export async function runMcpServer(): Promise<void> {
 			},
 		},
 		(args) => call("network.read", args),
+	);
+
+	// Library tools work without the browser: they talk to doi.org, OpenAlex and Crossref.
+	async function library<T>(fn: () => Promise<T> | T): Promise<{ content: Content[]; isError?: boolean }> {
+		try {
+			return { content: text(await fn()) };
+		} catch (err) {
+			return { content: text(errorMessage(err)), isError: true };
+		}
+	}
+	server.registerTool(
+		"library_add",
+		{
+			title: "Save a verified source",
+			description:
+				"Save a scholarly source to the user's Tabkyra library by DOI, doi.org link or arXiv id. Tabkyra fetches the record from the DOI registry, " +
+				"checks OpenAlex and Crossref for retractions, and returns the citekey and verification. A DOI that doesn't resolve is refused: " +
+				"never cite it. A retracted source is saved but flagged retracted; don't cite it as support. The result has citekey, retracted, complete and notices. If complete is false, the retraction check didn't finish: say so, and call library_add again with the same id to re-check before citing. Add the sentence you rely on as quote, " +
+				'with its page or section as location. Example: {"id":"10.1037/0033-2909.132.3.354","quote":"...","location":"p. 354"}',
+			inputSchema: {
+				id: z.string().describe("DOI, https://doi.org/... link, or arXiv id such as arXiv:1706.03762"),
+				quote: z.string().optional().describe("The sentence from the source that supports the claim, in its own words"),
+				location: z.string().optional().describe('Where the quote is, e.g. "p. 354" or "Table 2"'),
+				note: z.string().optional().describe("Your one-line note: study type, sample, how it bears on the claim"),
+				tags: z.array(z.string()).optional().describe("Tags, e.g. the project or question"),
+			},
+		},
+		(args) => library(async () => summary((await addSource(args.id, { quote: args.quote, location: args.location, note: args.note, tags: args.tags })).item)),
+	);
+	server.registerTool(
+		"library_search",
+		{
+			title: "Search the library",
+			description:
+				"Find saved sources by words in the title, authors, venue, DOI, tags or notes. Every word must match. Returns citekey, title, year, DOI and " +
+				'whether it is retracted. An empty query lists everything. Example: {"query":"spacing memory"}',
+			inputSchema: { query: z.string().describe("Words to match; empty for all") },
+		},
+		(args) =>
+			library(() =>
+				search(args.query).map(summary),
+			),
+	);
+	server.registerTool(
+		"library_cite",
+		{
+			title: "Format a reference",
+			description:
+				"Format a saved source as a reference in a citation style, through doi.org's citation formatter. A retracted source comes back marked [RETRACTED]. " +
+				'Styles: apa, mla, chicago, ieee, harvard, vancouver. Example: {"citekey":"cepeda2006distributed","style":"apa"}',
+			inputSchema: {
+				citekey: z.string().describe("The citekey from library_add or library_search"),
+				style: z.string().optional().describe("Citation style (default apa)"),
+			},
+		},
+		(args) => library(() => cite(args.citekey, args.style)),
 	);
 
 	const transport = new StdioServerTransport();

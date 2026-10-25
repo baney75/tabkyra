@@ -8,6 +8,7 @@ import { runMcpServer } from "./mcp.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { runSetup, type SetupOptions } from "./setup.ts";
+import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
 import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
@@ -32,6 +33,11 @@ function help(): string {
 		cmd("skill lint", "[path...]", "Check skills for hidden text, injection and missing structure"),
 		cmd("skill apply", "<folder> [--yes]", "Check and show an edited skill; --yes backs up and installs it (/rsi)"),
 		cmd("skill revert", "<name>", "Drop your edit and go back to the bundled skill"),
+		section("Library"),
+		cmd("library add", "<doi|arxiv>", "Save a source, verified against its registry, OpenAlex and retractions"),
+		cmd("library search|list|cite", "", "Find sources and format a reference (apa, mla, chicago, ieee)"),
+		cmd("library export", "--format bibtex|ris|csl", "For Zotero, Word and LaTeX"),
+		cmd("library obsidian", "<vault>", "One note per source in <vault>/Sources"),
 		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("(tabkyra setup adds these for you.)")}`,
@@ -342,6 +348,18 @@ async function main(): Promise<void> {
 				throw new UsageError("Usage: tabkyra skill install [name...] [--all] [--force] | list | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name>");
 			}
 			process.exitCode = runSkill(sub, rest, { force: flag("--force"), all: flag("--all"), raw: flag("--raw"), yes: flag("--yes") });
+			return;
+		}
+		case "library": {
+			try {
+				process.exitCode = await runLibrary(argv.slice(1));
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				if (message.includes(LIBRARY_USAGE)) throw new UsageError(message);
+				// A bad DOI or an unreachable registry is the input's problem, not the install's.
+				console.error(`${sym.fail} ${message}`);
+				process.exitCode = 1;
+			}
 			return;
 		}
 		case "pi-extension":
