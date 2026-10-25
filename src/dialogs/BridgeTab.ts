@@ -17,6 +17,7 @@ import {
 	setPermissionMode,
 } from "../bridge/permissions.js";
 import { listSessions } from "../browser/session.js";
+import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 
 /**
  * Settings > Bridge: who may drive the browser from outside (omp, pi, Claude
@@ -85,10 +86,10 @@ export class BridgeTab extends SettingsTab {
 					<h3 class="text-lg font-semibold text-foreground">Bridge</h3>
 					<p class="text-sm text-muted-foreground">
 						Lets coding agents on this computer (Claude Code, Codex, omp, pi) drive the browser through
-						Tabkyra. Each agent gets its own tab group and works in the background. Set up with
-						<code class="text-xs">tabkyra mcp</code>.
+						Tabkyra. Each agent gets its own tab group and works in the background.
 					</p>
 				</div>
+				${agentSetupPromptButton()}
 
 				<label class="flex items-center gap-2 text-sm text-foreground">
 					<input

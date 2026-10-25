@@ -26,8 +26,10 @@ function help(): string {
 		section("Agents"),
 		cmd("mcp", "", "MCP server on stdio (what Claude Code, Codex, OpenCode run)"),
 		cmd("pi-extension", "", "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts"),
-		cmd("skill install", "[--all]", "Teach Claude Code, Codex and OpenCode to use Tabkyra well"),
-		cmd("skill print", "", "The same skill as text for AGENTS.md or any other agent"),
+		cmd("skill install", "[name...] [--all]", "Install the bundled skills into Claude Code, Codex and OpenCode"),
+		cmd("skill list", "", "The bundled skills and what each is for"),
+		cmd("skill print", "[name]", "A skill as text for AGENTS.md or any other agent"),
+		cmd("skill lint", "[path...]", "Check skills for hidden text, injection and missing structure"),
 		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("(tabkyra setup adds these for you.)")}`,
@@ -217,7 +219,7 @@ const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
 	debug: { flags: [], positional: 0 },
 	mcp: { flags: [], positional: 0 },
 	"pi-extension": { flags: [], positional: 1 },
-	skill: { flags: ["--force", "--all"], positional: 1 },
+	skill: { flags: ["--force", "--all"], positional: 64 },
 };
 
 function checkArgs(command: string, args: string[]): void {
@@ -319,9 +321,11 @@ async function main(): Promise<void> {
 			return;
 		}
 		case "skill": {
-			const sub = argv.slice(1).find((a) => !a.startsWith("-"));
-			if (sub !== "install" && sub !== "print") throw new UsageError("Usage: tabkyra skill install [--all] [--force] | tabkyra skill print");
-			process.exitCode = runSkill(sub, { force: flag("--force"), all: flag("--all") });
+			const [sub, ...rest] = argv.slice(1).filter((a) => !a.startsWith("-"));
+			if (!sub || !["install", "list", "print", "lint"].includes(sub)) {
+				throw new UsageError("Usage: tabkyra skill install [name...] [--all] [--force] | list | print [name] | lint [path...]");
+			}
+			process.exitCode = runSkill(sub, rest, { force: flag("--force"), all: flag("--all") });
 			return;
 		}
 		case "pi-extension":

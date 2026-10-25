@@ -2,6 +2,7 @@ import { getProviders } from "@mariozechner/pi-ai";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { API_BILLING_NOTE, REMOVED_SIGN_IN_PROVIDERS } from "../auth/policy.js";
+import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 
 // Providers to hide from the API key list: removed sign-ins, and clouds that need more than a key.
 const HIDDEN_PROVIDERS = new Set([
@@ -28,11 +29,8 @@ export class ApiKeysTab extends SettingsTab {
 					<p class="text-sm text-muted-foreground mb-2">
 						Enter API keys for cloud providers. Keys are stored locally in your browser.
 					</p>
-					<p class="text-sm text-muted-foreground mb-2">${API_BILLING_NOTE}</p>
-					<p class="text-xs text-muted-foreground">
-						There is no ChatGPT, Claude, GitHub Copilot or Gemini subscription sign-in. Those sign-ins
-						only work by posing as the providers' own apps, and their terms forbid it.
-					</p>
+					<p class="text-sm text-muted-foreground mb-3">${API_BILLING_NOTE}</p>
+					${agentSetupPromptButton("Using your own agent instead? Paste this prompt into Claude Code, Codex, pi, OMP or any agent to connect it to this browser.")}
 				</div>
 				<div class="flex flex-col gap-6">
 					${providers.map((provider) => html`<provider-key-input .provider=${provider}></provider-key-input>`)}

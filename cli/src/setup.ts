@@ -12,7 +12,7 @@ import { buildState, builtVersion, sourceVersion } from "./doctor.ts";
 import { harnesses, launcherValid, runCommand, shellJoin, tabkyraBinary, which } from "./harness.ts";
 import { browserDirs, install } from "./install.ts";
 import { extensionDir, repoRoot } from "./paths.ts";
-import { installSkill, skillTargets } from "./skill.ts";
+import { installSkills, skillTargets } from "./skill.ts";
 import { banner, box, c, confirm, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 
@@ -238,9 +238,12 @@ async function offerSkill(options: SetupOptions): Promise<void> {
 		console.log(`    ${c.dim("Later:")} tabkyra skill install`);
 		return;
 	}
-	for (const r of installSkill({ force: false, all: false })) {
-		if (r.state === "written" || r.state === "current") console.log(`  ${sym.ok} ${r.name} skill ${c.dim(r.file)}`);
-		else if (r.state === "kept") console.log(`  ${sym.warn} ${r.name}: ${r.file} is not ours; left alone ${c.dim("(tabkyra skill install --force)")}`);
+	const results = installSkills({ force: false, all: false });
+	for (const t of targets) {
+		const mine = results.filter((r) => r.target.id === t.id);
+		const ok = mine.filter((r) => r.state === "written" || r.state === "current").length;
+		if (ok) console.log(`  ${sym.ok} ${t.name}: ${ok} skills ${c.dim(t.dir)}`);
+		for (const r of mine.filter((r) => r.state === "kept")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is not ours; left alone ${c.dim("(tabkyra skill install --force)")}`);
 	}
 }
 
