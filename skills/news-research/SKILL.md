@@ -1,6 +1,6 @@
 ---
 name: news-research
-description: Find what happened, when, and who says so, using primary sources, wire services and outlets across the political spectrum; build a dated timeline and separate confirmed facts from claims and opinion. Use when the user asks about current events, breaking news, what happened today or this week, the latest on a story, "what's going on with", "what's new", a viral claim, photo or video, whether someone really said something, a quote's origin, or wants a news briefing or fact-check.
+description: Find what happened, when, and who says so, using primary sources, wire services and outlets across the political spectrum; build a dated timeline and separate confirmed facts from claims and opinion. Use when the user asks about current events, breaking news, what happened today or this week, the latest on a story, "what's going on with", a viral claim, photo or video, whether someone really said something, a quote's origin, or wants a news briefing or fact-check.
 license: AGPL-3.0
 ---
 

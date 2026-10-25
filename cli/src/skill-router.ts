@@ -38,8 +38,12 @@ interface Doc {
 	/** Term frequencies and length per field. */
 	tf: Record<Field, Map<string, number>>;
 	len: Record<Field, number>;
-	/** Trigger phrases as word sequences (unstemmed, stopwords kept). */
-	phrases: string[][];
+	/**
+	 * Trigger phrases as word sequences (unstemmed, stopwords kept). `strong` when the phrase
+	 * holds a word specific enough to count as evidence; "what's going on with" is all
+	 * stopwords, so it ranks but can't make a match on its own.
+	 */
+	phrases: Array<{ seq: string[]; strong: boolean }>;
 	/** Pairs of neighbouring words within a clause ("literature review", "search operators"). */
 	pairs: Set<string>;
 }
@@ -74,7 +78,7 @@ const STOPWORDS = new Set(
 		"this that these those there here what which whom whose why how where when while if then than so too very just only also even " +
 		"all any each every some such no not own same other another more most less few much one ones " +
 		"please let get got give gave make made want wants wanted need needs like use used using user users ask asks asked tell " +
-		"help show look try see go put take thing things way whether last first next new after before until since " +
+		"help show look try see go goes going gone went put take thing things way whether last first next new after before until since " +
 		"something anything everything someone really actually return returns returned " +
 		"s t d ll re ve m don doesn didn isn aren wasn weren won wouldn can't don't it's i'm i've that's what's"
 	).split(" "),
@@ -176,14 +180,19 @@ function withoutOtherSkills(text: string, self: string, names: ReadonlySet<strin
 	return text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (inner !== self && names.has(inner) ? " " : whole));
 }
 
-function phrasesOf(name: string, description: string, bullets: string[]): string[][] {
+/**
+ * Quoted phrases of two or more words from the kept sentences and bullets. Quotes inside
+ * excluded sentences ("Not for "invoice triage"") never count, and a one-word quote is just
+ * a word, which the term score already counts.
+ */
+function phrasesOf(name: string, sources: string[]): string[][] {
 	const out: string[][] = [];
-	for (const source of [description, ...bullets]) {
+	for (const source of sources) {
 		for (const m of source.matchAll(/"([^"]{3,60})"/g)) {
 			// A trailing placeholder ("what is known about X") matches any topic, so it's dropped.
 			const seq = words(m[1]);
 			while (seq.length > 1 && seq[seq.length - 1].length === 1) seq.pop();
-			if (seq.length >= 1 && seq.join(" ") !== name) out.push(seq);
+			if (seq.length >= 2 && seq.join(" ") !== name) out.push(seq);
 		}
 	}
 	return out;
@@ -240,7 +249,7 @@ function parse(skill: RouterSkill, names: ReadonlySet<string>): Doc {
 		description,
 		tf: { name: count(fields.name), what: count(fields.what), when: count(fields.when) },
 		len: { name: fields.name.length, what: fields.what.length, when: fields.when.length },
-		phrases: phrasesOf(skill.name, clean(description), bullets.map(clean)),
+		phrases: phrasesOf(skill.name, [...kept, ...bullets].map(clean)).map((seq) => ({ seq, strong: false })),
 		pairs: pairsOf(clean([...kept, ...bullets].join(". "))),
 	};
 }
@@ -256,6 +265,7 @@ export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 	}
 	const n = docs.length;
 	const idf = new Map([...df].map(([t, k]) => [t, Math.log(1 + (n - k + 0.5) / (k + 0.5))]));
+	for (const d of docs) for (const p of d.phrases) p.strong = terms(p.seq.join(" ")).some((t) => (idf.get(t) ?? 0) >= EVIDENCE_IDF);
 	const mean = (f: Field) => (n ? docs.reduce((s, d) => s + d.len[f], 0) / n : 1) || 1;
 	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern.
 	const references = [...names].flatMap((name) => {
@@ -287,7 +297,7 @@ function withoutReferences(task: string, references: RegExp[]): string {
 export interface RawScore {
 	name: string;
 	score: number;
-	/** Pieces of evidence: one per specific matched word or word pair, two per command or trigger phrase. */
+	/** Pieces of evidence: one per specific matched word or word pair, two per command or specific trigger phrase. */
 	evidence: number;
 }
 
@@ -326,9 +336,9 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 			}
 		}
 		for (const p of d.phrases) {
-			if (containsSequence(seq, p)) {
+			if (containsSequence(seq, p.seq)) {
 				score += PHRASE_BONUS;
-				evidence += 2;
+				if (p.strong) evidence += 2;
 			}
 		}
 		out.push({ name: d.name, score, evidence });

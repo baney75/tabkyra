@@ -242,3 +242,6 @@
 {"task": "Format this date as ISO 8601", "skill": "none"}
 {"task": "Write a short story about a lighthouse keeper", "skill": "none"}
 {"task": "Review my essay for grammar mistakes", "skill": "none"}
+{"task": "What's new in Python 3.13?", "skill": "none"}
+{"task": "What's going on with my Docker build?", "skill": "none"}
+{"task": "Fix the artifact upload in my GitHub Actions workflow", "skill": "none"}
