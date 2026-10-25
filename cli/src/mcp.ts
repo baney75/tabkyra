@@ -203,7 +203,8 @@ export async function runMcpServer(): Promise<void> {
 			description:
 				"Check the browser connection before you start or after an error. Reports whether the Tabkyra extension is connected, " +
 				'the site permission mode ("ask": new sites need the user\'s approval; "allow_all": any site), the sites already allowed, ' +
-				"your tab group's name and the tabs in it. Never fails: when not connected it says how the user can fix it. Example: {}",
+				"your tab group's name and the tabs in it. Never fails: when not connected it says how the user can fix it. " +
+				'If the extension is reached but refuses (for example the bridge is turned off in Settings > Bridge), connected is true and "error" says why; tell the user. Example: {}',
 			inputSchema: {},
 		},
 		async () => {

@@ -205,6 +205,12 @@ export class BridgeClient {
 				this.everConnected = false;
 				throw new Error(NOT_CONNECTED);
 			}
+			// A host came back but the extension didn't: a request now would only time out.
+			if (!this.extensionConnected) {
+				this.everConnected = false;
+				this.close();
+				throw new Error(NOT_CONNECTED);
+			}
 			return this.callOnce<T>(method, params, timeoutMs);
 		}
 	}

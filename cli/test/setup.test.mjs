@@ -190,6 +190,9 @@ test("allow and status validate their input before touching the bridge", () => {
 	assert.equal(run(["allow", "not a host!"]).code, 2);
 	assert.equal(run(["allow"]).code, 2);
 	assert.equal(run(["status", "--jsno"]).code, 2);
+	assert.equal(run(["allow", "com"]).code, 2, "a bare TLD is not a site");
+	assert.equal(run(["allow", "localhost"]).code, 1, "localhost is a host; it fails only for lack of a browser");
+	assert.equal(run(["status", "--help"]).code, 0);
 	for (const args of [["ask", "github.com"], ["allow-all", "--force"], ["yolo", "x"], ["reload", "now"], ["install", "--yes"], ["allow", "a.com", "b.com"]]) {
 		assert.equal(run(args).code, 2, `tabkyra ${args.join(" ")} should be a usage error`);
 	}

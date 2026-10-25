@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { BridgeClient, BridgeRpcError, listSockets, NOT_CONNECTED } from "./client.ts";
+import { BridgeClient, BridgeRpcError, isConnectionError, listSockets, NOT_CONNECTED } from "./client.ts";
 import { runDoctor } from "./doctor.ts";
 import { runNativeHost } from "./host.ts";
 import { hostStatus, install, isInstalled } from "./install.ts";
@@ -59,6 +59,8 @@ function siteHost(value: string | undefined): string | undefined {
 		}
 	}
 	host = host.replace(/\/.*$/, "").replace(/:\d+$/, "");
+	// A real site has a dot ("github.com", "127.0.0.1"); a bare label like "com" would allow a whole TLD.
+	if (host !== "localhost" && !host.includes(".")) return undefined;
 	return /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/.test(host) ? host : undefined;
 }
 
@@ -68,7 +70,13 @@ class UsageError extends Error {}
 async function withBridge<T>(name: string, fn: (client: BridgeClient) => Promise<T>): Promise<T> {
 	const client = new BridgeClient({ name });
 	try {
-		await client.connect();
+		try {
+			await client.connect();
+		} catch (err) {
+			// No socket, a refused one, a wedged host: all mean the same thing to the person.
+			if (isConnectionError(err) || (err instanceof Error && err.message.startsWith("The bridge at "))) throw new Error(NOT_CONNECTED);
+			throw err;
+		}
 		if (!client.extensionConnected) throw new Error(NOT_CONNECTED);
 		return await fn(client);
 	} finally {
@@ -194,6 +202,10 @@ async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
 	const [command] = argv;
 	const flag = (name: string) => argv.includes(name);
+	if (command && command !== "host" && (flag("--help") || flag("-h"))) {
+		process.stdout.write(help());
+		return;
+	}
 	// `host` is spawned by the browser with its origin as an argument; leave it alone.
 	if (command && command !== "host") checkArgs(command, argv.slice(1));
 	switch (command) {
