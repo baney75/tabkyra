@@ -8,10 +8,12 @@
 //
 // Writes media/video/public/capture/: JPEG/PNG frames and capture.json (tool calls, their
 // real output, CLI output and exit codes). Then render with media/video (see its README).
-// Needs: `cd cli && npm install && npx playwright-core install chromium`, and network
-// access for www.gutenberg.org, doi.org, api.openalex.org and api.crossref.org.
+// Needs: Node 22.4+ (for its built-in WebSocket), `cd cli && npm install && npx
+// playwright-core install chromium`, and network access for www.gutenberg.org, doi.org,
+// api.openalex.org and api.crossref.org. The old capture is replaced only when every step
+// and check passes.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -22,10 +24,16 @@ import { StdioClientTransport } from "../../cli/node_modules/@modelcontextprotoc
 import { ElicitRequestSchema } from "../../cli/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js";
 import { chromium } from "../../cli/node_modules/playwright-core/index.mjs";
 
+if (typeof WebSocket !== "function") {
+	throw new Error(`Node ${process.versions.node} has no built-in WebSocket. The capture needs Node 22.4 or newer.`);
+}
+
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const cli = join(repo, "cli", "dist", "index.js");
 const extensionDir = join(repo, "dist-chrome");
-const out = join(repo, "media", "video", "public", "capture");
+const target = join(repo, "media", "video", "public", "capture");
+// Everything is written here first, then swapped into `target` once the run has passed.
+const out = mkdtempSync(join(repo, "media", "video", "public", ".capture-new-"));
 const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
 const NEW_SITE = "https://www.gutenberg.org/ebooks/2701";
 
@@ -103,8 +111,21 @@ const freePort = () =>
 	});
 
 async function main() {
-	rmSync(out, { recursive: true, force: true });
-	mkdirSync(out, { recursive: true });
+	try {
+		await record();
+		rmSync(target, { recursive: true, force: true });
+		renameSync(out, target);
+		console.log(`wrote ${target}`);
+	} finally {
+		rmSync(out, { recursive: true, force: true });
+	}
+}
+
+/** Shows a command the way it can be pasted into a shell. */
+const shellQuote = (args) =>
+	args.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replaceAll("'", "'\\''")}'`)).join(" ");
+
+async function record() {
 	const work = mkdtempSync(join(tmpdir(), "tabkyra-video-"));
 	const capture = { recordedAt: new Date().toISOString(), browser: {}, cli: {} };
 	try {
@@ -115,7 +136,6 @@ async function main() {
 		rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 	}
 	writeFileSync(join(out, "capture.json"), `${JSON.stringify(capture, null, "\t")}\n`);
-	console.log(`wrote ${out}`);
 }
 
 async function browserBeats(work, capture) {
@@ -224,6 +244,7 @@ async function browserBeats(work, capture) {
 		await until(() => panel.eval(`!!${findButton(copyLabel)}`), 15_000, "the side panel");
 		await new Promise((r) => setTimeout(r, 800));
 		await panel.shot(join(out, "panel-welcome.png"));
+		capture.browser.boxes = { welcomeDialog: await panel.box(`${findText("Welcome to Tabkyra")}.closest(".z-50")`) };
 		// Keep a copy of what the button puts on the clipboard; the real write still happens.
 		await panel.eval(`(() => {
 			const write = navigator.clipboard.writeText.bind(navigator.clipboard);
@@ -238,6 +259,7 @@ async function browserBeats(work, capture) {
 		);
 		await new Promise((r) => setTimeout(r, 300));
 		await panel.shot(join(out, "panel-copied.png"));
+		capture.browser.boxes.toast = await panel.box(surface(findTextIn("Setup prompt copied")));
 		capture.browser.setupPrompt = await panel.eval("window.__copied ?? ''");
 		if (!capture.browser.setupPrompt.startsWith("Set up Tabkyra")) throw new Error("the setup prompt wasn't copied");
 
@@ -309,6 +331,10 @@ async function browserBeats(work, capture) {
 		);
 		await new Promise((r) => setTimeout(r, 300));
 		await panel.shot(join(out, "panel-pending.png"));
+		// Where the crops and rings in the video go, read from this layout rather than assumed.
+		capture.browser.boxes.siteAccess = await panel.box(findText("Site access"));
+		capture.browser.boxes.requestCard = await panel.box(surface(findTextIn("wants to open")));
+		capture.browser.boxes.firstAllowedRow = await panel.box(`${findText("127.0.0.1")}.parentElement`);
 		answerPrompt({ action: "accept", content: { decision: "allow_host" } });
 		capture.browser.permissionAnswer = "allow_host";
 		await pending;
@@ -322,6 +348,7 @@ async function browserBeats(work, capture) {
 		);
 		await new Promise((r) => setTimeout(r, 300));
 		await panel.shot(join(out, "panel-allowed.png"));
+		capture.browser.boxes.allowedRow = await panel.box(`${findText("www.gutenberg.org")}.parentElement`);
 		capture.browser.panelErrors = await panel.errors();
 		await call("wait", { selector: "h1", timeoutMs: 15_000 }).catch(() => undefined);
 		const shotBook = await shot("book.jpg");
@@ -353,6 +380,16 @@ function findText(label) {
 	return `[...document.querySelectorAll("body *")].find((e) => e.childElementCount === 0 && e.textContent.trim() === ${JSON.stringify(label)} && e.offsetParent)`;
 }
 
+/** A JS expression for the innermost visible element whose text contains `text`. */
+function findTextIn(text) {
+	return `[...document.querySelectorAll("body *")].filter((e) => e.textContent.includes(${JSON.stringify(text)}) && e.offsetParent).at(-1)`;
+}
+
+/** A JS expression for the nearest ancestor of `element` (or itself) with a painted background. */
+function surface(element) {
+	return `(() => { let e = ${element}; while (e && getComputedStyle(e).backgroundColor === "rgba(0, 0, 0, 0)") e = e.parentElement; return e; })()`;
+}
+
 /** The few CDP calls the side panel needs, on one attached target and nothing else. */
 async function connectCdp(wsUrl) {
 	const ws = new WebSocket(wsUrl);
@@ -363,6 +400,13 @@ async function connectCdp(wsUrl) {
 	let next = 0;
 	const waiting = new Map();
 	const listeners = [];
+	// A closed socket (Chromium crashed or exited) fails every call still waiting on it.
+	let closed = false;
+	ws.onclose = () => {
+		closed = true;
+		for (const { reject } of waiting.values()) reject(new Error("the DevTools connection closed"));
+		waiting.clear();
+	};
 	ws.onmessage = (event) => {
 		const msg = JSON.parse(event.data);
 		if (msg.id && waiting.has(msg.id)) {
@@ -374,6 +418,7 @@ async function connectCdp(wsUrl) {
 	};
 	const send = (method, params = {}, sessionId) =>
 		new Promise((resolve, reject) => {
+			if (closed) return reject(new Error("the DevTools connection closed"));
 			const id = ++next;
 			waiting.set(id, { resolve, reject });
 			ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
@@ -418,6 +463,14 @@ async function connectCdp(wsUrl) {
 					await s("Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode: 27 });
 					await s("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode: 27 });
 				},
+				/** The element's box in the panel's CSS pixels. */
+				async box(element) {
+					const box = await evaluate(
+						`(() => { const r = ${element}.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()`,
+					);
+					if (!box || !(box.width > 0 && box.height > 0)) throw new Error(`no visible box for ${element}`);
+					return box;
+				},
 				// A real mouse click at the element's center, so the page sees a user gesture.
 				async click(element) {
 					const box = await evaluate(
@@ -440,16 +493,25 @@ function cliBeats(work, capture) {
 	const run = (args) => {
 		const started = Date.now();
 		const r = spawnSync(process.execPath, [cli, ...args], { env, encoding: "utf8", cwd: work });
-		return { args, code: r.status, ms: Date.now() - started, out: `${r.stdout}${r.stderr}`.trimEnd() };
+		// `shown` is the command as it can be pasted into a shell; spawnSync itself runs no shell.
+		return {
+			args,
+			shown: `tabkyra ${shellQuote(args)}`,
+			code: r.status,
+			ms: Date.now() - started,
+			out: `${r.stdout}${r.stderr}`.trimEnd(),
+		};
 	};
-	// Crossref sometimes times out under load, and the CLI then reports the check as not run.
-	// Each add starts from an empty library and is retried until every check answered, so the
-	// video shows a complete run (still a real one).
+	// OpenAlex or Crossref sometimes times out under load, and the CLI then leaves that check
+	// out of "verified by". Each add starts from an empty library and is retried until both
+	// answered, so the video shows a complete run (still a real one).
+	const answered = (r) =>
+		/verified by [^\n]*\bopenalex\b/.test(r.out) && /verified by [^\n]*\bcrossref-updates\b/.test(r.out);
 	const add = (doi) => {
 		for (let attempt = 1; ; attempt++) {
 			rmSync(env.TABKYRA_LIBRARY_DIR, { recursive: true, force: true });
 			const r = run(["library", "add", doi]);
-			if (r.out.includes("crossref-updates") || attempt === 4) return { ...r, attempts: attempt };
+			if (answered(r) || attempt === 4) return { ...r, attempts: attempt };
 		}
 	};
 	capture.cli.libraryGood = add("10.1037/0033-2909.132.3.354");
@@ -461,17 +523,22 @@ function cliBeats(work, capture) {
 	capture.cli.badSkill = BAD_SKILL;
 	const lintBad = run(["skill", "lint", skillDir]);
 	lintBad.args = ["skill", "lint", "page-helper"];
+	lintBad.shown = "tabkyra skill lint page-helper";
 	lintBad.out = lintBad.out.replaceAll(`${join(work, "skills")}/`, "");
 	capture.cli.lintBad = lintBad;
 	const lintShipped = run(["skill", "lint", join(repo, "skills")]);
 	lintShipped.args = ["skill", "lint", "skills/"];
+	lintShipped.shown = "tabkyra skill lint skills/";
 	capture.cli.lintShipped = lintShipped;
 	if (capture.cli.libraryGood.code !== 0) throw new Error(`library add failed: ${capture.cli.libraryGood.out}`);
 	if (capture.cli.libraryRetracted.code !== 3)
 		throw new Error(`expected a retraction: ${capture.cli.libraryRetracted.out}`);
 	for (const r of [capture.cli.libraryGood, capture.cli.libraryRetracted]) {
-		if (!r.out.includes("crossref-updates"))
-			throw new Error(`Crossref didn't answer after ${r.attempts} tries: ${r.out}`);
+		if (!answered(r)) throw new Error(`OpenAlex or Crossref didn't answer after ${r.attempts} tries: ${r.out}`);
+	}
+	const madeUp = capture.cli.libraryMadeUp;
+	if (madeUp.code === 0 || !/not registered \(doi\.org returned 404\)/.test(madeUp.out)) {
+		throw new Error(`the made-up DOI wasn't refused as unregistered: ${madeUp.out}`);
 	}
 	if (lintBad.code === 0) throw new Error("the bad skill passed lint");
 	if (lintShipped.code !== 0) throw new Error(`a shipped skill failed lint: ${lintShipped.out}`);
