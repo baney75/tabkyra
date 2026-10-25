@@ -45,7 +45,9 @@ tabkyra `tabs_show` tool and let them sign in.
    them. Build the reference:
    - Proton Pass: `pass://<vault>/<item>/<field>`, for example `pass://Work/GitHub/token`
    - 1Password: `op://<vault>/<item>/<field>`, for example `op://Work/GitHub/credential`
-   - Bitwarden Secrets Manager: the secret's ID, mapped to an env var name.
+   - Bitwarden Secrets Manager: no per-secret reference. `bws run` passes every secret in
+     the access token's project, so use an access token whose project holds only the
+     secrets this command needs.
 4. **Write an env file of references, not values.** For example `refs.env` with the line
    `SERVICE_CREDENTIAL=pass://Work/GitHub/token`, using the env var name the program
    reads. This file holds no secrets. Add it to `.gitignore` anyway.

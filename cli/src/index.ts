@@ -324,6 +324,20 @@ async function main(): Promise<void> {
 		}
 		case "skill": {
 			const [sub, ...rest] = argv.slice(1).filter((a) => !a.startsWith("-"));
+			// Flags and argument counts each subcommand accepts; anything else is a usage error.
+			const SKILL_SUB: Record<string, { flags: string[]; max: number }> = {
+				install: { flags: ["--force", "--all"], max: 64 },
+				list: { flags: [], max: 0 },
+				print: { flags: ["--raw"], max: 1 },
+				lint: { flags: [], max: 64 },
+				apply: { flags: ["--yes"], max: 1 },
+				revert: { flags: [], max: 1 },
+			};
+			const spec = sub ? SKILL_SUB[sub] : undefined;
+			const badFlag = argv.slice(1).find((a) => a.startsWith("-") && !(spec?.flags ?? []).includes(a));
+			if (spec && (badFlag || rest.length > spec.max)) {
+				throw new UsageError(`tabkyra skill ${sub} ${badFlag ? `doesn't take ${badFlag}` : "takes fewer arguments"}. Flags: ${spec.flags.join(" ") || "none"}.`);
+			}
 			if (!sub || !["install", "list", "print", "lint", "apply", "revert"].includes(sub)) {
 				throw new UsageError("Usage: tabkyra skill install [name...] [--all] [--force] | list | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name>");
 			}

@@ -34,7 +34,7 @@ these defenses:
 
 | Rule | Catches |
 | --- | --- |
-| `hidden-text` | Invisible format characters, bidi overrides, Unicode tag characters, filler characters, carriage returns, lookalike letters (mixed scripts, fullwidth, mathematical, stacked accents), HTML comments and any HTML tag outside code |
+| `hidden-text` | Invisible format characters, bidi overrides, Unicode tag characters, filler characters, carriage returns, lookalike letters (mixed scripts, fullwidth, mathematical, stacked accents), HTML comments and any HTML tag, in code fences too (inline code spans excepted) |
 | `override-instructions` | "Ignore/disregard ... previous/system instructions" |
 | `role-hijack` | Fake `system:`, `developer:` or `user:` turns, role tags, "you are now", "developer mode" |
 | `conceal-from-user` | "Without telling the user", "without asking", "don't tell the user", "secretly", "quietly", "silently" |
@@ -49,7 +49,7 @@ these defenses:
 | `suspicious-link` | Plain http, raw IPs, link shorteners, punycode, protocol-relative `//host`, `data:`/`javascript:`/`file:` URLs, credentials in URLs |
 | `structure` | Missing `## When to use`, numbered `## Steps`, `## Done when`; an unclosed fence; text on a fence line |
 | `frontmatter` | Any line that isn't `key: value` for `name`, `description` or `license`; quoted values; duplicates; a name not matching its folder; a missing "Use when" |
-| `file-type` | Anything in a skill folder besides `SKILL.md` and a license; loose files beside skill folders; any symbolic link |
+| `file-type` | Anything in a skill folder besides `SKILL.md` and a license (which is linted too); loose files beside skill folders; any symbolic link |
 
 Rules that name a dangerous act (`secret-exfiltration`, `remote-code`, `credential-files`,
 `config-tamper`, `safety-bypass`, `remote-instructions`) allow a clause that opens by
@@ -81,9 +81,11 @@ value, which YAML would read as a mapping or a comment.
 it backs up the current version to `~/.config/tabkyra/skill-history/`, keeps the edit in
 `~/.config/tabkyra/skills-local/` and installs it, leaving alone any same-name skill
 Tabkyra didn't write. A local copy is used only while `index.json` records it, it passes
-lint, it isn't a protected skill, it keeps every section of the bundled text, and it
-keeps every line of the protected sections (safety, rules, ethics, purpose check, done
-when). Headings inside code fences don't count. Tabkyra never writes through a symbolic
+lint, it isn't a protected skill, it keeps every section of the bundled text, and its
+protected sections (safety, rules, ethics, purpose check, limits, done when) are exactly
+the bundled ones. Those sections are read-only to `skill apply`, because an added line
+can cancel a rule as surely as a removed one; they change only through a reviewed pull
+request. Headings inside code fences don't count. Tabkyra never writes through a symbolic
 link, in skills-local or in a harness's skills folder.
 Skill names are checked before they reach a path. `tabkyra skill install` keeps using
 the edit while it passes lint, and warns when the bundled skill has changed since the edit
@@ -92,6 +94,12 @@ was based on it. `tabkyra skill revert <name>` returns to the bundled text. By d
 user has turned on both adversarial review and auto-apply, and the reviewer approved.
 
 ## Limits
+
+- Known gaps, tracked as issues: `config-tamper` doesn't yet catch a shell redirect or
+  `install`/`ln`/`rsync` into an installed skill folder; `remote-code` doesn't yet catch an
+  extensionless download that a later line runs; and package runners (`npx`, `uvx`,
+  `pipx run`) without a pinned version aren't flagged. Review must catch these by hand
+  until the rules land.
 
 - CODEOWNERS asks for a maintainer's review on the paths that control skills. It blocks a
   merge only if branch protection requires code-owner review.

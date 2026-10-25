@@ -36,6 +36,10 @@ test("the setup prompt refuses to build without a version to pin", () => {
 	assert.match(prompt, /local changes, stop and ask me/);
 	// The existing-checkout branch comes before the clone, so an agent reading in order doesn't clone over it.
 	assert.ok(prompt.indexOf("tabkyra exists") < prompt.indexOf("git clone"), "existing checkout is handled before cloning");
+	// A working install elsewhere skips only the CLI install, never connecting this harness.
+	assert.match(prompt, /go to step 3\./);
+	assert.doesNotMatch(prompt, /skip to step [4-9]/);
+	assert.match(prompt, /4\. Connect this harness, even if Tabkyra already works in another one/);
 });
 
 test("the setup prompt passes the skill security lint", () => {

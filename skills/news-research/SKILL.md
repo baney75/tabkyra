@@ -86,7 +86,7 @@ The user asks: "Did the Fed change rates today?"
 ```
 navigate {"url":"https://www.federalreserve.gov/newsevents/pressreleases.htm"}
 get_page_text {"maxChars":3000}     -> today's FOMC statement is listed
-navigate {"url":"<statement URL>"}
+navigate {"url":"(the statement URL)"}
 get_page_text {"maxChars":4000}     -> the target range and the vote
 navigate {"url":"https://apnews.com/search?q=federal+reserve+rates"}
 get_page_text {"maxChars":3000}     -> AP's report matches the statement

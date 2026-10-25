@@ -138,17 +138,16 @@ const headings = (t: string) => [...sections(t).keys()];
 /** Sections whose every line an edit must keep: safety rules, stop conditions, purpose checks. */
 const PROTECTED_SECTION = /safety|rules|done when|ethics|purpose check|limits|never/i;
 
-/** Lines a draft removed from a protected section of the current text. */
-function droppedProtectedLines(current: string, draft: string): string[] {
+/**
+ * Protected sections a draft changed in any way. They are read-only to `skill apply`: an
+ * added line can cancel a rule as surely as a removed one, so these change only through a
+ * reviewed pull request.
+ */
+function changedProtectedSections(current: string, draft: string): string[] {
 	const before = sections(current);
 	const after = sections(draft);
-	const dropped: string[] = [];
-	for (const [heading, lines] of before) {
-		if (!PROTECTED_SECTION.test(heading)) continue;
-		const kept = new Set((after.get(heading) ?? []).map((l) => l.trim()));
-		for (const line of lines) if (line.trim() && !kept.has(line.trim())) dropped.push(`${heading}: ${line.trim()}`);
-	}
-	return dropped;
+	const norm = (lines: string[] | undefined) => (lines ?? []).map((l) => l.trim()).filter(Boolean).join("\n");
+	return [...before.keys()].filter((h) => PROTECTED_SECTION.test(h) && norm(before.get(h)) !== norm(after.get(h)));
 }
 
 /** Why a local copy can't be used, or its text. */
@@ -164,9 +163,14 @@ function localText(name: string): { text?: string; problem?: string } {
 	const bundled = SKILLS.get(name);
 	const missing = bundled === undefined ? [] : headings(bundled).filter((h) => !headings(text).includes(h));
 	if (missing.length) return { problem: `${file} drops the section "${missing[0]}"` };
-	const dropped = bundled === undefined ? [] : droppedProtectedLines(bundled, text);
-	if (dropped.length) return { problem: `${file} removes a protected line (${dropped[0].slice(0, 80)})` };
+	const changed = bundled === undefined ? [] : changedProtectedSections(bundled, text);
+	if (changed.length) return { problem: `${file} changes the protected section "${changed[0]}"` };
 	return { text };
+}
+
+/** Refuse to touch anything under a symbolic link: a link could lead outside Tabkyra's folders. */
+function assertNoLinks(paths: string[]): void {
+	for (const p of paths) if (isLink(p)) throw new SkillError(`${p} is a symbolic link; Tabkyra won't read or write through it. Remove it by hand.`);
 }
 
 function isLink(path: string): boolean {
@@ -357,9 +361,9 @@ export function planApply(path: string): ApplyPlan {
 	if (current !== undefined) {
 		const missing = headings(current).filter((h) => !headings(text).includes(h));
 		if (missing.length) throw new SkillError(`The edit drops section${missing.length > 1 ? "s" : ""} ${missing.map((h) => `"${h}"`).join(", ")}. Edits add or change; they don't remove sections.`);
-		const dropped = droppedProtectedLines(current, text);
-		if (dropped.length) {
-			throw new SkillError(`The edit removes lines from a protected section (safety, rules, done when). Add to those sections; don't take away:\n${dropped.map((d) => `  ${d}`).join("\n")}`);
+		const changed = changedProtectedSections(current, text);
+		if (changed.length) {
+			throw new SkillError(`The edit changes a protected section (${changed.map((h) => `"${h}"`).join(", ")}). Safety, rules, purpose-check and done-when sections change only through a reviewed pull request.`);
 		}
 	}
 	return { name, text, current, diff: lineDiff(current ?? "", text) };
@@ -367,15 +371,14 @@ export function planApply(path: string): ApplyPlan {
 
 /** Apply a checked plan: back up, keep the edit, install it where nothing else owns the name. */
 export function applySkill(plan: ApplyPlan): { backup?: string; results: InstallResult[] } {
+	assertNoLinks([configDir(), localSkillsDir(), historyDir(), localSkillDir(plan.name), localFile(plan.name)]);
 	let backup: string | undefined;
 	if (plan.current !== undefined) {
 		backup = join(historyDir(), plan.name, `${stamp()}.md`);
 		mkdirSync(dirname(backup), { recursive: true });
 		writeFileSync(backup, plan.current);
 	}
-	for (const p of [configDir(), localSkillsDir(), localSkillDir(plan.name), localFile(plan.name)]) {
-		if (isLink(p)) throw new SkillError(`${p} is a symbolic link; Tabkyra won't write through it. Remove it by hand.`);
-	}
+	assertNoLinks([configDir(), localSkillsDir(), historyDir(), localSkillDir(plan.name), localFile(plan.name)]);
 	mkdirSync(localSkillDir(plan.name), { recursive: true });
 	// Temp file + rename replaces the path itself, never a file a link points at.
 	const tmp = `${localFile(plan.name)}.${process.pid}.tmp`;
@@ -394,7 +397,7 @@ export function revertSkill(name: string): { removed: boolean; results: InstallR
 	const file = join(dir, "SKILL.md");
 	const index = readIndex();
 	if (!existsSync(file) && !index[name]) return { removed: false, results: [] };
-	if (isLink(dir) || isLink(file)) throw new SkillError(`${file} is a symlink; remove it by hand.`);
+	assertNoLinks([configDir(), localSkillsDir(), historyDir(), dir, file]);
 	if (existsSync(file)) {
 		const kept = join(historyDir(), name, `${stamp()}.reverted.md`);
 		mkdirSync(dirname(kept), { recursive: true });

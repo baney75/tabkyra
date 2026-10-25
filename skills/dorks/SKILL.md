@@ -99,7 +99,7 @@ The user wants the FAA's own guidance on drone flights over people.
 ```
 navigate {"url":"https://www.google.com/search?q=site%3Afaa.gov+filetype%3Apdf+%22operations+over+people%22"}
 get_page_text {"maxChars":3000}     -> an FAA advisory circular PDF is the top hit
-navigate {"url":"<that PDF's URL>"}
+navigate {"url":"(the PDF URL from the results)"}
 get_page_text {"maxChars":6000}     -> the categories of operation
 ```
 

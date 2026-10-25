@@ -17,7 +17,7 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 
 export type Severity = "error" | "warning";
 
@@ -380,11 +380,12 @@ export function lintText(file: string, text: string, options: { reference?: bool
 		if (INVISIBLE.test(line)) add(n, "hidden-text", "Contains an invisible or text-reordering character.");
 		if (MIXED_SCRIPT.test(line)) add(n, "hidden-text", "A word mixes Latin with Cyrillic or Greek lookalike letters.");
 		if (LOOKALIKE.test(line)) add(n, "hidden-text", "Fullwidth, mathematical or accent-stacked letters read as plain words to a model. Use plain letters.");
-		// Outside a fence, markup renders: it can hide text from a reviewer or load content.
-		if (!inFence && !isFence) {
-			const visible = withoutInlineCode(line);
+		// Markup is refused everywhere, fences included: renderers disagree about where a fence
+		// ends (inside list items, for one), and a tag the reviewer sees as code may render.
+		if (!isFence) {
+			const visible = inFence ? line : withoutInlineCode(line);
 			if (/<!--/.test(visible) && line.trim() !== INSTALL_MARKER) add(n, "hidden-text", "HTML comments don't render, so reviewers miss them. Write it as visible text.");
-			else if (HTML_TAG.test(visible)) add(n, "hidden-text", "Raw HTML can hide text or load content. Write Markdown, or put markup in a code fence.");
+			else if (HTML_TAG.test(visible)) add(n, "hidden-text", "Raw HTML can hide text or load content, even in a code fence. Describe the markup in words instead.");
 		}
 		if (BLOB.test(line)) add(n, "encoded-blob", "A long encoded string can carry hidden instructions. Link to a reviewed file instead.");
 		if (/!\[[^\]]*\]\s*\((?!\s*(\.{0,2}\/)?[\w-]+(\/[\w.-]+)*\.(png|jpe?g|gif|svg|webp)\s*\))/i.test(line) || /!\[[^\]]*\]\s*\[/.test(line)) {
@@ -407,9 +408,14 @@ export function lintText(file: string, text: string, options: { reference?: bool
 	for (const group of logicalLines(lines, fences)) {
 		for (const r of PATTERN_RULES) {
 			const global = new RegExp(r.pattern.source, `${r.pattern.flags.replace("g", "")}g`);
-			for (const m of group.text.matchAll(global)) {
-				const at = m.index ?? 0;
-				if (r.negatable && negated(group.text, at)) continue;
+			// After a match that a prohibition covers, scan again from the next character, so an
+			// act nested inside the covered span still gets its own match.
+			for (let m = global.exec(group.text); m !== null; m = global.exec(group.text)) {
+				const at = m.index;
+				if (r.negatable && negated(group.text, at)) {
+					global.lastIndex = at + 1;
+					continue;
+				}
 				const n = group.lineAt(at);
 				const key = `${n}:${r.rule}`;
 				if (reported.has(key)) continue;
@@ -486,7 +492,7 @@ function lintSkillDir(dir: string): Finding[] {
 			findings.push({ file, line: 0, rule: "file-type", severity: "error", message: "Skill folders hold SKILL.md and a LICENSE only. Everything the model follows goes in SKILL.md." });
 			continue;
 		}
-		if (extname(rel) !== ".md") continue;
+		// Every allowed file is text a harness or a reviewer may read, LICENSE included.
 		findings.push(...lintText(file, readFileSync(file, "utf8"), { reference: rel !== "SKILL.md", dirName: basename(dir) }));
 	}
 	return findings;

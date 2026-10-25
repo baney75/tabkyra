@@ -47,33 +47,20 @@ For a quick answer, write plain text in chat instead.
 
 ## Skeleton
 
-```html
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Short title</title>
-<style>
-  :root { --fg:#1a1a1a; --muted:#5a5a5a; --bg:#fff; --accent:#2457c5; --line:#e3e3e3; }
-  @media (prefers-color-scheme: dark) { :root { --fg:#ececec; --muted:#a0a0a0; --bg:#141414; --accent:#7aa2ff; --line:#2a2a2a; } }
-  body { font: 16px/1.55 system-ui, sans-serif; color:var(--fg); background:var(--bg); max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.6rem; margin: 0 0 .25rem; } .lede { font-size: 1.1rem; }
-  table { border-collapse: collapse; width: 100%; } th, td { text-align:left; padding:.4rem .5rem; border-bottom:1px solid var(--line); }
-  .muted { color: var(--muted); font-size: .9rem; } a { color: var(--accent); }
-  @media print { body { margin: 0; max-width: none; } a { color: inherit; } }
-</style>
-</head>
-<body>
-<header><h1>Title</h1><p class="muted">Prepared 2026-01-01 from N sources</p></header>
-<main>
-  <p class="lede">The one-sentence takeaway.<sup><a href="#s1">1</a></sup></p>
-  <section><h2>Key numbers</h2><table><thead><tr><th>Measure</th><th>Value</th></tr></thead><tbody></tbody></table></section>
-  <section><h2>Sources</h2><ol><li id="s1"><a href="https://example.com">Source title</a>, publisher, date.</li></ol></section>
-</main>
-</body>
-</html>
-```
+Build the file in this order. Write the tags yourself; this list says what goes in each.
+
+1. Doctype for HTML5, then the html element with `lang="en"`.
+2. Head: a UTF-8 charset meta, a viewport meta (`width=device-width, initial-scale=1`), a
+   short title, and one style block.
+3. In the style block, define colors as CSS custom properties on `:root`: `--fg`, `--muted`,
+   `--bg`, `--accent`, `--line`. Add a `prefers-color-scheme: dark` media query that redefines
+   them. Body: system-ui font at 16px, line height 1.55, max width 760px, centered, 1rem side
+   padding. Tables collapse borders, full width, a 1px `--line` rule under each row.
+   An `@media print` block removes the max width and link colors.
+4. Body: a header with the h1 title and a muted line giving the date and the number of sources;
+   a main element with the lede paragraph (the takeaway, with a superscript citation link),
+   a "Key numbers" section holding a table with a header row, and a "Sources" section with
+   an ordered list whose items have ids `s1`, `s2`, ... that the citation links point to.
 
 ## Done when
 
