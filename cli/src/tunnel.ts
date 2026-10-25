@@ -52,6 +52,23 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 		/* reported below */
 	}
 	if (!dns) return { ok: false, message: "Tailscale isn't connected. Run tailscale up, then try again." };
+	if (options.public) {
+		// Funnel opens a whole host:port to the internet, not one path: refuse if anything else is served there.
+		const current = run(bin, ["serve", "status", "--json"]);
+		let others: string[] = [];
+		try {
+			const web = (JSON.parse(current.out || "{}") as { Web?: Record<string, { Handlers?: Record<string, unknown> }> }).Web ?? {};
+			others = Object.entries(web)
+				.filter(([hostPort]) => hostPort.endsWith(":443"))
+				.flatMap(([, v]) => Object.keys(v.Handlers ?? {}))
+				.filter((path) => path !== SERVE_PATH);
+		} catch {
+			return { ok: false, message: "Couldn't read tailscale serve status; not turning on Funnel." };
+		}
+		if (others.length) {
+			return { ok: false, message: `Port 443 also serves ${others.join(", ")} on this machine. Funnel would make those public too, so it wasn't turned on.` };
+		}
+	}
 	const r = run(bin, [mode, "--bg", "--yes", "--https=443", `--set-path=${SERVE_PATH}`, `http://127.0.0.1:${options.port}`]);
 	if (r.code !== 0) return { ok: false, message: r.out };
 	const url = `https://${dns}${SERVE_PATH}/mcp`;
@@ -63,18 +80,28 @@ function cloudflaredPidFile(): string {
 	return join(configDir(), "cloudflared.pid");
 }
 
+/** The cloudflared this command started, if it is still that process (not a reused PID). */
+function ourCloudflared(): number | undefined {
+	if (!existsSync(cloudflaredPidFile())) return undefined;
+	const pid = Number(readFileSync(cloudflaredPidFile(), "utf8"));
+	if (!Number.isInteger(pid) || pid <= 1) return undefined;
+	const cmd = run("ps", ["-p", String(pid), "-o", "command="]).out;
+	return /cloudflared/.test(cmd) && /tunnel/.test(cmd) && /--url http:\/\/127\.0\.0\.1:/.test(cmd) ? pid : undefined;
+}
+
 export async function cloudflareTunnel(options: { port: number; off: boolean; timeoutMs?: number }): Promise<TunnelResult> {
 	if (options.off) {
-		if (!existsSync(cloudflaredPidFile())) return { ok: true, message: "No Cloudflare tunnel is running." };
-		const pid = Number(readFileSync(cloudflaredPidFile(), "utf8"));
+		const pid = ourCloudflared();
+		rmSync(cloudflaredPidFile(), { force: true });
+		if (pid === undefined) return { ok: true, message: "No Cloudflare tunnel started by Tabkyra is running." };
 		try {
-			if (Number.isInteger(pid) && pid > 1) process.kill(pid);
+			process.kill(pid);
 		} catch {
 			/* already gone */
 		}
-		rmSync(cloudflaredPidFile(), { force: true });
 		return { ok: true, message: "Stopped the Cloudflare tunnel." };
 	}
+	if (ourCloudflared() !== undefined) return { ok: false, message: "A Cloudflare tunnel is already running. Run tabkyra tunnel cloudflare --off first." };
 	const bin = which("cloudflared");
 	if (!bin) {
 		return {
@@ -96,5 +123,12 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 		if (m) return { ok: true, url: `${m[0]}/mcp`, message: `MCP is reachable at ${m[0]}/mcp by anyone who has a token. The URL changes each time; for a fixed name, set up a named tunnel in your own Cloudflare account.` };
 		await new Promise((r) => setTimeout(r, 250));
 	}
-	return { ok: false, message: `cloudflared started but printed no URL in time. See ${log}.` };
+	// No URL in time: stop it, so nothing is left exposed without the user knowing the address.
+	try {
+		if (child.pid) process.kill(child.pid);
+	} catch {
+		/* already gone */
+	}
+	rmSync(cloudflaredPidFile(), { force: true });
+	return { ok: false, message: `cloudflared printed no URL in time, so it was stopped. See ${log}.` };
 }

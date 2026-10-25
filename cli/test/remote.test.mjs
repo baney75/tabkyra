@@ -3,7 +3,7 @@
 // the tunnel commands call the user's own tailscale and cloudflared with the right args.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -129,7 +129,61 @@ test("tunnel tailscale serves the tailnet path; --public uses funnel; --off stop
 });
 
 test("tunnel cloudflare without cloudflared says how to get it and exposes nothing", () => {
-	const r = cliRun(["tunnel", "cloudflare"]);
+	// A PATH holding only node: a real cloudflared (Homebrew puts it beside node) can't be found.
+	const bin = join(root, "node-only");
+	mkdirSync(bin, { recursive: true });
+	symlinkSync(process.execPath, join(bin, "node"));
+	const r = cliRun(["tunnel", "cloudflare"], { PATH: bin });
 	assert.equal(r.code, 1);
 	assert.match(r.out, /cloudflared isn't installed/);
+});
+
+test("token names can't collide or look like ids", () => {
+	token("unique-name", "browser.read");
+	assert.equal(cliRun(["token", "create", "unique-name", "--scope", "browser.read"]).code, 2);
+	assert.equal(cliRun(["token", "create", "3f9a01bc", "--scope", "browser.read"]).code, 2);
+});
+
+test("only an initialize request opens a session; unknown sessions get 404; serving never rewrites tokens.json", async () => {
+	const secret = token("probe", "library.read");
+	const file = join(env.HOME, ".config", "tabkyra", "tokens.json");
+	const before = readFileSync(file, "utf8");
+	const headers = { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${secret}` };
+	const notInit = await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+	assert.equal(notInit.status, 400);
+	const unknown = await fetch(url, { method: "POST", headers: { ...headers, "mcp-session-id": "nope" }, body: "{}" });
+	assert.equal(unknown.status, 404);
+	const bad = await fetch(url, { method: "POST", headers, body: "{not json" });
+	assert.equal(bad.status, 400);
+	const client = await connect(secret);
+	await client.listTools();
+	await client.close();
+	assert.equal(readFileSync(file, "utf8"), before, "tokens.json is only written by token commands");
+});
+
+test("a scoped session's instructions mention only its tools", async () => {
+	const client = await connect(token("instr", "library.read"));
+	try {
+		const text = client.getInstructions() ?? "";
+		assert.doesNotMatch(text, /Call status first|handle_dialog|tabs_show/);
+		assert.match(text, /This session's tools: library_cite, library_search\./);
+		assert.match(text, /untrusted data/);
+	} finally {
+		await client.close();
+	}
+});
+
+test("tunnel ports are validated, and Funnel is refused when other paths share port 443", () => {
+	assert.equal(cliRun(["tunnel", "tailscale", "--port", "87x7"]).code, 2);
+	const bin = join(root, "bin-funnel");
+	mkdirSync(bin, { recursive: true });
+	writeFileSync(
+		join(bin, "tailscale"),
+		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.tail1234.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"Web":{"mac.tail1234.ts.net:443":{"Handlers":{"/grafana":{}}}}}'; exit 0; fi\necho "$@" >> ${join(root, "funnel.log")}\n`,
+	);
+	chmodSync(join(bin, "tailscale"), 0o755);
+	const r = cliRun(["tunnel", "tailscale", "--public"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /\/grafana/);
+	assert.throws(() => readFileSync(join(root, "funnel.log"), "utf8"), "funnel was never called");
 });

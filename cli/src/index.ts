@@ -9,7 +9,7 @@ import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { runSetup, type SetupOptions } from "./setup.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
-import { createToken, loadTokens, revokeToken, SCOPES, serve } from "./remote.ts";
+import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
@@ -402,7 +402,8 @@ async function main(): Promise<void> {
 				return;
 			}
 			if (sub === "list") {
-				for (const t of loadTokens()) console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : "active "}  ${t.scopes.join(",")}  ${c.dim(t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used")}`);
+				const usage = loadUsage();
+				for (const t of loadTokens()) console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : "active "}  ${t.scopes.join(",")}  ${c.dim(usage[t.id] ? `last used ${usage[t.id]}` : "never used")}`);
 				return;
 			}
 			if (sub === "revoke") {
@@ -421,6 +422,7 @@ async function main(): Promise<void> {
 		case "tunnel": {
 			const kind = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--port"));
 			const port = Number(option("--port") ?? DEFAULT_PORT);
+			if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError("--port takes a port number from 1 to 65535.");
 			const result =
 				kind === "tailscale"
 					? tailscaleTunnel({ port, public: flag("--public"), off: flag("--off") })

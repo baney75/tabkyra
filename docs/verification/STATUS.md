@@ -3,7 +3,7 @@
 Labels: `none` (no code), `prepared` (code written, Check not run), `verified` (a Check that
 could fail passed; the record is linked), `deployed`, `published`. An item is only
 `verified` when its own DC Check ran. A narrower test that passed is noted under
-Evidence, and the item stays `prepared`. Decisions are in [../decisions.md](../decisions.md).
+Evidence, and the item stays `prepared`. Decisions are in [../decisions.md](../decisions.md) (D1 to D16).
 
 Updated 2026-10-25. #13 (skills, lint, CI), #14 (library) and #15 (private mode, bug
 reports) are merged to main (published). Merged code is still `prepared` against its DC
@@ -57,14 +57,14 @@ item until that item's own Check runs. Review records are in each PR's Review bl
 | Extra | Improved update system | none | `tabkyra update` exists (signed, rollback) |
 | New | Skills: maps, map data, Google world data, mathematics, chemistry, biology, genetics | none | |
 | New | Skills: notes and documents (Obsidian, Notion, Google Docs, Slides, Sheets), Proton and Proton Drive | none | |
-| New | Skill and system for adversarial review | prepared (partial) | `rsi` step 7 (prose); D4 Daybreak reviewer |
+| New | Skill and system for adversarial review | prepared | skills/adversarial-review (lint clean, no eval); `rsi` step 7; D4 |
 | New | Automatic skill invocation, strong compaction, small-model context budget | none | D12 |
 | New | Local model provider set (localhost and tailnet) | none | D13 |
-| New | `/fix`: rewrite a skill for the model tier that failed, verify, record, submit or keep | none | |
+| New | `/fix`: rewrite a skill for the model tier that failed, verify, record, submit or keep | prepared | skills/fix (lint clean, no eval); D14 |
 | New | Harness access to the skill and improvement system | prepared (partial) | CLI `skill apply/revert`; MCP skill tools not built |
 | New | Design library, templates, `/reference` (legal referencing), `/branding` | none | |
 | New | Shared successes and failures (opt-in) | none | D11 |
-| New | Report button that has the agent write the report via `/bug` | none | D5 |
+| New | Report button that has the agent write the report via `/bug` | prepared (partial) | skills/bug; no button yet; issues enabled 2026-10-25 |
 | New | Agent-customizable appearance; modified builds lose auto-acceptance | none | D10 |
 | New | Skill: PCB design and research | none | |
 | New | Skill: email organization and label creation | none | Label changes act under the user's sign-in: ask first (D15) |

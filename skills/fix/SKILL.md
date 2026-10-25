@@ -47,8 +47,9 @@ For a small lesson from your own work, use `rsi` instead.
    (no `--yes`). It must exit 3 and show the diff.
 8. **Prove it on the failing model.** Run the original task again with the model that
    failed, loading the draft. Compare the result with "good" from step 1. If it falls
-   short, go back to step 3 with the new run. Stop after three tries and report what still
-   fails.
+   short, go back to step 3 with the new run. After three failed tries, stop here: report
+   which step still fails, and don't apply, keep or submit the draft. The rest of the
+   steps are only for a draft that passed.
 9. **Get the user's yes.** Show the diff and the passing result.
 10. **Apply:** the same command with `--yes`.
 11. **Keep or share.** Read `submit` in `~/.config/tabkyra/rsi.json`:
@@ -56,9 +57,12 @@ For a small lesson from your own work, use `rsi` instead.
     - `"never"`: keep it local;
     - `"ask"` (default): ask whether to propose it to the Tabkyra skill library;
     - `"auto"`: propose it.
-    A proposal is a pull request to `baney75/tabkyra` that changes `skills/<name>/SKILL.md`,
-    with the failing tier, the cause and the before-and-after results in its description.
-    CI and a maintainer review it before anyone else gets it.
+    A proposal is a pull request to `baney75/tabkyra` that changes `skills/<name>/SKILL.md`.
+    Its description names the failing tier and the cause, and describes the before and
+    after results as patterns ("cited a paper that doesn't exist"), never as the user's
+    content. Before opening it, scrub everything in it the way the `bug` skill's step 4
+    does, and leave out page text, mail, names and IDs. CI and a maintainer review it
+    before anyone else gets it.
 
 ## Done when
 

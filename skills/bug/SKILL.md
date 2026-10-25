@@ -31,11 +31,11 @@ Not for problems with a website itself, or with the user's own code.
    home folder, and anything that looks like a key or token. Replace each with a label in
    square brackets, such as `[email]`. Never include page text from the user's signed-in
    sites.
-5. **Fingerprint it.** Write one line in this form, with numbers and paths taken out of
-   the error: `fingerprint: [component]/[error]`
-6. **Check for a duplicate.** Run this, with the fingerprint in the quotes:
-   `gh issue list --repo baney75/tabkyra --state open --search "[fingerprint]"`
-   If one matches, plan a comment on it instead of a new issue.
+5. **Fingerprint it.** One line, `fingerprint: [component]/[error]`. Use only lowercase
+   letters, digits and `_ . / -`: replace every other character with `-`, and take out
+   numbers and paths. Page text often ends up in errors, so this keeps it out of commands.
+6. **Leave the duplicate check for later.** Searching GitHub sends the fingerprint there,
+   so it waits for step 9.
 7. **Write the report** in exactly this shape:
 
    ```
@@ -55,10 +55,14 @@ Not for problems with a website itself, or with the user's own code.
    ```
 
 8. **Show the user the report** and say where it will go.
-9. **File it** only if the user turned on automatic bug reports or says yes now:
-   `gh issue create --repo baney75/tabkyra --label bug-report --title "..." --body-file <file>`
-   (or `gh issue comment <number>` for a duplicate). If `gh` isn't signed in, give the
-   user the text to paste at github.com/baney75/tabkyra/issues/new.
+9. **File it** only if the user turned on automatic bug reports or says yes now. Then:
+   1. Write the report to a file, for example `bug.md`.
+   2. Check for a duplicate, with the fingerprint in single quotes:
+      `gh issue list --repo baney75/tabkyra --state open --search 'fingerprint-here'`
+   3. If one matches: `gh issue comment <number> --repo baney75/tabkyra --body-file bug.md`.
+      Otherwise: `gh issue create --repo baney75/tabkyra --title 'title-here' --body-file bug.md`.
+   If `gh` isn't signed in, give the user the text to paste at
+   github.com/baney75/tabkyra/issues/new.
 
 ## Done when
 

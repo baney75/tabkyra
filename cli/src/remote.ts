@@ -16,6 +16,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer } from "./mcp.ts";
 
 /** What each scope grants. Acting under the user's sign-in is its own scope, never implied. */
@@ -34,7 +35,8 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	},
 	"browser.script": {
 		tools: ["run_js"],
-		what: "Run JavaScript in pages the agent opened",
+		// Code runs as the user on the page: it can do anything browser.act can, and more.
+		what: "Run any code as you on pages the agent opens: can read, post, send and buy (includes everything browser.act can do)",
 	},
 	"library.read": { tools: ["library_search", "library_cite"], what: "Search and cite the source library" },
 	"library.write": { tools: ["library_add"], what: "Add sources to the library (fetches from doi.org, OpenAlex, Crossref)" },
@@ -78,6 +80,8 @@ function hash(token: string): string {
 /** A new token for `name` with exactly `scopes`. The secret is returned once and never stored. */
 export function createToken(name: string, scopes: string[]): { record: TokenRecord; token: string } {
 	if (!/^[\w.-]{1,40}$/.test(name)) throw new Error("Token name: letters, digits, dot, dash or underscore, up to 40.");
+	if (/^[0-9a-f]{8}$/.test(name)) throw new Error("A token name can't look like a token id (8 hex characters).");
+	if (loadTokens().some((t) => t.name === name && !t.revokedAt)) throw new Error(`An active token is already named ${name}. Revoke it or pick another name.`);
 	if (scopes.length === 0) throw new Error(`Name at least one scope: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
 	for (const s of scopes) if (!SCOPES[s]) throw new Error(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
 	const token = `tkr_${randomBytes(32).toString("base64url")}`;
@@ -100,11 +104,43 @@ export function revokeToken(idOrName: string): number {
 }
 
 /** The live token record for a presented secret, compared in constant time. Reads the file each time, so a revoke applies at once. */
+/** Last use is kept in its own file, so the server never rewrites tokens.json (and never undoes a revoke). */
+function usageFile(): string {
+	return join(configDir(), "token-usage.json");
+}
+
+export function loadUsage(): Record<string, string> {
+	try {
+		return JSON.parse(readFileSync(usageFile(), "utf8")) as Record<string, string>;
+	} catch {
+		return {};
+	}
+}
+
+function recordUse(id: string): void {
+	try {
+		const usage = loadUsage();
+		usage[id] = new Date().toISOString();
+		const tmp = `${usageFile()}.${process.pid}.tmp`;
+		writeFileSync(tmp, `${JSON.stringify(usage)}\n`, { mode: 0o600 });
+		renameSync(tmp, usageFile());
+	} catch {
+		/* usage is informational */
+	}
+}
+
 export function authenticate(header: string | undefined): TokenRecord | undefined {
 	const m = /^Bearer (tkr_[A-Za-z0-9_-]{20,})$/.exec(header ?? "");
 	if (!m) return undefined;
 	const presented = Buffer.from(hash(m[1]), "hex");
-	return loadTokens().find((t) => !t.revokedAt && timingSafeEqual(Buffer.from(t.sha256, "hex"), presented));
+	let tokens: TokenRecord[];
+	try {
+		tokens = loadTokens();
+	} catch {
+		// An unreadable tokens.json authorizes nobody.
+		return undefined;
+	}
+	return tokens.find((t) => !t.revokedAt && timingSafeEqual(Buffer.from(t.sha256, "hex"), presented));
 }
 
 export function toolsFor(scopes: string[]): Set<string> {
@@ -129,7 +165,26 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message }, id: null }));
 	};
 
-	const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+	const http = createServer((req: IncomingMessage, res: ServerResponse) => {
+		handle(req, res).catch((err) => {
+			process.stderr.write(`[tabkyra serve] ${err instanceof Error ? err.message : String(err)}\n`);
+			if (!res.headersSent) deny(res, 500, "Internal error.");
+			else res.end();
+		});
+	});
+
+	async function readJson(req: IncomingMessage): Promise<unknown> {
+		const chunks: Buffer[] = [];
+		let size = 0;
+		for await (const chunk of req) {
+			size += (chunk as Buffer).length;
+			if (size > 4_000_000) throw new Error("Request body too large.");
+			chunks.push(chunk as Buffer);
+		}
+		return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+	}
+
+	async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		if (new URL(req.url ?? "/", "http://x").pathname !== "/mcp") return deny(res, 404, "Not found. The MCP endpoint is /mcp.");
 		const token = authenticate(req.headers.authorization);
 		if (!token) return deny(res, 401, "A valid, unrevoked bearer token is required (tabkyra token create).");
@@ -140,9 +195,23 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			if (existing.tokenId !== token.id) return deny(res, 403, "This session belongs to another token.");
 			return existing.transport.handleRequest(req, res);
 		}
+		if (typeof sessionId === "string") return deny(res, 404, "Unknown or expired session. Start a new one with an initialize request.");
 		if (req.method !== "POST") return deny(res, 400, "Start a session with an initialize POST.");
+		let body: unknown;
+		try {
+			body = await readJson(req);
+		} catch {
+			return deny(res, 400, "The request body isn't valid JSON.");
+		}
+		// Only an initialize request creates a server; anything else would leak one per request.
+		if (!isInitializeRequest(body)) return deny(res, 400, "Start a session with an initialize request.");
 		const allowed = toolsFor(token.scopes);
-		const { server, client } = createMcpServer({ name: `remote-${token.name}`, session: `remote-${token.id}`, allow: (tool) => allowed.has(tool) });
+		// Each session gets its own browser session (its own tab group), even under one token.
+		const { server, client } = createMcpServer({
+			name: `remote-${token.name}`,
+			session: `remote-${token.id}-${randomUUID().slice(0, 8)}`,
+			allowedTools: allowed,
+		});
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),
 			onsessioninitialized: (id) => {
@@ -154,14 +223,9 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			client.close?.();
 		};
 		await server.connect(transport);
-		await transport.handleRequest(req, res);
-		const tokens = loadTokens();
-		const t = tokens.find((x) => x.id === token.id);
-		if (t) {
-			t.lastUsedAt = new Date().toISOString();
-			saveTokens(tokens);
-		}
-	});
+		await transport.handleRequest(req, res, body);
+		recordUse(token.id);
+	}
 
 	await new Promise<void>((resolve) => http.listen(options.port, options.host, resolve));
 	const address = http.address();

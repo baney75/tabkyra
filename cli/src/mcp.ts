@@ -104,6 +104,13 @@ function sessionKey(): string {
 	);
 }
 
+/** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
+const INSTRUCTION_TOOLS = ["status", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite"];
+
+function mentionedTools(sentence: string): string[] {
+	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
+}
+
 export interface McpServerOptions {
 	/** Tab group label and bridge client name. */
 	name?: string;
@@ -111,13 +118,15 @@ export interface McpServerOptions {
 	session?: string;
 	/**
 	 * Which tools this server exposes. A tool outside it is never registered, so the client
-	 * can't see or call it. Omitted for the local stdio server, which runs as the user.
+	 * can't see or call it, and the instructions don't mention it. Omitted for the local
+	 * stdio server, which runs as the user.
 	 */
-	allow?: (tool: string) => boolean;
+	allowedTools?: Set<string>;
 }
 
 /** The MCP server and its bridge client, before any transport is attached. */
 export function createMcpServer(options: McpServerOptions = {}): { server: McpServer; client: BridgeClient } {
+	const allowedTools = options.allowedTools;
 
 	const server = new McpServer(
 		{ name: "tabkyra", version: VERSION },
@@ -137,10 +146,15 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"Refs expire when the page changes; take a new read_page after navigation or big updates.",
 				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
 				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
-			].join(" "),
+			]
+				// A scoped session hears only about the tools it has, so a small model isn't sent
+				// after a tool it can't call.
+				.filter((line) => !allowedTools || mentionedTools(line).every((t) => allowedTools.has(t)))
+				.concat(allowedTools ? [`This session's tools: ${[...allowedTools].sort().join(", ")}.`] : [])
+				.join(" "),
 		},
 	);
-	const allow = options.allow;
+	const allow = allowedTools ? (tool: string) => allowedTools.has(tool) : undefined;
 	if (allow) {
 		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
 		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, ...rest: unknown[]) =>
@@ -673,6 +687,12 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		(args) => library(() => cite(args.citekey, args.style)),
 	);
 
+	if (allowedTools) {
+		// Every way of adding a tool must have gone through the gate above.
+		const registered = Object.keys((server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools ?? {});
+		const leaked = registered.filter((t) => !allowedTools.has(t));
+		if (leaked.length) throw new Error(`Tools outside the session's scopes were registered: ${leaked.join(", ")}`);
+	}
 	return { server, client };
 }
 
