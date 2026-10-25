@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 
 /** Stable id from the `key` in static/manifest.chrome.json. */
@@ -72,9 +72,11 @@ export function cliLauncherPath(): string {
 function stableNode(): string {
 	const exec = process.execPath;
 	for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+		// A relative PATH entry would make the launcher depend on the directory it runs from.
+		if (!isAbsolute(dir)) continue;
 		const candidate = join(dir, process.platform === "win32" ? "node.exe" : "node");
 		try {
-			if (dir && existsSync(candidate) && realpathSync(candidate) === realpathSync(exec)) return candidate;
+			if (existsSync(candidate) && realpathSync(candidate) === realpathSync(exec)) return candidate;
 		} catch {
 			/* unreadable entry */
 		}

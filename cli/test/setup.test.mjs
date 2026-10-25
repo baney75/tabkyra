@@ -25,11 +25,14 @@ const helium = () =>
 		: join(home, ".config", "net.imput.helium");
 const launcher = () => join(home, ".config", "tabkyra", "tabkyra");
 
-/** A fake `claude` or `codex`. `mcp get` answers with `configured` (a command) or exit 1. */
-function fakeHarness(name, configured) {
+/**
+ * A fake `claude` or `codex`. `mcp get` answers with an entry running `configured` (with
+ * `args`, at `scope`) or exits 1 when there is none. Every call is logged.
+ */
+function fakeHarness(name, configured, { args = "mcp", scope = "User config (available in all your projects)" } = {}) {
 	const file = join(bin, name);
 	const get = configured
-		? `if [ "$2" = "get" ]; then printf '  Command: %s\\n  command: %s\\n' "${configured}" "${configured}"; exit 0; fi`
+		? `if [ "$2" = "get" ]; then printf '  Scope: %s\\n  Command: %s\\n  Args: %s\\n  command: %s\\n  args: %s\\n' "${scope}" "${configured}" "${args}" "${configured}" "${args}"; exit 0; fi`
 		: `if [ "$2" = "get" ]; then exit 1; fi`;
 	writeFileSync(file, `#!/bin/sh\necho "${name} $*" >> "${harnessLog}"\n${get}\nexit 0\n`);
 	chmodSync(file, 0o755);
@@ -95,7 +98,7 @@ test("doctor flags a build from another version of the checkout", () => {
 	try {
 		const build = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "build");
 		assert.equal(build.status, "fail");
-		assert.match(build.label, /older than this checkout/);
+		assert.match(build.label, /does not match this checkout/);
 		assert.equal(build.fix, "tabkyra setup");
 	} finally {
 		fakeBuild(sourceVersion);
@@ -125,19 +128,42 @@ test("setup --yes registers the host, wires harnesses to the launcher, then show
 	assert.equal(doctor.checks.find((c) => c.id === "host:Helium").status, "ok");
 });
 
-test("a harness entry that runs some other command is stale, and setup replaces it", () => {
+test("an entry pointing at a missing command is stale, and setup replaces it", () => {
 	writeFileSync(harnessLog, "");
-	fakeHarness("claude", "/somewhere/else/tabkyra");
+	fakeHarness("claude", "/somewhere/gone/tabkyra");
 	fakeHarness("codex", launcher());
-	const check = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
-	assert.equal(check.status, "fail");
-	assert.match(check.label, /runs a different command/);
-	assert.match(check.fix, /^claude mcp remove --scope user tabkyra && claude mcp add/);
+	const checks = JSON.parse(run(["doctor", "--json"]).out).checks;
+	const claude = checks.find((c) => c.id === "mcp:claude");
+	assert.equal(claude.status, "fail");
+	assert.match(claude.label, /missing command/);
+	assert.match(claude.fix, /^claude mcp remove --scope user tabkyra && claude mcp add/);
+	assert.equal(checks.find((c) => c.id === "mcp:codex").status, "ok", "the launcher with args mcp is this CLI");
 
 	run(["setup", "--yes", "--no-wait"]);
 	const calls = readFileSync(harnessLog, "utf8");
 	assert.ok(calls.includes("claude mcp remove --scope user tabkyra"), calls);
 	assert.ok(!calls.includes("codex mcp add"), "a current entry is left alone");
+});
+
+test("an entry running some other command is flagged but never replaced under --yes", () => {
+	writeFileSync(harnessLog, "");
+	fakeHarness("claude", "/bin/sh");
+	fakeHarness("codex", launcher(), { args: "mcp --debug" });
+	const checks = JSON.parse(run(["doctor", "--json"]).out).checks;
+	assert.equal(checks.find((c) => c.id === "mcp:claude").status, "warn");
+	assert.equal(checks.find((c) => c.id === "mcp:codex").status, "fail", "the launcher with other args is not this setup");
+
+	const { out } = run(["setup", "--yes", "--no-wait"]);
+	assert.match(out, /left alone/);
+	const calls = readFileSync(harnessLog, "utf8");
+	assert.ok(!calls.includes("claude mcp remove") && !calls.includes("claude mcp add"), calls);
+});
+
+test("a Claude Code entry outside user scope does not count", () => {
+	fakeHarness("claude", launcher(), { scope: "Local config (private to you in this project)" });
+	const check = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+	assert.equal(check.status, "fail");
+	assert.match(check.label, /not configured/);
 });
 
 test("setup without --yes and without a terminal never edits a harness config", () => {
@@ -149,7 +175,8 @@ test("setup without --yes and without a terminal never edits a harness config", 
 	assert.ok(!calls.includes("mcp add"), calls);
 });
 
-test("setup rejects unknown flags and bad timeouts", () => {
+test("setup and doctor reject unknown flags and bad timeouts", () => {
+	assert.equal(run(["doctor", "--jsno"]).code, 2);
 	assert.equal(run(["setup", "--yse"]).code, 2);
 	assert.equal(run(["setup", "--timeout=abc"]).code, 2);
 	assert.equal(run(["setup", "--timeout", "0"]).code, 2);

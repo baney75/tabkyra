@@ -89,9 +89,16 @@ async function main(): Promise<void> {
 			process.exitCode = await runSetup(parsed);
 			return;
 		}
-		case "doctor":
+		case "doctor": {
+			const unknown = process.argv.slice(3).find((a) => a !== "--json");
+			if (unknown) {
+				console.error(`Unknown option "${unknown}".\nUsage: tabkyra doctor [--json]`);
+				process.exitCode = 2;
+				return;
+			}
 			process.exitCode = await runDoctor({ json: process.argv.includes("--json") });
 			return;
+		}
 		case "host":
 			runNativeHost();
 			return;

@@ -7,8 +7,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 import { BridgeClient, listSockets } from "./client.ts";
-import { harnesses, shellJoin } from "./harness.ts";
-import { browserDirs, EXTENSION_ID, launcherPath } from "./install.ts";
+import { harnesses, launcherValid, shellJoin } from "./harness.ts";
+import { browserDirs, cliLauncherPath, EXTENSION_ID, launcherPath } from "./install.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { banner, c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
@@ -57,7 +57,7 @@ export function sourceVersion(): string | undefined {
 	}
 }
 
-/** "missing", "stale" (built from another version of this checkout) or "ok". */
+/** "missing", "stale" (built from a different version of this checkout) or "ok". */
 export function buildState(): "missing" | "stale" | "ok" {
 	const built = builtVersion();
 	if (!built) return "missing";
@@ -75,16 +75,38 @@ function buildCheck(): Check {
 		return {
 			id: "build",
 			status: "fail",
-			label: `Extension build ${builtVersion()} is older than this checkout (${sourceVersion()})`,
-			detail: "The checkout changed since dist-chrome was built.",
+			label: `Extension build ${builtVersion()} does not match this checkout (${sourceVersion()})`,
+			detail: "dist-chrome was built from a different version of the source.",
 			fix: "tabkyra setup",
 		};
 	}
 	return { id: "build", status: "ok", label: `Extension build ${builtVersion()}`, detail: dir };
 }
 
+function launcherCheck(): Check {
+	return launcherValid()
+		? { id: "launcher", status: "ok", label: "Agent launcher in place", detail: cliLauncherPath() }
+		: {
+				id: "launcher",
+				status: "fail",
+				label: "Agent launcher missing or broken",
+				detail: `${cliLauncherPath()} is what harness configs run.`,
+				fix: "tabkyra install --force",
+			};
+}
+
 function hostChecks(): Check[] {
-	if (process.platform === "win32") return [];
+	if (process.platform === "win32") {
+		return [
+			{
+				id: "host",
+				status: "warn",
+				label: "Native host registration is not checked on Windows",
+				detail: "tabkyra install writes HKCU\\Software\\<browser>\\NativeMessagingHosts keys; run it again if the extension can't connect.",
+				fix: "tabkyra install --force",
+			},
+		];
+	}
 	const origin = `chrome-extension://${EXTENSION_ID}/`;
 	const launcher = launcherPath();
 	const found = browserDirs().filter(({ dir }) => existsSync(dir));
@@ -199,26 +221,42 @@ function harnessChecks(): Check[] {
 	return harnesses()
 		.filter((h) => h.detected)
 		.map((h): Check => {
-			if (h.configured === true) return { id: `mcp:${h.id}`, status: "ok", label: `${h.name}: Tabkyra MCP server configured` };
-			const stale = h.configured === "stale";
+			const id = `mcp:${h.id}`;
+			if (h.configured === true) return { id, status: "ok", label: `${h.name}: Tabkyra MCP server configured` };
+			const replace = h.configured === "stale" || h.configured === "other";
 			let fix: string;
-			if (h.addCommand) fix = stale && h.removeCommand ? `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}` : shellJoin(h.addCommand);
-			else if (h.snippet?.startsWith("{")) fix = `${stale ? "Replace the tabkyra entry in" : "Add this to"} ${h.configFile}:\n${h.snippet}`;
+			if (h.addCommand) fix = replace && h.removeCommand ? `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}` : shellJoin(h.addCommand);
+			else if (h.snippet?.startsWith("{")) fix = `${replace ? "Replace the tabkyra entry in" : "Add this to"} ${h.configFile}:\n${h.snippet}`;
 			else fix = h.snippet ?? "";
-			const state = stale ? "runs a different command" : h.configured === undefined ? "unknown (config unreadable)" : "not configured";
+			if (h.configured === undefined) {
+				return {
+					id,
+					status: "warn",
+					label: `${h.name}: couldn't tell whether Tabkyra is configured`,
+					detail: h.configFile ? `${h.configFile} could not be parsed.` : `\`${h.id} mcp get tabkyra\` failed or printed something unexpected.`,
+					fix: h.configFile ? `Check ${h.configFile}` : `${h.id} mcp get tabkyra`,
+				};
+			}
+			if (h.configured === "stale") {
+				return { id, status: "fail", label: `${h.name}: the tabkyra entry points at a missing command`, detail: h.currentCommand, fix };
+			}
+			if (h.configured === "other") {
+				// Could be the user's own wrapper; flag it, don't fail on it.
+				return { id, status: "warn", label: `${h.name}: the tabkyra entry runs a different command`, detail: h.currentCommand, fix };
+			}
 			return {
-				id: `mcp:${h.id}`,
+				id,
 				// A harness the user doesn't browse from shouldn't fail the run; Claude Code and
-				// Codex are fixed with one command, and a stale entry is always broken, so those count.
-				status: stale || h.id === "claude" || h.id === "codex" ? "fail" : "warn",
-				label: `${h.name}: Tabkyra MCP server ${state}`,
+				// Codex are fixed with one command, so those count.
+				status: h.id === "claude" || h.id === "codex" ? "fail" : "warn",
+				label: `${h.name}: Tabkyra MCP server not configured`,
 				fix,
 			};
 		});
 }
 
 export async function runDoctor(options: { json: boolean }): Promise<number> {
-	const checks: Check[] = [nodeCheck(), buildCheck(), ...hostChecks(), ...(await connectionChecks()), ...harnessChecks()];
+	const checks: Check[] = [nodeCheck(), buildCheck(), launcherCheck(), ...hostChecks(), ...(await connectionChecks()), ...harnessChecks()];
 	const failed = checks.filter((check) => check.status === "fail").length;
 	if (options.json) {
 		process.stdout.write(`${JSON.stringify({ ok: failed === 0, version: VERSION, checks }, null, 2)}\n`);

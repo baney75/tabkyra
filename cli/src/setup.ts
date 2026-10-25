@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BridgeClient, listSockets } from "./client.ts";
 import { buildState, builtVersion, sourceVersion } from "./doctor.ts";
-import { harnesses, runAdd, shellJoin, tabkyraBinary, which } from "./harness.ts";
+import { harnesses, runCommand, shellJoin, tabkyraBinary, which } from "./harness.ts";
 import { browserDirs, install } from "./install.ts";
 import { extensionDir, repoRoot } from "./paths.ts";
 import { banner, box, c, confirm, sym } from "./ui.ts";
@@ -47,7 +47,7 @@ async function ensureBuild(options: SetupOptions): Promise<boolean> {
 	console.log(
 		state === "missing"
 			? `  ${sym.warn} No extension build at ${extensionDir()}`
-			: `  ${sym.warn} The extension build (${builtVersion()}) is older than this checkout (${sourceVersion()})`,
+			: `  ${sym.warn} The extension build (${builtVersion()}) does not match this checkout (${sourceVersion()})`,
 	);
 	if (!(await confirm(`  ${state === "missing" ? "Build" : "Rebuild"} it now? This takes about a minute.`, { assumeYes: options.yes }))) {
 		console.log(`  Build it yourself with: ${c.bold(`cd ${shellJoin([root])} && ./scripts/setup-siblings.sh && npm run build`)}`);
@@ -109,26 +109,51 @@ function copyToClipboard(text: string): boolean {
 	return false;
 }
 
-/** True when some live bridge socket reports the extension connected. */
-async function extensionConnected(): Promise<boolean> {
-	let sockets: string[] = [];
+interface Probe {
+	connected: boolean;
+	/** The version the browser is running, when connected. */
+	version?: string;
+	/** Why no socket could be used (an insecure socket directory, a wedged host). */
+	error?: string;
+	socket?: string;
+}
+
+/** Look for a live bridge with the extension behind it, and ask it which version it runs. */
+async function probe(): Promise<Probe> {
+	let sockets: string[];
 	try {
 		sockets = listSockets();
-	} catch {
-		return false;
+	} catch (err) {
+		return { connected: false, error: err instanceof Error ? err.message : String(err) };
 	}
+	let error: string | undefined;
 	for (const path of sockets) {
 		const client = new BridgeClient({ name: "setup" });
 		try {
 			await client.connect(path);
-			if (client.extensionConnected) return true;
-		} catch {
-			/* not this one */
+			if (!client.extensionConnected) continue;
+			const info = (await client.call("bridge.debug", {}, 5000).catch(() => ({}))) as { version?: string };
+			return { connected: true, version: info.version, socket: path };
+		} catch (err) {
+			error = err instanceof Error ? err.message : String(err);
 		} finally {
 			client.close();
 		}
 	}
-	return false;
+	return { connected: false, error };
+}
+
+/** Ask the running extension to reload itself (it comes back on the new build). */
+async function reloadExtension(socket: string): Promise<void> {
+	const client = new BridgeClient({ name: "setup" });
+	try {
+		await client.connect(socket);
+		await client.call("bridge.reload", {}, 5000);
+	} catch {
+		/* the reload drops the connection; that is expected */
+	} finally {
+		client.close();
+	}
 }
 
 /** Offer each detected harness the MCP server. Returns false if an attempted add failed. */
@@ -145,21 +170,36 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 			console.log(`  ${sym.ok} ${h.name.padEnd(12)} ${c.dim("already has Tabkyra")}`);
 			continue;
 		}
-		const stale = h.configured === "stale";
+		if (h.configured === undefined) {
+			console.log(`  ${sym.warn} ${h.name}: couldn't tell whether Tabkyra is configured. ${c.dim("Run tabkyra doctor for details.")}`);
+			continue;
+		}
+		const replacing = h.configured === "stale" || h.configured === "other";
 		if (h.addCommand) {
-			const commands = stale && h.removeCommand ? [h.removeCommand, h.addCommand] : [h.addCommand];
+			const commands = replacing && h.removeCommand ? [h.removeCommand, h.addCommand] : [h.addCommand];
 			const shown = commands.map(shellJoin).join(" && ");
 			// Windows harness CLIs are .cmd shims that need a shell; print the command there instead.
 			if (process.platform === "win32") {
 				console.log(`  ${sym.dot} ${c.bold(h.name)}: run ${shown}`);
 				continue;
 			}
-			const question = stale ? `Point ${c.bold(h.name)}'s tabkyra entry at this install?` : `Add Tabkyra to ${c.bold(h.name)}?`;
-			if (await confirm(`  ${sym.dot} ${question} ${c.dim(`(${shown})`)}`, { assumeYes: options.yes })) {
-				if (commands.every(runAdd)) console.log(`  ${sym.ok} ${h.name} is set up.`);
+			let question = `Add Tabkyra to ${c.bold(h.name)}?`;
+			if (h.configured === "stale") question = `${c.bold(h.name)}'s tabkyra entry points at a missing command. Replace it?`;
+			if (h.configured === "other") question = `${c.bold(h.name)}'s tabkyra entry runs ${h.currentCommand}. Replace it with this install?`;
+			// An entry running some other existing command may be the user's own wrapper:
+			// --yes doesn't replace it, and the interactive default is no.
+			const assumeYes = options.yes && h.configured !== "other";
+			if (options.yes && h.configured === "other") {
+				console.log(`  ${sym.warn} ${question} ${c.dim("left alone (--yes never replaces a working entry)")}`);
+				console.log(`    ${c.dim("To replace it:")} ${shown}`);
+				continue;
+			}
+			if (await confirm(`  ${sym.dot} ${question} ${c.dim(`(${shown})`)}`, { assumeYes, defaultYes: h.configured !== "other" })) {
+				const failedAt = commands.findIndex((command) => !runCommand(command));
+				if (failedAt === -1) console.log(`  ${sym.ok} ${h.name} is set up.`);
 				else {
 					ok = false;
-					console.log(`  ${sym.fail} That failed. Run it yourself: ${c.bold(shown)}`);
+					console.log(`  ${sym.fail} That failed. Run it yourself: ${c.bold(commands.slice(failedAt).map(shellJoin).join(" && "))}`);
 				}
 			} else {
 				console.log(`    ${c.dim("Later:")} ${shown}`);
@@ -167,7 +207,7 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 			continue;
 		}
 		if (h.snippet?.startsWith("{")) {
-			console.log(`  ${sym.dot} ${c.bold(h.name)}: ${stale ? "replace the tabkyra entry in" : "add this to"} ${c.cyan(h.configFile ?? "its MCP config")}`);
+			console.log(`  ${sym.dot} ${c.bold(h.name)}: ${replacing ? "replace the tabkyra entry in" : "add this to"} ${c.cyan(h.configFile ?? "its MCP config")}`);
 			for (const line of h.snippet.split("\n")) console.log(`    ${line}`);
 		} else if (h.snippet) {
 			console.log(`  ${sym.dot} ${c.bold(h.name)}: run ${c.bold(h.snippet)}`);
@@ -176,28 +216,46 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 	return ok;
 }
 
+/** Connected and running the build on disk. A stale running copy is reloaded once. */
+async function connectedOnCurrentBuild(state: { reloaded: boolean }): Promise<Probe & { ready: boolean }> {
+	const p = await probe();
+	if (!p.connected) return { ...p, ready: false };
+	const built = builtVersion();
+	if (!built || !p.version || p.version === built) return { ...p, ready: true };
+	if (!state.reloaded && p.socket) {
+		state.reloaded = true;
+		console.log(`  ${sym.warn} The browser runs Tabkyra ${p.version}, the build is ${built}. Reloading the extension...`);
+		await reloadExtension(p.socket);
+	}
+	return { ...p, ready: false };
+}
+
 async function loadExtension(options: SetupOptions): Promise<boolean> {
-	if (await extensionConnected()) {
-		console.log(`  ${sym.ok} The extension is loaded and connected.`);
+	const reload = { reloaded: false };
+	const first = await connectedOnCurrentBuild(reload);
+	if (first.ready) {
+		console.log(`  ${sym.ok} The extension is loaded and connected ${c.dim(`(${first.version ?? "unknown version"})`)}.`);
 		return true;
 	}
 	const dir = extensionDir();
-	console.log(
-		box(
-			[
-				`${c.brass("1")}  Open ${c.bold("chrome://extensions")}, turn on ${c.bold("Developer mode")},`,
-				`   and click ${c.bold("Load unpacked")}.`,
-				`${c.brass("2")}  Pick this folder:`,
-				`   ${c.cyan(dir)}`,
-				`${c.brass("3")}  Click ${c.bold("Details")} on Tabkyra and turn on ${c.bold("Allow user scripts")}.`,
-			],
-			"One step in your browser",
-		),
-	);
-	console.log(c.dim("  Browsers require this step by hand. In Helium, Brave or Edge the page is the same."));
-	// Offered only at a terminal: --yes and scripted runs never overwrite the clipboard.
-	if (process.stdin.isTTY && !options.yes && (await confirm("  Copy the folder path to the clipboard?", { assumeYes: false }))) {
-		console.log(copyToClipboard(dir) ? `  ${sym.ok} Copied.` : `  ${sym.warn} No clipboard tool found; copy the path above.`);
+	if (!first.connected) {
+		console.log(
+			box(
+				[
+					`${c.brass("1")}  Open ${c.bold("chrome://extensions")}, turn on ${c.bold("Developer mode")},`,
+					`   and click ${c.bold("Load unpacked")}.`,
+					`${c.brass("2")}  Pick this folder:`,
+					`   ${c.cyan(dir)}`,
+					`${c.brass("3")}  Click ${c.bold("Details")} on Tabkyra and turn on ${c.bold("Allow user scripts")}.`,
+				],
+				"One step in your browser",
+			),
+		);
+		console.log(c.dim("  Browsers require this step by hand. In Helium, Brave or Edge the page is the same."));
+		// Offered only at a terminal: --yes and scripted runs never overwrite the clipboard.
+		if (process.stdin.isTTY && !options.yes && (await confirm("  Copy the folder path to the clipboard?", { assumeYes: false }))) {
+			console.log(copyToClipboard(dir) ? `  ${sym.ok} Copied.` : `  ${sym.warn} No clipboard tool found; copy the path above.`);
+		}
 	}
 	if (!options.wait) {
 		console.log(`  ${c.dim("Not waiting (--no-wait). Check later with")} ${c.bold("tabkyra status")}`);
@@ -208,11 +266,20 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 	const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 	const live = Boolean(process.stdout.isTTY);
 	let frame = 0;
-	if (!live) console.log(`  Waiting up to ${options.timeoutS} s for the extension to connect...`);
+	let last: Probe = first;
+	if (!live) {
+		console.log(
+			options.timeoutS > 0
+				? `  Waiting up to ${options.timeoutS} s for the extension to connect...`
+				: "  Waiting for the extension to connect (Ctrl+C to stop)...",
+		);
+	}
 	while (Date.now() < deadline) {
-		if (await extensionConnected()) {
+		const p = await connectedOnCurrentBuild(reload);
+		last = p;
+		if (p.ready) {
 			if (live) process.stdout.write("\r\x1b[2K");
-			console.log(`  ${sym.ok} ${c.bold("Connected.")} Tabkyra can reach your browser.`);
+			console.log(`  ${sym.ok} ${c.bold("Connected.")} Tabkyra can reach your browser ${c.dim(`(${p.version ?? "unknown version"})`)}.`);
 			return true;
 		}
 		if (live) process.stdout.write(`\r  ${c.brass(frames[frame++ % frames.length])} Waiting for the extension to connect ${c.dim("(Ctrl+C to stop)")}`);
@@ -220,6 +287,8 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 	}
 	if (live) process.stdout.write("\r\x1b[2K");
 	console.log(`  ${sym.fail} The extension did not connect within ${options.timeoutS} s.`);
+	if (last.connected) console.log(`  It is connected but still runs an old build. Reload it on chrome://extensions.`);
+	else if (last.error) console.log(`  Last error: ${last.error}`);
 	console.log(`  If it is loaded, reload it once on chrome://extensions, then run ${c.bold("tabkyra doctor")}.`);
 	return false;
 }
