@@ -618,7 +618,7 @@ export async function runMcpServer(): Promise<void> {
 			description:
 				"Save a scholarly source to the user's Tabkyra library by DOI, doi.org link or arXiv id. Tabkyra fetches the record from the DOI registry, " +
 				"checks OpenAlex and Crossref for retractions, and returns the citekey and verification. A DOI that doesn't resolve is refused: " +
-				"never cite it. A retracted source is saved but flagged retracted; don't cite it as support. The result has citekey, retracted, complete and notices. If complete is false, the retraction check didn't finish: say so, and verify again before citing. Add the sentence you rely on as quote, " +
+				"never cite it. A retracted source is saved but flagged retracted; don't cite it as support. The result has citekey, retracted, complete and notices. If complete is false, the retraction check didn't finish: say so, and call library_add again with the same id to re-check before citing. Add the sentence you rely on as quote, " +
 				'with its page or section as location. Example: {"id":"10.1037/0033-2909.132.3.354","quote":"...","location":"p. 354"}',
 			inputSchema: {
 				id: z.string().describe("DOI, https://doi.org/... link, or arXiv id such as arXiv:1706.03762"),

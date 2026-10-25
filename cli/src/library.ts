@@ -57,6 +57,8 @@ export interface LibraryItem {
 		tags: string[];
 		note?: string;
 		quote?: { text: string; location?: string };
+		/** The primary DOI the registry named, when the saved DOI is an alias. Checked on every verify. */
+		primaryDoi?: string;
 	};
 }
 
@@ -112,12 +114,23 @@ function withLock<T>(fn: () => T): T {
 				/* the owner hasn't written its pid yet, or the lock just went away */
 			}
 			const st = lstatSync(lock, { throwIfNoEntry: false });
-			const abandoned = Number.isNaN(owner) ? Boolean(st && Date.now() - st.mtimeMs > 30_000) : !pidAlive(owner);
+			// The lock is held for one synchronous read-modify-write, milliseconds; past a minute
+			// it is abandoned even if its pid now belongs to another process.
+			const old = Boolean(st && Date.now() - st.mtimeMs > 60_000);
+			const abandoned = old || (Number.isNaN(owner) ? Boolean(st && Date.now() - st.mtimeMs > 5_000) : !pidAlive(owner));
 			if (abandoned) {
 				const stolen = `${lock}.stale-${process.pid}-${Date.now()}`;
 				try {
 					renameSync(lock, stolen);
-					rmSync(stolen, { recursive: true, force: true });
+					let took = Number.NaN;
+					try {
+						took = Number(readFileSync(join(stolen, "pid"), "utf8"));
+					} catch {
+						/* no pid */
+					}
+					// Took a different, live lock than the one judged abandoned: put it back.
+					if (!old && !Number.isNaN(took) && took !== owner && pidAlive(took)) renameSync(stolen, lock);
+					else rmSync(stolen, { recursive: true, force: true });
 				} catch {
 					/* another waiter took it first */
 				}
@@ -248,7 +261,8 @@ async function verify(doi: string, previous?: Verification): Promise<Verificatio
 		else if (res.ok) {
 			const w = (await res.json()) as { is_retracted?: boolean; open_access?: { oa_url?: string }; cited_by_count?: number };
 			v.sources.push("openalex");
-			checks.openalex = "ok";
+			// An answer without the field is not an answer.
+			if (typeof w.is_retracted === "boolean") checks.openalex = "ok";
 			if (w.is_retracted) v.retracted = true;
 			try {
 				const oa = new URL(clean(w.open_access?.oa_url, 2000));
@@ -269,21 +283,23 @@ async function verify(doi: string, previous?: Verification): Promise<Verificatio
 			};
 			v.sources.push("crossref-updates");
 			// Every notice must be in hand; more than one page leaves the check incomplete.
-			const total = body.message?.["total-results"] ?? 0;
-			if (total <= (body.message?.items?.length ?? 0)) checks.crossref = "ok";
+			const total = body.message?.["total-results"];
+			const listed = body.message?.items;
+			if (typeof total === "number" && Array.isArray(listed) && total <= listed.length) checks.crossref = "ok";
 			for (const item of body.message?.items ?? []) {
 				for (const u of item["update-to"] ?? []) {
 					if (u.DOI?.toLowerCase() !== doi.toLowerCase()) continue;
 					const type = clean(u.type, 50).toLowerCase();
 					v.notices.push({ type, doi: clean(item.DOI, 200) });
-					if (type === "retraction" || type === "withdrawal" || type === "removal") v.retracted = true;
+					if (/^(retraction|partial[_ ]retraction|withdrawal|removal)$/.test(type)) v.retracted = true;
 				}
 			}
 		}
 	} catch {
 		/* left as failed */
 	}
-	v.complete = checks.openalex !== "failed" && checks.crossref === "ok";
+	// OpenAlex not knowing the work leaves the question open, so it isn't complete.
+	v.complete = checks.openalex === "ok" && checks.crossref === "ok";
 	return previous ? keepRetraction(v, previous) : v;
 }
 
@@ -345,8 +361,9 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 	let verified = await verify(doi, known?.tabkyra.verified);
 	const record = csl;
 	// An alias DOI answers with its primary DOI; notices attach to the primary, so check both.
-	const primary = toDoi(clean(record?.DOI, 300));
-	if (primary && primary.toLowerCase() !== doi.toLowerCase()) verified = mergeVerification(verified, await verify(primary, known?.tabkyra.verified));
+	const named = toDoi(clean(record?.DOI, 300));
+	const primary = known?.tabkyra.primaryDoi ?? (named && named.toLowerCase() !== doi.toLowerCase() ? named : undefined);
+	if (primary) verified = mergeVerification(verified, await verify(primary, known?.tabkyra.verified));
 	return updateLibrary((library) => {
 		const existing = library.items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
 		if (existing) {
@@ -375,7 +392,7 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 		const item: LibraryItem = {
 			id: citekey(draft, new Set(library.items.map((i) => i.id))),
 			...draft,
-			tabkyra: { addedAt: new Date().toISOString(), verified, tags: [] },
+			tabkyra: { addedAt: new Date().toISOString(), verified, tags: [], ...(primary ? { primaryDoi: primary } : {}) },
 		};
 		mergeAnnotations(item, options);
 		library.items.push(item);
@@ -400,6 +417,13 @@ function mergeVerification(a: Verification, b: Verification): Verification {
 		notices: [...a.notices, ...b.notices],
 		sources: [...new Set([...a.sources, ...b.sources])],
 		complete: Boolean(a.complete && b.complete),
+		checks:
+			a.checks && b.checks
+				? {
+						openalex: a.checks.openalex === "ok" && b.checks.openalex === "ok" ? "ok" : a.checks.openalex === "failed" || b.checks.openalex === "failed" ? "failed" : "not-found",
+						crossref: a.checks.crossref === "ok" && b.checks.crossref === "ok" ? "ok" : "failed",
+					}
+				: a.checks,
 		oaUrl: a.oaUrl ?? b.oaUrl,
 	};
 }
@@ -418,7 +442,12 @@ export async function reverify(keys: string[]): Promise<{ items: LibraryItem[]; 
 	const targets = keys.length ? before.items.filter((i) => keys.includes(i.id)) : before.items;
 	const missing = keys.filter((k) => !before.items.some((i) => i.id === k));
 	const results = new Map<string, Verification>();
-	for (const item of targets) if (item.DOI) results.set(item.id, await verify(item.DOI, item.tabkyra.verified));
+	for (const item of targets) {
+		if (!item.DOI) continue;
+		let v = await verify(item.DOI, item.tabkyra.verified);
+		if (item.tabkyra.primaryDoi) v = mergeVerification(v, await verify(item.tabkyra.primaryDoi, item.tabkyra.verified));
+		results.set(item.id, v);
+	}
 	// Apply to a fresh, locked copy, so anything added meanwhile is kept.
 	const items = updateLibrary((library) => {
 		for (const item of library.items) {
@@ -471,6 +500,7 @@ export async function cite(key: string, style = "apa"): Promise<string> {
 /** The mark every output carries for a source that is retracted or not fully checked. */
 function warning(item: LibraryItem): string | undefined {
 	if (item.tabkyra.verified.retracted) return "RETRACTED";
+	if (item.tabkyra.verified.notices.some((n) => /concern/.test(n.type))) return "EXPRESSION OF CONCERN";
 	if (item.tabkyra.verified.complete === false) return "RETRACTION CHECK INCOMPLETE";
 	return undefined;
 }
@@ -534,7 +564,7 @@ export function toBibtex(items: LibraryItem[]): string {
 			];
 			const body = fields
 				.filter(([, v]) => v)
-				.map(([k, v]) => `  ${k} = {${k === "doi" || k === "url" ? (v as string).replace(/[{}\\]/g, "") : k === "author" ? v : bibEscape(v as string)}}`)
+				.map(([k, v]) => `  ${k} = {${k === "url" ? (v as string).replace(/[{}\\]/g, "") : k === "author" ? v : bibEscape(v as string)}}`)
 				.join(",\n");
 			return `@${BIBTEX_TYPE[i.type] ?? "misc"}{${i.id},\n${body}\n}`;
 		})
@@ -600,10 +630,15 @@ function yamlText(value: unknown): string {
 
 /** Text safe inside a Markdown line: no wikilink, embed or HTML syntax from fetched metadata. */
 function md(s: string): string {
-	return s.replace(/[\\[\]<>`|*_!%$=~^#&]/g, (c) => `\\${c}`);
+	// Defang URL schemes first (Obsidian autolinks bare URLs), then escape inline markup.
+	return s.replace(/\b([a-z][a-z0-9+.-]*):\/\//gi, "$1[:]//").replace(/[\\[\]<>`|*_!%$=~^#&]/g, (c) => `\\${c}`);
 }
 
 const GENERATED = "tabkyra-generated";
+
+function noteStatus(i: LibraryItem): string {
+	return warning(i)?.toLowerCase() ?? "verified";
+}
 
 function sha(text: string): string {
 	return createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -646,12 +681,13 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 			const m = new RegExp(`^${GENERATED}: ([0-9a-f]{16})$`, "m").exec(old);
 			if (!m || m[1] !== sha(old.replace(m[0], `${GENERATED}: `))) {
 				kept.push(file);
-				if (warning(i)) stale.push(`${warning(i)}: ${file}`);
+				const shown = /^status: "(.*)"$/m.exec(old)?.[1];
+				if (warning(i) && shown !== noteStatus(i)) stale.push(`${warning(i)}: ${file}`);
 				continue;
 			}
 		}
 		const v = i.tabkyra.verified;
-		const status = v.retracted ? "retracted" : v.complete === false ? "retraction check incomplete" : "verified";
+		const status = noteStatus(i);
 		const front = [
 			"---",
 			`title: ${yamlText(i.title)}`,
@@ -701,8 +737,8 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 
 function line(i: LibraryItem): string {
 	const who = i.author?.[0]?.family ?? i.author?.[0]?.literal ?? "?";
-	const flag = i.tabkyra.verified.retracted ? " [RETRACTED]" : "";
-	return `${i.id.padEnd(28)} ${who} ${year(i)}. ${i.title.slice(0, 90)}${flag}`;
+	const w = warning(i);
+	return `${i.id.padEnd(28)} ${who} ${year(i)}. ${i.title.slice(0, 90)}${w ? ` [${w}]` : ""}`;
 }
 
 export const LIBRARY_USAGE =
@@ -710,20 +746,31 @@ export const LIBRARY_USAGE =
 	"verify [key...] | cite <key> [--style apa|mla|chicago|ieee|harvard|vancouver] | export --format bibtex|ris|csl [--out FILE] | " +
 	"obsidian <vault> [--folder Sources] | remove <key>";
 
-/** Splits `--name value` options from positionals. Repeated `--tag` collects. */
-function parse(args: string[]): { positional: string[]; opts: Record<string, string>; tags: string[] } {
+/**
+ * Splits options from positionals: `--name value` or `--name=value`, and repeated `--tag`
+ * collects. Only option names are checked against `allowed`; a value may start with "--".
+ */
+function parse(args: string[], allowed: string[]): { positional: string[]; opts: Record<string, string>; tags: string[] } {
 	const positional: string[] = [];
 	const opts: Record<string, string> = {};
 	const tags: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
-		if (a === "--json") opts.json = "1";
-		else if (a.startsWith("--")) {
-			const value = args[++i];
-			if (value === undefined) throw new Error(`${a} needs a value. ${LIBRARY_USAGE}`);
-			if (a === "--tag") tags.push(value);
-			else opts[a.slice(2)] = value;
-		} else positional.push(a);
+		if (!a.startsWith("--")) {
+			positional.push(a);
+			continue;
+		}
+		const eq = a.indexOf("=");
+		const name = eq > 0 ? a.slice(0, eq) : a;
+		if (!allowed.includes(name)) throw new Error(`This command doesn't take ${name}. ${LIBRARY_USAGE}`);
+		if (name === "--json") {
+			opts.json = "1";
+			continue;
+		}
+		const value = eq > 0 ? a.slice(eq + 1) : args[++i];
+		if (value === undefined) throw new Error(`${name} needs a value. ${LIBRARY_USAGE}`);
+		if (name === "--tag") tags.push(value);
+		else opts[name.slice(2)] = value;
 	}
 	return { positional, opts, tags };
 }
@@ -761,9 +808,8 @@ export function summary(item: LibraryItem): Record<string, unknown> {
 export async function runLibrary(args: string[]): Promise<number> {
 	const [sub, ...rest] = args;
 	const allowed = sub ? LIBRARY_OPTIONS[sub] : undefined;
-	const unknown = rest.find((a) => a.startsWith("--") && !(allowed ?? []).includes(a.split("=")[0]));
-	if (allowed && unknown) throw new Error(`tabkyra library ${sub} doesn't take ${unknown}. ${LIBRARY_USAGE}`);
-	const { positional, opts, tags } = parse(rest);
+	if (!allowed) throw new Error(LIBRARY_USAGE);
+	const { positional, opts, tags } = parse(rest, allowed);
 	switch (sub) {
 		case "add": {
 			if (positional.length !== 1) throw new Error(LIBRARY_USAGE);

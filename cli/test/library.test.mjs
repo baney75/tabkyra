@@ -73,6 +73,8 @@ Object.assign(RECORDS, {
 	"10.1000/primary-retracted": { type: "journal-article", title: "Primary", author: [{ family: "Alias", given: "B." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary-retracted" },
 	"10.1000/marker": { type: "journal-article", title: "A title with tabkyra-generated: inside it", author: [{ family: "Marker", given: "M." }], issued: { "date-parts": [[2013]] }, DOI: "10.1000/marker" },
 	"10.1000/percent": { type: "journal-article", title: "Vaccine outcomes %% hidden", author: [{ literal: "World Health Organization" }], issued: { "date-parts": [[2012]] }, DOI: "10.1000/percent" },
+	"10.1000/partial": { type: "journal-article", title: "Partly retracted", author: [{ family: "Part", given: "P." }], issued: { "date-parts": [[2011]] }, DOI: "10.1000/partial" },
+	"10.1000/emptyshape": { type: "journal-article", title: "Empty answers", author: [{ family: "Empty", given: "E." }], issued: { "date-parts": [[2010]] }, DOI: "10.1000/emptyshape" },
 	"10.1000/alias": { type: "journal-article", title: "Alias target", author: [{ family: "Alias", given: "A." }], issued: { "date-parts": [[2017]] }, DOI: "10.9999/someone-else" },
 });
 
@@ -103,6 +105,7 @@ before(async () => {
 			if (mock.failChecks) return json(503, {});
 			const doi = decodeURIComponent(url.pathname.slice("/openalex/works/doi:".length));
 			if (!RECORDS[doi] || mock.openalexMissing.has(doi)) return json(404, {});
+			if (doi === "10.1000/emptyshape") return json(200, {});
 			return json(200, { is_retracted: doi === "10.1000/oaonly", cited_by_count: 42, open_access: { oa_url: "https://example.org/files/My%20Paper.pdf" } });
 		}
 		if (url.pathname === "/crossref/works") {
@@ -111,7 +114,8 @@ before(async () => {
 			const retracted = doi === "10.1000/retracted" || doi === "10.1000/primary-retracted" || mock.retractedNow.has(doi);
 			const items = retracted ? [{ DOI: "10.1000/notice", "update-to": [{ type: "retraction", DOI: doi }] }] : [];
 			if (doi === "10.1000/many-notices") return json(200, { message: { "total-results": 1500, items: [] } });
-			return json(200, { message: { items } });
+			if (doi === "10.1000/partial") return json(200, { message: { "total-results": 1, items: [{ DOI: "10.1000/n2", "update-to": [{ type: "partial_retraction", DOI: doi }] }] } });
+			return json(200, { message: { "total-results": items.length, items } });
 		}
 		json(404, {});
 	});
@@ -311,7 +315,8 @@ test("metadata keeps comparison signs, and every format escapes it correctly", a
 });
 
 test("the requested DOI is the identity, and an agency without metadata isn't called made up", async () => {
-	assert.equal((await lib("add", "10.1000/alias")).code, 0);
+	// The primary DOI isn't known to OpenAlex here, so the check is honestly incomplete (4).
+	assert.equal((await lib("add", "10.1000/alias")).code, 4);
 	assert.ok(items().some((i) => i.DOI === "10.1000/alias") && !items().some((i) => i.DOI === "10.9999/someone-else"));
 	const r = await lib("add", "10.1000/landing-only");
 	assert.equal(r.code, 1, r.out);
@@ -420,17 +425,22 @@ test("a kept note whose source is retracted is reported, and the export exits 3"
 	const vault = join(root, "vault-stale");
 	mkdirSync(vault);
 	await lib("obsidian", vault);
-	const key = items().find((i) => i.DOI === "10.1000/later").id;
+	// A source that was clean when its note was written, then retracted after the user edited it.
+	const key = items().find((i) => i.DOI === "10.1000/good").id;
 	const note = join(vault, "Sources", `${key}.md`);
+	assert.match(readFileSync(note, "utf8"), /^status: "verified"$/m);
 	writeFileSync(note, `${readFileSync(note, "utf8")}\nmine\n`);
-	mock.retractedNow.add("10.1000/later");
+	mock.retractedNow.add("10.1000/good");
 	try {
 		await lib("verify", key);
 		const r = await lib("obsidian", vault);
 		assert.equal(r.code, 3, r.out);
 		assert.match(r.out, /NOT UPDATED, RETRACTED/);
+		// Once the user's note says retracted, it isn't reported again.
+		writeFileSync(note, readFileSync(note, "utf8").replace('status: "verified"', 'status: "retracted"'));
+		assert.equal((await lib("obsidian", vault)).code, 0);
 	} finally {
-		mock.retractedNow.delete("10.1000/later");
+		mock.retractedNow.delete("10.1000/good");
 	}
 });
 
@@ -461,4 +471,34 @@ test("library_add returns a flat summary with the documented fields", async () =
 	} finally {
 		await mcp.close();
 	}
+});
+
+test("an alias whose primary is retracted stays retracted on every later check", async () => {
+	const key = items().find((i) => i.DOI === "10.1000/alias2").id;
+	assert.equal(items().find((i) => i.id === key).tabkyra.primaryDoi, "10.1000/primary-retracted");
+	assert.equal((await lib("verify", key)).code, 3);
+	assert.equal((await lib("add", "10.1000/alias2")).code, 3);
+});
+
+test("list shows the warning, --name=value works, and a value may start with --", async () => {
+	assert.match((await lib("list")).out, /\[RETRACTION CHECK INCOMPLETE\]/);
+	const r = await lib("add", "--note=a note", "10.1000/good", "--quote", "-- as the authors note, spacing helps");
+	assert.notEqual(r.code, 2, r.out);
+	const good = items().find((i) => i.DOI === "10.1000/good");
+	assert.equal(good.tabkyra.note, "a note");
+	assert.equal(good.tabkyra.quote.text, "-- as the authors note, spacing helps");
+});
+
+test("a bare URL in fetched text doesn't become a link in a note", async () => {
+	const vault = join(root, "vault-url");
+	mkdirSync(vault);
+	await lib("obsidian", vault);
+	const key = items().find((i) => i.DOI === "10.1000/escapes").id;
+	const body = readFileSync(join(vault, "Sources", `${key}.md`), "utf8").split("\n---\n")[1].split("\nDOI:")[0];
+	assert.doesNotMatch(body, /https:\/\/evil/);
+});
+
+test("a partial retraction counts, and an answer missing its fields isn't a check", async () => {
+	assert.equal((await lib("add", "10.1000/partial")).code, 3);
+	assert.equal((await lib("add", "10.1000/emptyshape")).code, 4);
 });
