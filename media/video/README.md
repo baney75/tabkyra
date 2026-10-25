@@ -18,19 +18,27 @@ Nothing on screen is mocked. `scripts/demo/capture-video.mjs` records a real run
 
 ## Re-record and re-render
 
+Needs Node 22.4 or newer for the capture (it uses Node's built-in WebSocket and stops at once
+on older versions), the Chromium from `cd cli && npx playwright-core install chromium`, and
+network access. The render needs nothing beyond `npm install`: Remotion writes the MP4 and the
+poster JPEG itself. A capture that fails partway leaves the previous `public/capture/` as it
+was.
+
 From the repo root:
 
 ```bash
 npm run build && (cd cli && npm run build)   # the extension and CLI being filmed
 node scripts/demo/capture-video.mjs          # needs network for gutenberg.org, doi.org, OpenAlex, Crossref
 cd media/video && npm install
-npm run render                               # out/demo.mp4 and out/demo-poster.jpg
+npm run render                               # out/demo.mp4 and out/demo-poster.jpg (no ffmpeg needed)
 npm run publish-media                        # copies both to media/
 ```
 
 `npm run dev` opens Remotion Studio for the `Demo` composition, each scene on its own, and
-the `Poster` still. Live data drifts (citation counts, the Gutenberg page), so a new capture
-can change a few words of output; check the captions still match before publishing.
+the `Poster` still. The side panel crops and rings are placed from element boxes the capture
+records (`browser.boxes` in `capture.json`), so they follow layout changes. Live data drifts
+(citation counts, the Gutenberg page), so a new capture can change a few words of output;
+check the captions still match before publishing.
 
 Fonts are Instrument Serif, Instrument Sans and JetBrains Mono under the OFL; their licenses
 are in `public/fonts/`.

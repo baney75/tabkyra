@@ -27,6 +27,8 @@ export const DATA = {
 	confirmation: b.catalog.confirmation.split("\n").at(-1) ?? "",
 	setupPrompt: b.setupPrompt,
 	copyButton: b.copyButton,
+	/** Side panel element boxes in CSS px, measured during the capture; crops and rings use them. */
+	boxes: b.boxes,
 	cli: capture.cli,
 };
 

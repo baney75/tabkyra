@@ -1,7 +1,8 @@
 import { DATA } from "../data";
 import { Caption, ChapterLabel, Code, Fill, Pane, type PaneLine, Watermark } from "../ui";
 
-const cmd = (r: { args: string[] }) => `tabkyra ${r.args.join(" ")}`;
+// `shown` is the command quoted the way it can be pasted into a shell.
+const cmd = (r: { shown: string }) => r.shown;
 
 /** Real CLI output, one pane line per output line, colored the way the CLI means it. */
 const output = (out: string, at: number, step = 5): PaneLine[] =>

@@ -23,7 +23,7 @@
   "scripts": {
     "dev": "remotion studio",
     "check": "tsc",
-    "render": "remotion render Demo out/demo.mp4 --codec=h264 --crf=20 && remotion still Poster out/poster.png && ffmpeg -loglevel error -y -i out/poster.png -q:v 3 out/demo-poster.jpg",
+    "render": "remotion render Demo out/demo.mp4 --codec=h264 --crf=20 && remotion still Poster out/demo-poster.jpg --image-format=jpeg --jpeg-quality=90",
     "publish-media": "cp out/demo.mp4 ../demo.mp4 && cp out/demo-poster.jpg ../demo-poster.jpg"
   },
   "allowScripts": {

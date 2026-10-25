@@ -63,14 +63,14 @@ const FileView: React.FC = () => {
 };
 
 const lintLines: PaneLine[] = [
-	{ at: 14, kind: "call", text: `tabkyra ${lint.args.join(" ")}`, cps: 40 },
+	{ at: 14, kind: "call", text: lint.shown, cps: 40 },
 	...lint.out.split("\n").map((text, i) => ({
 		at: ERR_AT + i * STEP,
 		kind: "bad" as const,
 		text: text.replace(/\s{2,}/g, "  "),
 	})),
 	{ at: 180, kind: "note", text: `# exit ${lint.code}` },
-	{ at: 200, kind: "call", text: `tabkyra ${shipped.args.join(" ")}`, cps: 40 },
+	{ at: 200, kind: "call", text: shipped.shown, cps: 40 },
 	{ at: 236, kind: "ok", text: shipped.out },
 ];
 

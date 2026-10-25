@@ -3,9 +3,16 @@ import { DATA, args, field } from "../data";
 import { C, FONT } from "../theme";
 import { Caption, ChapterLabel, Code, Fill, Pane, PanelCrop, Ring, rise, Watermark } from "../ui";
 
-// The Bridge tab, cropped to Site access through the request (CSS px of the 440-wide panel).
-const CROP = { x: 22, y: 425, w: 396, h: 352 };
-const SCALE = 1.95;
+// The Bridge tab, cropped from "Site access" down to the first allowed site, around the
+// request card. All boxes are CSS px of the 440-wide panel, measured during the capture.
+const { siteAccess, requestCard: card, firstAllowedRow, allowedRow } = DATA.boxes;
+const CROP = {
+	x: card.x - 25,
+	y: siteAccess.y - 13,
+	w: card.width + 50,
+	h: firstAllowedRow.y + firstAllowedRow.height + 12 - (siteAccess.y - 13),
+};
+const SCALE = Math.min(772 / CROP.w, 740 / CROP.h);
 const PANEL = { left: 1000, top: 150 };
 const ANSWER = 215;
 
@@ -84,12 +91,19 @@ export const AsksFirst: React.FC = () => {
 				<PanelCrop src="capture/panel-pending.png" crop={CROP} scale={SCALE} style={{ ...PANEL, opacity: 1 - after }} />
 				<PanelCrop src="capture/panel-allowed.png" crop={CROP} scale={SCALE} style={{ ...PANEL, opacity: after }} />
 			</div>
-			<Ring x={PANEL.left + (47 - CROP.x) * SCALE} y={PANEL.top + (573 - CROP.y) * SCALE} w={346 * SCALE} h={110 * SCALE} at={70} until={ANSWER} />
 			<Ring
-				x={PANEL.left + (47 - CROP.x) * SCALE}
-				y={PANEL.top + (612 - CROP.y) * SCALE}
-				w={346 * SCALE}
-				h={34 * SCALE}
+				x={PANEL.left + (card.x - CROP.x) * SCALE}
+				y={PANEL.top + (card.y - CROP.y) * SCALE}
+				w={card.width * SCALE}
+				h={card.height * SCALE}
+				at={70}
+				until={ANSWER}
+			/>
+			<Ring
+				x={PANEL.left + (card.x - CROP.x) * SCALE}
+				y={PANEL.top + (allowedRow.y - CROP.y) * SCALE}
+				w={card.width * SCALE}
+				h={allowedRow.height * SCALE}
 				at={ANSWER + 20}
 				until={400}
 				color={C.tide}

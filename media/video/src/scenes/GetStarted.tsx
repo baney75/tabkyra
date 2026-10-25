@@ -3,10 +3,12 @@ import { DATA } from "../data";
 
 import { Caption, ChapterLabel, Fill, Pane, PanelCrop, Ring, rise, Watermark } from "../ui";
 
-// The welcome dialog and, after the click, the toast above it (CSS px of the 440-wide panel).
-const CROP = { x: 22, y: 234, w: 396, h: 392 };
-const TOAST = { x: 20, y: 12, w: 408, h: 74 };
-const SCALE = 1.65;
+// The welcome dialog and, after the click, the toast above it. Boxes are CSS px of the
+// 440-wide panel, measured during the capture.
+const box = (b: { x: number; y: number; width: number; height: number }) => ({ x: b.x, y: b.y, w: b.width, h: b.height });
+const CROP = box(DATA.boxes.welcomeDialog);
+const TOAST = box(DATA.boxes.toast);
+const SCALE = Math.min(653 / CROP.w, 650 / CROP.h);
 const PANEL = { left: 100, top: 262 };
 const CLICK = 70;
 
@@ -55,7 +57,7 @@ export const GetStarted: React.FC = () => {
 				src="capture/panel-copied.png"
 				crop={TOAST}
 				scale={SCALE}
-				style={{ left: PANEL.left - 3 * SCALE, top: 128, opacity: copied, translate: `0 ${(1 - copied) * -24}px`, border: "none" }}
+				style={{ left: PANEL.left + (TOAST.x - CROP.x) * SCALE, top: 128, opacity: copied, translate: `0 ${(1 - copied) * -24}px`, border: "none" }}
 			/>
 			<Ring x={target.x - (button.width * SCALE) / 2} y={target.y - (button.height * SCALE) / 2} w={button.width * SCALE} h={button.height * SCALE} at={40} until={CLICK + 30} />
 			<Pane
