@@ -54,19 +54,24 @@ these defenses:
 Rules that name a dangerous act (`secret-exfiltration`, `remote-code`, `credential-files`,
 `config-tamper`, `safety-bypass`, `remote-instructions`) allow a clause that opens by
 forbidding it: "Never print the password", "Don't read ~/.ssh". Only "never", "don't",
-"do not", "must not" and "refuse to" count, with at most three words before the act and
-none that turns the prohibition around ("Don't hesitate to ..."). Every match is checked
-on its own. Clauses end at punctuation and at "and", "or", "but", "then", "if", "when",
-"so", "unless", "otherwise" and "instead".
+"do not", "must not" and "mustn't" count, and at most three words may sit between them and
+the act, all from a short list of plain verbs and determiners. Anything else ("refuse to",
+"be afraid to", "hesitate to", "not") can turn the prohibition around, so it doesn't count.
+Every match is checked on its own. Clauses end at punctuation, slashes, dashes and at
+"and", "or", "but", "then", "if", "when", "so", "unless", "otherwise" and "instead".
 
 The instruction rules read logical lines: a sentence wrapped across lines is checked as
-one sentence, after folding fullwidth and mathematical letters to plain ones and dropping
+one sentence (a line that opens with a role such as `system:` always starts its own), after folding fullwidth and mathematical letters to plain ones and dropping
 stacked accents.
 
 Every line is checked, including fence lines and code blocks. A model reads the raw file,
-so a fence doesn't change what it will follow. Skills describe attacks; they never quote
+so a fence doesn't change what it will follow. Fences are tracked the way CommonMark reads
+them (at most three spaces of indent, closed by the same character), so an indented
+look-alike fence can't hide HTML from the markup check, and escaped backticks don't open a
+code span. Skills describe attacks; they never quote
 them. Frontmatter is parsed strictly: one `key: value` per line, allowed keys only, no
-quotes, no YAML syntax, no duplicates.
+quotes, no YAML syntax, no duplicates, and no `: `, ` #`, trailing `:` or tab inside a
+value, which YAML would read as a mapping or a comment.
 
 ## Local edits
 

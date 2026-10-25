@@ -270,13 +270,24 @@ export function installSkills(options: { force: boolean; all: boolean; only?: st
 
 // --- Apply and revert --------------------------------------------------------------------
 
-/** A short line diff: removed lines with "-", added lines with "+". */
+/** A line diff in order (longest common subsequence), so reordered or repeated lines show. */
 function lineDiff(before: string, after: string): string {
 	const a = before.split("\n");
 	const b = after.split("\n");
-	const inA = new Set(a);
-	const inB = new Set(b);
-	const out = [...a.filter((l) => !inB.has(l)).map((l) => `- ${l}`), ...b.filter((l) => !inA.has(l)).map((l) => `+ ${l}`)];
+	const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+	for (let i = a.length - 1; i >= 0; i--) {
+		for (let j = b.length - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+	}
+	const out: string[] = [];
+	let i = 0;
+	let j = 0;
+	while (i < a.length || j < b.length) {
+		if (i < a.length && j < b.length && a[i] === b[j]) {
+			i++;
+			j++;
+		} else if (j < b.length && (i === a.length || lcs[i][j + 1] >= lcs[i + 1][j])) out.push(`+ ${b[j++]}`);
+		else out.push(`- ${a[i++]}`);
+	}
 	return out.length ? out.join("\n") : "(no changes)";
 }
 
@@ -311,7 +322,7 @@ export function planApply(path: string): ApplyPlan {
 		const missing = headings(current).filter((h) => !headings(text).includes(h));
 		if (missing.length) throw new SkillError(`The edit drops section${missing.length > 1 ? "s" : ""} ${missing.map((h) => `"${h}"`).join(", ")}. Edits add or change; they don't remove sections.`);
 	}
-	return { name, text, current, diff: current === undefined ? "(new skill)" : lineDiff(current, text) };
+	return { name, text, current, diff: lineDiff(current ?? "", text) };
 }
 
 /** Apply a checked plan: back up, keep the edit, install it where nothing else owns the name. */
@@ -350,7 +361,8 @@ export function revertSkill(name: string): { removed: boolean; results: InstallR
 		// A skill that only ever existed locally: remove the copies we installed, never anyone else's.
 		for (const target of skillTargets()) {
 			const installed = join(target.dir, name, "SKILL.md");
-			if (!isLink(installed) && existsSync(installed) && readFileSync(installed, "utf8").includes(MARKER)) rmSync(installed);
+			if (isLink(installed) || isLink(dirname(installed))) continue;
+			if (existsSync(installed) && readFileSync(installed, "utf8").includes(MARKER)) rmSync(installed);
 		}
 		return { removed: true, results: [] };
 	}

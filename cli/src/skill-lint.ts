@@ -43,9 +43,18 @@ const INSTALL_MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling 
  * of the clause that holds the match, with at most three words between them and the match,
  * none of which turns the prohibition around ("Don't hesitate to print ...").
  */
-const DIRECTIVE_NEGATION = /^\s*(?:[-*>]\s+|\d+\.\s+)?(?:\*\*)?\s*(?:never|don't|do not|must not|mustn't|refuse to)\b((?:\s+[\w'~/.*`-]+){0,3})\s*\**\s*$/i;
-const REVERSAL = /\b(hesitate|forget|fail|neglect|stop|skip|avoid|wait|delay|bother|miss|omit)\b/i;
-const CLAUSE_BREAK = /[.;:!?,()]|\b(but|and|or|then|otherwise|instead|unless|if|when|so)\b/gi;
+const DIRECTIVE_NEGATION = /^\s*(?:[-*>]\s+|\d+\.\s+)?(?:\*\*)?\s*(?:never|don't|do not|must not|mustn't)\b((?:\s+[A-Za-z']+){0,3})\s*\**\s*$/i;
+/**
+ * The words allowed between the negation and the act: the act's own verb and plain
+ * determiners. Anything else ("refuse to", "be afraid to", "hesitate to", "not") can turn
+ * the prohibition around, so it doesn't count as one.
+ */
+const GOVERNED = new Set(
+	"ever directly yourself again also even read open cat run use print paste post send copy show display log store save write type share upload email put include return output pipe source load add edit append enable set disable turn touch modify change start pass commit forward tell reveal echo keep leave follow obey execute apply adopt install it the a an any your their user's this that its them".split(
+		" ",
+	),
+);
+const CLAUSE_BREAK = /[.;:!?,()/]|\s-{1,2}\s|--|[‐-―]|\b(but|and|or|then|otherwise|instead|unless|if|when|so)\b/gi;
 /** Between a verb and its object: no clause break, so "print X and post Y" is two matches. */
 const GAP = "(?:(?!\\b(?:and|or|then|but)\\b)[^.\\n,;:]){0,40}?";
 
@@ -164,8 +173,9 @@ const BLOB = /[A-Za-z0-9+/_-]{100,}={0,2}/;
 const URL_RE = /\b(?:https?|ftp|data|javascript|file|vbscript):[^\s)>\]"'`]*/gi;
 const SHORTENERS = /^(bit\.ly|t\.co|tinyurl\.com|goo\.gl|ow\.ly|is\.gd|buff\.ly|rebrand\.ly|cutt\.ly|shorturl\.at|rb\.gy|t\.ly|s\.id|tiny\.cc|lnkd\.in)$/i;
 /** A fence line: the marker and at most one info word, nothing else. */
-const FENCE = /^\s*(```+|~~~+)/;
-const CLEAN_FENCE = /^\s*(```+|~~~+)\s*[\w-]*\s*$/;
+/** A fence the way CommonMark reads one: at most three spaces of indent. */
+const FENCE = /^ {0,3}(```+|~~~+)/;
+const CLEAN_FENCE = /^ {0,3}(```+|~~~+)\s*[\w-]*\s*$/;
 /** An HTML tag (not an autolink like <https://...>, which has a colon after the name). */
 const HTML_TAG = /<\s*\/?\s*[a-z][\w-]*(\s|>|\/>)/i;
 
@@ -197,7 +207,8 @@ function findingsForUrl(raw: string): string | undefined {
 
 /** Inline code spans render as literal text, so tags inside them don't hide anything. */
 function withoutInlineCode(line: string): string {
-	return line.replace(/`[^`]*`/g, "``");
+	// An escaped backtick renders as a literal backtick, so it can't open a code span.
+	return line.replace(/\\`/g, "").replace(/`[^`]*`/g, "``");
 }
 
 /** Start of the clause that holds `index`, after the last clause break before it. */
@@ -208,10 +219,15 @@ function clauseBefore(text: string, index: number): string {
 	return head.slice(start);
 }
 
-/** The match at `index` sits in a clause that opens by forbidding it. */
+/** The match at `index` sits in a clause that opens by forbidding it, with only governed words between. */
 function negated(text: string, index: number): boolean {
 	const m = DIRECTIVE_NEGATION.exec(clauseBefore(text, index));
-	return m !== null && !REVERSAL.test(m[1] ?? "");
+	if (!m) return false;
+	return (m[1] ?? "")
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean)
+		.every((w) => GOVERNED.has(w.toLowerCase()));
 }
 
 /** Text the rules read: compatibility forms folded (fullwidth to ASCII) and stacked accents dropped. */
@@ -237,7 +253,7 @@ function logicalLines(lines: string[]): LogicalLine[] {
 	lines.forEach((raw, i) => {
 		const line = folded(raw);
 		const fence = FENCE.test(line);
-		const opens = fence || inFence || line.trim() === "" || /^\s*(#|[-*+]\s|\d+\.\s|\||>)/.test(line);
+		const opens = fence || inFence || line.trim() === "" || /^\s*(#|[-*+]\s|\d+\.\s|\||>|(system|assistant|developer|user)\s*:)/i.test(line);
 		if (fence) inFence = !inFence;
 		if (opens || !current) {
 			current = { parts: [], starts: [], first: i + 1 };
@@ -289,6 +305,7 @@ export function parseFrontmatter(text: string): SkillMeta | undefined {
 			if (seen.has(m[1])) meta.problems.push({ line: n, message: `Duplicate frontmatter key "${m[1]}".` });
 			seen.add(m[1]);
 			if (/^["'[{|>&*!]/.test(m[2])) meta.problems.push({ line: n, message: `Write ${m[1]} as plain text, without YAML quotes or syntax.` });
+			if (/: |\s#|:$|\t/.test(m[2])) meta.problems.push({ line: n, message: `${m[1]} has ": ", " #", a trailing ":" or a tab, which YAML reads as syntax. Reword it.` });
 			if (m[1] === "name") meta.name = m[2].trim();
 			if (m[1] === "description") meta.description = m[2].trim();
 		});
@@ -325,18 +342,27 @@ export function lintText(file: string, text: string, options: { reference?: bool
 	}
 
 	let inFence = false;
+	let openFence = "";
 	lines.forEach((line, i) => {
 		const n = i + 1;
-		if (FENCE.test(line)) {
+		const fenceMark = FENCE.exec(line)?.[1];
+		let isFence = false;
+		if (fenceMark && !inFence) {
 			if (!CLEAN_FENCE.test(line)) add(n, "structure", "A fence line holds only the fence and one info word. Put text on its own line.");
-			inFence = !inFence;
+			inFence = true;
+			openFence = fenceMark;
+			isFence = true;
+		} else if (fenceMark && inFence && fenceMark[0] === openFence[0] && fenceMark.length >= openFence.length) {
+			if (!CLEAN_FENCE.test(line)) add(n, "structure", "A fence line holds only the fence and one info word. Put text on its own line.");
+			inFence = false;
+			isFence = true;
 		}
 
 		if (INVISIBLE.test(line)) add(n, "hidden-text", "Contains an invisible or text-reordering character.");
 		if (MIXED_SCRIPT.test(line)) add(n, "hidden-text", "A word mixes Latin with Cyrillic or Greek lookalike letters.");
 		if (LOOKALIKE.test(line)) add(n, "hidden-text", "Fullwidth, mathematical or accent-stacked letters read as plain words to a model. Use plain letters.");
 		// Outside a fence, markup renders: it can hide text from a reviewer or load content.
-		if (!inFence && !FENCE.test(line)) {
+		if (!inFence && !isFence) {
 			const visible = withoutInlineCode(line);
 			if (/<!--/.test(visible) && line.trim() !== INSTALL_MARKER) add(n, "hidden-text", "HTML comments don't render, so reviewers miss them. Write it as visible text.");
 			else if (HTML_TAG.test(visible)) add(n, "hidden-text", "Raw HTML can hide text or load content. Write Markdown, or put markup in a code fence.");
