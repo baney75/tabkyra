@@ -167,7 +167,9 @@ rule are in [docs/skill-security.md](docs/skill-security.md).
 ### Library
 
 A local source library in the spirit of Zotero. Every source is fetched from its DOI's
-registry and checked against OpenAlex and Crossref's retraction notices before it's saved.
+registry and checked against OpenAlex and Crossref's retraction notices before it's saved. When a
+check can't finish, the source is saved marked "retraction check incomplete" until `tabkyra library verify`
+completes it.
 
 ```bash
 tabkyra library add 10.1037/0033-2909.132.3.354 --quote "..." --location "p. 354"

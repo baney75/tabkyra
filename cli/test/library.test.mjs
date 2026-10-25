@@ -87,6 +87,10 @@ Object.assign(RECORDS, {
 		DOI: "10.1000/odd",
 	},
 	"10.1000/noagency": { type: "journal-article", title: "No agency", author: [{ family: "Nobody", given: "N." }], issued: { "date-parts": [[2007]] }, DOI: "10.1000/noagency" },
+	"10.1000/updatedby": { type: "journal-article", title: "Retracted via updated-by", author: [{ family: "Upd", given: "U." }], issued: { "date-parts": [[2006]] }, DOI: "10.1000/updatedby" },
+	"10.1000/ordinary": { type: "journal-article", title: "Retraction rates in biomedical journals: a review", author: [{ family: "Rate", given: "R." }], issued: { "date-parts": [[2005]] }, DOI: "10.1000/ordinary" },
+	"10.1000/brace": { type: "journal-article", title: "Effect of } on recall", author: [{ family: "Brace", given: "B." }], issued: { "date-parts": [[2004]] }, DOI: "10.1000/brace" },
+	"10.1000/oaodd": { type: "journal-article", title: "Odd open access link", author: [{ family: "Link", given: "L." }], issued: { "date-parts": [[2003]] }, DOI: "10.1000/oaodd" },
 	"10.1000/alias": { type: "journal-article", title: "Alias target", author: [{ family: "Alias", given: "A." }], issued: { "date-parts": [[2017]] }, DOI: "10.9999/someone-else" },
 });
 
@@ -129,7 +133,13 @@ before(async () => {
 			const doi = decodeURIComponent(url.pathname.slice("/openalex/works/doi:".length));
 			if (!RECORDS[doi] || mock.openalexMissing.has(doi)) return json(404, {});
 			if (doi === "10.1000/emptyshape") return json(200, {});
-			return json(200, { is_retracted: doi === "10.1000/oaonly", cited_by_count: 42, open_access: { oa_url: "https://example.org/files/My%20Paper.pdf" } });
+			const oa = doi === "10.1000/oaodd" ? "https://evil.example.net/[[Secret note]]/%%x" : "https://example.org/files/My%20Paper.pdf";
+			return json(200, { is_retracted: doi === "10.1000/oaonly", cited_by_count: 42, open_access: { oa_url: oa } });
+		}
+		if (url.pathname.startsWith("/crossref/works/")) {
+			if (mock.failChecks) return json(429, {});
+			const doi = decodeURIComponent(url.pathname.slice("/crossref/works/".length));
+			return json(200, { message: { "updated-by": doi === "10.1000/updatedby" ? [{ type: "retraction", DOI: "10.1000/rw" }] : [] } });
 		}
 		if (url.pathname === "/crossref/works") {
 			if (mock.failChecks) return json(429, {});
@@ -223,7 +233,7 @@ test("an arXiv id resolves through its DataCite DOI", async () => {
 test("exports escape for each format", async () => {
 	const bib = (await lib("export", "--format", "bibtex")).out;
 	assert.match(bib, /@article\{cepeda2006spacing,/);
-	assert.match(bib, /title = \{Spacing \\& memory: 100\\% \\\{better\\\}\}/);
+	assert.match(bib, /title = \{Spacing \\& memory: 100\\% \\textbraceleft\{\}better\\textbraceright\{\}\}/);
 	assert.match(bib, /pages = \{354--380\}/);
 	const ris = (await lib("export", "--format", "ris")).out;
 	assert.match(ris, /^TY {2}- JOUR$/m);
@@ -569,4 +579,32 @@ test("metadata from a registrant's own site isn't accepted, and an unknown agenc
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /no citation metadata/);
 	assert.equal((await lib("add", "10.1000/noagency")).code, 4);
+});
+
+test("a retraction announced only in the title survives every re-check; ordinary titles aren't flagged", async () => {
+	const odd = items().find((i) => i.DOI === "10.1000/odd").id;
+	assert.equal((await lib("verify", odd)).code, 3);
+	assert.equal((await lib("add", "10.1000/odd")).code, 3);
+	assert.equal((await lib("add", "10.1000/ordinary")).code, 0);
+});
+
+test("Crossref's updated-by on the work's own record counts", async () => {
+	assert.equal((await lib("add", "10.1000/updatedby")).code, 3);
+});
+
+test("BibTeX braces stay balanced, and an odd open-access link stays inert in a note", async () => {
+	await lib("add", "10.1000/brace");
+	const bib = (await lib("export", "--format", "bibtex")).out;
+	const entry = bib.split("\n\n").find((e) => e.includes("10.1000/brace"));
+	const opens = (entry.match(/(?<!\\)\{/g) ?? []).length;
+	const closes = (entry.match(/(?<!\\)\}/g) ?? []).length;
+	assert.equal(opens, closes, entry);
+	assert.match(entry, /\\textbraceright\{\}/);
+	await lib("add", "10.1000/oaodd");
+	const vault = join(root, "vault-oa");
+	mkdirSync(vault);
+	await lib("obsidian", vault);
+	const key = items().find((i) => i.DOI === "10.1000/oaodd").id;
+	const note = readFileSync(join(vault, "Sources", `${key}.md`), "utf8");
+	assert.doesNotMatch(note, /\[\[Secret note\]\]|%%x/);
 });

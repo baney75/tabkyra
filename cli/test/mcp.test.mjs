@@ -86,13 +86,21 @@ test("a host with no extension behind it is reported as not connected, at once",
 		head.writeUInt32LE(body.length);
 		return Buffer.concat([head, body]);
 	};
+	// Count frames, not "data" events: the hello and the first request can arrive in one chunk.
 	const server = createServer((socket) => {
-		let hello = false;
-		socket.on("data", () => {
-			if (!hello) {
-				hello = true;
-				socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: false }));
-			} else socket.destroy();
+		let buffered = Buffer.alloc(0);
+		let frames = 0;
+		socket.on("data", (chunk) => {
+			buffered = Buffer.concat([buffered, chunk]);
+			while (buffered.length >= 4 && buffered.length >= 4 + buffered.readUInt32LE(0)) {
+				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
+				frames++;
+				if (frames === 1) socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: false }));
+				else {
+					socket.destroy();
+					return;
+				}
+			}
 		});
 	});
 	await new Promise((r) => server.listen(path, r));

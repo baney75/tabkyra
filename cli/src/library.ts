@@ -117,7 +117,9 @@ function withLock<T>(fn: () => T): T {
 		} catch (err) {
 			rmSync(pending, { recursive: true, force: true });
 			const code = (err as NodeJS.ErrnoException).code;
-			if (code !== "EEXIST" && code !== "ENOTEMPTY") throw err;
+			// Windows reports a rename onto an existing folder as EPERM or EACCES.
+			const held = code === "EEXIST" || code === "ENOTEMPTY" || ((code === "EPERM" || code === "EACCES") && existsSync(lock));
+			if (!held) throw err;
 			let owner = Number.NaN;
 			try {
 				owner = Number(readFileSync(join(lock, "pid"), "utf8"));
@@ -253,6 +255,18 @@ function cleanIssued(value: unknown): LibraryItem["issued"] {
 	return { "date-parts": [date] };
 }
 
+/** doi.org itself, or a registration agency's metadata service: the only hosts whose answers count. */
+function registryHost(url: string): boolean {
+	const doiHost = new URL(base.doi()).host;
+	let host = doiHost;
+	try {
+		if (url) host = new URL(url).host;
+	} catch {
+		return false;
+	}
+	return host === doiHost || /(^|\.)(crossref\.org|datacite\.org|medra\.org|jalc\.or\.jp|kisti\.re\.kr|doi\.org)$/i.test(host);
+}
+
 /** A DOI as a URL path: each segment encoded, so "#" and "?" in a suffix stay part of the DOI. */
 function doiPath(doi: string): string {
 	return doi.split("/").map(encodeURIComponent).join("/");
@@ -283,7 +297,7 @@ async function fetchCsl(doi: string): Promise<Record<string, unknown>> {
 	const host = clean(finalHost, 255);
 	// Metadata counts only from doi.org or a registration agency's metadata service, never
 	// from a registrant's own site that a redirect landed on.
-	const registry = finalHost === doiHost || /(^|\.)(crossref\.org|datacite\.org|medra\.org|jalc\.or\.jp|kisti\.re\.kr|doi\.org)$/i.test(finalHost);
+	const registry = registryHost(res.url);
 	if (!res.ok || !/json/i.test(type) || !registry) {
 		throw new Error(`DOI ${doi} is registered, but its agency returned no citation metadata (${res.status} ${type || "no type"} from ${host}). Check it by hand before citing.`);
 	}
@@ -302,9 +316,11 @@ async function verify(doi: string, previous?: Verification, agency = ""): Promis
 		if (res.status === 404) checks.openalex = "not-found";
 		else if (res.ok) {
 			const w = (await res.json()) as { is_retracted?: boolean; open_access?: { oa_url?: string }; cited_by_count?: number };
-			v.sources.push("openalex");
-			// An answer without the field is not an answer.
-			if (typeof w.is_retracted === "boolean") checks.openalex = "ok";
+			// An answer without the field is not an answer, and isn't listed as a source.
+			if (typeof w.is_retracted === "boolean") {
+				checks.openalex = "ok";
+				v.sources.push("openalex");
+			}
 			if (w.is_retracted) v.retracted = true;
 			try {
 				const oa = new URL(clean(w.open_access?.oa_url, 2000));
@@ -339,6 +355,19 @@ async function verify(doi: string, previous?: Verification, agency = ""): Promis
 							notices.push({ type, doi: clean(item.DOI, 200) });
 							if (/^(retraction|partial[_ ]retraction|withdrawal|removal)$/.test(type)) retracted = true;
 						}
+					}
+					// Crossref also lists updates on the work's own record (updated-by), which is
+					// where Retraction Watch data appears; both must be read.
+					const own = await get(`${base.crossref()}/works/${doiPath(doi)}`, "application/json");
+					if (!own.ok) throw new Error("work record unavailable");
+					const record = (await own.json()) as { message?: { "updated-by"?: unknown } };
+					const updatedBy = record.message?.["updated-by"] ?? [];
+					if (!Array.isArray(updatedBy)) throw new Error("malformed updated-by");
+					for (const u of updatedBy as Array<{ type?: unknown; DOI?: unknown }>) {
+						if (!u || typeof u.type !== "string") throw new Error("malformed updated-by");
+						const type = clean(u.type, 50).toLowerCase();
+						notices.push({ type, doi: clean(u.DOI, 200) });
+						if (/^(retraction|partial[_ ]retraction|withdrawal|removal)$/.test(type)) retracted = true;
 					}
 					v.sources.push("crossref-updates");
 					v.notices.push(...notices);
@@ -422,7 +451,7 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 		const existing = library.items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
 		if (existing) {
 			// Adding again re-checks retractions, so a source retracted since is caught.
-			existing.tabkyra.verified = keepRetraction(verified, existing.tabkyra.verified);
+			existing.tabkyra.verified = withTitleCheck(existing.title, keepRetraction(verified, existing.tabkyra.verified));
 			if (agency) existing.tabkyra.agency = agency;
 			mergeAnnotations(existing, options);
 			return { item: existing, existed: true };
@@ -449,8 +478,7 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 			...draft,
 			tabkyra: {
 				addedAt: new Date().toISOString(),
-				// A title that announces a retraction counts, even when no notice is linked.
-				verified: /^\s*(retracted|withdrawn|retraction( notice)?)\b\s*:?/i.test(title) ? { ...verified, retracted: true } : verified,
+				verified: withTitleCheck(title, verified),
 				tags: [],
 				...(primary ? { primaryDoi: primary } : {}),
 				...(agency ? { agency } : {}),
@@ -460,6 +488,15 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 		library.items.push(item);
 		return { item, existed: false };
 	});
+}
+
+/** A title that announces a retraction ("RETRACTED: ...", "WITHDRAWN: ..."), even when no notice is linked. */
+function titleSaysRetracted(title: string): boolean {
+	return /^\s*(retracted|withdrawn)( article)?\s*:/i.test(title);
+}
+
+function withTitleCheck(title: string, v: Verification): Verification {
+	return titleSaysRetracted(title) && !v.retracted ? { ...v, retracted: true, notices: [...v.notices, { type: "title says retracted", doi: "" }] } : v;
 }
 
 /**
@@ -519,7 +556,7 @@ export async function reverify(keys: string[]): Promise<{ items: LibraryItem[]; 
 	const items = updateLibrary((library) => {
 		for (const item of library.items) {
 			const v = results.get(keyOf(item));
-			if (v) item.tabkyra.verified = keepRetraction(v, item.tabkyra.verified);
+			if (v) item.tabkyra.verified = withTitleCheck(item.title, keepRetraction(v, item.tabkyra.verified));
 			const agency = agencies.get(keyOf(item));
 			if (agency) item.tabkyra.agency = agency;
 		}
@@ -557,8 +594,8 @@ export async function cite(key: string, style = "apa"): Promise<string> {
 	if (!STYLES.has(csl)) throw new Error(`Unknown style ${style}. Use apa, mla, chicago, ieee, harvard or vancouver.`);
 	if (!item.DOI) throw new Error(`${key} has no DOI to format.`);
 	const res = await get(`${base.doi()}/${doiPath(item.DOI)}`, `text/x-bibliography; style=${csl}; locale=en-US`);
-	const type = res.headers.get("content-type") ?? "";
-	if (!res.ok || /html/i.test(type) || !/text\/(x-bibliography|plain)/i.test(type)) {
+	const type = clean(res.headers.get("content-type") ?? "", 100);
+	if (!res.ok || /html/i.test(type) || !/text\/(x-bibliography|plain)/i.test(type) || !registryHost(res.url)) {
 		throw new Error(`doi.org returned no formatted reference for ${key} (${res.status} ${type || "no type"}). Format it from the saved record instead.`);
 	}
 	// The formatter leaves an empty "edited by ," when a record has no editors.
@@ -596,11 +633,18 @@ const BIBTEX_TYPE: Record<string, string> = {
 	dataset: "misc",
 };
 
-const BIB_SPECIAL: Record<string, string> = { "\\": "\\textbackslash{}", "~": "\\textasciitilde{}", "^": "\\textasciicircum{}" };
+// Braces become commands, not \{ \}: BibTeX counts every brace when it finds a field's end.
+const BIB_SPECIAL: Record<string, string> = {
+	"\\": "\\textbackslash{}",
+	"~": "\\textasciitilde{}",
+	"^": "\\textasciicircum{}",
+	"{": "\\textbraceleft{}",
+	"}": "\\textbraceright{}",
+};
 
 /** One pass, so a replacement is never escaped again. */
 function bibEscape(s: string): string {
-	return s.replace(/[\\{}&%$#_~^]/g, (c) => BIB_SPECIAL[c] ?? `\\${c}`);
+	return s.replace(/[\\{}&%$#_~^]/g, (c) => (Object.hasOwn(BIB_SPECIAL, c) ? BIB_SPECIAL[c] : `\\${c}`));
 }
 
 /** BibTeX authors; a corporate or literal name is braced so it stays one name. */
@@ -785,7 +829,8 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 		].filter(Boolean);
 		let oa = "";
 		try {
-			if (v.oaUrl) oa = new URL(v.oaUrl).href;
+			// Percent-encode what Obsidian would read as markup, and any "%" that isn't an escape.
+			if (v.oaUrl) oa = new URL(v.oaUrl).href.replace(/%(?![0-9A-Fa-f]{2})/g, "%25").replace(/[[\]<>|`]/g, (c) => encodeURIComponent(c));
 		} catch {
 			/* skipped */
 		}
