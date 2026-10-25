@@ -33,7 +33,8 @@ const cli = join(repo, "cli", "dist", "index.js");
 const extensionDir = join(repo, "dist-chrome");
 const target = join(repo, "media", "video", "public", "capture");
 // Everything is written here first, then swapped into `target` once the run has passed.
-const out = mkdtempSync(join(repo, "media", "video", "public", ".capture-new-"));
+// Created in main(), after the prerequisite checks, so a failed check leaves nothing behind.
+let out;
 const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
 const NEW_SITE = "https://www.gutenberg.org/ebooks/2701";
 
@@ -111,14 +112,35 @@ const freePort = () =>
 	});
 
 async function main() {
+	out = mkdtempSync(join(repo, "media", "video", "public", ".capture-new-"));
+	const cleanUp = () => rmSync(out, { recursive: true, force: true });
+	// Ctrl-C skips finally blocks; remove the staging folder before exiting.
+	process.once("SIGINT", () => {
+		cleanUp();
+		process.exit(130);
+	});
 	try {
 		await record();
-		rmSync(target, { recursive: true, force: true });
-		renameSync(out, target);
+		swapIn(out, target);
 		console.log(`wrote ${target}`);
 	} finally {
-		rmSync(out, { recursive: true, force: true });
+		cleanUp();
 	}
+}
+
+/** Replaces `target` with `fresh` by renames only, so a failure leaves the old capture in place. */
+function swapIn(fresh, target) {
+	const old = `${target}.old-${process.pid}`;
+	const hadOld = existsSync(target);
+	if (hadOld) renameSync(target, old);
+	try {
+		renameSync(fresh, target);
+	} catch (err) {
+		if (hadOld) renameSync(old, target);
+		throw err;
+	}
+	// The new capture is in place; a leftover old copy is only clutter.
+	if (hadOld) rmSync(old, { recursive: true, force: true });
 }
 
 /** Shows a command the way it can be pasted into a shell. */

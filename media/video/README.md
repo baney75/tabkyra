@@ -21,7 +21,8 @@ Nothing on screen is mocked. `scripts/demo/capture-video.mjs` records a real run
 Needs Node 22.4 or newer for the capture (it uses Node's built-in WebSocket and stops at once
 on older versions), the Chromium from `cd cli && npx playwright-core install chromium`, and
 network access. The render needs nothing beyond `npm install`: Remotion writes the MP4 and the
-poster JPEG itself. A capture that fails partway leaves the previous `public/capture/` as it
+poster JPEG itself. Remotion is not open source: it is free for individuals and companies of up
+to three people, and larger companies need a Remotion company license (see remotion.dev/license). A capture that fails partway leaves the previous `public/capture/` as it
 was.
 
 From the repo root:

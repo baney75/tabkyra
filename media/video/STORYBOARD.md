@@ -140,4 +140,4 @@ plate, one line). Commands in captions are set in JetBrains Mono, brass.
 - **Live data drifts.** Citation counts, page text and the Gutenberg page change over time. The
   video shows the run dated in `public/capture/capture.json`.
 - **File size.** Mostly flat colour and text; CRF 20 lands near 5 MB.
-- **Licensing.** Fonts are OFL (licenses in `public/fonts/`). No music.
+- **Licensing.** Fonts are OFL (licenses in `public/fonts/`). No music. Remotion itself is source-available, free for individuals and companies of up to three people; larger companies need a Remotion company license.

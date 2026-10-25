@@ -5,3 +5,7 @@ dist
 
 # Ignore the output video from Git but not videos you import into src/.
 out
+
+# Capture staging folders and swap leftovers (scripts/demo/capture-video.mjs).
+public/.capture-new-*
+public/capture.old-*

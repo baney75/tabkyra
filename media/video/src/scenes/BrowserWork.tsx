@@ -25,7 +25,10 @@ const lines: PaneLine[] = [
 	...DATA.readPage1.map((l, i) => ({ at: T.home + 62 + i * 4, kind: "result" as const, text: `  ${l}` })),
 	{ at: T.home + 90, kind: "call", text: args("type", 0) },
 	{ at: T.results, kind: "result", text: `→ ${result("type", 0)}` },
-	{ at: T.results + 20, kind: "call", text: `${args("click", 0)}  // Place hold` },
+	// The results page renumbers the refs, so the agent reads it again before it clicks.
+	{ at: T.results + 14, kind: "call", text: 'read_page { filter: "interactive" }' },
+	...DATA.readPage2.map((l, i) => ({ at: T.results + 34 + i * 4, kind: "result" as const, text: `  ${l}` })),
+	{ at: T.results + 50, kind: "call", text: `${args("click", 0)}  // Place hold` },
 	{ at: T.hold + 20, kind: "call", text: 'read_page { filter: "interactive" }' },
 	...DATA.readPage3.map((l, i) => ({ at: T.hold + 50 + i * 4, kind: "result" as const, text: `  ${l}` })),
 	{ at: T.hold + 66, kind: "call", text: args("fill", 0) },
