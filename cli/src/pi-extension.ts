@@ -51,7 +51,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-const SOCKET_DIR = \`/tmp/tabkyra-bridge-\${userInfo().username}\`;
+const SOCKET_DIR = process.env.TABKYRA_SOCKET_DIR || \`/tmp/tabkyra-bridge-\${userInfo().username}\`;
 // One key per pi process: a reconnect (extension reload) must land on the same tabs.
 const SESSION_FALLBACK = \`p\${process.pid}-\${Date.now().toString(36)}\`;
 
