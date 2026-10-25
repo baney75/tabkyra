@@ -53,6 +53,8 @@
 		"ajv": "8.18.0",
 		"zod-to-json-schema": "3.25.1",
 		"undici": "7.24.4",
-		"@aws-sdk/client-bedrock-runtime": "3.1011.0"
+		"zod": "4.3.6",
+		"google-auth-library": "10.6.2",
+		"protobufjs": "7.5.4"
 	}
 }

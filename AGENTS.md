@@ -17,7 +17,8 @@ If the user did not give you a concrete task, read README.md first.
 ## Dependencies
 - `@mariozechner/mini-lit` (0.2.1), `@mariozechner/pi-ai`, `@mariozechner/pi-web-ui`, `@mariozechner/pi-agent-core` (0.60.0) come from npm at exact versions. No sibling checkouts are needed.
 - pi-mono later renamed its packages to `@earendil-works/*` and dropped `web-ui`, so do not bump past 0.60.x without porting.
-- `overrides` in package.json pins pi-tui and the provider SDKs that pi-ai pulls in (@google/genai, ajv, zod-to-json-schema, undici, Bedrock) to the versions pi-mono's own lockfile used at `ff1ea1232`. Keep them unless you mean to upgrade.
+- `overrides` in package.json pins pi-tui and the libraries pi-ai and pi-web-ui pull in (zod, ajv, zod-to-json-schema, @google/genai, google-auth-library, protobufjs, undici) to the versions pi-mono's own lockfile used at `ff1ea1232`. Bedrock and Vertex are hidden in Tabkyra and not pinned. Keep the pins unless you mean to upgrade, and run `npm dedupe` after changing them.
+- `src/prompts/count-tokens.ts` is a dev-only script. It imports `node_modules/@mariozechner/pi-web-ui/dist/prompts/prompts.js` by relative path because the package's exports map hides that file, so it assumes pi-web-ui is hoisted to the root.
 - To patch upstream code, check out pi-mono at tag `v0.60.0` next to this repo, run `npm ci` at its root, then build with `npx tsgo -p tsconfig.build.json` in `packages/{tui,ai,agent,web-ui}` (its `npm run build` regenerates the model list from the network). The tsgo build emits ES class fields while the published package emits constructor assignments; Lit reactive properties need the latter, so treat a tsgo build as a local experiment only. Point the dependency at it with `file:` locally and do not commit `file:` paths.
 
 ## Changelog
