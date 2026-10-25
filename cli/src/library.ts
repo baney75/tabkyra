@@ -34,7 +34,8 @@ export interface Verification {
 	 * Whether each retraction check ran. "failed" (timeout, rate limit, offline) means the
 	 * answer is unknown: `complete` is false, and the source isn't reported as clean.
 	 */
-	checks?: { openalex: "ok" | "not-found" | "failed"; crossref: "ok" | "failed" };
+	/** "n/a": the DOI isn't Crossref's, so Crossref's notices can't speak for it. */
+	checks?: { openalex: "ok" | "not-found" | "failed"; crossref: "ok" | "failed" | "n/a" };
 	complete?: boolean;
 }
 
@@ -59,6 +60,8 @@ export interface LibraryItem {
 		quote?: { text: string; location?: string };
 		/** The primary DOI the registry named, when the saved DOI is an alias. Checked on every verify. */
 		primaryDoi?: string;
+		/** Registration agency from doi.org ("crossref", "datacite", ...). */
+		agency?: string;
 	};
 }
 
@@ -99,11 +102,13 @@ function pidAlive(pid: number): boolean {
 function withLock<T>(fn: () => T): T {
 	const lock = `${libraryFile()}.lock`;
 	mkdirSync(join(lock, ".."), { recursive: true });
+	const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	const deadline = Date.now() + 10_000;
 	for (;;) {
 		try {
 			mkdirSync(lock);
 			writeFileSync(join(lock, "pid"), String(process.pid));
+			writeFileSync(join(lock, "token"), token);
 			break;
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
@@ -143,7 +148,12 @@ function withLock<T>(fn: () => T): T {
 	try {
 		return fn();
 	} finally {
-		rmSync(lock, { recursive: true, force: true });
+		// Remove the lock only if it is still ours.
+		try {
+			if (readFileSync(join(lock, "token"), "utf8") === token) rmSync(lock, { recursive: true, force: true });
+		} catch {
+			/* already gone */
+		}
 	}
 }
 
@@ -170,16 +180,19 @@ function saveLibrary(library: Library): void {
 /** A DOI from a bare DOI, a doi: prefix, a doi.org URL, or an arXiv id (DataCite DOI). */
 export function toDoi(input: string): string | undefined {
 	const s = input.trim();
-	const arxiv = /^(?:arxiv:|https?:\/\/arxiv\.org\/(?:abs|pdf)\/)?(\d{4}\.\d{4,5})(v\d+)?(?:\.pdf)?$/i.exec(s);
+	const arxiv = /^(?:arxiv:|https?:\/\/arxiv\.org\/(?:abs|pdf)\/)?((?:[a-z-]+(?:\.[A-Z]{2})?\/\d{7})|(?:\d{4}\.\d{4,5}))(v\d+)?(?:\.pdf)?$/i.exec(s);
 	if (arxiv) return `10.48550/arXiv.${arxiv[1]}`;
 	const doi = /(?:^doi:|^https?:\/\/(?:dx\.)?doi\.org\/|^)(10\.\d{4,9}\/\S+)$/i.exec(s);
 	if (!doi) return undefined;
+	let decoded = doi[1];
 	try {
-		return decodeURIComponent(doi[1]);
+		decoded = decodeURIComponent(doi[1]);
 	} catch {
 		// A bare "%" is legal in a DOI; keep it as typed.
-		return doi[1];
 	}
+	// No whitespace or control characters, and no empty, "." or ".." path segments.
+	if (/[\s\p{Cc}\p{Cf}]/u.test(decoded) || /(^|\/)\.{1,2}(\/|$)|\/\//.test(decoded)) return undefined;
+	return decoded;
 }
 
 // --- Fetching ----------------------------------------------------------------------------
@@ -199,7 +212,7 @@ async function get(url: string, accept: string): Promise<Response> {
 export function clean(value: unknown, max = 1000): string {
 	if (typeof value !== "string") return "";
 	return value
-		.replace(/[\p{Cc}\p{Cf}]/gu, " ")
+		.replace(/[\p{Cc}\p{Cf}\p{Co}\u{FE00}-\u{FE0F}\u{E0000}-\u{E01EF}]/gu, " ")
 		// Only tag-shaped text: "n<10 versus n>50" in a title stays as it is.
 		.replace(/<\/?[a-zA-Z][\w:-]*(?:\s[^<>]{0,200})?>/g, "")
 		.replace(/\s+/g, " ")
@@ -232,6 +245,18 @@ function doiPath(doi: string): string {
 	return doi.split("/").map(encodeURIComponent).join("/");
 }
 
+/** Which agency registered the DOI ("crossref", "datacite", ...), from doi.org; "" if unknown. */
+async function registrationAgency(doi: string): Promise<string> {
+	try {
+		const res = await get(`${base.doi()}/ra/${doiPath(doi)}`, "application/json");
+		if (!res.ok) return "";
+		const body = (await res.json()) as Array<{ RA?: string }>;
+		return Array.isArray(body) ? clean(body[0]?.RA, 50).toLowerCase() : "";
+	} catch {
+		return "";
+	}
+}
+
 async function fetchCsl(doi: string): Promise<Record<string, unknown>> {
 	const res = await get(`${base.doi()}/${doiPath(doi)}`, "application/vnd.citationstyles.csl+json");
 	const doiHost = new URL(base.doi()).host;
@@ -252,7 +277,7 @@ async function fetchCsl(doi: string): Promise<Record<string, unknown>> {
  * Retraction and access checks. A check that fails leaves the answer unknown (complete:
  * false). A retraction already recorded in `previous` is never cleared by a failed check.
  */
-async function verify(doi: string, previous?: Verification): Promise<Verification> {
+async function verify(doi: string, previous?: Verification, agency = "crossref"): Promise<Verification> {
 	const v: Verification = { at: new Date().toISOString(), sources: ["doi.org"], retracted: false, notices: [], checks: { openalex: "failed", crossref: "failed" } };
 	const checks = v.checks as NonNullable<Verification["checks"]>;
 	try {
@@ -275,31 +300,40 @@ async function verify(doi: string, previous?: Verification): Promise<Verificatio
 	} catch {
 		/* left as failed */
 	}
-	try {
-		const res = await get(`${base.crossref()}/works?filter=updates:${encodeURIComponent(doi)}&select=DOI,update-to&rows=1000`, "application/json");
-		if (res.ok) {
-			const body = (await res.json()) as {
-				message?: { "total-results"?: number; items?: Array<{ DOI?: string; "update-to"?: Array<{ type?: string; DOI?: string }> }> };
-			};
-			v.sources.push("crossref-updates");
-			// Every notice must be in hand; more than one page leaves the check incomplete.
-			const total = body.message?.["total-results"];
-			const listed = body.message?.items;
-			if (typeof total === "number" && Array.isArray(listed) && total <= listed.length) checks.crossref = "ok";
-			for (const item of body.message?.items ?? []) {
-				for (const u of item["update-to"] ?? []) {
-					if (u.DOI?.toLowerCase() !== doi.toLowerCase()) continue;
-					const type = clean(u.type, 50).toLowerCase();
-					v.notices.push({ type, doi: clean(item.DOI, 200) });
-					if (/^(retraction|partial[_ ]retraction|withdrawal|removal)$/.test(type)) v.retracted = true;
+	if (agency && agency !== "crossref") checks.crossref = "n/a";
+	else {
+		try {
+			const res = await get(`${base.crossref()}/works?filter=updates:${encodeURIComponent(doi)}&select=DOI,update-to&rows=1000`, "application/json");
+			if (res.ok) {
+				const body = (await res.json()) as { message?: { "total-results"?: unknown; items?: unknown } };
+				const total = body.message?.["total-results"];
+				const listed = body.message?.items;
+				if (typeof total === "number" && Array.isArray(listed) && total <= listed.length) {
+					const notices: Verification["notices"] = [];
+					let retracted = false;
+					for (const item of listed as Array<{ DOI?: unknown; "update-to"?: unknown }>) {
+						// Every notice must parse; anything malformed leaves the check failed.
+						if (!item || typeof item !== "object" || !Array.isArray(item["update-to"])) throw new Error("malformed notice");
+						for (const u of item["update-to"] as Array<{ type?: unknown; DOI?: unknown }>) {
+							if (!u || typeof u.DOI !== "string" || typeof u.type !== "string") throw new Error("malformed notice");
+							if (u.DOI.toLowerCase() !== doi.toLowerCase()) continue;
+							const type = clean(u.type, 50).toLowerCase();
+							notices.push({ type, doi: clean(item.DOI, 200) });
+							if (/^(retraction|partial[_ ]retraction|withdrawal|removal)$/.test(type)) retracted = true;
+						}
+					}
+					v.sources.push("crossref-updates");
+					v.notices.push(...notices);
+					if (retracted) v.retracted = true;
+					checks.crossref = "ok";
 				}
 			}
+		} catch {
+			/* left as failed */
 		}
-	} catch {
-		/* left as failed */
 	}
 	// OpenAlex not knowing the work leaves the question open, so it isn't complete.
-	v.complete = checks.openalex === "ok" && checks.crossref === "ok";
+	v.complete = checks.openalex === "ok" && (checks.crossref === "ok" || checks.crossref === "n/a");
 	return previous ? keepRetraction(v, previous) : v;
 }
 
@@ -358,12 +392,13 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 	const known = loadLibrary().items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
 	// Network first; the library is read and written only after, so a parallel add isn't lost.
 	const csl = known ? undefined : await fetchCsl(doi);
-	let verified = await verify(doi, known?.tabkyra.verified);
+	const agency = known?.tabkyra.agency ?? (await registrationAgency(doi));
+	let verified = await verify(doi, known?.tabkyra.verified, agency);
 	const record = csl;
 	// An alias DOI answers with its primary DOI; notices attach to the primary, so check both.
 	const named = toDoi(clean(record?.DOI, 300));
 	const primary = known?.tabkyra.primaryDoi ?? (named && named.toLowerCase() !== doi.toLowerCase() ? named : undefined);
-	if (primary) verified = mergeVerification(verified, await verify(primary, known?.tabkyra.verified));
+	if (primary) verified = mergeVerification(verified, await verify(primary, known?.tabkyra.verified, await registrationAgency(primary)));
 	return updateLibrary((library) => {
 		const existing = library.items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
 		if (existing) {
@@ -392,7 +427,7 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 		const item: LibraryItem = {
 			id: citekey(draft, new Set(library.items.map((i) => i.id))),
 			...draft,
-			tabkyra: { addedAt: new Date().toISOString(), verified, tags: [], ...(primary ? { primaryDoi: primary } : {}) },
+			tabkyra: { addedAt: new Date().toISOString(), verified, tags: [], ...(primary ? { primaryDoi: primary } : {}), ...(agency ? { agency } : {}) },
 		};
 		mergeAnnotations(item, options);
 		library.items.push(item);
@@ -405,7 +440,7 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
  * An OpenAlex 404 ("not-found") isn't enough: the work may have been merged or re-keyed.
  */
 function keepRetraction(next: Verification, previous: Verification): Verification {
-	const bothAnswered = next.checks?.openalex === "ok" && next.checks?.crossref === "ok";
+	const bothAnswered = next.checks?.openalex === "ok" && (next.checks?.crossref === "ok" || next.checks?.crossref === "n/a");
 	return previous.retracted && !next.retracted && !bothAnswered ? { ...next, retracted: true, notices: previous.notices } : next;
 }
 
@@ -421,7 +456,7 @@ function mergeVerification(a: Verification, b: Verification): Verification {
 			a.checks && b.checks
 				? {
 						openalex: a.checks.openalex === "ok" && b.checks.openalex === "ok" ? "ok" : a.checks.openalex === "failed" || b.checks.openalex === "failed" ? "failed" : "not-found",
-						crossref: a.checks.crossref === "ok" && b.checks.crossref === "ok" ? "ok" : "failed",
+						crossref: a.checks.crossref === "failed" || b.checks.crossref === "failed" ? "failed" : a.checks.crossref === "ok" || b.checks.crossref === "ok" ? "ok" : "n/a",
 					}
 				: a.checks,
 		oaUrl: a.oaUrl ?? b.oaUrl,
@@ -441,20 +476,22 @@ export async function reverify(keys: string[]): Promise<{ items: LibraryItem[]; 
 	const before = loadLibrary();
 	const targets = keys.length ? before.items.filter((i) => keys.includes(i.id)) : before.items;
 	const missing = keys.filter((k) => !before.items.some((i) => i.id === k));
+	// Keyed by id and DOI: a result applies only to the very item it was computed for.
 	const results = new Map<string, Verification>();
+	const keyOf = (i: LibraryItem) => `${i.id}\u0000${i.DOI}\u0000${i.tabkyra.addedAt}`;
 	for (const item of targets) {
 		if (!item.DOI) continue;
-		let v = await verify(item.DOI, item.tabkyra.verified);
-		if (item.tabkyra.primaryDoi) v = mergeVerification(v, await verify(item.tabkyra.primaryDoi, item.tabkyra.verified));
-		results.set(item.id, v);
+		let v = await verify(item.DOI, item.tabkyra.verified, item.tabkyra.agency);
+		if (item.tabkyra.primaryDoi) v = mergeVerification(v, await verify(item.tabkyra.primaryDoi, item.tabkyra.verified, await registrationAgency(item.tabkyra.primaryDoi)));
+		results.set(keyOf(item), v);
 	}
 	// Apply to a fresh, locked copy, so anything added meanwhile is kept.
 	const items = updateLibrary((library) => {
 		for (const item of library.items) {
-			const v = results.get(item.id);
+			const v = results.get(keyOf(item));
 			if (v) item.tabkyra.verified = keepRetraction(v, item.tabkyra.verified);
 		}
-		return library.items.filter((i) => results.has(i.id));
+		return library.items.filter((i) => results.has(keyOf(i)));
 	});
 	return { items, missing };
 }
@@ -499,10 +536,13 @@ export async function cite(key: string, style = "apa"): Promise<string> {
 
 /** The mark every output carries for a source that is retracted or not fully checked. */
 function warning(item: LibraryItem): string | undefined {
-	if (item.tabkyra.verified.retracted) return "RETRACTED";
-	if (item.tabkyra.verified.notices.some((n) => /concern/.test(n.type))) return "EXPRESSION OF CONCERN";
-	if (item.tabkyra.verified.complete === false) return "RETRACTION CHECK INCOMPLETE";
-	return undefined;
+	const v = item.tabkyra.verified;
+	const marks = [
+		v.retracted ? "RETRACTED" : "",
+		v.notices.some((n) => /concern/.test(n.type)) ? "EXPRESSION OF CONCERN" : "",
+		!v.retracted && v.complete === false ? "RETRACTION CHECK INCOMPLETE" : "",
+	].filter(Boolean);
+	return marks.length ? marks.join("; ") : undefined;
 }
 
 function warningPrefix(item: LibraryItem): string {
@@ -558,13 +598,14 @@ export function toBibtex(items: LibraryItem[]): string {
 				["volume", i.volume],
 				["number", i.issue],
 				["pages", i.page?.replace(/-/g, "--")],
-				["doi", i.DOI],
+				// biblatex reads doi verbatim: write it as is, or not at all.
+				["doi", i.DOI && !/[{}\\]/.test(i.DOI) ? i.DOI : undefined],
 				["url", i.DOI ? `https://doi.org/${doiPath(i.DOI)}` : i.URL],
 				["note", warning(i)],
 			];
 			const body = fields
 				.filter(([, v]) => v)
-				.map(([k, v]) => `  ${k} = {${k === "url" ? (v as string).replace(/[{}\\]/g, "") : k === "author" ? v : bibEscape(v as string)}}`)
+				.map(([k, v]) => `  ${k} = {${k === "url" ? (v as string).replace(/[{}\\]/g, "") : k === "author" || k === "doi" ? v : bibEscape(v as string)}}`)
 				.join(",\n");
 			return `@${BIBTEX_TYPE[i.type] ?? "misc"}{${i.id},\n${body}\n}`;
 		})
@@ -603,7 +644,11 @@ export function toRis(items: LibraryItem[]): string {
 				warning(i) ? `N1  - ${warning(i)}` : "",
 				"ER  - ",
 			];
-			return lines.filter(Boolean).join("\n");
+			// Each value stays on its own tag line.
+			return lines
+				.filter(Boolean)
+				.map((l) => l.replace(/[\r\n]+/g, " "))
+				.join("\n");
 		})
 		.join("\n\n")
 		.concat(items.length ? "\n" : "");
@@ -807,7 +852,7 @@ export function summary(item: LibraryItem): Record<string, unknown> {
 
 export async function runLibrary(args: string[]): Promise<number> {
 	const [sub, ...rest] = args;
-	const allowed = sub ? LIBRARY_OPTIONS[sub] : undefined;
+	const allowed = sub && Object.hasOwn(LIBRARY_OPTIONS, sub) ? LIBRARY_OPTIONS[sub] : undefined;
 	if (!allowed) throw new Error(LIBRARY_USAGE);
 	const { positional, opts, tags } = parse(rest, allowed);
 	switch (sub) {

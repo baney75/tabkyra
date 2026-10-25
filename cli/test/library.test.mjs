@@ -75,6 +75,10 @@ Object.assign(RECORDS, {
 	"10.1000/percent": { type: "journal-article", title: "Vaccine outcomes %% hidden", author: [{ literal: "World Health Organization" }], issued: { "date-parts": [[2012]] }, DOI: "10.1000/percent" },
 	"10.1000/partial": { type: "journal-article", title: "Partly retracted", author: [{ family: "Part", given: "P." }], issued: { "date-parts": [[2011]] }, DOI: "10.1000/partial" },
 	"10.1000/emptyshape": { type: "journal-article", title: "Empty answers", author: [{ family: "Empty", given: "E." }], issued: { "date-parts": [[2010]] }, DOI: "10.1000/emptyshape" },
+	"10.1000/springer_13": { type: "chapter", title: "Underscore DOI", author: [{ family: "Under", given: "U." }], issued: { "date-parts": [[2020]] }, DOI: "10.1000/springer_13" },
+	"10.1000/nullnotice": { type: "journal-article", title: "Null notice", author: [{ family: "Null", given: "N." }], issued: { "date-parts": [[2009]] }, DOI: "10.1000/nullnotice" },
+	"10.1000/smuggle": { type: "journal-article", title: `Visible${String.fromCodePoint(0xe0100, 0xe0101)} title`, author: [{ family: "Smug", given: "S." }], issued: { "date-parts": [[2008]] }, DOI: "10.1000/smuggle" },
+	"10.48550/arXiv.hep-th/9901001": { type: "article", title: "Old style arXiv", author: [{ family: "Old", given: "O." }], issued: { "date-parts": [[1999]] }, DOI: "10.48550/arXiv.hep-th/9901001" },
 	"10.1000/alias": { type: "journal-article", title: "Alias target", author: [{ family: "Alias", given: "A." }], issued: { "date-parts": [[2017]] }, DOI: "10.9999/someone-else" },
 });
 
@@ -91,6 +95,10 @@ before(async () => {
 			return res.end("<html>publisher landing page</html>");
 		}
 		if (url.pathname.startsWith("/doi/") && mock.doiDown) return json(503, {});
+		if (url.pathname.startsWith("/doi/ra/")) {
+			const doi = decodeURIComponent(url.pathname.slice("/doi/ra/".length));
+			return json(200, [{ DOI: doi, RA: doi.startsWith("10.48550/") ? "DataCite" : "Crossref" }]);
+		}
 		if (url.pathname.startsWith("/doi/")) {
 			const doi = decodeURIComponent(url.pathname.slice(5));
 			const record = RECORDS[doi];
@@ -114,6 +122,7 @@ before(async () => {
 			const retracted = doi === "10.1000/retracted" || doi === "10.1000/primary-retracted" || mock.retractedNow.has(doi);
 			const items = retracted ? [{ DOI: "10.1000/notice", "update-to": [{ type: "retraction", DOI: doi }] }] : [];
 			if (doi === "10.1000/many-notices") return json(200, { message: { "total-results": 1500, items: [] } });
+			if (doi === "10.1000/nullnotice") return json(200, { message: { "total-results": 1, items: [null] } });
 			if (doi === "10.1000/partial") return json(200, { message: { "total-results": 1, items: [{ DOI: "10.1000/n2", "update-to": [{ type: "partial_retraction", DOI: doi }] }] } });
 			return json(200, { message: { "total-results": items.length, items } });
 		}
@@ -501,4 +510,31 @@ test("a bare URL in fetched text doesn't become a link in a note", async () => {
 test("a partial retraction counts, and an answer missing its fields isn't a check", async () => {
 	assert.equal((await lib("add", "10.1000/partial")).code, 3);
 	assert.equal((await lib("add", "10.1000/emptyshape")).code, 4);
+});
+
+test("DataCite DOIs aren't marked checked by Crossref; old arXiv ids resolve", async () => {
+	assert.equal((await lib("add", "arXiv:hep-th/9901001")).code, 0);
+	const item = items().find((i) => i.DOI === "10.48550/arXiv.hep-th/9901001");
+	assert.equal(item.tabkyra.agency, "datacite");
+	assert.equal(item.tabkyra.verified.checks.crossref, "n/a");
+});
+
+test("a malformed notice leaves the check incomplete", async () => {
+	assert.equal((await lib("add", "10.1000/nullnotice")).code, 4);
+});
+
+test("identifiers with newlines or dot segments are refused, and hidden selectors are stripped", async () => {
+	for (const id of ["10.1000/x%0AER%20%20-%20", "10.9999/not-real/../../10.1037/0033-2909.132.3.354", "10.9999/x/%2e%2e/%2e%2e/10.1000/good"]) {
+		const r = await lib("add", id);
+		assert.equal(r.code, 1, `${id}: ${r.out}`);
+		assert.match(r.out, /not a DOI/);
+	}
+	await lib("add", "10.1000/smuggle");
+	assert.doesNotMatch(items().find((i) => i.DOI === "10.1000/smuggle").title, /[\u{E0100}-\u{E01EF}]/u);
+});
+
+test("BibTeX keeps the doi field verbatim, marks combine, and an inherited name isn't a subcommand", async () => {
+	await lib("add", "10.1000/springer_13");
+	assert.match((await lib("export", "--format", "bibtex")).out, /doi = \{10\.1000\/springer_13\}/);
+	assert.equal((await lib("constructor", "--x")).code, 2);
 });
