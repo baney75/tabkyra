@@ -120,12 +120,13 @@ export async function runMcpServer(): Promise<void> {
 				"Do not enter passwords or payment details; when a page needs a sign-in or captcha, call tabs_show and ask the user to do it.",
 				"Opening a new site may need the user's approval; if a site is denied, tell the user and do not try to get around it.",
 				"How to work: you get your own tab group; your tabs never take focus and you cannot see the user's other tabs.",
-				"Call status first if unsure the browser is connected. Workflow: navigate(url) -> read_page (refs) -> click/type/fill by ref -> read_page again to confirm.",
+				"Call status first; if it is not connected, tell the user and stop. Workflow: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref -> read_page again to confirm the result.",
 				"For canvas apps and multi-step input, batch steps with actions (one call, screenshot at the end) instead of one tool call per key or drag.",
 				"Canvas editors (Excalidraw, tldraw, Figma-like): use the app's keyboard shortcuts and mouse drags, check the result on the screenshot, and do not reverse-engineer the app's internals with run_js.",
 				"Reuse your current tab for step-by-step browsing; tabs_create only when two pages must stay open.",
 				"Close tabs you no longer need with tabs_close. Prefer read_page/get_page_text over screenshots for reading.",
 				"Refs expire when the page changes; take a new read_page after navigation or big updates.",
+				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; ask the user before OK on anything that acts under their sign-in).",
 			].join(" "),
 		},
 	);
@@ -548,6 +549,22 @@ export async function runMcpServer(): Promise<void> {
 			},
 		},
 		(args) => call("wait", args),
+	);
+	server.registerTool(
+		"handle_dialog",
+		{
+			title: "Answer a page dialog",
+			description:
+				"Answer an alert, confirm or prompt box. While one is open the page is frozen, and other calls fail with its text " +
+				"(error dialog_open). accept true presses OK, false presses Cancel. Ask the user before pressing OK on anything that acts " +
+				'under their sign-in (delete, send, buy, post); Cancel is always safe. Example: {"accept":false}',
+			inputSchema: {
+				accept: z.boolean().describe("true presses OK (accept), false presses Cancel (dismiss)"),
+				promptText: z.string().optional().describe("Text to enter in a prompt() box before OK"),
+				tabId,
+			},
+		},
+		(args) => call("dialog", args),
 	);
 	server.registerTool(
 		"read_console",

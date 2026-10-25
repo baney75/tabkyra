@@ -152,6 +152,8 @@ export const ERR = {
 	INTERNAL: "internal",
 	TIMEOUT: "timeout",
 	NO_EXTENSION: "no_extension",
+	/** An alert, confirm or prompt box is open; answer it with the `dialog` method. */
+	DIALOG_OPEN: "dialog_open",
 } as const;
 
 /** Methods the extension implements; the CLI maps MCP tools onto these. */
@@ -180,6 +182,7 @@ export const BRIDGE_METHODS = [
 	"fill",
 	"evaluate",
 	"wait",
+	"dialog",
 	"console.read",
 	"network.read",
 	"permission.respond",

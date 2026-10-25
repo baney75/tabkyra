@@ -28,12 +28,66 @@ export function isRestrictedUrl(url: string): boolean {
 	);
 }
 
+// ---- JavaScript dialogs ---------------------------------------------------------
+//
+// alert(), confirm(), prompt() and beforeunload boxes freeze the page: every script and
+// input call into it waits until someone answers. The bridge tracks open dialogs so a
+// call that runs into one fails at once with the dialog's text, and `dialog` answers it.
+
+export interface PageDialog {
+	type: string;
+	message: string;
+	defaultPrompt?: string;
+	url?: string;
+}
+
+const openDialogs = new Map<number, PageDialog>();
+const dialogWatchers = new Set<(tabId: number, dialog: PageDialog) => void>();
+
+/** The dialog open on a tab, if any. */
+export function openDialog(tabId: number): PageDialog | undefined {
+	return openDialogs.get(tabId);
+}
+
+/** Called whenever a dialog opens on any attached tab. Returns an unsubscribe function. */
+export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): () => void {
+	dialogWatchers.add(fn);
+	return () => dialogWatchers.delete(fn);
+}
+
+/** Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). */
+export async function answerDialog(tabId: number, accept: boolean, promptText?: string): Promise<PageDialog> {
+	const dialog = openDialogs.get(tabId);
+	if (!dialog) throw new Error("No dialog is open on this tab");
+	await send(tabId, "Page.handleJavaScriptDialog", { accept, ...(promptText !== undefined ? { promptText } : {}) });
+	openDialogs.delete(tabId);
+	return dialog;
+}
+
 function installListeners(): void {
 	if (listenersInstalled) return;
 	listenersInstalled = true;
 	chrome.tabs.onActivated.addListener(({ tabId }) => void releaseAgentViewport(tabId));
+	chrome.debugger.onEvent.addListener((source, method, params) => {
+		const tabId = source.tabId;
+		if (tabId === undefined) return;
+		if (method === "Page.javascriptDialogOpening") {
+			const p = (params ?? {}) as { type?: string; message?: string; defaultPrompt?: string; url?: string };
+			const dialog: PageDialog = {
+				type: p.type ?? "alert",
+				message: p.message ?? "",
+				defaultPrompt: p.defaultPrompt,
+				url: p.url,
+			};
+			openDialogs.set(tabId, dialog);
+			for (const fn of dialogWatchers) fn(tabId, dialog);
+		} else if (method === "Page.javascriptDialogClosed") {
+			openDialogs.delete(tabId);
+		}
+	});
 	chrome.debugger.onDetach.addListener((source, reason) => {
 		if (source.tabId === undefined) return;
+		openDialogs.delete(source.tabId);
 		attachedTabs.delete(source.tabId);
 		viewportTabs.delete(source.tabId);
 		if (reason === "canceled_by_user") bannedTabs.add(source.tabId);
@@ -42,6 +96,7 @@ function installListeners(): void {
 		if (details.frameId === 0) bannedTabs.delete(details.tabId);
 	});
 	chrome.tabs.onRemoved.addListener((tabId) => {
+		openDialogs.delete(tabId);
 		attachedTabs.delete(tabId);
 		viewportTabs.delete(tabId);
 		bannedTabs.delete(tabId);
@@ -70,6 +125,8 @@ export async function ensureAttached(tabId: number): Promise<void> {
 			}
 		}
 		attachedTabs.add(tabId);
+		// Page events report alert/confirm/prompt dialogs (see openDialog above).
+		await send(tabId, "Page.enable").catch(() => undefined);
 		// Hidden tabs freeze rAF; focus emulation unfreezes it and makes the page report
 		// itself visible, so lazy loading and infinite scroll keep working off-screen.
 		await send(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => undefined);

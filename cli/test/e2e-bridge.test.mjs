@@ -29,6 +29,10 @@ const PAGE = `<!doctype html><title>Tabkyra e2e</title>
 <button id="go" onclick="document.getElementById('out').textContent = 'Hello, ' + document.getElementById('name').value + '!'">Greet</button>
 <p id="out">waiting</p>`;
 
+const DIALOG_PAGE = `<!doctype html><title>Tabkyra dialog</title>
+<button id="del" onclick="document.getElementById('res').textContent = confirm('Really delete?') ? 'deleted' : 'kept'">Delete</button>
+<p id="res">untouched</p>`;
+
 let home;
 let socketDir;
 let browser;
@@ -83,9 +87,9 @@ before(async () => {
 			: join(home, ".config", "chromium");
 	mkdirSync(profile, { recursive: true });
 
-	server = createServer((_req, res) => {
+	server = createServer((req, res) => {
 		res.writeHead(200, { "content-type": "text/html" });
-		res.end(PAGE);
+		res.end(req.url === "/dialog" ? DIALOG_PAGE : PAGE);
 	});
 	await new Promise((r) => server.listen(0, "127.0.0.1", r));
 	pageUrl = `http://127.0.0.1:${server.address().port}/`;
@@ -189,4 +193,30 @@ test("open a page, snapshot, type, click and read back through MCP", async () =>
 		"the greeting",
 	);
 	assert.match(text, /Hello, Donovan!/);
+});
+
+test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {
+	await tool("navigate", { url: `${pageUrl}dialog` });
+	const started = Date.now();
+	const blocked = await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
+	const message = blocked.content.map((c) => c.text).join("\n");
+	assert.ok(blocked.isError, message);
+	assert.match(message, /dialog_open: A confirm dialog is open on the page: "Really delete\?"/);
+	assert.ok(Date.now() - started < 10_000, "the call must not wait for the 90 s handler timeout");
+	// While it is open, page calls fail the same way instead of hanging.
+	const frozen = await mcp.callTool({ name: "get_page_text", arguments: {} });
+	assert.ok(frozen.isError);
+	assert.match(frozen.content[0].text, /dialog_open/);
+
+	const answered = JSON.parse(await tool("handle_dialog", { accept: false }));
+	assert.equal(answered.type, "confirm");
+	assert.equal(answered.accepted, false);
+	assert.match(await tool("get_page_text"), /kept/);
+
+	await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
+	await tool("handle_dialog", { accept: true });
+	assert.match(await tool("get_page_text"), /deleted/);
+	const none = await mcp.callTool({ name: "handle_dialog", arguments: { accept: true } });
+	assert.ok(none.isError);
+	assert.match(none.content[0].text, /No dialog is open/);
 });

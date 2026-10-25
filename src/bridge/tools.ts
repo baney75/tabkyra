@@ -5,6 +5,7 @@
  */
 
 import {
+	answerDialog,
 	captureScreenshot,
 	scroll as cdpScroll,
 	click,
@@ -13,6 +14,7 @@ import {
 	enableNetworkCapture,
 	evaluateMain,
 	hover,
+	openDialog,
 	pressKey,
 	readConsole,
 	readNetwork,
@@ -409,6 +411,20 @@ export const handlers: Record<string, Handler> = {
 		);
 		if (!ok) throw new BridgeError(ERR.TIMEOUT, "Condition not met before timeout");
 		return { ...(await tabSummary(tabId)), matched: true };
+	},
+
+	/** Answer an alert, confirm or prompt box: accept presses OK, otherwise Cancel. */
+	dialog: async (ctx, params) => {
+		const requested = num(params, "tabId");
+		const candidates = requested !== undefined ? [requested] : [ctx.session.currentTabId, ...ctx.session.tabIds];
+		const tabId = candidates.find(
+			(id): id is number => id !== undefined && ctx.session.tabIds.includes(id) && !!openDialog(id),
+		);
+		if (tabId === undefined) throw new BridgeError(ERR.NOT_FOUND, "No dialog is open on your tabs.");
+		if (typeof params.accept !== "boolean")
+			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
+		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"));
+		return { tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
 	},
 
 	/**

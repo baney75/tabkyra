@@ -22,7 +22,7 @@ await build({
 	packages: "bundle",
 	sourcemap: true,
 	// keys/tabkyra-release.pub is bundled as text: the key that verifies releases ships inside the CLI.
-	loader: { ".pub": "text" },
+	loader: { ".pub": "text", ".md": "text" },
 	logLevel: "info",
 });
 chmodSync(join(outDir, "index.js"), 0o755);

@@ -7,7 +7,7 @@
  * backoff and on a 30 s alarm, which also keeps the worker alive.
  */
 
-import { stopScreencastsOwnedBy } from "../browser/cdp.js";
+import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, NoTabError, pruneSessions } from "../browser/session.js";
 import {
@@ -178,6 +178,48 @@ function resolveDecision(requestId: string, decision: PermissionDecision): boole
 	return true;
 }
 
+/** Methods that still work while a dialog freezes the page. */
+const DIALOG_SAFE = new Set([
+	"dialog",
+	"status",
+	"tabs.context",
+	"tabs.create",
+	"tabs.close",
+	"tabs.select",
+	"tabs.show",
+	"permission.respond",
+]);
+
+function dialogError(dialog: PageDialog): BridgeError {
+	const kind = dialog.type === "beforeunload" ? "leave-page" : dialog.type;
+	return new BridgeError(
+		ERR.DIALOG_OPEN,
+		`A ${kind} dialog is open on the page: ${JSON.stringify(dialog.message)}. The page is frozen until it is answered. ` +
+			"Call handle_dialog with accept true (OK) or false (Cancel). Ask the user first if OK would act under their sign-in (delete, send, buy, post).",
+	);
+}
+
+/** Run a handler, but fail at once if a dialog opens on one of the session's tabs. */
+function raceDialogs<T>(session: BrowserSession, work: Promise<T>): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const stop = watchDialogs((tabId, dialog) => {
+			if (!session.tabIds.includes(tabId)) return;
+			stop();
+			reject(dialogError(dialog));
+		});
+		work.then(
+			(v) => {
+				stop();
+				resolve(v);
+			},
+			(e) => {
+				stop();
+				reject(e);
+			},
+		);
+	});
+}
+
 async function runRequest(state: ClientState, req: HostForwardedRequest): Promise<void> {
 	const reply = (result?: unknown, error?: BridgeError) =>
 		send({
@@ -214,7 +256,16 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 				}
 			},
 		};
-		const result = await withTimeout(handler(ctx, req.params ?? {}), HANDLER_TIMEOUT_MS, req.method);
+		if (!DIALOG_SAFE.has(req.method)) {
+			const open = session.tabIds.map((id) => openDialog(id)).find((d) => d !== undefined);
+			if (open) throw dialogError(open);
+		}
+		const work = handler(ctx, req.params ?? {});
+		const result = await withTimeout(
+			DIALOG_SAFE.has(req.method) ? work : raceDialogs(session, work),
+			HANDLER_TIMEOUT_MS,
+			req.method,
+		);
 		trace(`${state.name} ${req.method} session=${tSession}ms total=${Math.round(performance.now() - t0)}ms`);
 		reply(result);
 	} catch (err) {

@@ -125,6 +125,19 @@ codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp
 
 Any other MCP client can run the stdio server with `~/.config/tabkyra/tabkyra mcp`.
 
+### Teach your agent
+
+```bash
+tabkyra skill install            # Claude Code, Codex and OpenCode, wherever they're installed
+tabkyra skill print >> AGENTS.md # any other agent, as a section of a project's AGENTS.md
+```
+
+The skill ([skills/tabkyra/SKILL.md](skills/tabkyra/SKILL.md)) is short and written for small
+models. It covers when to use Tabkyra, `status` first, then the loop: navigate, `read_page`
+for refs, act by ref, read back. It also covers stale refs, waits, dialogs, the safety rules,
+cleanup and three worked examples. A test keeps it in step with the MCP server's
+instructions and tool schemas. `tabkyra setup` offers to install it.
+
 ## What your agent can do
 
 | Tools | |
@@ -134,6 +147,7 @@ Any other MCP client can run the stdio server with `~/.config/tabkyra/tabkyra mc
 | `read_page`, `find`, `get_page_text`, `get_page_html`, `screenshot` | Read a page as element refs and text, or look at it |
 | `click`, `type`, `fill`, `press`, `hover`, `scroll`, `drag`, `actions` | Act with real input events, by ref or by screenshot pixel |
 | `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits and debugging |
+| `handle_dialog` | Answer an alert, confirm or prompt box. While one is open, other calls fail at once with its text |
 | `tabs_show` | Bring a tab in front of you, when you need to sign in or see it |
 
 Every tool's description documents its parameters and includes an example.
