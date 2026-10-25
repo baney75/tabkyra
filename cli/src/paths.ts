@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 /** Socket directory: per user, outside $TMPDIR so every process finds the same path. */
 export function socketDir(): string {
-	if (process.platform === "win32") return `\\\\.\\pipe\\sitegeist-bridge-${userInfo().username}`;
-	return `/tmp/sitegeist-bridge-${userInfo().username}`;
+	if (process.platform === "win32") return `\\\\.\\pipe\\tabkyra-bridge-${userInfo().username}`;
+	return `/tmp/tabkyra-bridge-${userInfo().username}`;
 }
 
 export function socketPath(pid: number): string {

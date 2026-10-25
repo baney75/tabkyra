@@ -1,10 +1,10 @@
 {
 	"manifest_version": 3,
 	"minimum_chrome_version": "141",
-	"name": "sitegeist",
-	"description": "Your AI companion for the web - Research, automate, create",
+	"name": "Tabkyra",
+	"description": "An AI agent in your browser side panel, and a browser for your coding agents",
 	"version": "1.1.8",
-	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuutndkGSMNcoeKm/TTwkmosKUeJ8L8iNWkMnUvHL0PTFodX560qX1k330bweWhwa67VcU9L/Bl/AAvFSqsxvUBh+vSqiX4fRRKAKWHGvnK1SX4D76ZxRayoRYF1Plhmt9crDnaMJHbVLRxkdwnxa1m2UbYltTouYn65wpeoxgxK6OyWkjEmNP/cJ/0lBDg7ouwacDR6MOd/q53wEJAis128DU/Z81p+8f2AzBPtRcCBMAm4GTr6RX3H0MrIzIBvcvA0efTgiHuTp+Swv9EBeZjbf5ILNLCJkSQCbDf5424uC6F7BzGCdaBU03YaTJHTI/FECvMEePzwUB5ZRY7MVKwIDAQAB",
+	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2kC2+fqshozr+m/uopS9WXvavWghH5/l2yJbwV0sZZUpq0OOMfnVkGZLJtN7y/n0ifjKi4NENTCFou2e7CfX8D2j+0GSYuYFC/D4x0SElBEaL1Ey23JbjEL3auyfG5B4k4YfqU1hKk0Vxw1ENP46dvE7Vv0xvkOCnB1vcZzdJhqGFXjyPIrrTfiXNmzozeFSGPzi+AfNNh41T3pbN/9CB81rlhZnxVav3tTYLsvi8xrBbC88H4B1BtDw4OVLLETvmYJeXUE7tHftQdmZzAg70D6ABBfmYqKNIC+6mDYMH6uXokSZb4qog3LNrV1XCvaUHKGU9E/Xla3gTs8PLiR+8wIDAQAB",
 	"action": {
 		"default_title": "Click to open side panel"
 	},

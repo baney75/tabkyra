@@ -2,7 +2,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { type CustomProvider, SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { Toast } from "../components/Toast.js";
-import { getSitegeistStorage } from "../storage/app-storage.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 import { syncCustomProviderCorsRules } from "../utils/custom-provider-cors.js";
 import { CustomProviderEditDialog } from "./CustomProviderEditDialog.js";
 
@@ -24,7 +24,7 @@ export class CustomProvidersTab extends SettingsTab {
 
 	private async loadProviders() {
 		try {
-			this.providers = await getSitegeistStorage().customProviders.getAll();
+			this.providers = await getTabkyraStorage().customProviders.getAll();
 			this.requestUpdate();
 		} catch (error) {
 			console.error("Failed to load custom providers:", error);
@@ -42,7 +42,7 @@ export class CustomProvidersTab extends SettingsTab {
 	private async removeProvider(provider: CustomProvider) {
 		if (!confirm(`Delete custom provider "${provider.name}"?`)) return;
 		try {
-			const storage = getSitegeistStorage();
+			const storage = getTabkyraStorage();
 			await storage.customProviders.delete(provider.id);
 			// Remove the mirrored key entry created on save.
 			await storage.providerKeys.delete(provider.name);

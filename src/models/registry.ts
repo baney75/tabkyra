@@ -10,7 +10,7 @@
 
 import { type Api, getGeneratedModels, type Model, registerModels, resetProviderModels } from "@mariozechner/pi-ai";
 import { isOAuthCredentials, parseOAuthCredentials, resolveApiKey } from "../oauth/index.js";
-import type { SitegeistAppStorage } from "../storage/app-storage.js";
+import type { TabkyraAppStorage } from "../storage/app-storage.js";
 import { canDiscover, type DiscoveredModel, discoverProviderModels } from "./discovery.js";
 
 const STALE_MS = 60 * 60 * 1000;
@@ -38,7 +38,7 @@ const MODELS_DEV_KEYS: Record<string, string[]> = {
 let metadataCache: ModelsDevData | undefined;
 const inFlight = new Map<string, Promise<void>>();
 
-async function loadMetadata(storage: SitegeistAppStorage): Promise<ModelsDevData | undefined> {
+async function loadMetadata(storage: TabkyraAppStorage): Promise<ModelsDevData | undefined> {
 	if (metadataCache) return metadataCache;
 	const cached = await storage.discoveredModels.getMetadata<ModelsDevData>();
 	if (cached && Date.now() - cached.fetchedAt < METADATA_STALE_MS) {
@@ -118,7 +118,7 @@ function merge(
 	return model;
 }
 
-async function credentialFor(storage: SitegeistAppStorage, provider: string) {
+async function credentialFor(storage: TabkyraAppStorage, provider: string) {
 	const stored = await storage.providerKeys.get(provider);
 	if (!stored) return undefined;
 	const token = await resolveApiKey(stored, provider, storage.providerKeys);
@@ -127,7 +127,7 @@ async function credentialFor(storage: SitegeistAppStorage, provider: string) {
 }
 
 /** Register the cached discovery result for a provider, if any. */
-export async function applyCachedModels(storage: SitegeistAppStorage, provider: string): Promise<boolean> {
+export async function applyCachedModels(storage: TabkyraAppStorage, provider: string): Promise<boolean> {
 	const entry = await storage.discoveredModels.get(provider);
 	if (!entry || entry.models.length === 0) return false;
 	registerModels(provider, entry.models);
@@ -138,7 +138,7 @@ export async function applyCachedModels(storage: SitegeistAppStorage, provider: 
  * Discover models for one provider and register them. Errors are recorded on the
  * cache entry and the generated table stays in effect.
  */
-export async function refreshProviderModels(storage: SitegeistAppStorage, provider: string): Promise<void> {
+export async function refreshProviderModels(storage: TabkyraAppStorage, provider: string): Promise<void> {
 	if (!canDiscover(provider)) return;
 	const existing = inFlight.get(provider);
 	if (existing) return existing;
@@ -184,7 +184,7 @@ export async function refreshProviderModels(storage: SitegeistAppStorage, provid
  * stale ones refresh in the background (or are awaited when `wait` is set).
  */
 export async function refreshDiscoveredModels(
-	storage: SitegeistAppStorage,
+	storage: TabkyraAppStorage,
 	options: { wait?: boolean; force?: boolean; timeoutMs?: number } = {},
 ): Promise<void> {
 	const providers = (await storage.providerKeys.list()).filter(canDiscover);
@@ -201,7 +201,7 @@ export async function refreshDiscoveredModels(
 }
 
 /** Human-readable state for settings UI. */
-export async function discoveryStatus(storage: SitegeistAppStorage, provider: string): Promise<string> {
+export async function discoveryStatus(storage: TabkyraAppStorage, provider: string): Promise<string> {
 	if (!canDiscover(provider)) return "static list";
 	const entry = await storage.discoveredModels.get(provider);
 	if (!entry) return "not fetched yet";

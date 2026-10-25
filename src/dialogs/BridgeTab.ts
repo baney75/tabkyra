@@ -20,7 +20,7 @@ import { listSessions } from "../browser/session.js";
 
 /**
  * Settings > Bridge: who may drive the browser from outside (omp, pi, Claude
- * Code, Codex through `sitegeist mcp`), which hosts they may open, and pending
+ * Code, Codex through `tabkyra mcp`), which hosts they may open, and pending
  * permission requests.
  */
 @customElement("bridge-tab")
@@ -85,8 +85,8 @@ export class BridgeTab extends SettingsTab {
 					<h3 class="text-lg font-semibold text-foreground">Bridge</h3>
 					<p class="text-sm text-muted-foreground">
 						Lets coding agents on this computer (Claude Code, Codex, omp, pi) drive the browser through
-						Sitegeist. Each agent gets its own tab group and works in the background. Set up with
-						<code class="text-xs">npx sitegeist mcp</code>.
+						Tabkyra. Each agent gets its own tab group and works in the background. Set up with
+						<code class="text-xs">tabkyra mcp</code>.
 					</p>
 				</div>
 

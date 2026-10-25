@@ -105,7 +105,7 @@ export function runNativeHost(): void {
 		chmodSync(dir, 0o700);
 		const st = statSync(dir);
 		if (st.uid !== process.getuid?.()) {
-			process.stderr.write(`[sitegeist-host] ${dir} is owned by another user; refusing to start\n`);
+			process.stderr.write(`[tabkyra-host] ${dir} is owned by another user; refusing to start\n`);
 			process.exit(1);
 		}
 		sweepStaleSockets(dir);
@@ -123,7 +123,7 @@ export function runNativeHost(): void {
 			try {
 				messages = parser.push(chunk);
 			} catch (err) {
-				process.stderr.write(`[sitegeist-host] bad frame from ${id}: ${String(err)}\n`);
+				process.stderr.write(`[tabkyra-host] bad frame from ${id}: ${String(err)}\n`);
 				socket.destroy();
 				return;
 			}
@@ -147,7 +147,7 @@ export function runNativeHost(): void {
 		try {
 			messages = parser.push(chunk);
 		} catch (err) {
-			process.stderr.write(`[sitegeist-host] bad frame from extension: ${String(err)}\n`);
+			process.stderr.write(`[tabkyra-host] bad frame from extension: ${String(err)}\n`);
 			return;
 		}
 		for (const m of messages) onExtensionMessage(m as ExtToHost);

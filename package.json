@@ -1,8 +1,8 @@
 {
-	"name": "sitegeist",
+	"name": "tabkyra",
 	"version": "1.1.8",
 	"private": true,
-	"description": "AI-powered browser extension for web navigation and interaction",
+	"description": "Tabkyra browser extension",
 	"type": "module",
 	"main": "dist/background.js",
 	"scripts": {

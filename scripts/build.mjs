@@ -47,7 +47,7 @@ const buildOptions = {
 	// Let bare imports inside the bundled pi-mono source resolve against pi-mono's
 	// installed dependencies (openai, @anthropic-ai/sdk, typebox, ...).
 	nodePaths: [join(packageRoot, "../pi-mono/node_modules")],
-	// Force all mini-lit and lit imports to resolve to sitegeist's node_modules
+	// Force all mini-lit and lit imports to resolve to tabkyra's node_modules
 	alias: {
 		process: join(packageRoot, "scripts/process-shim.js"),
 		"@mariozechner/mini-lit": join(packageRoot, "node_modules/@mariozechner/mini-lit"),

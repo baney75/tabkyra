@@ -12,8 +12,8 @@ type ExportedSession = {
 	metadata: SessionMetadata;
 };
 
-@customElement("sitegeist-session-list-dialog")
-export class SitegeistSessionListDialog extends DialogBase {
+@customElement("tabkyra-session-list-dialog")
+export class TabkyraSessionListDialog extends DialogBase {
 	@state() private sessions: SessionMetadata[] = [];
 	@state() private loading = true;
 	@state() private searchQuery = "";
@@ -47,7 +47,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 	};
 
 	static async open(onSelect: (sessionId: string) => void, onDelete?: (sessionId: string) => void) {
-		const dialog = new SitegeistSessionListDialog();
+		const dialog = new TabkyraSessionListDialog();
 		dialog.onSelectCallback = onSelect;
 		dialog.onDeleteCallback = onDelete;
 		dialog.open();
@@ -158,8 +158,8 @@ export class SitegeistSessionListDialog extends DialogBase {
 			const a = document.createElement("a");
 			a.href = url;
 			const filename = sessionId
-				? `sitegeist-session-${exported[0]?.metadata.title?.replace(/[^a-z0-9]/gi, "-").toLowerCase() || "export"}.json`
-				: `sitegeist-sessions-${new Date().toISOString().split("T")[0]}.json`;
+				? `tabkyra-session-${exported[0]?.metadata.title?.replace(/[^a-z0-9]/gi, "-").toLowerCase() || "export"}.json`
+				: `tabkyra-sessions-${new Date().toISOString().split("T")[0]}.json`;
 			a.download = filename;
 			a.click();
 			URL.revokeObjectURL(url);

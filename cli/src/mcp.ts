@@ -1,5 +1,5 @@
 /**
- * `sitegeist mcp`: stdio MCP server that exposes the browser bridge to any MCP
+ * `tabkyra mcp`: stdio MCP server that exposes the browser bridge to any MCP
  * client (Claude Code, Codex, omp, ...). Tool names mirror Claude in Chrome so
  * prompts written for it carry over.
  */
@@ -65,7 +65,7 @@ function formatSnapshot(snap: {
 }
 
 function harnessName(): string {
-	const explicit = process.env.SITEGEIST_CLIENT_NAME;
+	const explicit = process.env.TABKYRA_CLIENT_NAME;
 	if (explicit) return explicit;
 	if (process.env.CLAUDECODE || process.env.CLAUDE_CODE_ENTRYPOINT) return "claude";
 	if (process.env.CODEX_HOME || process.env.CODEX_SANDBOX) return "codex";
@@ -80,7 +80,7 @@ function harnessName(): string {
  */
 function sessionKey(): string {
 	return (
-		process.env.SITEGEIST_SESSION ||
+		process.env.TABKYRA_SESSION ||
 		process.env.CLAUDE_SESSION_ID ||
 		process.env.CODEX_THREAD_ID ||
 		process.env.OMP_SESSION_ID ||
@@ -93,14 +93,14 @@ export async function runMcpServer(): Promise<void> {
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
 		const result = install();
-		process.stderr.write(`[sitegeist] installed native host manifest (${result.written.length} browser dir(s))\n`);
+		process.stderr.write(`[tabkyra] installed native host manifest (${result.written.length} browser dir(s))\n`);
 	}
 
 	const server = new McpServer(
-		{ name: "sitegeist", version: VERSION },
+		{ name: "tabkyra", version: VERSION },
 		{
 			instructions: [
-				"sitegeist drives the user's real Chromium browser in the background.",
+				"tabkyra drives the user's real Chromium browser in the background.",
 				"You get your own tab group; your tabs never take focus and you cannot see the user's other tabs.",
 				"Workflow: navigate(url) -> read_page (refs) -> click/type/fill by ref -> read_page again to confirm.",
 				"For canvas apps and multi-step input, batch steps with actions (one call, screenshot at the end) instead of one tool call per key or drag.",
@@ -123,13 +123,13 @@ export async function runMcpServer(): Promise<void> {
 		const requestId = String(data.requestId);
 		const host = String(data.host);
 		let decision: "allow_once" | "allow_host" | "deny" = "deny";
-		if (process.env.SITEGEIST_AUTO_ALLOW === "1") {
+		if (process.env.TABKYRA_AUTO_ALLOW === "1") {
 			await client.call("permission.respond", { requestId, decision: "allow_once" }).catch(() => undefined);
 			return;
 		}
 		try {
 			const answer = await server.server.elicitInput({
-				message: `sitegeist: the browser agent wants to open ${host}. Allow?`,
+				message: `tabkyra: the browser agent wants to open ${host}. Allow?`,
 				requestedSchema: {
 					type: "object",
 					properties: {
@@ -151,7 +151,7 @@ export async function runMcpServer(): Promise<void> {
 			// Client without elicitation support (headless runs): deny now instead of stalling
 			// the tool call; the error text tells the model how the user can allow the host.
 			process.stderr.write(
-				`[sitegeist] ${host} needs approval: run \`sitegeist allow ${host}\`, use the side panel (Settings > Bridge), or set SITEGEIST_AUTO_ALLOW=1.\n`,
+				`[tabkyra] ${host} needs approval: run \`tabkyra allow ${host}\`, use the side panel (Settings > Bridge), or set TABKYRA_AUTO_ALLOW=1.\n`,
 			);
 		}
 		await client.call("permission.respond", { requestId, decision }).catch(() => undefined);
@@ -448,5 +448,5 @@ export async function runMcpServer(): Promise<void> {
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
 	// Connect lazily on the first call, but try once now so a missing extension is reported early.
-	client.connect().catch((err) => process.stderr.write(`[sitegeist] ${err instanceof Error ? err.message : String(err)}\n`));
+	client.connect().catch((err) => process.stderr.write(`[tabkyra] ${err instanceof Error ? err.message : String(err)}\n`));
 }

@@ -6,7 +6,7 @@ import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Toast } from "../components/Toast.js";
 import { buildSkillFromRecording, type RecordingResult } from "../recording/recorder.js";
-import { getSitegeistStorage } from "../storage/app-storage.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 
 /**
  * Review a recording and save it as a site-scoped Skill. The agent will then
@@ -144,7 +144,7 @@ export class RecordSkillDialog extends DialogBase {
 			Toast.error("Please enter a skill name");
 			return;
 		}
-		const storage = getSitegeistStorage();
+		const storage = getTabkyraStorage();
 		const existing = await storage.skills.get(name);
 		if (existing && !confirm(`A skill named "${name}" already exists. Overwrite it?`)) return;
 

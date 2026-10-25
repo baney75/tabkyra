@@ -35,7 +35,7 @@ import {
 } from "./protocol.js";
 import { BridgeError, type HandlerContext, handlers } from "./tools.js";
 
-const ALARM_NAME = "sitegeist-bridge-keepalive";
+const ALARM_NAME = "tabkyra-bridge-keepalive";
 const WORKER_STARTED_AT = Date.now();
 const LOG_MAX = 200;
 /** Ring buffer of timing lines, readable through bridge.debug. */
@@ -188,7 +188,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 
 	try {
 		if (!(await isBridgeEnabled())) {
-			throw new BridgeError(ERR.DISABLED, "The sitegeist bridge is disabled in Settings > Bridge.");
+			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Bridge.");
 		}
 		const handler = handlers[req.method];
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
@@ -207,7 +207,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 						ERR.PERMISSION_DENIED,
 						`Not allowed to open ${hostOf(url) || url}. ` +
 							(mode === "ask"
-								? "The user can allow it in the sitegeist side panel under Settings > Bridge, or answer the permission prompt."
+								? "The user can allow it in the tabkyra side panel under Settings > Bridge, or answer the permission prompt."
 								: "Bridge navigation is blocked."),
 					);
 				}
@@ -255,7 +255,7 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			if (message.method === "permission.allow") {
-				// `sitegeist allow <host>`: a local user process granting a host, same trust as the side panel.
+				// `tabkyra allow <host>`: a local user process granting a host, same trust as the side panel.
 				const host = String(message.params?.host ?? "").toLowerCase();
 				if (!host) {
 					send({
@@ -272,7 +272,7 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			if (message.method === "permission.setMode") {
-				// `sitegeist yolo` / `sitegeist ask`: a local user process flipping the site-permission mode,
+				// `tabkyra yolo` / `tabkyra ask`: a local user process flipping the site-permission mode,
 				// same trust as the Settings > Bridge toggle.
 				const mode = String(message.params?.mode ?? "");
 				if (mode !== "ask" && mode !== "allow_all") {
@@ -298,7 +298,7 @@ function onHostMessage(message: HostToExt): void {
 						.query({})
 						.then((groups) =>
 							groups
-								.filter((g) => g.title?.startsWith("Sitegeist"))
+								.filter((g) => g.title?.startsWith("Tabkyra"))
 								.map((g) => ({ id: g.id, title: g.title, windowId: g.windowId })),
 						)
 						.catch(() => []),

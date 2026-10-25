@@ -7,7 +7,7 @@
 
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
 
-const SNAPSHOT_WORLD_ID = "sitegeist-snapshot";
+const SNAPSHOT_WORLD_ID = "tabkyra-snapshot";
 const SNAPSHOT_CSP = "script-src 'unsafe-eval' 'unsafe-inline'; default-src 'none';";
 
 export interface NavigateOptions {
@@ -238,13 +238,13 @@ export interface Snapshot {
 
 /**
  * Page-side snapshot function. Stringified and injected, so it must be
- * self-contained. Stores element refs on window.__sitegeistRefs (same world),
+ * self-contained. Stores element refs on window.__tabkyraRefs (same world),
  * so a later click/fill by ref resolves without a second scan.
  */
 function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): unknown {
-	const w = window as unknown as { __sitegeistRefs?: Map<string, Element>; __sitegeistRefSeq?: number };
+	const w = window as unknown as { __tabkyraRefs?: Map<string, Element>; __tabkyraRefSeq?: number };
 	const refs = new Map<string, Element>();
-	w.__sitegeistRefs = refs;
+	w.__tabkyraRefs = refs;
 	let seq = 0;
 	const interactiveSel =
 		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=option],[role=switch],[role=textbox],[role=combobox],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
@@ -338,7 +338,7 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 		else if (el instanceof HTMLSelectElement) node.value = el.options[el.selectedIndex]?.text ?? "";
 		nodes.push(node);
 	}
-	w.__sitegeistRefSeq = seq;
+	w.__tabkyraRefSeq = seq;
 	const text = (document.body?.innerText ?? "").replace(/\n{3,}/g, "\n\n").slice(0, maxTextChars);
 	return {
 		url: location.href,
@@ -372,7 +372,7 @@ export async function locate(
 	target: { ref?: string; selector?: string },
 ): Promise<{ x: number; y: number; width: number; height: number }> {
 	const code = `(() => {
-		const refs = window.__sitegeistRefs;
+		const refs = window.__tabkyraRefs;
 		let el = null;
 		const ref = ${JSON.stringify(target.ref ?? "")};
 		const sel = ${JSON.stringify(target.selector ?? "")};
@@ -394,7 +394,7 @@ export async function fillElement(
 	value: string,
 ): Promise<void> {
 	const code = `(() => {
-		const refs = window.__sitegeistRefs;
+		const refs = window.__tabkyraRefs;
 		let el = null;
 		const ref = ${JSON.stringify(target.ref ?? "")};
 		const sel = ${JSON.stringify(target.selector ?? "")};
@@ -462,7 +462,7 @@ export async function scrollPage(
 	const code = `(() => {
 		const o = ${JSON.stringify(options)};
 		let target = null;
-		if (o.ref && window.__sitegeistRefs) target = window.__sitegeistRefs.get(o.ref);
+		if (o.ref && window.__tabkyraRefs) target = window.__tabkyraRefs.get(o.ref);
 		if (!target && o.selector) target = document.querySelector(o.selector);
 		if (target) target.scrollIntoView({ block: "center", behavior: "instant" });
 		else if (o.to === "top") window.scrollTo(0, 0);
