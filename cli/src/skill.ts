@@ -475,14 +475,33 @@ function routerIndex(): RouterIndex {
 	return router.index;
 }
 
-/** The best skills for a task, best first; empty when none fits. */
-export function matchTask(task: string, top = 3): SkillMatch[] {
-	return matchSkills(routerIndex(), task, top);
+let bundledRouter: RouterIndex | undefined;
+
+/** The index over bundled skills only, for remote sessions. */
+function bundledIndex(): RouterIndex {
+	bundledRouter ??= buildRouterIndex([...SKILLS].map(([name, text]) => ({ name, text })));
+	return bundledRouter;
 }
 
-/** The SKILL.md text in use for `name`: the applied local copy, or the bundled skill. */
-export function readSkill(name: string): string {
+/**
+ * The best skills for a task, best first; empty when none fits. `bundledOnly` (remote
+ * sessions) leaves out the user's local skills and edits, which stay on their devices (D6).
+ */
+export function matchTask(task: string, top = 3, bundledOnly = false): SkillMatch[] {
+	return matchSkills(bundledOnly ? bundledIndex() : routerIndex(), task, top);
+}
+
+/**
+ * The SKILL.md text in use for `name`: the applied local copy, or the bundled skill. With
+ * `bundledOnly` (remote sessions) it is always the bundled text, and local-only skills don't exist.
+ */
+export function readSkill(name: string, bundledOnly = false): string {
 	assertName(name);
+	if (bundledOnly) {
+		const text = SKILLS.get(name);
+		if (text === undefined) throw new SkillError(`No bundled skill named ${name}. Call skill_match.`);
+		return text;
+	}
 	if (!allNames().includes(name)) throw new SkillError(`No skill named ${name}. Call skill_match, or run tabkyra skill list.`);
 	return skillText(name);
 }

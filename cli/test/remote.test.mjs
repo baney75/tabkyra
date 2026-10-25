@@ -284,3 +284,21 @@ test("tailscale changes nothing when serve status can't be read", () => {
 	assert.match(r.out, /Couldn't read tailscale serve status/);
 	assert.throws(() => readFileSync(join(root, "status-fail.log"), "utf8"), "serve was never changed");
 });
+
+test("remote sessions read bundled skills only, never the user's local edits", async () => {
+	const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills");
+	const draft = join(root, "drafts", "dorks");
+	mkdirSync(draft, { recursive: true });
+	const text = readFileSync(join(skillsDir, "dorks", "SKILL.md"), "utf8");
+	writeFileSync(join(draft, "SKILL.md"), text.replace("## When something goes wrong", "## When something goes wrong\n\n| Private local note | Only on this machine |"));
+	const applied = cliRun(["skill", "apply", draft, "--yes"]);
+	assert.equal(applied.code, 0, applied.out);
+	const client = await connect(token("skills-reader", "skills.read"));
+	try {
+		const r = await client.callTool({ name: "skill_read", arguments: { name: "dorks" } });
+		assert.doesNotMatch(r.content[0].text, /Private local note/);
+		assert.equal(r.content[0].text.trim(), text.trim());
+	} finally {
+		await client.close();
+	}
+});

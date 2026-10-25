@@ -714,7 +714,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		(args) =>
 			library(() => {
-				const matches = matchTask(args.task, args.top ?? 3);
+				const matches = matchTask(args.task, args.top ?? 3, Boolean(options.remote));
 				if (matches.length === 0) return "none: no skill fits this task. Work without one.";
 				const lines = matches.map((m) => `${m.name} (${m.score}): ${m.description}`);
 				return [...lines, `Next: skill_read {"name":"${matches[0].name}"}`].join("\n");
@@ -725,11 +725,11 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		{
 			title: "Read one skill",
 			description:
-				"The full SKILL.md of one skill: the user's applied edit if they made one, otherwise the bundled text. Read only the skill skill_match chose, then follow its steps. " +
+				"The full SKILL.md of one skill: the user's applied edit if they made one, otherwise the bundled text (remote sessions always get the bundled text). Read only the skill skill_match chose, then follow its steps. " +
 				'Example: {"name":"academic-research"}',
 			inputSchema: { name: z.string().describe("A skill name from skill_match, lowercase-kebab-case") },
 		},
-		(args) => library(() => readSkill(args.name)),
+		(args) => library(() => readSkill(args.name, Boolean(options.remote))),
 	);
 
 	if (allowedTools) {
