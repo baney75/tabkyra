@@ -1,16 +1,20 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { BridgeClient, listSockets } from "./client.ts";
 import { runNativeHost } from "./host.ts";
+import { runDoctor } from "./doctor.ts";
 import { hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
+import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
+import { runSetup, type SetupOptions } from "./setup.ts";
 import { VERSION } from "./version.ts";
 
 const HELP = `tabkyra ${VERSION} - browser bridge for coding harnesses
 
 Usage:
+  tabkyra setup           Build, register, connect agents, load the extension (--yes accepts every offer)
+  tabkyra doctor          Check every piece and print one fix per problem
   tabkyra mcp             Run the MCP server on stdio (installs the native host on first run)
   tabkyra install         Write the native messaging manifest for every Chromium browser found
   tabkyra status          Show whether the extension is reachable
@@ -28,6 +32,23 @@ Harness setup:
   omp:    add an MCP server entry running "tabkyra mcp"
   pi:     tabkyra pi-extension
 `;
+
+/** Parse `setup` flags strictly: a typo should not silently change what setup does. */
+function parseSetupArgs(args: string[]): SetupOptions | string {
+	const options: SetupOptions = { yes: false, wait: true, timeoutS: 0 };
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--yes" || arg === "-y") options.yes = true;
+		else if (arg === "--no-wait") options.wait = false;
+		else if (arg === "--timeout" || arg.startsWith("--timeout=")) {
+			const raw = arg === "--timeout" ? args[++i] : arg.slice("--timeout=".length);
+			const seconds = Number(raw);
+			if (!raw || !Number.isFinite(seconds) || seconds <= 0) return `--timeout needs a number of seconds above 0, got "${raw ?? ""}".`;
+			options.timeoutS = seconds;
+		} else return `Unknown option "${arg}".`;
+	}
+	return options;
+}
 
 async function status(): Promise<void> {
 	const sockets = listSockets();
@@ -58,6 +79,26 @@ async function status(): Promise<void> {
 async function main(): Promise<void> {
 	const [command] = process.argv.slice(2);
 	switch (command) {
+		case "setup": {
+			const parsed = parseSetupArgs(process.argv.slice(3));
+			if (typeof parsed === "string") {
+				console.error(`${parsed}\nUsage: tabkyra setup [--yes] [--no-wait] [--timeout <seconds>]`);
+				process.exitCode = 2;
+				return;
+			}
+			process.exitCode = await runSetup(parsed);
+			return;
+		}
+		case "doctor": {
+			const unknown = process.argv.slice(3).find((a) => a !== "--json");
+			if (unknown) {
+				console.error(`Unknown option "${unknown}".\nUsage: tabkyra doctor [--json]`);
+				process.exitCode = 2;
+				return;
+			}
+			process.exitCode = await runDoctor({ json: process.argv.includes("--json") });
+			return;
+		}
 		case "host":
 			runNativeHost();
 			return;
@@ -105,9 +146,8 @@ async function main(): Promise<void> {
 		}
 		case "reload": {
 			// Refuse to reload onto a broken bundle: a half-written dist-chrome unloads the extension.
-			const dist = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist-chrome");
-			const required = ["manifest.json", "background.js", "sidepanel.js", "sidepanel.html", "app.css"];
-			const missing = required.filter((f) => !existsSync(join(dist, f)));
+			const dist = extensionDir();
+			const missing = EXTENSION_FILES.filter((f) => !existsSync(join(dist, f)));
 			if (existsSync(dist) && missing.length > 0) {
 				throw new Error(`dist-chrome is incomplete (missing ${missing.join(", ")}); run \`npm run build\` first`);
 			}

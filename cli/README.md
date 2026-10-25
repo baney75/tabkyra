@@ -16,8 +16,15 @@ user can reach. The client refuses sockets and directories it does not own.
 
 ```bash
 npm link                      # from this directory; puts tabkyra (and the sitegeist alias) on PATH
-tabkyra install               # writes the native-messaging manifest for every Chromium browser found
+tabkyra setup                 # build, register, load, connect and wire up your harnesses
 ```
+
+`tabkyra setup` builds `dist-chrome` if it is missing, registers the native host for every
+Chromium browser it finds, shows the one manual step (Load unpacked), waits until the
+extension connects, and offers to add the MCP server to each harness it detects. It edits
+a harness config only after a yes; `--yes` accepts every offer, `--no-wait` skips the
+wait, `--timeout=<s>` bounds it. `tabkyra doctor` re-checks everything later and prints
+one fix per problem (`--json` for scripts).
 
 `tabkyra mcp` runs the installer itself on first use, so a harness configured to start
 it needs no extra step. Reload the extension once after the first install.
@@ -26,6 +33,8 @@ it needs no extra step. Reload the extension once after the first install.
 
 | Command | Purpose |
 | --- | --- |
+| `tabkyra setup [--yes] [--no-wait] [--timeout=<s>]` | first-time setup, end to end |
+| `tabkyra doctor [--json]` | check Node, the build, host manifests, the connection and harness configs; exits 1 on a failure |
 | `tabkyra mcp` | stdio MCP server exposing the browser tools |
 | `tabkyra install [--force]` | write the native host manifest (Helium, Chrome, Chromium, Brave, Edge, Arc, Vivaldi, Opera; Linux and Windows too) |
 | `tabkyra status` | which browsers have the host manifest, is the extension connected |

@@ -5,9 +5,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 
 /** Stable id from the `key` in static/manifest.chrome.json. */
@@ -56,25 +56,54 @@ function configDir(): string {
 	return join(homedir(), ".config", "tabkyra");
 }
 
-function launcherPath(): string {
+export function launcherPath(): string {
 	return join(configDir(), process.platform === "win32" ? "host.cmd" : "host");
 }
 
-function writeLauncher(): string {
-	const path = launcherPath();
-	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
-	const node = process.execPath;
+/**
+ * The `tabkyra` command harness configs run: a launcher that pins Node by absolute path,
+ * so harnesses started from a GUI (Cursor, Claude Desktop) work without node on PATH.
+ */
+export function cliLauncherPath(): string {
+	return join(configDir(), process.platform === "win32" ? "tabkyra.cmd" : "tabkyra");
+}
+
+/** Node by its PATH name when that is this same binary (survives upgrades), else execPath. */
+function stableNode(): string {
+	const exec = process.execPath;
+	for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+		// A relative PATH entry would make the launcher depend on the directory it runs from.
+		if (!isAbsolute(dir)) continue;
+		const candidate = join(dir, process.platform === "win32" ? "node.exe" : "node");
+		try {
+			if (existsSync(candidate) && realpathSync(candidate) === realpathSync(exec)) return candidate;
+		} catch {
+			/* unreadable entry */
+		}
+	}
+	return exec;
+}
+
+function writeScript(path: string, args: string): void {
+	const node = stableNode();
 	const script = process.argv[1];
 	if (process.platform === "win32") {
-		writeFileSync(path, `@echo off\r\n"${node}" "${script}" host %*\r\n`);
+		writeFileSync(path, `@echo off\r\n"${node}" "${script}" ${args} %*\r\n`);
 	} else {
-		writeFileSync(path, `#!/bin/sh\nexec "${node}" "${script}" host "$@"\n`);
+		writeFileSync(path, `#!/bin/sh\nexec "${node}" "${script}" ${args}"$@"\n`);
 		chmodSync(path, 0o755);
 	}
+}
+
+function writeLauncher(): string {
+	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+	writeScript(cliLauncherPath(), "");
+	const path = launcherPath();
+	writeScript(path, "host ");
 	return path;
 }
 
-function manifestFor(launcher: string): string {
+export function manifestFor(launcher: string): string {
 	return `${JSON.stringify(
 		{
 			name: NATIVE_HOST_NAME,

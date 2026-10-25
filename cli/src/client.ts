@@ -75,19 +75,46 @@ export class BridgeClient {
 		return this.socket !== undefined && !this.socket.destroyed;
 	}
 
-	async connect(path?: string): Promise<void> {
-		const target = path ?? listSockets()[0];
-		if (!target) {
+	/** Dial the host and wait for its welcome; gives up after `timeoutMs` (a wedged host). */
+	async connect(path?: string, timeoutMs = 5000): Promise<void> {
+		if (path) return this.dial(path, timeoutMs);
+		// Several hosts can be alive (two browsers, a stale one): use the newest whose
+		// extension is connected, the same socket `tabkyra doctor` and `setup` report on.
+		const sockets = listSockets();
+		if (sockets.length === 0) {
 			throw new Error(
 				"No tabkyra browser bridge is running. Make sure the tabkyra extension is loaded in a Chromium browser and that `tabkyra install` has been run.",
 			);
 		}
+		let fallback: string | undefined;
+		let lastError: unknown;
+		for (const socket of sockets) {
+			try {
+				await this.dial(socket, timeoutMs);
+				if (this.extensionConnected) return;
+				fallback ??= socket;
+				this.close();
+			} catch (err) {
+				lastError = err;
+			}
+		}
+		if (fallback) return this.dial(fallback, timeoutMs);
+		throw lastError instanceof Error ? lastError : new Error(String(lastError));
+	}
+
+	private async dial(target: string, timeoutMs: number): Promise<void> {
 		if (process.platform !== "win32") assertSecurePath(target, "socket");
 		await new Promise<void>((resolve, reject) => {
 			const socket = connect(target);
 			const parser = new FrameParser(MAX_FRAME_FROM_EXTENSION);
 			let welcomed = false;
+			const timer = setTimeout(() => {
+				if (welcomed) return;
+				reject(new Error(`The bridge at ${target} did not answer within ${timeoutMs} ms`));
+				socket.destroy();
+			}, timeoutMs);
 			socket.once("error", (err) => {
+				clearTimeout(timer);
 				if (!welcomed) reject(err);
 			});
 			socket.on("data", (chunk) => {
@@ -102,6 +129,7 @@ export class BridgeClient {
 					const msg = m as HostToClient;
 					if (msg.type === "welcome") {
 						welcomed = true;
+						clearTimeout(timer);
 						this.clientId = msg.clientId;
 						this.extensionConnected = msg.extensionConnected;
 						resolve();
@@ -109,6 +137,9 @@ export class BridgeClient {
 				}
 			});
 			socket.on("close", () => {
+				clearTimeout(timer);
+				// Closed before the welcome: the promise would otherwise never settle.
+				if (!welcomed) reject(new Error("Bridge connection closed"));
 				for (const p of this.pending.values()) {
 					clearTimeout(p.timer);
 					p.reject(new Error("Bridge connection closed"));

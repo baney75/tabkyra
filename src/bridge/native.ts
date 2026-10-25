@@ -227,6 +227,22 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	}
 }
 
+/**
+ * True when "Allow user scripts" is on. The API object exists whenever the permission is
+ * declared; only a call tells whether the toggle is on (it throws while off).
+ */
+async function userScriptsAvailable(): Promise<boolean> {
+	try {
+		// Reading the property can itself throw while the toggle is off, so it is inside the try.
+		const api = (chrome as { userScripts?: { getScripts?: () => Promise<unknown> } }).userScripts;
+		if (!api?.getScripts) return false;
+		await api.getScripts();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function onHostMessage(message: HostToExt): void {
 	switch (message.type) {
 		case "ping":
@@ -313,37 +329,51 @@ function onHostMessage(message: HostToExt): void {
 						const options = await chrome.sidePanel.getOptions({ tabId: tab.id }).catch(() => null);
 						return { tabId: tab.id, url: tab.url, groupId: tab.groupId, options };
 					}),
-				]).then(([sessions, perms, panelState, groups, windows, activeTab]) =>
-					send({
-						type: "response",
-						clientId: message.clientId,
-						id: message.id,
-						result: {
-							version: chrome.runtime.getManifest().version,
-							userScriptsApi: typeof (chrome as { userScripts?: unknown }).userScripts !== "undefined",
-							sidePanel: { ...panelState, activeTab, groups },
-							windows,
-							grantedPermissions: perms.permissions ?? [],
-							workerUptimeS: Math.round((Date.now() - WORKER_STARTED_AT) / 1000),
-							log: [...log],
-							clients: [...clients.values()].map((c) => ({
-								clientId: c.clientId,
-								name: c.name,
-								sessionKey: c.sessionKey,
-								hasSession: !!c.session,
-								inFlight: c.inFlight,
-								lastError: c.lastError,
-							})),
-							sessions: sessions.map((s) => ({
-								id: s.id,
-								label: s.label,
-								tabs: s.tabIds.length,
-								windowId: s.windowId,
-								groupId: s.groupId,
-							})),
-						},
-					}),
-				);
+					userScriptsAvailable(),
+				])
+					.then(([sessions, perms, panelState, groups, windows, activeTab, userScriptsApi]) =>
+						send({
+							type: "response",
+							clientId: message.clientId,
+							id: message.id,
+							result: {
+								version: chrome.runtime.getManifest().version,
+								userScriptsApi,
+								sidePanel: { ...panelState, activeTab, groups },
+								windows,
+								grantedPermissions: perms.permissions ?? [],
+								workerUptimeS: Math.round((Date.now() - WORKER_STARTED_AT) / 1000),
+								log: [...log],
+								clients: [...clients.values()].map((c) => ({
+									clientId: c.clientId,
+									name: c.name,
+									sessionKey: c.sessionKey,
+									hasSession: !!c.session,
+									inFlight: c.inFlight,
+									lastError: c.lastError,
+								})),
+								sessions: sessions.map((s) => ({
+									id: s.id,
+									label: s.label,
+									tabs: s.tabIds.length,
+									windowId: s.windowId,
+									groupId: s.groupId,
+								})),
+							},
+						}),
+					)
+					.catch((err) =>
+						// Answer even when a probe fails, so `tabkyra doctor` and `debug` don't wait out a timeout.
+						send({
+							type: "response",
+							clientId: message.clientId,
+							id: message.id,
+							error: {
+								code: ERR.INTERNAL,
+								message: `bridge.debug: ${err instanceof Error ? err.message : String(err)}`,
+							},
+						}),
+					);
 				return;
 			}
 			if (message.method === "bridge.bench") {

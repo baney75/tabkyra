@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Socket directory: per user, outside $TMPDIR so every process finds the same path.
@@ -35,3 +36,16 @@ export function assertSecurePath(path: string, expected: "dir" | "socket"): void
 		if (mode & 0o077) throw new Error(`${path} is accessible to other users (mode ${mode.toString(8)})`);
 	}
 }
+
+/** The repository this CLI was built from (cli/dist/index.js -> repo root). */
+export function repoRoot(): string {
+	return join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+}
+
+/** The unpacked extension folder users load in the browser. TABKYRA_EXTENSION_DIR overrides it (tests). */
+export function extensionDir(): string {
+	return process.env.TABKYRA_EXTENSION_DIR || join(repoRoot(), "dist-chrome");
+}
+
+/** Files a loadable build must have; a half-written dist-chrome unloads the extension. */
+export const EXTENSION_FILES = ["manifest.json", "background.js", "sidepanel.js", "sidepanel.html", "app.css"];
