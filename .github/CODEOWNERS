@@ -1,0 +1,14 @@
+# Skills run with the user's sign-in in every agent that loads them, and the lint and CI
+# are what keep a bad one out. Changes to any of these need a maintainer's review.
+/skills/                    @baney75
+/cli/src/skill-lint.ts      @baney75
+/cli/src/skills-catalog.ts  @baney75
+/cli/test/skill-lint.test.mjs @baney75
+/.github/                   @baney75
+/cli/src/skill.ts           @baney75
+/cli/scripts/               @baney75
+/cli/package.json           @baney75
+/cli/package-lock.json      @baney75
+/src/agent-setup-prompt.ts  @baney75
+/test/agent-setup-prompt.test.mjs @baney75
+/docs/skill-security.md     @baney75

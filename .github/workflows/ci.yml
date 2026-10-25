@@ -1,0 +1,103 @@
+# Runs on every pull request and every push to main. Two jobs:
+#   skills: the gate for skills/. Lints every skill for hidden text, prompt injection,
+#           remote code, secret handling and structure, and runs the red-team tests that
+#           prove the lint still catches each attack. No install scripts run.
+#   check:  the full build, format, type and test pass that a release runs.
+# Nothing here gets a write token or a secret, so a pull request from a fork can't use CI
+# to reach anything.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Only superseded pull request runs are cancelled; every commit on main finishes its checks.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  skills:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install the CLI without install scripts
+        working-directory: cli
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          # esbuild ships its binary through an install script; fetch it explicitly, pinned by the lockfile.
+          node node_modules/esbuild/install.js
+
+      - name: Build the CLI
+        working-directory: cli
+        run: npm run build
+
+      - name: Lint every skill
+        run: node cli/dist/index.js skill lint skills
+
+      - name: Red-team the lint
+        working-directory: cli
+        run: node --test test/skill-lint.test.mjs
+
+      # A pull request that weakens the lint must still pass the base branch's lint.
+      - name: Lint with the base branch's lint
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth 1 origin "$BASE_SHA"
+          git worktree add --detach ../base "$BASE_SHA"
+          if [ ! -f ../base/cli/src/skill-lint.ts ]; then
+            echo "The base branch has no skill lint yet."
+            exit 0
+          fi
+          (cd ../base/cli && npm ci --ignore-scripts --no-audit --no-fund && node node_modules/esbuild/install.js && npm run build)
+          node ../base/cli/dist/index.js skill lint skills
+
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tabkyra
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Check out the pinned siblings and install
+        run: ./tabkyra/scripts/setup-siblings.sh
+
+      - name: Build
+        working-directory: tabkyra
+        env:
+          TABKYRA_NO_BUMP: "1"
+        run: |
+          npm run build
+          (cd cli && npm run build)
+
+      - name: Test
+        working-directory: tabkyra
+        run: |
+          npx biome check .
+          npx tsc --noEmit
+          node --import tsx --test test/*.test.mjs
+          (cd cli && npx tsc --noEmit && npm test)

@@ -132,11 +132,37 @@ tabkyra skill install            # Claude Code, Codex and OpenCode, wherever the
 tabkyra skill print >> AGENTS.md # any other agent, as a section of a project's AGENTS.md
 ```
 
+Or open the side panel's Settings > Bridge and click **Copy setup prompt for your agent**.
+Paste it into Claude Code, Codex, pi, OMP or any agent with a shell, and the agent installs
+the CLI, connects itself and installs the skills.
+
 The skill ([skills/tabkyra/SKILL.md](skills/tabkyra/SKILL.md)) is short and written for small
 models. It covers when to use Tabkyra, `status` first, then the loop: navigate, `read_page`
 for refs, act by ref, read back. It also covers stale refs, waits, dialogs, the safety rules,
 cleanup and three worked examples. A test keeps it in step with the MCP server's
 instructions and tool schemas. `tabkyra setup` offers to install it.
+
+### Skills
+
+`tabkyra skill install` installs every bundled skill; `tabkyra skill list` shows them.
+
+| Skill | What it does |
+| --- | --- |
+| `tabkyra` | The browser loop, dialogs, safety rules and cleanup |
+| `academic-research` | Find papers, verify each DOI, metadata and retraction status, save BibTeX and Obsidian notes |
+| `osint` | Public-record research on companies, domains and people, with a purpose check |
+| `news-research` | Primary sources, wire services, more than one side, every statement labeled |
+| `dorks` | Search operators and recipes for Google, Bing, DuckDuckGo, GitHub and Scholar |
+| `autoresearch` | `/autoresearch`: a research loop with sub-questions, a budget and a stop rule |
+| `rsi` | `/rsi`: turn lessons from real work into small, linted, reviewed skill edits |
+| `artifacts` | Self-contained HTML reports, checked in the browser before hand-off |
+| `proton-pass` | Credentials through Proton Pass, 1Password or Bitwarden, never through the model |
+| `kyraskillmaker` | Write a skill to Tabkyra's standard |
+
+Every skill passes `tabkyra skill lint`, which CI runs on every pull request. It refuses
+hidden text, instruction overrides, piped remote code, secret handling and config
+tampering, and it requires the structure a small model needs. The threat model and every
+rule are in [docs/skill-security.md](docs/skill-security.md).
 
 ## What your agent can do
 

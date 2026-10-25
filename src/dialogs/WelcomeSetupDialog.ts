@@ -2,6 +2,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.js";
 import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { html } from "lit";
+import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { helmMark } from "../components/HelmMark.js";
 
 /**
@@ -37,10 +38,10 @@ export class WelcomeSetupDialog extends DialogBase {
 						title: "Welcome to Tabkyra",
 					})}
 					<p class="text-sm text-foreground">
-						To get started, add an API key for at least one AI provider. API use is billed by the
-						provider. Tabkyra has no subscription sign-in, because the providers' terms forbid
-						third-party apps from using them.
+						To chat in this side panel, add an API key for at least one AI provider. API use is billed
+						by the provider.
 					</p>
+					${agentSetupPromptButton("To let your own agent drive this browser, paste this prompt into Claude Code, Codex, pi, OMP or any agent. It needs no API key here.")}
 					<div class="flex justify-end">
 						${Button({
 							variant: "default",
