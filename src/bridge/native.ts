@@ -188,24 +188,33 @@ const DIALOG_SAFE = new Set([
 	"tabs.select",
 	"tabs.show",
 	"permission.respond",
+	// Read buffered messages only; they help explain the dialog.
+	"console.read",
+	"network.read",
 ]);
 
-function dialogError(dialog: PageDialog): BridgeError {
+function dialogError(tabId: number, dialog: PageDialog): BridgeError {
 	const kind = dialog.type === "beforeunload" ? "leave-page" : dialog.type;
 	return new BridgeError(
 		ERR.DIALOG_OPEN,
-		`A ${kind} dialog is open on the page: ${JSON.stringify(dialog.message)}. The page is frozen until it is answered. ` +
-			"Call handle_dialog with accept true (OK) or false (Cancel). Ask the user first if OK would act under their sign-in (delete, send, buy, post).",
+		`${/^[aeiou]/.test(kind) ? "An" : "A"} ${kind} dialog is open on tab ${tabId}: ${JSON.stringify(dialog.message)}. The page is frozen until it is answered. ` +
+			`Call handle_dialog with tabId ${tabId} and accept true (OK) or false (Cancel). Cancel is always safe. ` +
+			"OK is fine when the user already asked for exactly this action; otherwise ask them first if OK would act under their sign-in (delete, send, buy, post).",
 	);
 }
 
-/** Run a handler, but fail at once if a dialog opens on one of the session's tabs. */
-function raceDialogs<T>(session: BrowserSession, work: Promise<T>): Promise<T> {
+/**
+ * Run a handler, but fail at once if a dialog opens on one of the session's tabs. The
+ * handler can't be cancelled mid-CDP-call, so `onAbort` flips the flag it checks before
+ * sending more input.
+ */
+function raceDialogs<T>(session: BrowserSession, work: Promise<T>, onAbort: () => void): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
 		const stop = watchDialogs((tabId, dialog) => {
 			if (!session.tabIds.includes(tabId)) return;
 			stop();
-			reject(dialogError(dialog));
+			onAbort();
+			reject(dialogError(tabId, dialog));
 		});
 		work.then(
 			(v) => {
@@ -237,12 +246,14 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
 		state.inFlight = { method: req.method, since: Date.now() };
 		const t0 = performance.now();
+		let aborted = false;
 		const session = await withTimeout(getSession(state), 15000, "session open");
 		const tSession = Math.round(performance.now() - t0);
 		const ctx: HandlerContext = {
 			session,
 			clientId: state.clientId,
 			emit: (event, data) => send({ type: "event", clientId: state.clientId, event, data }),
+			aborted: () => aborted,
 			checkUrl: async (url: string) => {
 				if (!(await askPermission(state, url))) {
 					const mode = await getPermissionMode();
@@ -257,12 +268,16 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			},
 		};
 		if (!DIALOG_SAFE.has(req.method)) {
-			const open = session.tabIds.map((id) => openDialog(id)).find((d) => d !== undefined);
-			if (open) throw dialogError(open);
+			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
+			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
 		const work = handler(ctx, req.params ?? {});
 		const result = await withTimeout(
-			DIALOG_SAFE.has(req.method) ? work : raceDialogs(session, work),
+			DIALOG_SAFE.has(req.method)
+				? work
+				: raceDialogs(session, work, () => {
+						aborted = true;
+					}),
 			HANDLER_TIMEOUT_MS,
 			req.method,
 		);

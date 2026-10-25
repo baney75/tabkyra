@@ -85,6 +85,8 @@ test("server instructions and the skill teach the same rules", () => {
 		[/Refs expire/, /refs are gone/],
 		[/handle_dialog/, /handle_dialog/],
 		[/Cancel is always safe/, /Cancel, which is always safe/],
+		[/confirms exactly what the user asked for/, /confirms exactly what\s+the user asked for/],
+		[/Settings > Bridge/, /Settings > Bridge/],
 		[/tabs_close/, /tabs_close/],
 		[/tabs_show/, /tabs_show/],
 		[/do not try to get around it/, /Don't try another URL to\s+get around it/],
@@ -99,8 +101,12 @@ test("server instructions and the skill teach the same rules", () => {
 	assert.match(tools.get("tabs_show").description, /only tool that changes what the user sees/);
 });
 
+// An empty PATH: node's own bin dir can hold codex or claude (nvm, Homebrew globals).
+const emptyBin = join(root, "bin");
+mkdirSync(emptyBin, { recursive: true });
+
 function run(home, ...args) {
-	const env = { HOME: home, PATH: dirname(process.execPath), NO_COLOR: "1" };
+	const env = { HOME: home, PATH: emptyBin, NO_COLOR: "1" };
 	const r = spawnSync(process.execPath, [cli, ...args], { env, encoding: "utf8" });
 	return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }

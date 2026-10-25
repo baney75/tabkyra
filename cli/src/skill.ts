@@ -25,12 +25,13 @@ export function skillTargets(): SkillTarget[] {
 	const home = homedir();
 	const configHome = process.env.XDG_CONFIG_HOME || join(home, ".config");
 	const codexHome = process.env.CODEX_HOME || join(home, ".codex");
+	const claudeHome = process.env.CLAUDE_CONFIG_DIR || join(home, ".claude");
 	return [
 		{
 			id: "claude",
 			name: "Claude Code",
-			detected: Boolean(which("claude")) || existsSync(join(home, ".claude")),
-			file: join(home, ".claude", "skills", "tabkyra", "SKILL.md"),
+			detected: Boolean(which("claude")) || existsSync(claudeHome),
+			file: join(claudeHome, "skills", "tabkyra", "SKILL.md"),
 		},
 		{
 			id: "codex",

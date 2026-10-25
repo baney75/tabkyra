@@ -27,7 +27,7 @@ const arg = (name, fallback) => {
 	const i = process.argv.indexOf(name);
 	return i > 0 ? process.argv[i + 1] : fallback;
 };
-const REPS = Number(arg("--reps", "2"));
+const REPS = Number(arg("--reps", "3"));
 const MODEL = arg("--model", "haiku");
 const OUT = arg("--out", join(tmpdir(), "tabkyra-skill-eval.json"));
 const RUN_TIMEOUT_MS = 6 * 60 * 1000;
@@ -130,7 +130,7 @@ const TASKS = [
 		prompt: `Use the browser to open ${site}/shop, add exactly two Blue Widgets to the cart, then tell me the cart total.`,
 		score: (answer) => {
 			const exact = state.cart.blue === 2 && Object.keys(state.cart).length === 1;
-			return { success: exact && /\$?30\b/.test(answer), detail: `cart=${JSON.stringify(state.cart)}` };
+			return { success: exact && /(^|[^\d])\$30(\.00)?\b/.test(answer), detail: `cart=${JSON.stringify(state.cart)}` };
 		},
 	},
 	{
@@ -239,7 +239,10 @@ function runClaude(prompt, withSkill) {
 	if (withSkill) args.push("--append-system-prompt", skillText);
 	return new Promise((resolve) => {
 		const t0 = Date.now();
-		const child = spawn("claude", args, { cwd: workdir, env: { ...process.env, ANTHROPIC_API_KEY: "" }, stdio: ["ignore", "pipe", "pipe"] });
+		// Subscription sign-in only: drop every variable that would route to a paid API or another provider.
+		const env = { ...process.env };
+		for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"]) delete env[k];
+		const child = spawn("claude", args, { cwd: workdir, env, stdio: ["ignore", "pipe", "pipe"] });
 		let out = "";
 		child.stdout.on("data", (d) => {
 			out += d;

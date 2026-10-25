@@ -394,10 +394,17 @@ export async function scroll(tabId: number, x: number, y: number, deltaX: number
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX, deltaY });
 }
 
-/** Type text as key events (works in inputs, contenteditable, and for shortcuts). */
-export async function typeText(tabId: number, text: string): Promise<void> {
+/** Thrown when a call that hit a dialog would otherwise keep sending input after it closes. */
+export class InputAbortedError extends Error {}
+
+/**
+ * Type text as key events (works in inputs, contenteditable, and for shortcuts).
+ * `aborted` is checked before every key, so a call that failed on a dialog stops typing.
+ */
+export async function typeText(tabId: number, text: string, aborted: () => boolean = () => false): Promise<void> {
 	await ensureAttached(tabId);
 	for (const char of text) {
+		if (aborted()) throw new InputAbortedError("Stopped typing: a dialog interrupted this call");
 		if (char === "\n") {
 			await pressKey(tabId, "Enter");
 			continue;

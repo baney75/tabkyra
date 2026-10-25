@@ -42,16 +42,18 @@ Repeat 2 to 4 until the task is done. Prefer refs over selectors, and selectors 
 - **The page is still loading or updating**: call `wait`, for example
   `{"text":"Order confirmed","timeoutMs":15000}` or `{"selector":"#results"}`, then
   `read_page`. Don't loop `read_page` to poll.
-- **Site approval**: opening a new site may ask the user first. If the result says the site
-  was denied, tell the user. They can run `tabkyra allow <host>`. Don't try another URL to
-  get around it.
+- **Site approval**: opening a new site may ask the user first. If the result says "Not
+  allowed to open" a site, tell the user. They can allow it in the Tabkyra side panel
+  (Settings > Bridge) or with `tabkyra allow <host>`. Don't try another URL to get around it.
 - **Sign-in, captcha or payment**: never type passwords or card numbers. Call `tabs_show`
   so the user sees the tab, ask them to finish, and continue after they say so.
 - **Error `dialog_open`**: the page opened an alert, confirm or prompt box, and the page
-  is frozen until someone answers it. The error quotes the box's text. Answer with
-  `handle_dialog`: `{"accept":false}` presses Cancel, which is always safe, and
-  `{"accept":true}` presses OK. Ask the user before you press OK on anything that acts
-  under their sign-in ("Delete this item?", "Send now?"). Then `read_page` again.
+  is frozen until someone answers it. The error quotes the box's text and its tab. Answer
+  with `handle_dialog`: `{"tabId":41,"accept":false}` presses Cancel, which is always safe,
+  and `{"tabId":41,"accept":true}` presses OK. Press OK when the box confirms exactly what
+  the user asked for ("Send this message?" after they said to send it). Otherwise ask the
+  user before OK on anything that acts under their sign-in ("Delete your account?"). Then
+  `read_page` again.
 
 ## Safety rules (always)
 
