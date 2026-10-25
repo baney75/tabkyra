@@ -14,7 +14,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { which } from "./harness.ts";
-import { EvalError, formatBaseline, parseBaseline, parseCases, runBaseCheck, runEval } from "./skill-eval.ts";
+import { EvalError, formatBaseline, parseBaseline, parseCases, parseDrops, runBaseCheck, runEval } from "./skill-eval.ts";
 import { formatFindings, lintPath, lintText, parseFrontmatter } from "./skill-lint.ts";
 import { buildRouterIndex, matchSkills, oneLine, type RouterIndex, type RouterSkill, type SkillMatch } from "./skill-router.ts";
 import { SKILLS } from "./skills-catalog.ts";
@@ -686,6 +686,7 @@ export interface SkillFlags {
 	yes?: boolean;
 	json?: boolean;
 	updateBaseline?: boolean;
+	draftOnly?: boolean;
 	/** Values of --top, --to, --cases and --base. */
 	top?: string;
 	to?: string;
@@ -735,6 +736,7 @@ function runEvalCommand(flags: SkillFlags): number {
 	if (flags.base) return runBaseCommand(flags, skills, casesFile, heldoutText);
 	const cases = parseCases(readFileSync(casesFile, "utf8"));
 	const heldout = heldoutText === undefined ? undefined : parseCases(heldoutText, "router-heldout.jsonl");
+	parseDrops(readIfExists(join(dir, "accepted-drops.json")));
 	let baseline = existsSync(baselineFile) ? parseBaseline(readFileSync(baselineFile, "utf8")) : undefined;
 	if (flags.updateBaseline) {
 		writeFileSync(baselineFile, formatBaseline(runEval(skills, cases)));
@@ -771,13 +773,28 @@ function runBaseCommand(flags: SkillFlags, skills: RouterSkill[], casesFile: str
 	const baseDir = join(resolve(flags.base ?? ""), "skills-eval");
 	if (!existsSync(baseDir)) throw new SkillError(`No skills-eval folder in ${flags.base}.`);
 	const headRoot = dirname(dirname(casesFile));
-	const { ok, gates } = runBaseCheck(
+	const headDir = dirname(casesFile);
+	const { ok, skills: indexed, gates } = runBaseCheck(
 		skills,
-		{ cases: readFileSync(casesFile, "utf8"), heldout: heldoutText, baseline: readIfExists(join(dirname(casesFile), "baseline.json")), evalSource: readIfExists(join(headRoot, "cli", "src", "skill-eval.ts")) },
-		{ cases: readIfExists(join(baseDir, "router-cases.jsonl")), heldout: readIfExists(join(baseDir, "router-heldout.jsonl")), baseline: readIfExists(join(baseDir, "baseline.json")) },
+		{
+			cases: readFileSync(casesFile, "utf8"),
+			heldout: heldoutText,
+			baseline: readIfExists(join(headDir, "baseline.json")),
+			drops: readIfExists(join(headDir, "accepted-drops.json")),
+			evalSource: readIfExists(join(headRoot, "cli", "src", "skill-eval.ts")),
+		},
+		{
+			cases: readIfExists(join(baseDir, "router-cases.jsonl")),
+			heldout: readIfExists(join(baseDir, "router-heldout.jsonl")),
+			baseline: readIfExists(join(baseDir, "baseline.json")),
+			drops: readIfExists(join(baseDir, "accepted-drops.json")),
+		},
 	);
-	if (flags.json) console.log(JSON.stringify({ ok, gates }, null, "\t"));
-	else for (const g of gates) console.log(`${g.ok ? sym.ok : sym.fail} ${g.gate.padEnd(16)} ${g.detail}`);
+	if (flags.json) console.log(JSON.stringify({ ok, skills: indexed, gates }, null, "\t"));
+	else {
+		console.log(`${c.bold("Base check")} ${indexed} skills indexed`);
+		for (const g of gates) console.log(`${g.ok ? sym.ok : sym.fail} ${g.gate.padEnd(16)} ${g.detail}`);
+	}
 	return ok ? 0 : 1;
 }
 
@@ -816,14 +833,26 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 			return 0;
 		}
 		console.log(`${c.bold(`Roll ${plan.name} back to ${from.version} (${from.at}):`)}\n${plan.diff}\n`);
+		// The bundled text isn't kept as a local copy: that would pin it and stop updates.
+		const toBundled = plan.text === SKILLS.get(plan.name);
 		if (!flags.yes) {
-			console.log(`${sym.arrow} Lint passed. Nothing changed yet. Show this to the user; run again with --yes once they approve.`);
+			console.log(
+				toBundled
+					? `${sym.arrow} That is the bundled version, so --yes removes your local edit (as tabkyra skill revert ${plan.name} does) and updates reach you again. Nothing changed yet.`
+					: `${sym.arrow} Lint passed. Nothing changed yet. Show this to the user; run again with --yes once they approve.`,
+			);
 			return 3;
+		}
+		if (toBundled) {
+			const { results } = revertSkill(plan.name);
+			console.log(`${sym.ok} Rolled ${plan.name} back to the bundled version ${from.version}; your edit is kept in ${join(historyDir(), plan.name)}.`);
+			printInstall(results);
+			return 0;
 		}
 		return reportApplied(plan, `Rolled ${plan.name} back to ${from.version}.`);
 	}
 	if (sub === "edit") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill edit <name> [--yes]");
+		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill edit <name> [--yes] [--draft-only]");
 		const { dir, file, resumed, stale } = prepareDraft(args[0]);
 		const name = basename(dir);
 		const source = readSkill(name);
@@ -831,8 +860,9 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		const later = `tabkyra skill apply ${dir}`;
 		if (stale) console.log(`${sym.warn} Your earlier draft was taken from an older version of ${name}, so it would undo changes made since. It is kept at ${stale}; starting a fresh draft.`);
 		console.log(`${sym.ok} ${resumed ? "Your earlier draft" : "Draft"} of ${name}: ${file}`);
-		if (!process.stdin.isTTY || !process.stdout.isTTY || !editor) {
-			if (process.stdin.isTTY && !editor) console.log(`${sym.dot} Set $VISUAL or $EDITOR to open it from here.`);
+		// --draft-only: for agents, whose shell may be a terminal with the user's $EDITOR.
+		if (flags.draftOnly || !process.stdin.isTTY || !process.stdout.isTTY || !editor) {
+			if (!flags.draftOnly && process.stdin.isTTY && !editor) console.log(`${sym.dot} Set $VISUAL or $EDITOR to open it from here.`);
 			console.log(`${sym.arrow} Edit it, then check it with: ${c.bold(later)} (add --yes to apply)`);
 			return 0;
 		}
@@ -845,12 +875,22 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 			console.log(`${sym.dot} No changes.`);
 			return 0;
 		}
+		// Another apply, revert or rollback while the editor was open would be undone by this one.
+		const changedUnderneath = () => {
+			if (readSkill(name) === source) return false;
+			console.log(
+				`${sym.fail} ${name} changed while you were editing (now version ${skillVersion(readSkill(name))}, you started from ${skillVersion(source)}). Nothing applied, so that change isn't undone. Your draft is kept at ${file}; run tabkyra skill edit ${name} to start again from the new version (your draft moves to skill-drafts/.backups).`,
+			);
+			return true;
+		};
+		if (changedUnderneath()) return 1;
 		const plan = planApply(dir);
 		console.log(`${c.bold(`Change to ${plan.name}:`)}\n${plan.diff}\n`);
 		if (!flags.yes && !/^y(es)?$/i.test(askLine("Apply? [y/N] "))) {
 			console.log(`${sym.dot} Not applied. The draft is kept; apply it later with ${c.bold(later)} --yes`);
 			return 3;
 		}
+		if (changedUnderneath()) return 1;
 		return reportApplied(plan, `Applied your edit of ${plan.name}.`);
 	}
 	if (sub === "print") {

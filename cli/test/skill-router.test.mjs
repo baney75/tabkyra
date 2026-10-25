@@ -112,7 +112,7 @@ test("a skill more than 10 points below its baseline fails, and --update-baselin
 	assert.match(gate.detail, new RegExp(weak));
 	const updated = run(["skill", "eval", "--update-baseline", "--cases", join(dir, "router-cases.jsonl")]);
 	assert.equal(updated.code, 0, updated.out);
-	assert.equal(JSON.parse(readFileSync(join(dir, "baseline.json"), "utf8")).accuracy[weak], current.perSkill[weak].accuracy);
+	assert.equal(JSON.parse(readFileSync(join(dir, "baseline.json"), "utf8")).accuracy[weak], Math.round(current.perSkill[weak].accuracy * 10000) / 10000);
 });
 
 test("a missing baseline, or one without a valid value for every skill, fails the run", () => {
@@ -207,12 +207,17 @@ test("skill match routes to a skill the user applied locally", () => {
 });
 
 /** A fake pull-request checkout: skills-eval files and cli/src/skill-eval.ts, each changeable. */
-function headCheckout({ evalSource = readFileSync(join(here, "..", "src", "skill-eval.ts"), "utf8"), baseline } = {}) {
+const EVAL_FILES = ["router-cases.jsonl", "router-heldout.jsonl", "baseline.json", "accepted-drops.json"];
+const repoBaseline = () => JSON.parse(readFileSync(join(repo, "skills-eval", "baseline.json"), "utf8")).accuracy;
+const dropsFile = (...drops) => JSON.stringify({ drops });
+
+function headCheckout({ evalSource = readFileSync(join(here, "..", "src", "skill-eval.ts"), "utf8"), baseline, drops } = {}) {
 	const dir = mkdtempSync(join(root, "head-"));
 	mkdirSync(join(dir, "skills-eval"));
 	mkdirSync(join(dir, "cli", "src"), { recursive: true });
-	for (const f of ["router-cases.jsonl", "router-heldout.jsonl", "baseline.json"]) copyFileSync(join(repo, "skills-eval", f), join(dir, "skills-eval", f));
+	for (const f of EVAL_FILES) copyFileSync(join(repo, "skills-eval", f), join(dir, "skills-eval", f));
 	if (baseline) writeFileSync(join(dir, "skills-eval", "baseline.json"), baseline);
+	if (drops) writeFileSync(join(dir, "skills-eval", "accepted-drops.json"), drops);
 	if (evalSource !== null) writeFileSync(join(dir, "cli", "src", "skill-eval.ts"), evalSource);
 	return dir;
 }
@@ -221,19 +226,21 @@ function headCheckout({ evalSource = readFileSync(join(here, "..", "src", "skill
 function baseCheckout(change = {}) {
 	const dir = mkdtempSync(join(root, "base-"));
 	mkdirSync(join(dir, "skills-eval"));
-	for (const f of ["router-cases.jsonl", "router-heldout.jsonl", "baseline.json"]) writeFileSync(join(dir, "skills-eval", f), change[f] ?? readFileSync(join(repo, "skills-eval", f), "utf8"));
+	for (const f of EVAL_FILES) writeFileSync(join(dir, "skills-eval", f), change[f] ?? readFileSync(join(repo, "skills-eval", f), "utf8"));
 	return dir;
 }
 
 function baseRun(head, base) {
 	const r = run(["skill", "eval", "--json", "--base", base, "--cases", join(head, "skills-eval", "router-cases.jsonl")]);
-	return { code: r.code, gates: Object.fromEntries(JSON.parse(r.stdout).gates.map((g) => [g.gate, g])) };
+	const out = JSON.parse(r.stdout);
+	return { code: r.code, skills: out.skills, gates: Object.fromEntries(out.gates.map((g) => [g.gate, g])) };
 }
 
 test("--base passes a pull request that keeps the base branch's cases, baseline and thresholds", () => {
 	const r = baseRun(headCheckout(), baseCheckout());
 	assert.equal(r.code, 0, JSON.stringify(r.gates));
 	for (const gate of ["base cases kept", "base baseline", "base thresholds", "base-code eval"]) assert.ok(r.gates[gate]?.ok, gate);
+	assert.equal(r.skills, bundled.length, "every bundled skill is indexed");
 });
 
 test("--base fails a pull request that drops a base case", () => {
@@ -243,15 +250,32 @@ test("--base fails a pull request that drops a base case", () => {
 	assert.match(r.gates["base cases kept"].detail, /A case the pull request deleted/);
 });
 
-test("--base fails a pull request that lowers a skill's baseline more than the threshold, or drops it", () => {
-	const accuracy = JSON.parse(readFileSync(join(repo, "skills-eval", "baseline.json"), "utf8")).accuracy;
-	const lowered = baseRun(headCheckout({ baseline: JSON.stringify({ accuracy: { ...accuracy, dorks: 0.5 } }) }), baseCheckout());
-	assert.equal(lowered.code, 1);
-	assert.match(lowered.gates["base baseline"].detail, /dorks 50\.0% \(base 100\.0%\)/);
-	const dropped = baseRun(headCheckout({ baseline: JSON.stringify({ accuracy: { ...accuracy, dorks: undefined } }) }), baseCheckout());
-	assert.match(dropped.gates["base baseline"].detail, /dorks missing/);
-	const small = baseRun(headCheckout({ baseline: JSON.stringify({ accuracy: { ...accuracy, dorks: 0.95 } }) }), baseCheckout());
-	assert.ok(small.gates["base baseline"].ok, "within the threshold is fine");
+test("--base: the baseline only ratchets up; any lower value needs an accepted drop the pull request adds", () => {
+	const accuracy = repoBaseline();
+	const lowered = (value, drops, base = {}) => baseRun(headCheckout({ baseline: JSON.stringify({ accuracy: { ...accuracy, dorks: value } }), drops }), baseCheckout(base));
+	// Any drop fails, even a small one, so small steps can't add up across pull requests.
+	for (const value of [0.5, 0.95]) {
+		const r = lowered(value);
+		assert.equal(r.code, 1, String(value));
+		assert.match(r.gates["base baseline"].detail, new RegExp(`dorks ${(value * 100).toFixed(1)}% \\(base 100\\.0%\\)`));
+	}
+	assert.match(lowered(undefined).gates["base baseline"].detail, /dorks missing/);
+	// An entry for the exact new value, with a reason, accepts it.
+	const ok = lowered(0.95, dropsFile({ skill: "dorks", value: 0.95, reason: "new skills share its search words" }));
+	assert.equal(ok.gates["base baseline"].ok, true, ok.gates["base baseline"].detail);
+	assert.match(ok.gates["base baseline"].detail, /accepted drops: dorks 95\.0%/);
+	// Not for another value, and not from an entry the base branch already had.
+	assert.equal(lowered(0.9, dropsFile({ skill: "dorks", value: 0.95, reason: "x" })).gates["base baseline"].ok, false);
+	const stale = dropsFile({ skill: "dorks", value: 0.95, reason: "accepted long ago" });
+	assert.equal(lowered(0.95, stale, { "accepted-drops.json": stale }).gates["base baseline"].ok, false);
+	// Malformed entries are refused.
+	for (const bad of [dropsFile({ skill: "dorks", value: 0.95 }), dropsFile({ skill: "dorks", value: 2, reason: "x" }), "{}"]) {
+		const r = run(["skill", "eval", "--json", "--base", baseCheckout(), "--cases", join(headCheckout({ drops: bad }), "skills-eval", "router-cases.jsonl")]);
+		assert.equal(r.code, 1);
+		assert.match(r.out, /accepted-drops\.json/);
+	}
+	// Raising a value is always fine.
+	assert.ok(baseRun(headCheckout(), baseCheckout({ "baseline.json": JSON.stringify({ accuracy: { ...accuracy, dorks: 0.9 } }) })).gates["base baseline"].ok);
 });
 
 test("--base fails a pull request that loosens a threshold or hides them", () => {
@@ -274,11 +298,99 @@ test("--base fails a pull request that loosens a threshold or hides them", () =>
 	assert.equal(hidden.gates["base thresholds"].ok, false);
 });
 
-test("--base runs the base code's gates on the pull request's skills against the base baseline", () => {
-	const accuracy = JSON.parse(readFileSync(join(repo, "skills-eval", "baseline.json"), "utf8")).accuracy;
+test("--base runs the base code's gates on the pull request's skills, with no tolerance below the base baseline", () => {
+	const accuracy = repoBaseline();
 	const weak = Object.entries(accuracy).find(([name, v]) => name !== "none" && v <= 0.85)[0];
-	const r = baseRun(headCheckout(), baseCheckout({ "baseline.json": JSON.stringify({ accuracy: { ...accuracy, [weak]: 1 } }) }));
+	const raised = { "baseline.json": JSON.stringify({ accuracy: { ...accuracy, [weak]: Math.min(1, accuracy[weak] + 0.02) } }) };
+	const r = baseRun(headCheckout(), baseCheckout(raised));
 	assert.equal(r.code, 1);
 	assert.equal(r.gates["base-code eval"].ok, false);
-	assert.match(r.gates["base-code eval"].detail, new RegExp(weak));
+	assert.match(r.gates["base-code eval"].detail, new RegExp(`below the baseline: .*${weak}`));
+	// The same drop, accepted by the pull request, passes both gates.
+	const accepted = baseRun(headCheckout({ drops: dropsFile({ skill: weak, value: accuracy[weak], reason: "measured the same way" }) }), baseCheckout(raised));
+	assert.ok(accepted.gates["base-code eval"].ok, accepted.gates["base-code eval"].detail);
+	assert.ok(accepted.gates["base baseline"].ok, accepted.gates["base baseline"].detail);
+});
+
+test("--base doesn't ask base coverage of a skill the pull request adds", () => {
+	// A base branch that never had the weakest skill: no cases, no baseline. The pull request
+	// "adds" it. (The weakest, so leaving its cases out doesn't lower top-1 for the rest.)
+	const accuracy = repoBaseline();
+	const added = Object.entries(accuracy)
+		.filter(([name]) => name !== "none")
+		.sort((a, b) => a[1] - b[1])[0][0];
+	const without = (file) =>
+		readFileSync(file, "utf8")
+			.split("\n")
+			.filter((l) => !l.includes(`"skill": "${added}"`))
+			.join("\n");
+	const cases = without(casesFile);
+	const heldout = without(heldoutFile);
+	const { [added]: _dropped, ...rest } = accuracy;
+	const r = baseRun(headCheckout(), baseCheckout({ "router-cases.jsonl": cases, "router-heldout.jsonl": heldout, "baseline.json": JSON.stringify({ accuracy: rest }) }));
+	assert.ok(r.gates["base-code eval"].ok, r.gates["base-code eval"].detail);
+	assert.ok(r.gates["base baseline"].ok, r.gates["base baseline"].detail);
+	assert.equal(r.skills, bundled.length, "the new skill is still indexed");
+});
+
+test("the catalog script writes exactly the committed catalog from skills/", () => {
+	const scratch = mkdtempSync(join(root, "catalog-"));
+	mkdirSync(join(scratch, "cli", "src"), { recursive: true });
+	mkdirSync(join(scratch, "cli", "scripts"), { recursive: true });
+	copyFileSync(join(here, "..", "scripts", "skills-catalog.mjs"), join(scratch, "cli", "scripts", "skills-catalog.mjs"));
+	for (const name of bundled) {
+		mkdirSync(join(scratch, "skills", name), { recursive: true });
+		copyFileSync(join(repo, "skills", name, "SKILL.md"), join(scratch, "skills", name, "SKILL.md"));
+	}
+	const r = spawnSync(process.execPath, [join(scratch, "cli", "scripts", "skills-catalog.mjs")], { encoding: "utf8" });
+	assert.equal(r.status, 0, r.stderr);
+	assert.equal(readFileSync(join(scratch, "cli", "src", "skills-catalog.ts"), "utf8"), catalog);
+	// A removed skill drops out of the catalog instead of leaving a broken import.
+	rmSync(join(scratch, "skills", "dorks"), { recursive: true });
+	mkdirSync(join(scratch, "skills", "new-skill"));
+	writeFileSync(join(scratch, "skills", "new-skill", "SKILL.md"), "x");
+	spawnSync(process.execPath, [join(scratch, "cli", "scripts", "skills-catalog.mjs")]);
+	const regenerated = readFileSync(join(scratch, "cli", "src", "skills-catalog.ts"), "utf8");
+	assert.doesNotMatch(regenerated, /dorks/);
+	assert.match(regenerated, /import NEW_SKILL from "\.\.\/\.\.\/skills\/new-skill\/SKILL\.md";/);
+	assert.match(regenerated, /\["new-skill", NEW_SKILL\]/);
+});
+
+test("naming a skill to use routes to it; naming it to change it doesn't", () => {
+	const name = (task) => JSON.parse(run(["skill", "match", "--json", task]).stdout)[0].name;
+	assert.equal(name("Use the osint skill on the landlord at 12 Elm St"), "osint");
+	assert.equal(name("run the dorks skill to find PDFs"), "dorks");
+	assert.equal(name("use the tabkyra skill to fill the form"), "tabkyra");
+	assert.equal(name("the proton-pass skill, please, for the deploy token"), "proton-pass");
+	assert.notEqual(name("Repair the osint skill, it keeps failing on small models"), "osint");
+	assert.notEqual(name("Update the dorks skill with a new operator"), "dorks");
+});
+
+test("a slash command counts only as the first token, never as part of a path", () => {
+	const name = (task) => JSON.parse(run(["skill", "match", "--json", task]).stdout)[0].name;
+	assert.equal(name("/rsi"), "rsi");
+	assert.equal(name("/autoresearch: what caused the 2008 crisis"), "autoresearch");
+	for (const task of ["Copy the build output to /artifacts in the container", "cat /bug/report.txt", "ls /fix", "/fix/old.log is too big", "/rsi.json is missing"]) {
+		assert.equal(name(task), "none", task);
+	}
+});
+
+test("common words alone never make a match, however many add up", () => {
+	const home = mkdtempSync(join(root, "common-"));
+	// Five skills share the same three words, so none of the words is specific (evidence).
+	const words = "quartz, lantern, harbor";
+	for (const n of ["one", "two", "three", "four", "five"]) {
+		const dir = join(home, "drafts", `shared-${n}`);
+		mkdirSync(dir, { recursive: true });
+		const extra = n === "one" ? `, quartz, lantern, harbor, quartz, lantern, harbor, zephyr` : "";
+		writeFileSync(
+			join(dir, "SKILL.md"),
+			`---\nname: shared-${n}\ndescription: Sorts ${words}${extra}. Use when the user asks about ${words}${extra}.\n---\n# Shared ${n}\n\n## When to use\n\n- The user asks about ${words}.\n\n## Steps\n\n1. **Sort.** Sort them.\n2. **Check.** Check them.\n\n## Done when\n\n- They are sorted.\n`,
+		);
+		assert.equal(run(["skill", "apply", dir, "--yes"], { home }).code, 0);
+	}
+	const top = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "5", task], { home }).stdout).map((m) => m.name);
+	assert.deepEqual(top("harbor quartz lantern"), ["none"]);
+	// One specific word is enough to make them count.
+	assert.equal(top("harbor quartz lantern zephyr")[0], "shared-one");
 });

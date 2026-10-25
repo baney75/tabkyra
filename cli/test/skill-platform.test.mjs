@@ -90,11 +90,18 @@ test("rollback restores a backed-up version by version or time, and only with --
 	assert.equal(done.code, 0, done.out);
 	assert.equal(readFileSync(local(home, "dorks"), "utf8"), first);
 	assert.match(run(home, ["skill", "rollback", "dorks", "--to", version(first)]).out, /already at version/);
-	// By time: the oldest backup is the bundled text.
+	// By time: the oldest backup is the bundled text. Rolling back to it removes the local
+	// copy, as revert does, so bundled updates reach the user again.
 	const oldest = JSON.parse(run(home, ["skill", "versions", "dorks", "--json"]).stdout).find((v) => v.source === "history");
+	const preview = run(home, ["skill", "rollback", "dorks", "--to", oldest.at]);
+	assert.equal(preview.code, 3, preview.out);
+	assert.match(preview.out, /bundled version/);
+	assert.ok(existsSync(local(home, "dorks")), "nothing changed without --yes");
 	const byTime = run(home, ["skill", "rollback", "dorks", "--to", oldest.at, "--yes"]);
 	assert.equal(byTime.code, 0, byTime.out);
-	assert.equal(readFileSync(local(home, "dorks"), "utf8"), bundled("dorks"));
+	assert.equal(existsSync(local(home, "dorks")), false, "no local pin of the bundled text");
+	assert.equal(JSON.parse(run(home, ["skill", "list", "--json"]).stdout).find((x) => x.name === "dorks").source, "bundled");
+	assert.match(readdirSync(history(home, "dorks")).join(" "), /reverted/, "the edit it replaced is kept");
 });
 
 /** Put a file into skill-history by hand, as if an earlier apply had kept it. */
@@ -237,4 +244,48 @@ test("edit in a terminal opens the editor, shows the diff and applies only on ye
 	const yes = inTerminal(home, ["skill", "edit", "dorks"], { EDITOR: editor }, "y");
 	assert.match(yes.out, /Applied your edit of dorks/);
 	assert.match(readFileSync(local(home, "dorks"), "utf8"), /Lesson: from the editor\./);
+});
+
+test("edit --draft-only never opens an editor or asks, even in a terminal", (t) => {
+	const home = newHome();
+	const marker = join(home, "editor-ran");
+	const editor = join(home, "editor.sh");
+	writeFileSync(editor, `#!/bin/sh\ntouch ${marker}\n`);
+	chmodSync(editor, 0o755);
+	const r = inTerminal(home, ["skill", "edit", "dorks", "--draft-only"], { EDITOR: editor }, "y");
+	if (!r) {
+		t.skip("no script(1) here to run a pseudo-terminal");
+		return;
+	}
+	assert.equal(existsSync(marker), false, "no editor ran");
+	assert.doesNotMatch(r.out, /Apply\?/);
+	assert.match(r.out, /tabkyra skill apply \S+skill-drafts\/dorks/);
+	assert.equal(existsSync(local(home, "dorks")), false);
+	assert.equal(run(home, ["skill", "edit", "dorks", "--draft-only", "--yes"]).code, 0);
+	assert.equal(existsSync(local(home, "dorks")), false, "--yes doesn't make --draft-only apply");
+});
+
+test("edit refuses to apply when the skill changed while the editor was open", (t) => {
+	const home = newHome();
+	// While "editing", another apply lands; then the draft gets its own change.
+	const other = join(home, "other", "dorks");
+	mkdirSync(other, { recursive: true });
+	writeFileSync(join(other, "SKILL.md"), addLesson("landed during the edit.")(bundled("dorks")));
+	const editor = join(home, "editor.sh");
+	writeFileSync(
+		editor,
+		`#!/bin/sh\n'${process.execPath}' '${cli}' skill apply '${other}' --yes > /dev/null\nawk '/^## Done when/ { print "- Lesson: from the editor."; print "" } { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"\n`,
+	);
+	chmodSync(editor, 0o755);
+	const r = inTerminal(home, ["skill", "edit", "dorks", "--yes"], { EDITOR: editor }, "y");
+	if (!r) {
+		t.skip("no script(1) here to run a pseudo-terminal");
+		return;
+	}
+	assert.match(r.out, /changed while you were editing/);
+	assert.doesNotMatch(r.out, /Applied your edit/);
+	const now = readFileSync(local(home, "dorks"), "utf8");
+	assert.match(now, /landed during the edit/, "the change made meanwhile is kept");
+	assert.doesNotMatch(now, /from the editor/);
+	assert.match(readFileSync(join(home, ".config", "tabkyra", "skill-drafts", "dorks", "SKILL.md"), "utf8"), /from the editor/, "the draft is kept");
 });

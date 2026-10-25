@@ -118,7 +118,7 @@ the menu re-renders on hover.
 1. Lesson: "When a menu re-renders on hover, use `find` with the item's text right before
    `click`, because hover-driven menus replace their refs."
 2. Target: the tabkyra skill's "Stale refs" section. Draft it with
-   `tabkyra skill edit tabkyra` (outside a terminal it prints the path), or with
+   `tabkyra skill edit tabkyra --draft-only` (it prints the path), or with
    `mkdir -p ~/.config/tabkyra/skill-drafts/tabkyra` then
    `tabkyra skill print tabkyra --raw > ~/.config/tabkyra/skill-drafts/tabkyra/SKILL.md`.
    Add one bullet there.

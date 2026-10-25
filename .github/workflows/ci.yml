@@ -129,8 +129,19 @@ jobs:
           git worktree add --detach ../base-code "$BASE_SHA"
           rm -rf ../base-code/skills
           cp -R skills ../base-code/skills
+          # The base build bundles the pull request's skills: new ones are indexed, and removed
+          # or renamed ones can't break the build on a stale import.
+          node ../base-code/cli/scripts/skills-catalog.mjs
           (cd ../base-code/cli && npm ci --ignore-scripts --no-audit --no-fund && node node_modules/esbuild/install.js && npm run build)
-          node ../base-code/cli/dist/index.js skill eval --base ../base
+          status=0
+          node ../base-code/cli/dist/index.js skill eval --base ../base --json > ../base-eval.json || status=$?
+          expected=$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("../base-eval.json", "utf8"));
+            for (const g of r.gates) console.log(`${g.ok ? "ok  " : "FAIL"} ${g.gate}: ${g.detail}`);
+            if (r.skills !== Number(process.argv[1])) { console.log(`FAIL the base build indexed ${r.skills} skills; skills/ has ${process.argv[1]}`); process.exit(1); }
+          ' "$expected"
+          exit "$status"
 
   check:
     runs-on: ubuntu-24.04

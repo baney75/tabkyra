@@ -13,8 +13,11 @@
  * skill can land before or after the skill itself.
  *
  * `--base <checkout>` is run by the base branch's build in CI. It checks that a pull request
- * kept every base case, didn't lower the baseline or loosen a threshold, and that its skills
- * still pass the base gates under the base code, so a pull request can't lower its own bar.
+ * kept every base case, didn't loosen a threshold, and didn't lower any skill's baseline,
+ * and that under the base code its skills route the base cases at least as well as the base
+ * baseline says. The baseline only ratchets up: a lower value passes only when the pull
+ * request adds it to skills-eval/accepted-drops.json with a reason, which a maintainer
+ * reviews (CODEOWNERS). So a pull request can't lower its own bar, in one step or many.
  */
 
 import { performance } from "node:perf_hooks";
@@ -28,6 +31,8 @@ export const P95_MAX_MS = 10;
 export const REGRESSION_POINTS = 10;
 export const HELDOUT_TOP1_MIN = 0.8;
 export const HELDOUT_FALSE_INVOKE_MAX = 0.1;
+/** baseline.json keeps four decimals; a difference this small (in points) is rounding. */
+const ROUNDING = 0.01;
 /** Every case is matched this many times for the latency figures. */
 const ROUNDS = 5;
 
@@ -156,8 +161,17 @@ function scoreSet(match: (task: string) => string, cases: EvalCase[], names: Set
 	return { cases: usable.length, positives, negatives, top1: positives ? round(correct / positives, 4) : 0, falseInvoke: negatives ? round(falseInvokes / negatives, 4) : 0, misses };
 }
 
+export interface EvalOptions {
+	/** Skills that must have cases and a baseline; default every skill indexed. */
+	covered?: ReadonlySet<string>;
+	/** Points a skill may fall below its baseline; default REGRESSION_POINTS. */
+	tolerance?: number;
+	/** Skills whose drop below the baseline is accepted. */
+	accepted?: ReadonlySet<string>;
+}
+
 /** Run every case through a fresh index of `skills` and check each gate. */
-export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Baseline, heldout?: EvalCase[]): EvalReport {
+export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Baseline, heldout?: EvalCase[], options: EvalOptions = {}): EvalReport {
 	const started = performance.now();
 	const index = buildRouterIndex(skills);
 	const buildMs = performance.now() - started;
@@ -197,9 +211,13 @@ export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Bas
 	const speed = { buildMs: round(buildMs), p50Ms: round(percentile(times, 0.5), 4), p95Ms: round(percentile(times, 0.95), 4), maxMs: round(times.at(-1) ?? 0, 4), matches: times.length };
 	const held = heldout ? scoreSet(top, heldout, names) : undefined;
 
-	const tooFew = [...names].filter((n) => perSkill[n].cases < MIN_CASES);
-	const regressions = Object.entries(perSkill).filter(([, s]) => s.baseline !== undefined && s.cases > 0 && (s.baseline - s.accuracy) * 100 > REGRESSION_POINTS + 1e-9);
-	const unbased = baseline ? [...names, "none"].filter((n) => baseline.accuracy[n] === undefined) : [];
+	const covered = options.covered ?? names;
+	const tolerance = options.tolerance ?? REGRESSION_POINTS;
+	const tooFew = [...names].filter((n) => covered.has(n) && perSkill[n].cases < MIN_CASES);
+	const regressions = Object.entries(perSkill).filter(
+		([name, s]) => !options.accepted?.has(name) && s.baseline !== undefined && s.cases > 0 && (s.baseline - s.accuracy) * 100 > tolerance + ROUNDING,
+	);
+	const unbased = baseline ? [...names, "none"].filter((n) => (n === "none" || covered.has(n)) && baseline.accuracy[n] === undefined) : [];
 	const gates: Gate[] = [
 		{ gate: "top-1 accuracy", ok: positives > 0 && top1 >= TOP1_MIN, detail: `${pct(top1)} over ${positives} cases (needs ${pct(TOP1_MIN)})` },
 		{ gate: "false invokes", ok: none.cases > 0 && falseInvoke <= FALSE_INVOKE_MAX, detail: `${pct(falseInvoke)} of ${none.cases} none cases (allows ${pct(FALSE_INVOKE_MAX)})` },
@@ -213,8 +231,10 @@ export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Bas
 				: unbased.length
 					? `no valid baseline (a number from 0 to 1) for ${unbased.join(", ")}; run tabkyra skill eval --update-baseline and commit it`
 					: regressions.length
-						? `dropped more than ${REGRESSION_POINTS} points: ${regressions.map(([n, s]) => `${n} ${pct(s.accuracy)} (baseline ${pct(s.baseline ?? 0)})`).join(", ")}`
-						: `no skill more than ${REGRESSION_POINTS} points below its baseline`,
+						? `${tolerance ? `dropped more than ${tolerance} points` : "below the baseline"}: ${regressions.map(([n, s]) => `${n} ${pct(s.accuracy)} (baseline ${pct(s.baseline ?? 0)})`).join(", ")}`
+						: tolerance
+							? `no skill more than ${tolerance} points below its baseline`
+							: "no skill below its baseline",
 		},
 		{
 			gate: "held-out top-1",
@@ -259,14 +279,55 @@ export interface BaseFiles {
 	cases?: string;
 	heldout?: string;
 	baseline?: string;
+	/** skills-eval/accepted-drops.json. */
+	drops?: string;
+}
+
+export interface AcceptedDrop {
+	skill: string;
+	/** The new, lower baseline value the pull request accepts. */
+	value: number;
+	reason: string;
+}
+
+/** Parse accepted-drops.json: `{"drops": [{"skill", "value", "reason"}]}`. */
+export function parseDrops(text: string | undefined): AcceptedDrop[] {
+	if (text === undefined) return [];
+	let data: unknown;
+	try {
+		data = JSON.parse(text);
+	} catch {
+		throw new EvalError("accepted-drops.json is not JSON.");
+	}
+	const drops = (data as { drops?: unknown }).drops;
+	if (!Array.isArray(drops)) throw new EvalError('accepted-drops.json needs {"drops": [...]}.');
+	return drops.map((d, i) => {
+		const e = d as Partial<AcceptedDrop>;
+		const ok =
+			typeof e.skill === "string" &&
+			/^(none|[a-z0-9]+(-[a-z0-9]+)*)$/.test(e.skill) &&
+			typeof e.value === "number" &&
+			Number.isFinite(e.value) &&
+			e.value >= 0 &&
+			e.value <= 1 &&
+			typeof e.reason === "string" &&
+			e.reason.trim().length > 0;
+		if (!ok) throw new EvalError(`accepted-drops.json entry ${i + 1} needs {"skill": "<name>|none", "value": 0..1, "reason": "..."}.`);
+		return { skill: e.skill as string, value: e.value as number, reason: (e.reason as string).trim() };
+	});
 }
 
 /**
  * Checks a pull request against its base branch, run by the base branch's build with the
- * pull request's skills bundled in. `head` is the pull request's files and its skill-eval.ts
+ * pull request's skills bundled. `head` is the pull request's files and its skill-eval.ts
  * source; `base` is the base branch's files. The running code's thresholds are the base's.
+ * Drops are accepted only from entries the pull request added to accepted-drops.json.
  */
-export function runBaseCheck(skills: RouterSkill[], head: BaseFiles & { evalSource?: string }, base: BaseFiles): { ok: boolean; gates: Gate[]; report?: EvalReport } {
+export function runBaseCheck(
+	skills: RouterSkill[],
+	head: BaseFiles & { evalSource?: string },
+	base: BaseFiles,
+): { ok: boolean; skills: number; gates: Gate[]; report?: EvalReport } {
 	const gates: Gate[] = [];
 	const key = (c: EvalCase) => `${c.skill}\u0000${c.task}`;
 	const missing: string[] = [];
@@ -283,11 +344,27 @@ export function runBaseCheck(skills: RouterSkill[], head: BaseFiles & { evalSour
 	const names = new Set(skills.map((s) => s.name));
 	const baseBaseline = base.baseline === undefined ? undefined : parseBaseline(base.baseline);
 	const headBaseline = head.baseline === undefined ? { accuracy: {} } : parseBaseline(head.baseline);
+	const old = new Set(parseDrops(base.drops).map((d) => `${d.skill}\u0000${d.value}`));
+	const added = parseDrops(head.drops).filter((d) => !old.has(`${d.skill}\u0000${d.value}`));
+	const acceptedValue = new Map(added.map((d) => [d.skill, d.value]));
+	const close = (a: number, b: number) => Math.abs(a - b) < 1e-4;
 	const lowered = Object.entries(baseBaseline?.accuracy ?? {})
 		.filter(([name]) => name === "none" || names.has(name))
-		.filter(([name, value]) => headBaseline.accuracy[name] === undefined || (value - headBaseline.accuracy[name]) * 100 > REGRESSION_POINTS + 1e-9)
+		.filter(([name, value]) => {
+			const now = headBaseline.accuracy[name];
+			if (now === undefined) return true;
+			if ((value - now) * 100 <= ROUNDING) return false;
+			const accepted = acceptedValue.get(name);
+			return accepted === undefined || !close(accepted, now);
+		})
 		.map(([name, value]) => `${name} ${headBaseline.accuracy[name] === undefined ? "missing" : pct(headBaseline.accuracy[name])} (base ${pct(value)})`);
-	gates.push({ gate: "base baseline", ok: lowered.length === 0, detail: lowered.length ? `more than ${REGRESSION_POINTS} points below the base branch: ${lowered.join(", ")}` : `no skill more than ${REGRESSION_POINTS} points below the base branch's baseline` });
+	gates.push({
+		gate: "base baseline",
+		ok: lowered.length === 0,
+		detail: lowered.length
+			? `lower than the base branch without an entry in accepted-drops.json for the new value: ${lowered.join(", ")}`
+			: `no skill below the base branch's baseline${added.length ? ` except accepted drops: ${added.map((d) => `${d.skill} ${pct(d.value)} (${d.reason})`).join("; ")}` : ""}`,
+	});
 
 	const declared = thresholdsIn(head.evalSource ?? "");
 	const looser = (Object.entries(THRESHOLDS) as Array<[keyof typeof THRESHOLDS, (typeof THRESHOLDS)[keyof typeof THRESHOLDS]]>)
@@ -298,12 +375,23 @@ export function runBaseCheck(skills: RouterSkill[], head: BaseFiles & { evalSour
 		.map(([name, t]) => `${name} ${declared[name] ?? "missing"} (base ${t.value})`);
 	gates.push({ gate: "base thresholds", ok: looser.length === 0, detail: looser.length ? `looser than the base branch: ${looser.join(", ")}` : "no threshold looser than the base branch's" });
 
-	// The pull request's skills, the base branch's code, cases and baseline.
+	// The pull request's skills (new ones indexed too), the base branch's code, cases and
+	// baseline. Skills the base knows must route the base cases at least as well as the base
+	// baseline says; new skills are covered by the pull request's own eval.
 	let report: EvalReport | undefined;
 	if (base.cases !== undefined) {
-		report = runEval(skills, parseCases(base.cases), baseBaseline, base.heldout === undefined ? undefined : parseCases(base.heldout, "router-heldout.jsonl"));
+		const known = new Set([...names].filter((n) => baseBaseline?.accuracy[n] !== undefined));
+		report = runEval(skills, parseCases(base.cases), baseBaseline, base.heldout === undefined ? undefined : parseCases(base.heldout, "router-heldout.jsonl"), {
+			covered: known,
+			tolerance: 0,
+			accepted: new Set(acceptedValue.keys()),
+		});
 		const failed = report.gates.filter((g) => !g.ok && !(g.gate.startsWith("held-out") && base.heldout === undefined));
-		gates.push({ gate: "base-code eval", ok: failed.length === 0, detail: failed.length ? failed.map((g) => `${g.gate}: ${g.detail}`).join("; ") : `top-1 ${pct(report.top1)}, false invokes ${pct(report.falseInvoke)} on the base cases` });
+		gates.push({
+			gate: "base-code eval",
+			ok: failed.length === 0,
+			detail: failed.length ? failed.map((g) => `${g.gate}: ${g.detail}`).join("; ") : `top-1 ${pct(report.top1)}, false invokes ${pct(report.falseInvoke)} on the base cases, ${names.size} skills indexed`,
+		});
 	}
-	return { ok: gates.every((g) => g.ok), gates, report };
+	return { ok: gates.every((g) => g.ok), skills: names.size, gates, report };
 }
