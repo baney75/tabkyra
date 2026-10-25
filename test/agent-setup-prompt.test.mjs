@@ -14,7 +14,8 @@ const prompt = agentSetupPrompt("1.2.3");
 
 test("the setup prompt covers install, connect, skills and a status check", () => {
 	for (const step of [
-		/git clone https:\/\/github\.com\/baney75\/tabkyra/,
+		/git clone --depth 1 --branch v1\.2\.3 https:\/\/github\.com\/baney75\/tabkyra/,
+		/npm ci/,
 		/npm link/,
 		/tabkyra setup --yes/,
 		/tabkyra mcp|"mcp"/,

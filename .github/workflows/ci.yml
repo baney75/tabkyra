@@ -52,6 +52,21 @@ jobs:
         working-directory: cli
         run: node --test test/skill-lint.test.mjs
 
+      # A pull request that weakens the lint must still pass the base branch's lint.
+      - name: Lint with the base branch's lint
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth 1 origin "$BASE_SHA"
+          git worktree add --detach ../base "$BASE_SHA"
+          if [ ! -f ../base/cli/src/skill-lint.ts ]; then
+            echo "The base branch has no skill lint yet."
+            exit 0
+          fi
+          (cd ../base/cli && npm ci --ignore-scripts --no-audit --no-fund && node node_modules/esbuild/install.js && npm run build)
+          node ../base/cli/dist/index.js skill lint skills
+
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

@@ -5,3 +5,9 @@
 /cli/src/skills-catalog.ts  @baney75
 /cli/test/skill-lint.test.mjs @baney75
 /.github/                   @baney75
+/cli/src/skill.ts           @baney75
+/cli/scripts/               @baney75
+/cli/package.json           @baney75
+/src/agent-setup-prompt.ts  @baney75
+/test/agent-setup-prompt.test.mjs @baney75
+/docs/skill-security.md     @baney75

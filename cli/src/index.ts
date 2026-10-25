@@ -30,6 +30,8 @@ function help(): string {
 		cmd("skill list", "", "The bundled skills and what each is for"),
 		cmd("skill print", "[name]", "A skill as text for AGENTS.md or any other agent"),
 		cmd("skill lint", "[path...]", "Check skills for hidden text, injection and missing structure"),
+		cmd("skill apply", "<folder>", "Lint, back up and install your edit of a skill (used by /rsi)"),
+		cmd("skill revert", "<name>", "Drop your edit and go back to the bundled skill"),
 		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("(tabkyra setup adds these for you.)")}`,
@@ -322,8 +324,8 @@ async function main(): Promise<void> {
 		}
 		case "skill": {
 			const [sub, ...rest] = argv.slice(1).filter((a) => !a.startsWith("-"));
-			if (!sub || !["install", "list", "print", "lint"].includes(sub)) {
-				throw new UsageError("Usage: tabkyra skill install [name...] [--all] [--force] | list | print [name] | lint [path...]");
+			if (!sub || !["install", "list", "print", "lint", "apply", "revert"].includes(sub)) {
+				throw new UsageError("Usage: tabkyra skill install [name...] [--all] [--force] | list | print [name] | lint [path...] | apply <folder> | revert <name>");
 			}
 			process.exitCode = runSkill(sub, rest, { force: flag("--force"), all: flag("--all") });
 			return;

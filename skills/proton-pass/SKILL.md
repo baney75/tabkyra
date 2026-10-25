@@ -23,8 +23,11 @@ tabkyra `tabs_show` tool and let them sign in.
 
 ## The rules
 
-- Never run a command whose purpose is to show a secret value. That includes `pass-cli`
-  item views with secret fields, `op read`, `op item get --reveal`, and `bws secret get`.
+- Never run a command whose purpose is to display a stored value. These are off limits:
+  - `op read`
+  - `op item get --reveal`
+  - `bws secret get`
+  - any `pass-cli` item view that includes hidden fields
 - Never turn off output masking, and never redirect a resolved secret into a file.
 - Never put a secret value in a command line, an argument, a commit or a chat message.
 - You may list or search items by name to find the right reference. Item names are not
