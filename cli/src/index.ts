@@ -1,16 +1,20 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { BridgeClient, listSockets } from "./client.ts";
 import { runNativeHost } from "./host.ts";
+import { runDoctor } from "./doctor.ts";
 import { hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
+import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
+import { runSetup } from "./setup.ts";
 import { VERSION } from "./version.ts";
 
 const HELP = `tabkyra ${VERSION} - browser bridge for coding harnesses
 
 Usage:
+  tabkyra setup           Build, register, load and connect everything (--yes accepts every offer)
+  tabkyra doctor          Check every piece and print one fix per problem
   tabkyra mcp             Run the MCP server on stdio (installs the native host on first run)
   tabkyra install         Write the native messaging manifest for every Chromium browser found
   tabkyra status          Show whether the extension is reachable
@@ -58,6 +62,19 @@ async function status(): Promise<void> {
 async function main(): Promise<void> {
 	const [command] = process.argv.slice(2);
 	switch (command) {
+		case "setup": {
+			const args = process.argv.slice(3);
+			const timeoutArg = args.find((a) => a.startsWith("--timeout="));
+			process.exitCode = await runSetup({
+				yes: args.includes("--yes") || args.includes("-y"),
+				wait: !args.includes("--no-wait"),
+				timeoutS: timeoutArg ? Number(timeoutArg.slice("--timeout=".length)) || 0 : 0,
+			});
+			return;
+		}
+		case "doctor":
+			process.exitCode = await runDoctor({ json: process.argv.includes("--json") });
+			return;
 		case "host":
 			runNativeHost();
 			return;
@@ -105,9 +122,8 @@ async function main(): Promise<void> {
 		}
 		case "reload": {
 			// Refuse to reload onto a broken bundle: a half-written dist-chrome unloads the extension.
-			const dist = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist-chrome");
-			const required = ["manifest.json", "background.js", "sidepanel.js", "sidepanel.html", "app.css"];
-			const missing = required.filter((f) => !existsSync(join(dist, f)));
+			const dist = extensionDir();
+			const missing = EXTENSION_FILES.filter((f) => !existsSync(join(dist, f)));
 			if (existsSync(dist) && missing.length > 0) {
 				throw new Error(`dist-chrome is incomplete (missing ${missing.join(", ")}); run \`npm run build\` first`);
 			}

@@ -56,7 +56,7 @@ function configDir(): string {
 	return join(homedir(), ".config", "tabkyra");
 }
 
-function launcherPath(): string {
+export function launcherPath(): string {
 	return join(configDir(), process.platform === "win32" ? "host.cmd" : "host");
 }
 
@@ -74,7 +74,7 @@ function writeLauncher(): string {
 	return path;
 }
 
-function manifestFor(launcher: string): string {
+export function manifestFor(launcher: string): string {
 	return `${JSON.stringify(
 		{
 			name: NATIVE_HOST_NAME,
