@@ -63,7 +63,8 @@ solve it, then go on. Never try to get around it.
    From a shell: `tabkyra library add <DOI> --quote "..." --location "p. 12" --tag <project>`.
    The library fetches the record from the DOI registry and checks retractions again, so
    it doubles as step 4's check. Exit code 3 (or `"retracted": true`) means drop it as
-   support. If neither is available, write BibTeX into `references.bib` from the Crossref
+   support. Exit code 4 (or `"complete": false`) means the retraction check didn't finish:
+   run `tabkyra library verify <citekey>` before citing it. If neither is available, write BibTeX into `references.bib` from the Crossref
    record.
 7. **Export what the user's tools read.**
    - Obsidian: `tabkyra library obsidian <vault folder>` writes one note per source in

@@ -9,9 +9,10 @@
  * are generated here from [a-z0-9] only.
  */
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { VERSION } from "./version.ts";
 
 export interface CslName {
@@ -29,6 +30,12 @@ export interface Verification {
 	notices: Array<{ type: string; doi: string }>;
 	oaUrl?: string;
 	citedBy?: number;
+	/**
+	 * Whether each retraction check ran. "failed" (timeout, rate limit, offline) means the
+	 * answer is unknown: `complete` is false, and the source isn't reported as clean.
+	 */
+	checks?: { openalex: "ok" | "not-found" | "failed"; crossref: "ok" | "failed" };
+	complete?: boolean;
 }
 
 export interface LibraryItem {
@@ -71,6 +78,43 @@ export function loadLibrary(): Library {
 	return data;
 }
 
+/**
+ * Run `fn` holding the library lock, so two processes (a shell and the MCP server, or two
+ * agents) can't read the same copy and overwrite each other's additions. A lock older than
+ * 30 seconds belongs to a process that died and is cleared.
+ */
+function withLock<T>(fn: () => T): T {
+	const lock = `${libraryFile()}.lock`;
+	mkdirSync(join(lock, ".."), { recursive: true });
+	const deadline = Date.now() + 10_000;
+	for (;;) {
+		try {
+			writeFileSync(lock, String(process.pid), { flag: "wx" });
+			break;
+		} catch {
+			const st = lstatSync(lock, { throwIfNoEntry: false });
+			if (st && Date.now() - st.mtimeMs > 30_000) rmSync(lock, { force: true });
+			else if (Date.now() > deadline) throw new Error(`The library is locked by another process (${lock}).`);
+			else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+		}
+	}
+	try {
+		return fn();
+	} finally {
+		rmSync(lock, { force: true });
+	}
+}
+
+/** Read, change and write the library as one locked step. */
+function updateLibrary<T>(change: (library: Library) => T): T {
+	return withLock(() => {
+		const library = loadLibrary();
+		const result = change(library);
+		saveLibrary(library);
+		return result;
+	});
+}
+
 function saveLibrary(library: Library): void {
 	const file = libraryFile();
 	mkdirSync(join(file, ".."), { recursive: true });
@@ -108,7 +152,8 @@ export function clean(value: unknown, max = 1000): string {
 	if (typeof value !== "string") return "";
 	return value
 		.replace(/[\p{Cc}\p{Cf}]/gu, " ")
-		.replace(/<[^>]{0,200}>/g, "")
+		// Only tag-shaped text: "n<10 versus n>50" in a title stays as it is.
+		.replace(/<\/?[a-zA-Z][\w:-]*(?:\s[^<>]{0,200})?>/g, "")
 		.replace(/\s+/g, " ")
 		.trim()
 		.slice(0, max);
@@ -134,33 +179,56 @@ function cleanIssued(value: unknown): LibraryItem["issued"] {
 	return nums.length ? { "date-parts": [nums] } : undefined;
 }
 
+/** A DOI as a URL path: each segment encoded, so "#" and "?" in a suffix stay part of the DOI. */
+function doiPath(doi: string): string {
+	return doi.split("/").map(encodeURIComponent).join("/");
+}
+
 async function fetchCsl(doi: string): Promise<Record<string, unknown>> {
-	const res = await get(`${base.doi()}/${encodeURI(doi)}`, "application/vnd.citationstyles.csl+json");
-	if (res.status === 404) throw new Error(`DOI ${doi} is not registered (doi.org returned 404). It may be mistyped or made up.`);
-	if (!res.ok) throw new Error(`doi.org returned ${res.status} for ${doi}.`);
+	const res = await get(`${base.doi()}/${doiPath(doi)}`, "application/vnd.citationstyles.csl+json");
+	const doiHost = new URL(base.doi()).host;
+	const finalHost = res.url ? new URL(res.url).host : doiHost;
+	// Only doi.org itself answering 404 means the DOI isn't registered.
+	if (res.status === 404 && finalHost === doiHost) throw new Error(`DOI ${doi} is not registered (doi.org returned 404). It may be mistyped or made up.`);
+	const type = res.headers.get("content-type") ?? "";
+	if (!res.ok || !/json/i.test(type)) {
+		throw new Error(`DOI ${doi} is registered, but its agency returned no citation metadata (${res.status} ${type || "no type"} from ${finalHost}). Check it by hand before citing.`);
+	}
 	return (await res.json()) as Record<string, unknown>;
 }
 
-async function verify(doi: string): Promise<Verification> {
-	const v: Verification = { at: new Date().toISOString(), sources: ["doi.org"], retracted: false, notices: [] };
+/**
+ * Retraction and access checks. A check that fails leaves the answer unknown (complete:
+ * false). A retraction already recorded in `previous` is never cleared by a failed check.
+ */
+async function verify(doi: string, previous?: Verification): Promise<Verification> {
+	const v: Verification = { at: new Date().toISOString(), sources: ["doi.org"], retracted: false, notices: [], checks: { openalex: "failed", crossref: "failed" } };
+	const checks = v.checks as NonNullable<Verification["checks"]>;
 	try {
-		const res = await get(`${base.openalex()}/works/doi:${encodeURI(doi)}?select=is_retracted,open_access,cited_by_count`, "application/json");
-		if (res.ok) {
+		const res = await get(`${base.openalex()}/works/doi:${doiPath(doi)}?select=is_retracted,open_access,cited_by_count`, "application/json");
+		if (res.status === 404) checks.openalex = "not-found";
+		else if (res.ok) {
 			const w = (await res.json()) as { is_retracted?: boolean; open_access?: { oa_url?: string }; cited_by_count?: number };
 			v.sources.push("openalex");
+			checks.openalex = "ok";
 			if (w.is_retracted) v.retracted = true;
-			const oa = clean(w.open_access?.oa_url, 2000);
-			if (/^https:\/\//.test(oa)) v.oaUrl = oa;
+			try {
+				const oa = new URL(clean(w.open_access?.oa_url, 2000));
+				if (oa.protocol === "https:") v.oaUrl = oa.href;
+			} catch {
+				/* no usable open-access link */
+			}
 			if (Number.isInteger(w.cited_by_count)) v.citedBy = w.cited_by_count;
 		}
 	} catch {
-		/* OpenAlex is a second opinion; the record itself came from the registry. */
+		/* left as failed */
 	}
 	try {
 		const res = await get(`${base.crossref()}/works?filter=updates:${encodeURIComponent(doi)}&select=DOI,update-to&rows=20`, "application/json");
 		if (res.ok) {
 			const body = (await res.json()) as { message?: { items?: Array<{ DOI?: string; "update-to"?: Array<{ type?: string; DOI?: string }> }> } };
 			v.sources.push("crossref-updates");
+			checks.crossref = "ok";
 			for (const item of body.message?.items ?? []) {
 				for (const u of item["update-to"] ?? []) {
 					if (u.DOI?.toLowerCase() !== doi.toLowerCase()) continue;
@@ -171,7 +239,13 @@ async function verify(doi: string): Promise<Verification> {
 			}
 		}
 	} catch {
-		/* Same as above. */
+		/* left as failed */
+	}
+	v.complete = checks.openalex !== "failed" && checks.crossref === "ok";
+	// Evidence of a retraction is kept until a complete check says otherwise.
+	if (previous?.retracted && !v.retracted && !v.complete) {
+		v.retracted = true;
+		v.notices = previous.notices;
 	}
 	return v;
 }
@@ -228,38 +302,50 @@ export interface AddOptions {
 export async function addSource(input: string, options: AddOptions = {}): Promise<{ item: LibraryItem; existed: boolean }> {
 	const doi = toDoi(input);
 	if (!doi) throw new Error(`"${input}" is not a DOI, doi.org link or arXiv id. Find the source's DOI first.`);
-	const library = loadLibrary();
-	const existing = library.items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
-	if (existing) {
-		mergeAnnotations(existing, options);
-		saveLibrary(library);
-		return { item: existing, existed: true };
-	}
-	const csl = await fetchCsl(doi);
-	const title = first(csl.title);
-	if (!title) throw new Error(`The record for ${doi} has no title.`);
-	const draft = {
-		type: cslType(clean(csl.type, 50)),
-		title,
-		author: cleanNames(csl.author) ?? cleanNames(csl.editor),
-		issued: cleanIssued(csl.issued) ?? cleanIssued(csl.published) ?? cleanIssued(csl.created),
-		"container-title": first(csl["container-title"]) || undefined,
-		publisher: clean(csl.publisher, 300) || undefined,
-		volume: clean(csl.volume, 50) || undefined,
-		issue: clean(csl.issue, 50) || undefined,
-		page: clean(csl.page, 50) || undefined,
-		DOI: clean(csl.DOI, 300) || doi,
-		URL: `https://doi.org/${doi}`,
-	};
-	const item: LibraryItem = {
-		id: citekey(draft, new Set(library.items.map((i) => i.id))),
-		...draft,
-		tabkyra: { addedAt: new Date().toISOString(), verified: await verify(doi), tags: [] },
-	};
-	mergeAnnotations(item, options);
-	library.items.push(item);
-	saveLibrary(library);
-	return { item, existed: false };
+	const known = loadLibrary().items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
+	// Network first; the library is read and written only after, so a parallel add isn't lost.
+	const csl = known ? undefined : await fetchCsl(doi);
+	const verified = await verify(doi, known?.tabkyra.verified);
+	const record = csl;
+	return updateLibrary((library) => {
+		const existing = library.items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
+		if (existing) {
+			// Adding again re-checks retractions, so a source retracted since is caught.
+			existing.tabkyra.verified = keepRetraction(verified, existing.tabkyra.verified);
+			mergeAnnotations(existing, options);
+			return { item: existing, existed: true };
+		}
+		if (!record) throw new Error(`${doi} was removed while it was being added. Add it again.`);
+		const title = first(record.title);
+		if (!title) throw new Error(`The record for ${doi} has no title.`);
+		const draft = {
+			type: cslType(clean(record.type, 50)),
+			title,
+			author: cleanNames(record.author) ?? cleanNames(record.editor),
+			issued: cleanIssued(record.issued) ?? cleanIssued(record.published) ?? cleanIssued(record.created),
+			"container-title": first(record["container-title"]) || undefined,
+			publisher: clean(record.publisher, 300) || undefined,
+			volume: clean(record.volume, 50) || undefined,
+			issue: clean(record.issue, 50) || undefined,
+			page: clean(record.page, 50) || undefined,
+			// The requested DOI is the identity: it is what was verified and what the URL points at.
+			DOI: doi,
+			URL: `https://doi.org/${doi}`,
+		};
+		const item: LibraryItem = {
+			id: citekey(draft, new Set(library.items.map((i) => i.id))),
+			...draft,
+			tabkyra: { addedAt: new Date().toISOString(), verified, tags: [] },
+		};
+		mergeAnnotations(item, options);
+		library.items.push(item);
+		return { item, existed: false };
+	});
+}
+
+/** A recorded retraction survives an incomplete re-check. */
+function keepRetraction(next: Verification, previous: Verification): Verification {
+	return previous.retracted && !next.retracted && !next.complete ? { ...next, retracted: true, notices: previous.notices } : next;
 }
 
 function mergeAnnotations(item: LibraryItem, options: AddOptions): void {
@@ -271,12 +357,21 @@ function mergeAnnotations(item: LibraryItem, options: AddOptions): void {
 	}
 }
 
-export async function reverify(keys: string[]): Promise<LibraryItem[]> {
-	const library = loadLibrary();
-	const targets = keys.length ? library.items.filter((i) => keys.includes(i.id)) : library.items;
-	for (const item of targets) if (item.DOI) item.tabkyra.verified = await verify(item.DOI);
-	saveLibrary(library);
-	return targets;
+export async function reverify(keys: string[]): Promise<{ items: LibraryItem[]; missing: string[] }> {
+	const before = loadLibrary();
+	const targets = keys.length ? before.items.filter((i) => keys.includes(i.id)) : before.items;
+	const missing = keys.filter((k) => !before.items.some((i) => i.id === k));
+	const results = new Map<string, Verification>();
+	for (const item of targets) if (item.DOI) results.set(item.id, await verify(item.DOI, item.tabkyra.verified));
+	// Apply to a fresh, locked copy, so anything added meanwhile is kept.
+	const items = updateLibrary((library) => {
+		for (const item of library.items) {
+			const v = results.get(item.id);
+			if (v) item.tabkyra.verified = keepRetraction(v, item.tabkyra.verified);
+		}
+		return library.items.filter((i) => results.has(i.id));
+	});
+	return { items, missing };
 }
 
 export function search(query: string): LibraryItem[] {
@@ -290,12 +385,11 @@ export function search(query: string): LibraryItem[] {
 }
 
 export function removeSource(key: string): boolean {
-	const library = loadLibrary();
-	const before = library.items.length;
-	library.items = library.items.filter((i) => i.id !== key);
-	if (library.items.length === before) return false;
-	saveLibrary(library);
-	return true;
+	return updateLibrary((library) => {
+		const before = library.items.length;
+		library.items = library.items.filter((i) => i.id !== key);
+		return library.items.length !== before;
+	});
 }
 
 const STYLES = new Set(["apa", "modern-language-association", "chicago-author-date", "ieee", "harvard-cite-them-right", "vancouver"]);
@@ -329,8 +423,11 @@ const BIBTEX_TYPE: Record<string, string> = {
 	dataset: "misc",
 };
 
+const BIB_SPECIAL: Record<string, string> = { "\\": "\\textbackslash{}", "~": "\\textasciitilde{}", "^": "\\textasciicircum{}" };
+
+/** One pass, so a replacement is never escaped again. */
 function bibEscape(s: string): string {
-	return s.replace(/\\/g, "\\textbackslash{}").replace(/([{}&%$#_])/g, "\\$1").replace(/~/g, "\\textasciitilde{}").replace(/\^/g, "\\textasciicircum{}");
+	return s.replace(/[\\{}&%$#_~^]/g, (c) => BIB_SPECIAL[c] ?? `\\${c}`);
 }
 
 function names(item: LibraryItem, sepBy: string): string {
@@ -406,7 +503,8 @@ export function toRis(items: LibraryItem[]): string {
 
 export function toCslJson(items: LibraryItem[]): string {
 	return `${JSON.stringify(
-		items.map(({ tabkyra: _t, ...csl }) => csl),
+		// A retracted source keeps a visible mark in every format, CSL included.
+		items.map(({ tabkyra, ...csl }) => (tabkyra.verified.retracted ? { ...csl, note: "RETRACTED" } : csl)),
 		null,
 		2,
 	)}\n`;
@@ -420,28 +518,53 @@ function yamlText(value: unknown): string {
 
 /** Text safe inside a Markdown line: no wikilink, embed or HTML syntax from fetched metadata. */
 function md(s: string): string {
-	return s.replace(/[[\]<>`|]/g, (c) => `\\${c}`);
+	return s.replace(/[\\[\]<>`|*_!]/g, (c) => `\\${c}`);
 }
 
-/** One Obsidian note per source, named by citekey, inside `<vault>/<folder>`. */
-export function writeObsidian(vault: string, folder = "Sources"): string[] {
-	if (!existsSync(vault) || !statSync(vault).isDirectory()) throw new Error(`${vault} is not a folder.`);
+const GENERATED = "tabkyra-generated";
+
+function sha(text: string): string {
+	return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+/**
+ * One Obsidian note per source, named by citekey, inside `<vault>/<folder>`. The folder is
+ * walked one segment at a time and a symbolic link anywhere stops it, before anything is
+ * created. A note is replaced only if Tabkyra wrote it and nobody edited it since.
+ */
+export function writeObsidian(vault: string, folder = "Sources"): { written: string[]; kept: string[] } {
+	if (!existsSync(vault) || !lstatSync(vault).isDirectory()) throw new Error(`${vault} is not a folder.`);
 	const root = realpathSync(vault);
-	const inside = (p: string) => {
-		const rel = relative(root, p);
-		return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-	};
-	const dir = resolve(root, folder);
-	if (!inside(dir)) throw new Error(`${folder} is outside the vault.`);
-	mkdirSync(dir, { recursive: true });
-	// A symlinked folder could still lead out of the vault.
-	if (!inside(realpathSync(dir))) throw new Error(`${folder} leads outside the vault.`);
+	let dir = root;
+	for (const segment of folder.split(/[/\\]+/).filter(Boolean)) {
+		if (segment === "." || segment === "..") throw new Error(`${folder} is outside the vault.`);
+		dir = join(dir, segment);
+		const st = lstatSync(dir, { throwIfNoEntry: false });
+		if (st?.isSymbolicLink()) throw new Error(`${folder} leads outside the vault through a symbolic link.`);
+		if (st && !st.isDirectory()) throw new Error(`${dir} is not a folder.`);
+		if (!st) mkdirSync(dir);
+	}
 	const written: string[] = [];
+	const kept: string[] = [];
 	for (const i of loadLibrary().items) {
 		if (!/^[a-z0-9]+$/.test(i.id)) continue;
 		const file = join(dir, `${i.id}.md`);
-		if (existsSync(file) && lstatSync(file).isSymbolicLink()) continue;
+		// lstat, not exists: a dangling link reports as missing to existsSync.
+		const st = lstatSync(file, { throwIfNoEntry: false });
+		if (st && !st.isFile()) {
+			kept.push(file);
+			continue;
+		}
+		if (st) {
+			const old = readFileSync(file, "utf8");
+			const m = new RegExp(`^${GENERATED}: ([0-9a-f]{16})$`, "m").exec(old);
+			if (!m || m[1] !== sha(old.replace(m[0], `${GENERATED}: `))) {
+				kept.push(file);
+				continue;
+			}
+		}
 		const v = i.tabkyra.verified;
+		const status = v.retracted ? "retracted" : v.complete === false ? "retraction check incomplete" : "verified";
 		const front = [
 			"---",
 			`title: ${yamlText(i.title)}`,
@@ -450,24 +573,38 @@ export function writeObsidian(vault: string, folder = "Sources"): string[] {
 			`citekey: ${i.id}`,
 			i.DOI ? `doi: ${yamlText(i.DOI)}` : "",
 			`verified: ${JSON.stringify(v.at.slice(0, 10))}`,
+			`status: ${JSON.stringify(status)}`,
 			`retracted: ${v.retracted}`,
 			`tags: ${yamlText(["source", ...i.tabkyra.tags.map((t) => t.replace(/[^\w/-]/g, "-"))])}`,
+			`${GENERATED}: `,
 			"---",
 		].filter(Boolean);
+		let oa = "";
+		try {
+			if (v.oaUrl) oa = new URL(v.oaUrl).href;
+		} catch {
+			/* skipped */
+		}
 		const body = [
 			`# ${md(i.title)}`,
 			"",
 			`${md(names(i, "; "))} (${year(i)}). ${i["container-title"] ? `*${md(i["container-title"])}*` : ""}`,
-			i.DOI ? `DOI: <https://doi.org/${encodeURI(i.DOI)}>` : "",
+			i.DOI ? `DOI: <https://doi.org/${doiPath(i.DOI)}>` : "",
 			v.retracted ? "\n> [!warning] Retracted\n> A retraction notice points at this DOI. Don't cite it as support." : "",
-			v.oaUrl ? `Open access copy: <${encodeURI(v.oaUrl)}>` : "",
+			!v.retracted && v.complete === false ? "\n> [!caution] Retraction check incomplete\n> Run tabkyra library verify before citing." : "",
+			oa ? `Open access copy: <${oa}>` : "",
 			i.tabkyra.quote ? `\n## Supporting quote\n\n> ${md(i.tabkyra.quote.text)}${i.tabkyra.quote.location ? `\n> (${md(i.tabkyra.quote.location)})` : ""}` : "",
 			i.tabkyra.note ? `\n## Notes\n\n${md(i.tabkyra.note)}` : "",
 		].filter((l) => l !== "");
-		writeFileSync(file, `${front.join("\n")}\n\n${body.join("\n\n")}\n`);
+		const draft = `${front.join("\n")}\n\n${body.join("\n\n")}\n`;
+		const text = draft.replace(`${GENERATED}: `, `${GENERATED}: ${sha(draft)}`);
+		// Temp file + rename never writes through a link planted at the note's path.
+		const tmp = join(dir, `.${i.id}.${process.pid}.tmp`);
+		writeFileSync(tmp, text, { flag: "wx" });
+		renameSync(tmp, file);
 		written.push(file);
 	}
-	return written;
+	return { written, kept };
 }
 
 // --- CLI ---------------------------------------------------------------------------------
@@ -516,6 +653,10 @@ export async function runLibrary(args: string[]): Promise<number> {
 				console.log("  RETRACTED: don't cite this as support.");
 				return 3;
 			}
+			if (v.complete === false) {
+				console.log("  Retraction check incomplete (OpenAlex or Crossref didn't answer). Run tabkyra library verify before citing.");
+				return 4;
+			}
 			return 0;
 		}
 		case "list": {
@@ -530,9 +671,14 @@ export async function runLibrary(args: string[]): Promise<number> {
 			return hits.length ? 0 : 1;
 		}
 		case "verify": {
-			const items = await reverify(positional);
-			for (const i of items) console.log(`${line(i)}  (${i.tabkyra.verified.sources.join(", ")})`);
-			return items.some((i) => i.tabkyra.verified.retracted) ? 3 : 0;
+			const { items, missing } = await reverify(positional);
+			for (const i of items) {
+				console.log(`${line(i)}  (${i.tabkyra.verified.sources.join(", ")}${i.tabkyra.verified.complete === false ? "; check incomplete" : ""})`);
+			}
+			for (const k of missing) console.log(`No source with key ${k}.`);
+			if (items.some((i) => i.tabkyra.verified.retracted)) return 3;
+			if (missing.length) return 1;
+			return items.some((i) => i.tabkyra.verified.complete === false) ? 4 : 0;
 		}
 		case "cite": {
 			if (positional.length !== 1) throw new Error(LIBRARY_USAGE);
@@ -552,8 +698,9 @@ export async function runLibrary(args: string[]): Promise<number> {
 		}
 		case "obsidian": {
 			if (positional.length !== 1) throw new Error(LIBRARY_USAGE);
-			const files = writeObsidian(positional[0], opts.folder);
-			console.log(`Wrote ${files.length} notes to ${join(positional[0], opts.folder ?? "Sources")}`);
+			const { written, kept } = writeObsidian(positional[0], opts.folder);
+			console.log(`Wrote ${written.length} notes to ${join(positional[0], opts.folder ?? "Sources")}`);
+			for (const k of kept) console.log(`  kept ${k}: you edited it, or Tabkyra didn't write it`);
 			return 0;
 		}
 		case "remove": {

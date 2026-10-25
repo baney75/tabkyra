@@ -3,7 +3,7 @@
 // hostile metadata can't hide text, inject Markdown or YAML, or write outside the vault.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -55,6 +55,20 @@ const RECORDS = {
 let server;
 let env;
 const requests = [];
+/** Switches the tests flip: checks that fail, and DOIs retracted after they were added. */
+const mock = { failChecks: false, retractedNow: new Set() };
+Object.assign(RECORDS, {
+	"10.1000/later": { type: "journal-article", title: "Fine at first", author: [{ family: "Later", given: "L." }], issued: { "date-parts": [[2019]] }, DOI: "10.1000/later" },
+	"10.1000/a#b": { type: "journal-article", title: "Hash in the suffix", author: [{ family: "Hash", given: "H." }], issued: { "date-parts": [[2018]] }, DOI: "10.1000/a#b" },
+	"10.1000/escapes": {
+		type: "journal-article",
+		title: "Outcomes for n<10 versus n>50 cohorts with a back\\slash and \\[Full text\\](https://evil.example.net/p.pdf)",
+		author: [{ family: "Esc", given: "E." }],
+		issued: { "date-parts": [[2021]] },
+		DOI: "10.1000/escapes",
+	},
+	"10.1000/alias": { type: "journal-article", title: "Alias target", author: [{ family: "Alias", given: "A." }], issued: { "date-parts": [[2017]] }, DOI: "10.9999/someone-else" },
+});
 
 before(async () => {
 	server = createServer((req, res) => {
@@ -64,8 +78,12 @@ before(async () => {
 			res.writeHead(status, { "content-type": "application/json" });
 			res.end(JSON.stringify(body));
 		};
+		if (url.pathname === "/doi/10.1000/landing-only") {
+			res.writeHead(200, { "content-type": "text/html" });
+			return res.end("<html>publisher landing page</html>");
+		}
 		if (url.pathname.startsWith("/doi/")) {
-			const doi = decodeURI(url.pathname.slice(5));
+			const doi = decodeURIComponent(url.pathname.slice(5));
 			const record = RECORDS[doi];
 			if (!record) return json(404, { error: "not found" });
 			if ((req.headers.accept ?? "").startsWith("text/x-bibliography")) {
@@ -75,13 +93,16 @@ before(async () => {
 			return json(200, record);
 		}
 		if (url.pathname.startsWith("/openalex/works/doi:")) {
-			const doi = decodeURI(url.pathname.slice("/openalex/works/doi:".length));
+			if (mock.failChecks) return json(503, {});
+			const doi = decodeURIComponent(url.pathname.slice("/openalex/works/doi:".length));
 			if (!RECORDS[doi]) return json(404, {});
-			return json(200, { is_retracted: false, cited_by_count: 42, open_access: { oa_url: "https://example.org/paper.pdf" } });
+			return json(200, { is_retracted: false, cited_by_count: 42, open_access: { oa_url: "https://example.org/files/My%20Paper.pdf" } });
 		}
 		if (url.pathname === "/crossref/works") {
+			if (mock.failChecks) return json(429, {});
 			const doi = (url.searchParams.get("filter") ?? "").replace(/^updates:/, "");
-			const items = doi === "10.1000/retracted" ? [{ DOI: "10.1000/notice", "update-to": [{ type: "retraction", DOI: "10.1000/retracted" }] }] : [];
+			const retracted = doi === "10.1000/retracted" || mock.retractedNow.has(doi);
+			const items = retracted ? [{ DOI: "10.1000/notice", "update-to": [{ type: "retraction", DOI: doi }] }] : [];
 			return json(200, { message: { items } });
 		}
 		json(404, {});
@@ -229,4 +250,89 @@ test("search, remove and the MCP tools agree with the CLI", async () => {
 	}
 	assert.equal((await lib("remove", "vaswani2017attention")).code, 0);
 	assert.equal((await lib("remove", "vaswani2017attention")).code, 1);
+});
+
+test("failed retraction checks are reported as incomplete, and never clear a recorded retraction", async () => {
+	mock.failChecks = true;
+	try {
+		const r = await lib("add", "10.1000/later");
+		assert.equal(r.code, 4, r.out);
+		assert.match(r.out, /Retraction check incomplete/);
+		assert.equal(items().find((i) => i.DOI === "10.1000/later").tabkyra.verified.complete, false);
+		const wakefield = items().find((i) => i.DOI === "10.1000/retracted").id;
+		const v = await lib("verify", wakefield);
+		assert.equal(v.code, 3, v.out);
+		assert.equal(items().find((i) => i.id === wakefield).tabkyra.verified.retracted, true, "an incomplete re-check keeps the retraction");
+	} finally {
+		mock.failChecks = false;
+	}
+});
+
+test("adding a source again re-checks it, so a later retraction is caught", async () => {
+	assert.equal((await lib("add", "10.1000/later")).code, 0);
+	mock.retractedNow.add("10.1000/later");
+	try {
+		const r = await lib("add", "10.1000/later");
+		assert.equal(r.code, 3, r.out);
+	} finally {
+		mock.retractedNow.delete("10.1000/later");
+	}
+});
+
+test("parallel adds both land", async () => {
+	await Promise.all([lib("add", "10.1000/a#b"), lib("add", "10.1000/escapes")]);
+	const dois = items().map((i) => i.DOI);
+	assert.ok(dois.includes("10.1000/a#b") && dois.includes("10.1000/escapes"), dois.join(", "));
+	assert.ok(requests.some((p) => p.startsWith("/doi/10.1000/a%23b")), "a # in the suffix is encoded, not cut off");
+});
+
+test("metadata keeps comparison signs, and every format escapes it correctly", async () => {
+	const item = items().find((i) => i.DOI === "10.1000/escapes");
+	assert.match(item.title, /n<10 versus n>50/);
+	const bib = (await lib("export", "--format", "bibtex")).out;
+	assert.match(bib, /back\\textbackslash\{\}slash/);
+	assert.doesNotMatch(bib, /textbackslash\\\{/);
+	const csl = JSON.parse((await lib("export", "--format", "csl")).out);
+	assert.equal(csl.find((i) => i.DOI === "10.1000/retracted").note, "RETRACTED");
+	const vault = join(root, "vault-esc");
+	mkdirSync(vault);
+	assert.equal((await lib("obsidian", vault)).code, 0);
+	const note = readFileSync(join(vault, "Sources", `${item.id}.md`), "utf8");
+	assert.doesNotMatch(note, /(?<!\\)\[Full text(?<!\\)\]\(/, "no live link from fetched text");
+	assert.match(readFileSync(join(vault, "Sources", "cepeda2006spacing.md"), "utf8"), /My%20Paper\.pdf/, "an encoded URL isn't encoded twice");
+});
+
+test("the requested DOI is the identity, and an agency without metadata isn't called made up", async () => {
+	assert.equal((await lib("add", "10.1000/alias")).code, 0);
+	assert.ok(items().some((i) => i.DOI === "10.1000/alias") && !items().some((i) => i.DOI === "10.9999/someone-else"));
+	const r = await lib("add", "10.1000/landing-only");
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /registered, but its agency returned no citation metadata/);
+	assert.doesNotMatch(r.out, /made up/);
+});
+
+test("verify reports keys that match nothing", async () => {
+	const r = await lib("verify", "nosuchkey2000");
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /No source with key nosuchkey2000/);
+});
+
+test("obsidian never writes through a link, never makes folders outside, and keeps edited notes", async () => {
+	const vault = join(root, "vault-links");
+	mkdirSync(join(vault, "Sources"), { recursive: true });
+	const target = join(root, "planted-target.txt");
+	symlinkSync(target, join(vault, "Sources", "cepeda2006spacing.md"));
+	const outside = join(root, "outside-dir");
+	mkdirSync(outside);
+	symlinkSync(outside, join(vault, "Linked"));
+	assert.equal((await lib("obsidian", vault, "--folder", "Linked/NewFolder")).code, 1);
+	assert.deepEqual(readdirSync(outside), [], "nothing created through the link");
+	const r = await lib("obsidian", vault);
+	assert.equal(r.code, 0, r.out);
+	assert.equal(existsSync(target), false, "a dangling link's target is never created");
+	const mine = join(vault, "Sources", "wakefield1998bad.md");
+	writeFileSync(mine, `${readFileSync(mine, "utf8")}\nMy own notes.\n`);
+	const again = await lib("obsidian", vault);
+	assert.match(again.out, /kept .*wakefield1998bad\.md/);
+	assert.match(readFileSync(mine, "utf8"), /My own notes\./);
 });
