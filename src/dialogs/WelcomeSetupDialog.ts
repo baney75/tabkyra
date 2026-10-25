@@ -2,6 +2,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.js";
 import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { html } from "lit";
+import { helmMark } from "../components/HelmMark.js";
 
 /**
  * Shown on first launch when no API keys are configured.
@@ -31,6 +32,7 @@ export class WelcomeSetupDialog extends DialogBase {
 			${DialogContent({
 				className: "flex flex-col gap-4",
 				children: html`
+					${helmMark(40, "tile", "rounded-[9px]")}
 					${DialogHeader({
 						title: "Welcome to Tabkyra",
 					})}

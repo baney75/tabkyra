@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="media/hero.png" alt="Tabkyra" width="400">
+  <img src="media/brand/hero.png" alt="Tabkyra: you steer, your agents work the tabs" width="720">
 </p>
 
 # Tabkyra

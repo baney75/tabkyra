@@ -265,6 +265,28 @@ index 192c3c536..451f2f957 100644
  				${Input({
  					placeholder: i18n("Search models..."),
  					value: this.searchQuery,
+diff --git a/packages/web-ui/src/dialogs/SettingsDialog.ts b/packages/web-ui/src/dialogs/SettingsDialog.ts
+index 71620552e..f0cce34c8 100644
+--- a/packages/web-ui/src/dialogs/SettingsDialog.ts
++++ b/packages/web-ui/src/dialogs/SettingsDialog.ts
+@@ -156,7 +156,7 @@ export class SettingsDialog extends LitElement {
+ 		const isActive = this.activeTabIndex === index;
+ 		return html`
+ 			<button
+-				class="px-3 py-2 text-sm font-medium transition-colors ${
++				class="shrink-0 whitespace-nowrap px-3 py-2 text-sm font-medium transition-colors ${
+ 					isActive ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground"
+ 				}"
+ 				@click=${() => this.setActiveTab(index)}
+@@ -190,7 +190,7 @@ export class SettingsDialog extends LitElement {
+ 							<div class="pb-4 flex-shrink-0">${DialogHeader({ title: i18n("Settings") })}</div>
+ 
+ 							<!-- Mobile Tabs -->
+-							<div class="md:hidden flex flex-shrink-0 pb-4">
++							<div class="md:hidden flex flex-shrink-0 mb-4 overflow-x-auto overflow-y-hidden border-b border-border">
+ 								${this.tabs.map((tab, index) => this.renderMobileTab(tab, index))}
+ 							</div>
+ 
 diff --git a/packages/web-ui/src/index.ts b/packages/web-ui/src/index.ts
 index 48284c742..9eb3d1873 100644
 --- a/packages/web-ui/src/index.ts

@@ -15,8 +15,24 @@ if ! git diff --quiet; then
 	if git apply --reverse --check "$here/patches/pi-mono.patch" 2>/dev/null; then
 		echo "pi-mono patch already applied"
 	else
-		echo "pi-mono has local changes that are not patches/pi-mono.patch; resolve them first" >&2
-		exit 1
+		# An older revision of the patch is applied: swap it for the current one, but only
+		# when the local changes are exactly that older patch, so no hand edits are lost.
+		current="$(git diff)"
+		upgraded=""
+		for rev in $(git -C "$here" log --format=%H -- patches/pi-mono.patch); do
+			old_patch="$(git -C "$here" show "$rev:patches/pi-mono.patch" 2>/dev/null || true)"
+			if [ -n "$old_patch" ] && [ "$old_patch" = "$current" ]; then
+				echo "pi-mono has an older patch (${rev:0:7}); updating it"
+				git -C "$here" show "$rev:patches/pi-mono.patch" | git apply --reverse
+				git apply "$here/patches/pi-mono.patch"
+				upgraded=1
+				break
+			fi
+		done
+		if [ -z "$upgraded" ]; then
+			echo "pi-mono has local changes that are not patches/pi-mono.patch; resolve them first" >&2
+			exit 1
+		fi
 	fi
 else
 	git checkout -q "$pi_mono_rev"
