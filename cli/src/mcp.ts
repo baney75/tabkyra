@@ -104,12 +104,20 @@ function sessionKey(): string {
 	);
 }
 
-export async function runMcpServer(): Promise<void> {
-	if (!isInstalled()) {
-		// First run from any harness completes setup; the extension reconnects on its alarm.
-		const result = install();
-		process.stderr.write(`[tabkyra] installed native host manifest (${result.written.length} browser dir(s))\n`);
-	}
+export interface McpServerOptions {
+	/** Tab group label and bridge client name. */
+	name?: string;
+	/** Browser session key; one per MCP session. */
+	session?: string;
+	/**
+	 * Which tools this server exposes. A tool outside it is never registered, so the client
+	 * can't see or call it. Omitted for the local stdio server, which runs as the user.
+	 */
+	allow?: (tool: string) => boolean;
+}
+
+/** The MCP server and its bridge client, before any transport is attached. */
+export function createMcpServer(options: McpServerOptions = {}): { server: McpServer; client: BridgeClient } {
 
 	const server = new McpServer(
 		{ name: "tabkyra", version: VERSION },
@@ -132,9 +140,15 @@ export async function runMcpServer(): Promise<void> {
 			].join(" "),
 		},
 	);
+	const allow = options.allow;
+	if (allow) {
+		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, ...rest: unknown[]) =>
+			allow(String(name)) ? register(name, ...rest) : undefined;
+	}
 	const client = new BridgeClient({
-		name: harnessName(),
-		session: sessionKey(),
+		name: options.name ?? harnessName(),
+		session: options.session ?? sessionKey(),
 		onEvent: (event, data) => {
 			if (event === "permission_request") void handlePermission(data);
 		},
@@ -659,6 +673,16 @@ export async function runMcpServer(): Promise<void> {
 		(args) => library(() => cite(args.citekey, args.style)),
 	);
 
+	return { server, client };
+}
+
+export async function runMcpServer(): Promise<void> {
+	if (!isInstalled()) {
+		// First run from any harness completes setup; the extension reconnects on its alarm.
+		const result = install();
+		process.stderr.write(`[tabkyra] installed native host manifest (${result.written.length} browser dir(s))\n`);
+	}
+	const { server, client } = createMcpServer();
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
 	// Connect lazily on the first call, but try once now so a missing extension is reported early.

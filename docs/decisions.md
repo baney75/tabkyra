@@ -79,3 +79,59 @@ transcripts are recorded as blocked until the owner signs in a harness for the r
 #13 (skills, lint, CI), #14 (library) and #15 (private mode, bug reports) are reviewed
 and merged in order. Owner, 2026-10-25, answering whether to run a second review series
 on #13 and then review and merge #14 and #15: "Yes, review and merge".
+
+## D9. Remote MCP and tunnels (DC-2, DC-9)
+
+`tabkyra serve` speaks MCP over Streamable HTTP and binds to loopback only; it refuses any
+other address. Every request needs a bearer token from `tabkyra token create`. Tokens are
+per client, stored as SHA-256 hashes, revocable at once, and limited to named scopes
+(`browser.read`, `browser.navigate`, `browser.act`, `browser.script`, `library.read`,
+`library.write`). There is no wildcard. A session sees only its scopes' tools, and another
+token can't reuse it. The stdio server that a local harness runs keeps full access: it
+runs as the user, so a token there would protect nothing. TLS comes from the tunnel:
+`tabkyra tunnel tailscale` (tailnet only; `--public` uses Funnel and warns) or
+`tabkyra tunnel cloudflare` (a quick tunnel under the user's own `cloudflared`).
+
+## D10. Appearance customization and the contribution network (owner, 2026-10-25)
+
+Users and their agents customize Tabkyra's look through a theme file: design tokens and
+CSS custom properties as data, checked by a linter. A theme can't contain code, URLs or
+selectors that hide controls. A modified build is still allowed (AGPL-3.0).
+
+"Lose access to the contribution network if they tamper with the code" is enforced where
+it can actually hold. The client can't prove it is unmodified: it is open source, so any
+check inside it can be patched out or faked. So the network never trusts the client.
+
+- Every contribution (skill fix, success or failure report, bug report) is signed with a
+  per-install key and carries the build's hash. Builds whose hash isn't in the signed
+  release manifest are labeled `unofficial build`. Their contributions go to a separate
+  queue that is never auto-accepted.
+- Every contribution, from any build, passes the same server-side gates: CI lint, the
+  red-team suite, adversarial review, and a maintainer for sensitive scopes. Security
+  rests on these gates, not on trusting the client.
+- Abuse (repeated rejected or malicious submissions) revokes that install key.
+
+## D11. Worldwide successes and failures (owner, 2026-10-25)
+
+Off by default and opt-in at first run, next to bug reports. When on, a skill run's
+outcome is scrubbed by the DC-7 scrubber and contributed. It includes the skill name and
+version, the model class, pass or fail, the step that failed, and the fix if `/fix`
+produced one. Personal skills (D6) and page content are never included. Outcomes reach
+the shared library only through D10's gates, as proposed fixes. Raw data never edits a
+skill directly.
+
+## D12. Small-model context budget (owner, 2026-10-25)
+
+Harnesses see only each skill's name and its one-line description. The full SKILL.md
+loads when the skill is invoked. Each first-party skill stays under 150 lines and
+1,500 tokens, and longer material is split into separate skills, not appendices. The
+router (DC-3) picks at most one skill per task for small models. The `rsi` and `fix`
+skills also check a skill's token count, so an improvement can't bloat it.
+
+## D13. Local model providers (owner, 2026-10-25)
+
+A "Local models" provider set in the side panel. It finds OpenAI-compatible servers
+(Ollama :11434, LM Studio :1234, llama.cpp and vLLM :8080 and :8000) on this machine and on
+the user's tailnet peers. The native host asks `tailscale status --json` for the peers and
+probes each port with a short timeout. A model on a tailnet peer counts as local for
+private mode (D8 in #15 already treats `*.ts.net` and 100.64/10 as local).

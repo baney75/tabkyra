@@ -15,7 +15,7 @@ bug reports. None is merged yet.
 | DC-1 | No secrets, no piped installer, pinned version and checksum | prepared | Pinned tag yes, lint-tested; checksum missing (no signed release published yet) |
 | DC-1 | Check: 4+ clean containers, doctor exits 0 | none | Docker daemon returns 500 on this Mac; D7 sets the scripted variant |
 | DC-2 | CLI: search, skill {list,add,create,improve,review,submit}, cite, vault, tunnel, doctor, private-mode, report | prepared (partial) | Have doctor, skill {list,install,print,lint,apply,revert}, library {add,search,cite,export,obsidian}. Missing the rest |
-| DC-2 | MCP parity, least privilege, scoped revocable per-client tokens | none | MCP is stdio only, no tokens |
+| DC-2 | MCP parity, least privilege, scoped revocable per-client tokens | prepared (partial) | `tabkyra serve` + `tabkyra token` (D9). Narrow tests pass ([dc-2-dc-9.md](dc-2-dc-9.md)); CLI/MCP parity contract tests not written |
 | DC-3 | One schema (SKILL.md + skill.toml per D1, tools/, tests/) | none | Lint currently allows SKILL.md + license only |
 | DC-3 | Router: top-1 >= 90%, false-invoke <= 5% on 200 tasks | none | |
 | DC-3 | Agent skill creation into skills/local as prepared | prepared (partial) | `skill apply` keeps edits in skills-local; no create command |
@@ -38,7 +38,7 @@ bug reports. None is merged yet.
 | DC-7 | E2E cookie and session sync | none | |
 | DC-8 | Allowlist routing, block not warn | prepared | #15; unit tests pass; Check (forced call blocked and logged) not run end to end |
 | DC-8 | Persistent indicator | none | |
-| DC-9 | Tailscale and Cloudflare tunnels, token + TLS, default off | none | |
+| DC-9 | Tailscale and Cloudflare tunnels, token + TLS, default off | prepared | `tabkyra tunnel tailscale|cloudflare` (D9); args tested with stub binaries. The DC Check (a cloud agent through each real tunnel) is not run |
 | DC-10 | Pause, notify, user solves, resume | prepared (partial) | `tabs_show` handoff exists; no notification |
 | DC-10 | Opt-in solver per D2; CI flags bundled solvers | none | |
 | DC-11 | Capture with metadata, snapshot, excerpt | prepared (partial) | #14: metadata + excerpt; no PDF or snapshot |
@@ -54,3 +54,14 @@ bug reports. None is merged yet.
 | DC-14 | Daybreak identified | resolved | Owner confirmed, D4 (a decision, not a Check) |
 | Extra | Session management on device and across devices | none | |
 | Extra | Improved update system | none | `tabkyra update` exists (signed, rollback) |
+| New | Skills: maps, map data, Google world data, mathematics, chemistry, biology, genetics | none | |
+| New | Skills: notes and documents (Obsidian, Notion, Google Docs, Slides, Sheets), Proton and Proton Drive | none | |
+| New | Skill and system for adversarial review | prepared (partial) | `rsi` step 7 (prose); D4 Daybreak reviewer |
+| New | Automatic skill invocation, strong compaction, small-model context budget | none | D12 |
+| New | Local model provider set (localhost and tailnet) | none | D13 |
+| New | `/fix`: rewrite a skill for the model tier that failed, verify, record, submit or keep | none | |
+| New | Harness access to the skill and improvement system | prepared (partial) | CLI `skill apply/revert`; MCP skill tools not built |
+| New | Design library, templates, `/reference` (legal referencing), `/branding` | none | |
+| New | Shared successes and failures (opt-in) | none | D11 |
+| New | Report button that has the agent write the report via `/bug` | none | D5 |
+| New | Agent-customizable appearance; modified builds lose auto-acceptance | none | D10 |
