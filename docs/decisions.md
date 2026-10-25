@@ -157,3 +157,20 @@ user's devices and is never submitted, synced to shared storage or put in a bug 
 Email organization reads freely, but creating labels, moving mail or changing filters acts
 under the user's sign-in. It shows the plan and waits for the user's yes, per the safety
 rules.
+
+## D16. SDKs and vendor terms (owner, 2026-10-25: "we don't want to break ToS")
+
+No user should risk a ban for using Tabkyra.
+
+- **Harnesses the user runs** (Claude Code, Codex, pi, OMP, OpenCode, Cursor) connect to
+  Tabkyra as an MCP server, a pi extension or skills. The user's own harness, signed in
+  however its vendor allows, calls Tabkyra. Nothing is borrowed or impersonated, so this
+  is the primary integration.
+- **pi** (`@mariozechner/pi-ai`, `pi-agent-core`, `pi-web-ui`, MIT) already powers the side
+  panel with API keys. OMP is integrated through MCP config.
+- **Vendor agent SDKs** (Claude Agent SDK, Codex SDK) are used only with an API key the
+  user supplies and pays for, never with a subscription sign-in inside Tabkyra. Products
+  built on these SDKs are expected to use API keys, and reusing a consumer sign-in in
+  another app is what got the old Sitegeist sign-ins removed (docs/auth-policy.md).
+- `/fix` and `adversarial-review` run a stronger model by calling the user's own CLI
+  (`claude -p`, `codex exec`) on their machine, the same way the user would.
