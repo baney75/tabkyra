@@ -15,9 +15,9 @@ If the user did not give you a concrete task, read README.md first.
 - Always ask before removing functionality or code that appears intentional
 
 ## Dependencies
-- `@mariozechner/mini-lit`, `@mariozechner/pi-ai`, `@mariozechner/pi-web-ui`, `@mariozechner/pi-agent-core` are linked via `file:` to sibling repos `../mini-lit` and `../pi-mono`
-- Changes to those packages require rebuilding them (the dev watcher handles this)
-- If you need to modify upstream code, edit it in `../pi-mono` or `../mini-lit` directly and rebuild
+- `@mariozechner/mini-lit` (0.2.1), `@mariozechner/pi-ai`, `@mariozechner/pi-web-ui`, `@mariozechner/pi-agent-core` (0.60.0) come from npm at exact versions. No sibling checkouts are needed.
+- pi-mono later renamed its packages to `@earendil-works/*` and dropped `web-ui`, so do not bump past 0.60.x without porting.
+- To patch upstream code, check out pi-mono at tag `v0.60.0` next to this repo, build with `npx tsgo -p tsconfig.build.json` in `packages/{tui,ai,agent,web-ui}` (its `npm run build` regenerates the model list from the network), and point the dependency at it with `file:` locally. Do not commit `file:` paths.
 
 ## Changelog
 Location: `CHANGELOG.md`
