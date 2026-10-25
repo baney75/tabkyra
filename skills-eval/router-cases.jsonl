@@ -256,3 +256,15 @@
 {"task": "cat /bug/report.txt", "skill": "none"}
 {"task": "ls /fix", "skill": "none"}
 {"task": "Move the logs into ./rsi/old before the next run", "skill": "none"}
+{"task": "Use the news-research skill for the latest updates on the rail strike", "skill": "news-research"}
+{"task": "Use the osint skill on the port authority's new contractor", "skill": "osint"}
+{"task": "Run the osint skill and review what you find on the landlord", "skill": "osint"}
+{"task": "Use the tabkyra skill to fill in my fixed address", "skill": "tabkyra"}
+{"task": "Rewrite the dorks skill to Tabkyra's skill standard", "skill": "kyraskillmaker"}
+{"task": "The proton-pass skill gave my small model a bad result, fix it", "skill": "fix"}
+{"task": "Don't use the osint skill, just search the news for the landlord", "skill": "none"}
+{"task": "Instead of the dorks skill, write me a plain search query", "skill": "none"}
+{"task": "Skip the tabkyra skill and fetch the URL directly", "skill": "none"}
+{"task": "tabkyra skill install wrote to the wrong folder, report it", "skill": "bug"}
+{"task": "tabkyra skill versions shows nothing for my local skill", "skill": "bug"}
+{"task": "how do I use tabkyra skill rollback", "skill": "none"}

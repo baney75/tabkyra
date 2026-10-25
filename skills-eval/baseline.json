@@ -4,15 +4,15 @@
 		"adversarial-review": 0.9375,
 		"artifacts": 0.8235,
 		"autoresearch": 1,
-		"bug": 0.875,
+		"bug": 0.9444,
 		"dorks": 1,
 		"fix": 1,
-		"kyraskillmaker": 0.7647,
-		"news-research": 0.7059,
+		"kyraskillmaker": 0.7778,
+		"news-research": 0.7222,
 		"none": 1,
-		"osint": 0.8824,
+		"osint": 0.8947,
 		"proton-pass": 1,
 		"rsi": 1,
-		"tabkyra": 0.8235
+		"tabkyra": 0.8333
 	}
 }

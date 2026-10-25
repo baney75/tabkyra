@@ -144,7 +144,16 @@ function count(list: string[]): Map<string, number> {
 }
 
 /** Sentences that point to another tool or skill describe what the skill is not. */
-const REDIRECT = /^(not for|for [^.]*\buse `|use a plain|use `|don't write a skill)/i;
+const REDIRECT = /^(not for|use a plain|don't write a skill)/i;
+/** "Use `x` ..." or "For ..., use `x`" sends the reader to x only when x is a skill; "Use `pass-cli run` when ..." is a trigger. */
+const USE_OTHER = /^(?:for [^.]*\b)?use `([^`]+)`/i;
+
+function redirects(sentence: string, names: ReadonlySet<string>): boolean {
+	const t = sentence.trim();
+	if (REDIRECT.test(t)) return true;
+	const m = USE_OTHER.exec(t);
+	return m !== null && names.has(m[1]);
+}
 
 function frontmatterDescription(text: string): string {
 	return /^description: (.*)$/m.exec(text)?.[1]?.trim() ?? "";
@@ -237,11 +246,11 @@ function nameTerms(name: string, vocabulary: Set<string>): string[] {
 function parse(skill: RouterSkill, names: ReadonlySet<string>): Doc {
 	const description = frontmatterDescription(skill.text);
 	const clean = (t: string) => withoutOtherSkills(t, skill.name, names);
-	const kept = sentences(description).filter((s) => !REDIRECT.test(s.trim()));
+	const kept = sentences(description).filter((s) => !redirects(s, names));
 	const useAt = kept.findIndex((s) => /\bUse when\b/.test(s));
 	const whatText = useAt < 0 ? kept : kept.slice(0, useAt);
 	const triggers = useAt < 0 ? [] : kept.slice(useAt);
-	const bullets = whenToUse(skill.text).filter((b) => !REDIRECT.test(b.trim()));
+	const bullets = whenToUse(skill.text).filter((b) => !redirects(b, names));
 	const what = terms(clean(whatText.join(" ")));
 	const when = terms(clean([...triggers, ...bullets].join(" ")));
 	const fields: Record<Field, string[]> = { name: nameTerms(skill.name, new Set([...what, ...when])), what, when };
@@ -281,14 +290,24 @@ function containsSequence(haystack: string[], needle: string[]): boolean {
 	return false;
 }
 
-/** Words that make a task about changing a skill rather than using it. */
-const EDIT_VERB = /\b(fix(es|ed|ing)?|repair\w*|edit\w*|updat\w*|rewrit\w*|rewrote|improv\w*|review\w*|chang\w*|correct\w*|tweak\w*|shorten\w*|port(s|ed|ing)?|debug\w*|refin\w*|lint\w*)\b/;
+/** Verbs that, aimed at a named skill, make the task about changing it rather than using it. */
+const EDIT_VERB = "(?:fix(?:es|ed|ing)?|repair\\w*|edit\\w*|updat\\w*|rewrit\\w*|rewrote|improv\\w*|review\\w*|chang\\w*|correct\\w*|tweak\\w*|shorten\\w*|port(?:s|ed|ing)?|debug\\w*|refin\\w*|lint\\w*)";
+/** "<verb> [to|of|on|for] [the|this|my|our|that|your] [up to two words]" right before the mention. */
+const GOVERNS = new RegExp(`\\b${EDIT_VERB}\\s+(?:(?:to|of|on|for)\\s+)?(?:(?:the|this|my|our|that|your)\\s+)?(?:[a-z0-9'-]+\\s+){0,2}$`);
+/** "..., fix it" after the mention, pointing back at it. */
+const POINTS_BACK = new RegExp(`\\b${EDIT_VERB}\\s+(?:it|them)\\b`);
+/** A word in the same clause before the mention that turns the request around. */
+const EXCLUDES = /\b(?:don'?t|do not|never|without|instead of|skip(?:ping)?|not|no|rather than|avoid(?:ing)?)\b/;
+/** `tabkyra skill <subcommand>` is the Tabkyra CLI (read as "tabkyra cli"), not a mention of the tabkyra skill. */
+const CLI_SUBCOMMAND = /^\s+(?:install|list|print|lint|apply|revert|edit|eval|match|versions|rollback)\b/;
 
 interface ReadTask {
 	/** A slash command naming a skill, as the task's first token. */
 	command?: string;
 	/** Skills the task asks to use by name ("use the osint skill"). */
 	invoked: Set<string>;
+	/** Skills the task rules out ("don't use the osint skill"); never returned. */
+	excluded: Set<string>;
 	/** The task is about changing a skill it names ("fix the osint skill", "/fix osint"). */
 	changesSkill: boolean;
 	/** The text left to score. */
@@ -301,9 +320,14 @@ interface ReadTask {
  *   isn't followed by "/" or ".": "ls /fix" and "cat /bug/report.txt" are paths.
  * - Path-like words (starting with "/", "./", "../" or "~/") are data, not intent, and are
  *   dropped.
- * - "<name> skill" in a task about changing it ("fix the osint skill", "/fix news-research")
- *   names the object: the name is dropped so it doesn't score for itself. Otherwise ("use
- *   the osint skill on this landlord") it is a request for that skill.
+ * - "<name> skill" is the object of a change when an edit verb governs it ("fix the osint
+ *   skill", "rewrite my old dorks skill", "the osint skill failed, repair it") or a slash
+ *   command comes first: the name is dropped so it doesn't score for itself. An edit-like
+ *   word elsewhere ("the latest updates", "review what you find") doesn't count.
+ * - It is ruled out when a negation comes before it in the same clause ("don't use the
+ *   osint skill", "instead of the dorks skill"): that skill is never returned.
+ * - `tabkyra skill install` and the other subcommands are the CLI, not the tabkyra skill.
+ * - Otherwise ("use the osint skill on this landlord") it is a request for that skill.
  */
 function readTask(index: RouterIndex, task: string): ReadTask {
 	let text = task.toLowerCase();
@@ -322,18 +346,27 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 	}
 	text = text.replace(/(^|\s)(~|\.{1,2})?\/\S*/g, "$1 ");
 	const invoked = new Set<string>();
-	const mentions = index.named.filter((n) => text.search(n.pattern) >= 0);
-	if (mentions.length) {
-		let rest = text;
-		for (const n of mentions) rest = rest.replace(n.pattern, " ");
-		const editing = command !== undefined || EDIT_VERB.test(rest);
-		for (const n of mentions) {
-			if (editing) text = text.replace(n.pattern, " skill ");
-			else invoked.add(n.name);
-		}
-		changesSkill ||= editing;
+	const excluded = new Set<string>();
+	for (const n of index.named) {
+		text = text.replace(n.pattern, (whole: string, offset: number, all: string) => {
+			const after = all.slice(offset + whole.length);
+			if (n.name === "tabkyra" && CLI_SUBCOMMAND.test(after)) return "tabkyra cli";
+			const before = all.slice(0, offset);
+			const clause = before.slice(Math.max(...[".", ",", ";", ":", "!", "?"].map((p) => before.lastIndexOf(p))) + 1);
+			if (EXCLUDES.test(clause)) {
+				excluded.add(n.name);
+				return " ";
+			}
+			if (command !== undefined || GOVERNS.test(before) || POINTS_BACK.test(after)) {
+				changesSkill = true;
+				return " skill ";
+			}
+			invoked.add(n.name);
+			return whole;
+		});
 	}
-	return { command, invoked, changesSkill, content: text };
+	for (const name of excluded) invoked.delete(name);
+	return { command, invoked, excluded, changesSkill, content: text };
 }
 
 export interface RawScore {
@@ -345,13 +378,14 @@ export interface RawScore {
 
 /** Every skill's unfiltered score for a task, best first. */
 export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
-	const { command, invoked, changesSkill, content } = readTask(index, task);
+	const { command, invoked, excluded, changesSkill, content } = readTask(index, task);
 	const skillTerm = stem("skill");
 	const query = [...new Set(terms(content))];
 	const seq = words(content);
 	const queryPairs = pairsOf(content);
 	const out: RawScore[] = [];
 	for (const d of index.docs) {
+		if (excluded.has(d.name)) continue;
 		let score = 0;
 		let evidence = 0;
 		for (const t of query) {
