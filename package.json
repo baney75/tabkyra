@@ -1,8 +1,8 @@
 {
-	"name": "sitegeist",
+	"name": "tabkyra",
 	"version": "0.1.0",
 	"private": true,
-	"description": "AI-powered browser extension for web navigation and interaction",
+	"description": "Browser side-panel agent with an MCP bridge so local agents can drive the browser in the background",
 	"type": "module",
 	"main": "dist/background.js",
 	"scripts": {
@@ -56,5 +56,10 @@
 		"zod": "4.3.6",
 		"google-auth-library": "10.6.2",
 		"protobufjs": "7.5.4"
+	},
+	"license": "AGPL-3.0-only",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/baney75/tabkyra.git"
 	}
 }

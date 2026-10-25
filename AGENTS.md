@@ -5,8 +5,7 @@ If the user did not give you a concrete task, read README.md first.
 
 ## Commands
 - After code changes: run `./check.sh`. Fix all errors and warnings before committing.
-- The user runs `./dev.sh` in a separate tmux session. Do not run `npm run dev` or `npm run build`.
-- NEVER commit unless the user asks.
+- `npm run build` writes the unpacked extension to `dist-chrome/`. `./dev.sh` runs the watchers.
 
 ## Code Quality
 - No `any` types unless absolutely necessary
@@ -45,14 +44,8 @@ When the user asks to do a release:
 
 The script bumps the version in `static/manifest.chrome.json`, finalizes the changelog, commits, tags, and pushes. GitHub Actions builds and publishes the release.
 
-## Updating the Website
-When the user asks to update the website:
-```bash
-cd site && ./run.sh deploy
-```
-Requires SSH access to `slayer.marioslab.io`.
-
-The site is static HTML (no backend). Source is in `site/src/frontend/`.
+## Website
+The landing page in `site/` is static (Vite + Tailwind). `cd site && ./run.sh build` writes `site/dist/`. It is not deployed.
 
 ## Style
 - No emojis in commits, code, or comments
@@ -71,7 +64,7 @@ The site is static HTML (no backend). Source is in `site/src/frontend/`.
 src/
   sidepanel.ts          # Main entry point, agent setup, settings, rendering
   background.ts         # Service worker (sidepanel toggle, session locks)
-  oauth/                # Browser OAuth flows (Anthropic, OpenAI, GitHub, Gemini)
+  oauth/                # Browser OAuth flows (ChatGPT, GitHub Copilot, Gemini). No Anthropic subscription login.
   dialogs/              # Settings tabs, API key dialogs, welcome setup
   tools/                # Agent tools (navigate, REPL, extract-image, skills, debugger)
   messages/             # Custom message types (navigation, welcome)

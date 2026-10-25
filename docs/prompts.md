@@ -70,7 +70,7 @@ The descriptions from runtime providers are **dynamically injected** so the LLM 
 ## Current Prompts
 
 ### Web-UI Prompts
-**File**: `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/prompts/prompts.ts`
+**File**: `pi-mono/packages/web-ui/src/prompts/prompts.ts`
 
 Shared prompts and runtime provider descriptions:
 
@@ -84,10 +84,10 @@ Shared prompts and runtime provider descriptions:
 - `ATTACHMENTS_RUNTIME_DESCRIPTION` - User attachment access: `listAttachments()`, `readTextAttachment()`, `readBinaryAttachment()`
 - `EXTRACT_DOCUMENT_DESCRIPTION` - Extract text from PDF/DOCX/XLSX/PPTX
 
-### Sitegeist Prompts
-**File**: `/Users/badlogic/workspaces/sitegeist/src/prompts/prompts.ts`
+### Tabkyra Prompts
+**File**: `src/prompts/prompts.ts`
 
-Sitegeist-specific prompts:
+Tabkyra-specific prompts:
 
 **System Prompt**:
 - `SYSTEM_PROMPT` - Main agent identity, tone, workflows
@@ -310,8 +310,8 @@ For tools that manipulate content (artifacts, skills), use consistent action nam
 ### When Adding a New Tool
 
 1. **Choose the right location**:
-   - Shared/reusable tools → `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/prompts/prompts.ts`
-   - Sitegeist-specific tools → `/Users/badlogic/workspaces/sitegeist/src/prompts/prompts.ts`
+   - Shared/reusable tools → `pi-mono/packages/web-ui/src/prompts/prompts.ts`
+   - Tabkyra-specific tools → `src/prompts/prompts.ts`
 
 2. **Follow the tool description pattern** (see above)
 
@@ -368,23 +368,23 @@ After updating prompts:
 ### Key Files
 
 **Interfaces**:
-- `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/components/sandbox/SandboxRuntimeProvider.ts` - Provider interface
+- `pi-mono/packages/web-ui/src/components/sandbox/SandboxRuntimeProvider.ts` - Provider interface
 
 **Prompt Definitions**:
-- `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/prompts/prompts.ts` - Shared prompts and providers
-- `/Users/badlogic/workspaces/sitegeist/src/prompts/prompts.ts` - Sitegeist-specific prompts
+- `pi-mono/packages/web-ui/src/prompts/prompts.ts` - Shared prompts and providers
+- `src/prompts/prompts.ts` - Tabkyra-specific prompts
 
 **Provider Implementations**:
-- `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/components/sandbox/ArtifactsRuntimeProvider.ts` - Artifacts provider
-- `/Users/badlogic/workspaces/sitegeist/src/tools/NativeInputEventsRuntimeProvider.ts` - Native events provider
-- `/Users/badlogic/workspaces/sitegeist/src/tools/repl/runtime-providers.ts` - BrowserJs and Navigate providers
+- `pi-mono/packages/web-ui/src/components/sandbox/ArtifactsRuntimeProvider.ts` - Artifacts provider
+- `src/tools/NativeInputEventsRuntimeProvider.ts` - Native events provider
+- `src/tools/repl/runtime-providers.ts` - BrowserJs and Navigate providers
 
 **Tool Implementations**:
-- `/Users/badlogic/workspaces/pi-mono/packages/web-ui/src/tools/artifacts/artifacts.ts` - Artifacts tool
-- `/Users/badlogic/workspaces/sitegeist/src/tools/repl/repl.ts` - REPL tool
+- `pi-mono/packages/web-ui/src/tools/artifacts/artifacts.ts` - Artifacts tool
+- `src/tools/repl/repl.ts` - REPL tool
 
 **Integration**:
-- `/Users/badlogic/workspaces/sitegeist/src/sidepanel.ts` - Tool and provider composition
+- `src/sidepanel.ts` - Tool and provider composition
 
 ### Related Documentation
 - `docs/tool-renderers.md` - How tool invocations are rendered in UI

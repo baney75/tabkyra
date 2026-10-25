@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <title>Tabkyra</title>
+  <rect x="0" y="0" width="128" height="128" rx="28" fill="#0f1b2d"/>
+  <g stroke="#f5a524" stroke-width="8" stroke-linecap="round" fill="none">
+    <line x1="75.09" y1="68.59" x2="104.65" y2="80.84"/><line x1="68.59" y1="75.09" x2="80.84" y2="104.65"/><line x1="59.41" y1="75.09" x2="47.16" y2="104.65"/><line x1="52.91" y1="68.59" x2="23.35" y2="80.84"/><line x1="52.91" y1="59.41" x2="23.35" y2="47.16"/><line x1="59.41" y1="52.91" x2="47.16" y2="23.35"/><line x1="68.59" y1="52.91" x2="80.84" y2="23.35"/><line x1="75.09" y1="59.41" x2="104.65" y2="47.16"/>
+  </g>
+  <circle cx="64" cy="64" r="34" fill="none" stroke="#f5a524" stroke-width="9"/>
+  <g fill="#f5a524"><circle cx="112.04" cy="83.90" r="6"/><circle cx="83.90" cy="112.04" r="6"/><circle cx="44.10" cy="112.04" r="6"/><circle cx="15.96" cy="83.90" r="6"/><circle cx="15.96" cy="44.10" r="6"/><circle cx="44.10" cy="15.96" r="6"/><circle cx="83.90" cy="15.96" r="6"/><circle cx="112.04" cy="44.10" r="6"/></g>
+  <circle cx="64" cy="64" r="11" fill="#0f1b2d" stroke="#f5a524" stroke-width="7"/>
+</svg>

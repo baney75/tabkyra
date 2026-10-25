@@ -3,6 +3,7 @@ import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import "../utils/i18n-extension.js";
+import { fetchLatestVersion, RELEASES_URL, REPO_URL, UPSTREAM_URL } from "../utils/project.js";
 
 @customElement("about-tab")
 export class AboutTab extends SettingsTab {
@@ -22,14 +23,11 @@ export class AboutTab extends SettingsTab {
 
 	private async checkForUpdates() {
 		try {
-			const response = await fetch("https://sitegeist.ai/uploads/version.json", {
-				cache: "no-cache",
-			});
-			const data = await response.json();
+			const latest = await fetchLatestVersion();
 			const currentVersion = chrome.runtime.getManifest().version;
 
-			this.latestVersion = data.version;
-			this.updateAvailable = data.version !== currentVersion;
+			this.latestVersion = latest ?? currentVersion;
+			this.updateAvailable = latest !== undefined && latest !== currentVersion;
 			this.checking = false;
 		} catch (err) {
 			console.warn("[AboutTab] Failed to check for updates:", err);
@@ -39,7 +37,7 @@ export class AboutTab extends SettingsTab {
 	}
 
 	private openUpdatePage() {
-		window.open("https://sitegeist.ai/install.html#updating", "_blank");
+		window.open(RELEASES_URL, "_blank");
 	}
 
 	render(): TemplateResult {
@@ -49,7 +47,7 @@ export class AboutTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-4">
 				<div class="space-y-2">
-					<h3 class="text-lg font-semibold text-foreground">Sitegeist</h3>
+					<h3 class="text-lg font-semibold text-foreground">Tabkyra</h3>
 					<p class="text-sm text-muted-foreground">${i18n("AI-powered browser extension for web navigation and interaction")}</p>
 				</div>
 
@@ -99,11 +97,11 @@ export class AboutTab extends SettingsTab {
 
 				<div class="pt-4 space-y-2">
 					<div class="text-xs text-muted-foreground space-x-3">
-						<a href="https://sitegeist.ai" target="_blank" class="text-primary hover:underline">${i18n("Website")}</a>
-						<span>·</span>
-						<a href="https://sitegeist.ai/imprint" target="_blank" class="text-primary hover:underline">${i18n("Imprint")}</a>
-						<span>·</span>
-						<a href="https://sitegeist.ai/privacy" target="_blank" class="text-primary hover:underline">${i18n("Privacy")}</a>
+						<a href=${REPO_URL} target="_blank" class="text-primary hover:underline">${i18n("Website")}</a>
+					</div>
+					<div class="text-xs text-muted-foreground">
+						Based on <a href=${UPSTREAM_URL} target="_blank" class="text-primary hover:underline">Sitegeist</a> by Mario
+						Zechner. AGPL-3.0.
 					</div>
 				</div>
 			</div>

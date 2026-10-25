@@ -1,11 +1,11 @@
 {
 	"manifest_version": 3,
 	"minimum_chrome_version": "141",
-	"name": "sitegeist",
-	"description": "Your AI companion for the web - Research, automate, create",
-	"version": "1.0.0",
+	"name": "Tabkyra",
+	"description": "A browser agent in your side panel that local agents can also drive, in the background, through MCP.",
+	"version": "0.1.0",
 	"action": {
-		"default_title": "Click to open side panel"
+		"default_title": "Open Tabkyra"
 	},
 	"background": {
 		"service_worker": "background.js",

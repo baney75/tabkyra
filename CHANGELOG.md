@@ -2,10 +2,21 @@
 
 ## [Unreleased]
 
+Tabkyra is a fork of Sitegeist by Mario Zechner. Versions 1.0.0 and earlier below are Sitegeist releases.
+
 ### Changed
 
+- Renamed to Tabkyra: extension name, UI strings, package name, icons, storage database name, README and landing page.
+- The About tab checks GitHub releases of baney75/tabkyra for updates and links to the upstream project.
+- Manifest version reset to 0.1.0.
 - Dependencies `@mariozechner/pi-ai`, `pi-agent-core`, `pi-web-ui` (0.60.0) and `mini-lit` (0.2.1) now come from npm. A fresh clone builds with `npm install`; no sibling checkouts of pi-mono or mini-lit.
 - Compared with the previously pinned pi-mono commit (`ff1ea1232`, v0.60.0 plus 11 commits), the published 0.60.0 lacks: OpenRouter's nested `reasoning` request parameter, the `gpt-5.4-mini` entry for ChatGPT sign-in (the published model list instead has `gpt-5.4-nano` for GitHub Copilot; every other model entry is identical), Bedrock prompt caching for inference profiles and a Vertex placeholder-key fix. Bedrock and Vertex are hidden in Tabkyra. On OpenRouter, reasoning effort falls back to the plain `reasoning_effort` field.
+
+### Removed
+
+- Anthropic subscription (Claude Pro/Max) OAuth login. Anthropic does not allow Claude subscriptions in third-party apps. Anthropic API keys still work.
+- Forced update dialog and the sitegeist.ai version check.
+- sitegeist.ai deploy scripts, publish.sh, the Sitegeist subscription design notes and the upstream marketing assets.
 
 ## [1.0.0] - 2026-03-15
 

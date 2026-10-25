@@ -1,6 +1,6 @@
 import type { LockedSessionsMessage, LockResultMessage, SidepanelToBackgroundMessage } from "./utils/port.js";
 
-// Called when Sitegeist icon is clicked - opens sidepanel for current tab
+// Called when Tabkyra icon is clicked - opens sidepanel for current tab
 chrome.action.onClicked.addListener((tab: chrome.tabs.Tab) => {
 	const tabId = tab?.id;
 	if (tabId && chrome.sidePanel.open) {

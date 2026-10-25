@@ -19,7 +19,6 @@ export default defineConfig({
 		rollupOptions: {
 			input: {
 				main: path.resolve(__dirname, "../src/frontend/index.html"),
-				install: path.resolve(__dirname, "../src/frontend/install.html"),
 			},
 		},
 	},
