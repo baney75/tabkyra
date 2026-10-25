@@ -49,6 +49,7 @@
 - Removed upstream working notes from the repository root (`db.md`, `gmail.md`, `plan.md`).
 
 ### Fixed
+- `tabkyra library add` listed most Crossref notices two to four times (Crossref reports each one from the notice's record and again on the work's record, and alias checks added more). Notices are now kept once per type and DOI; `cli/test/library.test.mjs` fails on a repeated notice.
 - The empty-chat welcome screen now renders. `appendMessage` emits no event, so the chat never redrew to show it.
 - Settings tabs no longer wrap to several lines in a narrow side panel; the tab row scrolls (pi-web-ui `SettingsDialog`, in `patches/pi-mono.patch`).
 - Hidden agent tabs render at a fixed 1280x800 viewport (CDP device-metrics override, dropped while the user looks at the tab and restored when the agent acts on it again), so screenshot pixels, DOM coordinates and click coordinates are the same numbers in every window; models mixed the two scales on wide windows and clicked the wrong spots.

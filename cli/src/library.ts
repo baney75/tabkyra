@@ -370,7 +370,7 @@ async function verify(doi: string, previous?: Verification, agency = ""): Promis
 						if (/^(retraction|partial[_ ]retraction|withdrawal|removal)$/.test(type)) retracted = true;
 					}
 					v.sources.push("crossref-updates");
-					v.notices.push(...notices);
+					v.notices.push(...uniqueNotices(notices));
 					if (retracted) v.retracted = true;
 					checks.crossref = "ok";
 				}
@@ -508,12 +508,26 @@ function keepRetraction(next: Verification, previous: Verification): Verificatio
 	return previous.retracted && !next.retracted && !bothAnswered ? { ...next, retracted: true, notices: previous.notices } : next;
 }
 
+/**
+ * Crossref lists most notices twice, once from the notice's own record (`update-to`) and once
+ * on the work's record (`updated-by`). Keep one per type and notice DOI.
+ */
+function uniqueNotices(notices: Verification["notices"]): Verification["notices"] {
+	const seen = new Set<string>();
+	return notices.filter((n) => {
+		const key = `${n.type} ${n.doi.toLowerCase()}`;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+}
+
 /** Combine checks of two DOIs for one work (an alias and its primary). */
 function mergeVerification(a: Verification, b: Verification): Verification {
 	return {
 		...a,
 		retracted: a.retracted || b.retracted,
-		notices: [...a.notices, ...b.notices],
+		notices: uniqueNotices([...a.notices, ...b.notices]),
 		sources: [...new Set([...a.sources, ...b.sources])],
 		complete: Boolean(a.complete && b.complete),
 		checks:

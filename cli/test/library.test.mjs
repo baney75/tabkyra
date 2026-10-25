@@ -139,7 +139,9 @@ before(async () => {
 		if (url.pathname.startsWith("/crossref/works/")) {
 			if (mock.failChecks) return json(429, {});
 			const doi = decodeURIComponent(url.pathname.slice("/crossref/works/".length));
-			return json(200, { message: { "updated-by": doi === "10.1000/updatedby" ? [{ type: "retraction", DOI: "10.1000/rw" }] : [] } });
+			// Like the real Crossref, a notice found by filter=updates is listed again on the work's own record.
+			const updatedBy = { "10.1000/updatedby": [{ type: "retraction", DOI: "10.1000/rw" }], "10.1000/retracted": [{ type: "retraction", DOI: "10.1000/NOTICE" }] };
+			return json(200, { message: { "updated-by": updatedBy[doi] ?? [] } });
 		}
 		if (url.pathname === "/crossref/works") {
 			if (mock.failChecks) return json(429, {});
@@ -208,6 +210,7 @@ test("a retracted source is saved, flagged, exits 3 and cites as [RETRACTED]", a
 	const r = await lib("add", "doi:10.1000/retracted");
 	assert.equal(r.code, 3, r.out);
 	assert.match(r.out, /notice: retraction 10\.1000\/notice/);
+	assert.equal(r.out.match(/notice: retraction/gi)?.length, 1, "a notice Crossref lists twice is shown once");
 	assert.match(r.out, /RETRACTED: don't cite this as support/);
 	const item = items().find((i) => i.DOI === "10.1000/retracted");
 	assert.equal(item.id, "wakefield1998bad", "the RETRACTED: prefix doesn't become the citekey");
