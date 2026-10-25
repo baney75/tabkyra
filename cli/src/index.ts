@@ -9,6 +9,8 @@ import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { runSetup, type SetupOptions } from "./setup.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
+import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
+import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
 import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
@@ -33,6 +35,12 @@ function help(): string {
 		cmd("skill lint", "[path...]", "Check skills for hidden text, injection and missing structure"),
 		cmd("skill apply", "<folder> [--yes]", "Check and show an edited skill; --yes backs up and installs it (/rsi)"),
 		cmd("skill revert", "<name>", "Drop your edit and go back to the bundled skill"),
+		section("Remote"),
+		cmd("serve", "[--port 8787]", "MCP over HTTP on loopback, for tunnels; every request needs a token"),
+		cmd("token create", "<name> --scope a,b", "A scoped, revocable token (tabkyra token scopes lists them)"),
+		cmd("token list|revoke", "", "See and end tokens"),
+		cmd("tunnel tailscale", "[--public] [--off]", "Reach serve from your tailnet over HTTPS"),
+		cmd("tunnel cloudflare", "[--off]", "A free cloudflared quick tunnel"),
 		section("Library"),
 		cmd("library add", "<doi|arxiv>", "Save a source, verified against its registry, OpenAlex and retractions"),
 		cmd("library search|list|cite", "", "Find sources and format a reference (apa, mla, chicago, ieee)"),
@@ -245,6 +253,13 @@ async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
 	const [command] = argv;
 	const flag = (name: string) => argv.includes(name);
+	/** `--name value` or `--name=value`. */
+	const option = (name: string): string | undefined => {
+		const eq = argv.find((a) => a.startsWith(`${name}=`));
+		if (eq) return eq.slice(name.length + 1);
+		const i = argv.indexOf(name);
+		return i >= 0 ? argv[i + 1] : undefined;
+	};
 	if (command && command !== "host" && (flag("--help") || flag("-h"))) {
 		process.stdout.write(help());
 		return;
@@ -360,6 +375,64 @@ async function main(): Promise<void> {
 				console.error(`${sym.fail} ${message}`);
 				process.exitCode = 1;
 			}
+			return;
+		}
+		case "serve": {
+			const port = Number(option("--port") ?? DEFAULT_PORT);
+			if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError("--port takes a port number.");
+			if (loadTokens().every((t) => t.revokedAt)) console.log(`${sym.warn} No tokens yet; every request will be refused. Create one: tabkyra token create <name> --scope browser.read`);
+			const { url } = await serve({ port, host: "127.0.0.1" });
+			console.log(`${sym.ok} MCP over HTTP at ${url} (loopback only; every request needs a token). Ctrl-C stops it.`);
+			await new Promise(() => {});
+			return;
+		}
+		case "token": {
+			const [sub, name] = argv.slice(1).filter((a) => !a.startsWith("-") && a !== option("--scope"));
+			if (sub === "create") {
+				if (!name) throw new UsageError("Usage: tabkyra token create <name> --scope browser.read,library.read");
+				const scopes = (option("--scope") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+				try {
+					const { record, token } = createToken(name, scopes);
+					console.log(`${sym.ok} Token ${record.id} for ${record.name}: ${record.scopes.join(", ")}`);
+					console.log(`\n  ${token}\n`);
+					console.log(c.dim("Shown once. Give it to the agent as an Authorization: Bearer header. tabkyra token revoke " + record.id + " ends it."));
+				} catch (err) {
+					throw new UsageError(err instanceof Error ? err.message : String(err));
+				}
+				return;
+			}
+			if (sub === "list") {
+				const usage = loadUsage();
+				for (const t of loadTokens()) console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : "active "}  ${t.scopes.join(",")}  ${c.dim(usage[t.id] ? `last used ${usage[t.id]}` : "never used")}`);
+				return;
+			}
+			if (sub === "revoke") {
+				if (!name) throw new UsageError("Usage: tabkyra token revoke <id|name>");
+				const n = revokeToken(name);
+				console.log(n ? `${sym.ok} Revoked ${n} token${n === 1 ? "" : "s"}.` : `${sym.dot} No active token matches ${name}.`);
+				process.exitCode = n ? 0 : 1;
+				return;
+			}
+			if (sub === "scopes") {
+				for (const [scope, { what, tools }] of Object.entries(SCOPES)) console.log(`${c.bold(scope.padEnd(18))} ${what}\n${"".padEnd(19)}${c.dim(tools.join(", "))}`);
+				return;
+			}
+			throw new UsageError("Usage: tabkyra token create <name> --scope a,b | list | revoke <id|name> | scopes");
+		}
+		case "tunnel": {
+			const kind = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--port"));
+			const port = Number(option("--port") ?? DEFAULT_PORT);
+			if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError("--port takes a port number from 1 to 65535.");
+			const result =
+				kind === "tailscale"
+					? tailscaleTunnel({ port, public: flag("--public"), off: flag("--off") })
+					: kind === "cloudflare"
+						? await cloudflareTunnel({ port, off: flag("--off") })
+						: undefined;
+			if (!result) throw new UsageError("Usage: tabkyra tunnel tailscale|cloudflare [--port N] [--public] [--off]");
+			if (flag("--public") && kind === "tailscale" && !flag("--off")) console.log(`${sym.warn} --public uses Tailscale Funnel: anyone on the internet can reach it, and the token is the only lock.`);
+			console.log(`${result.ok ? sym.ok : sym.fail} ${result.message}`);
+			process.exitCode = result.ok ? 0 : 1;
 			return;
 		}
 		case "pi-extension":
