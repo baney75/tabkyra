@@ -134,7 +134,7 @@ A "Local models" provider set in the side panel. It finds OpenAI-compatible serv
 (Ollama :11434, LM Studio :1234, llama.cpp and vLLM :8080 and :8000) on this machine and on
 the user's tailnet peers. The native host asks `tailscale status --json` for the peers and
 probes each port with a short timeout. A model on a tailnet peer counts as local for
-private mode (D8 in #15 already treats `*.ts.net` and 100.64/10 as local).
+private mode only once the user lists it as their own (#15's rule in `src/privacy/private-mode.ts`: only loopback is trusted automatically).
 
 ## D14. Fix submissions and tier variants (owner, 2026-10-25)
 

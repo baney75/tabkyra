@@ -117,7 +117,13 @@ export function loadUsage(): Record<string, string> {
 	}
 }
 
+const lastRecorded = new Map<string, number>();
+
+/** Record a token's use, at most once a minute per token. */
 function recordUse(id: string): void {
+	const now = Date.now();
+	if (now - (lastRecorded.get(id) ?? 0) < 60_000) return;
+	lastRecorded.set(id, now);
 	try {
 		const usage = loadUsage();
 		usage[id] = new Date().toISOString();
@@ -140,7 +146,11 @@ export function authenticate(header: string | undefined): TokenRecord | undefine
 		// An unreadable tokens.json authorizes nobody.
 		return undefined;
 	}
-	return tokens.find((t) => !t.revokedAt && timingSafeEqual(Buffer.from(t.sha256, "hex"), presented));
+	return tokens.find((t) => {
+		const stored = Buffer.from(String(t.sha256), "hex");
+		// A malformed record matches nothing instead of throwing for every request.
+		return !t.revokedAt && stored.length === presented.length && timingSafeEqual(stored, presented);
+	});
 }
 
 export function toolsFor(scopes: string[]): Set<string> {
@@ -158,7 +168,27 @@ export interface ServeOptions {
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
 export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string }> {
 	if (!LOOPBACK.has(options.host)) throw new Error(`tabkyra serve binds to loopback only (got ${options.host}). Use tabkyra tunnel to reach it from another device over TLS.`);
-	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string }>();
+	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string; lastSeen: number }>();
+	const IDLE_MS = 30 * 60_000;
+	const MAX_SESSIONS_PER_TOKEN = 8;
+	// Close sessions that went quiet or whose token was revoked; a client that vanished without
+	// a DELETE would otherwise hold a server and a tab group forever.
+	const sweep = setInterval(() => {
+		let tokens: TokenRecord[] = [];
+		try {
+			tokens = loadTokens();
+		} catch {
+			/* unreadable: treat every token as revoked */
+		}
+		const live = new Set(tokens.filter((t) => !t.revokedAt).map((t) => t.id));
+		for (const [id, s] of sessions) {
+			if (!live.has(s.tokenId) || Date.now() - s.lastSeen > IDLE_MS) {
+				sessions.delete(id);
+				void s.transport.close();
+			}
+		}
+	}, 60_000);
+	sweep.unref();
 
 	const deny = (res: ServerResponse, status: number, message: string) => {
 		res.writeHead(status, { "content-type": "application/json", ...(status === 401 ? { "www-authenticate": 'Bearer realm="tabkyra"' } : {}) });
@@ -193,6 +223,8 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		if (existing) {
 			// A session belongs to the token that opened it; another token can't ride on it.
 			if (existing.tokenId !== token.id) return deny(res, 403, "This session belongs to another token.");
+			existing.lastSeen = Date.now();
+			recordUse(token.id);
 			return existing.transport.handleRequest(req, res);
 		}
 		if (typeof sessionId === "string") return deny(res, 404, "Unknown or expired session. Start a new one with an initialize request.");
@@ -205,17 +237,21 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		}
 		// Only an initialize request creates a server; anything else would leak one per request.
 		if (!isInitializeRequest(body)) return deny(res, 400, "Start a session with an initialize request.");
+		if ([...sessions.values()].filter((s) => s.tokenId === token.id).length >= MAX_SESSIONS_PER_TOKEN) {
+			return deny(res, 429, `This token already has ${MAX_SESSIONS_PER_TOKEN} open sessions. Close one first.`);
+		}
 		const allowed = toolsFor(token.scopes);
 		// Each session gets its own browser session (its own tab group), even under one token.
 		const { server, client } = createMcpServer({
 			name: `remote-${token.name}`,
 			session: `remote-${token.id}-${randomUUID().slice(0, 8)}`,
 			allowedTools: allowed,
+			remote: true,
 		});
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),
 			onsessioninitialized: (id) => {
-				sessions.set(id, { transport, tokenId: token.id });
+				sessions.set(id, { transport, tokenId: token.id, lastSeen: Date.now() });
 			},
 		});
 		transport.onclose = () => {
@@ -236,6 +272,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		url,
 		close: () =>
 			new Promise<void>((resolve) => {
+				clearInterval(sweep);
 				for (const { transport } of sessions.values()) void transport.close();
 				http.close(() => resolve());
 			}),

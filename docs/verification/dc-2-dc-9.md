@@ -3,7 +3,8 @@
 ## 2026-10-25: scoped tokens and loopback HTTP (narrow checks, not the DC Checks)
 
 Command: `cd cli && npm run build && node --test test/remote.test.mjs`
-Result: 6 pass, 0 fail.
+Result on the #16 review-round-2 head: 13 pass, 0 fail (it started at 6; review rounds
+added sessions, scoping, Funnel, cloudflared and token-name cases).
 
 What each test could fail on:
 

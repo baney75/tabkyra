@@ -57,10 +57,14 @@ Not for problems with a website itself, or with the user's own code.
 8. **Show the user the report** and say where it will go.
 9. **File it** only if the user turned on automatic bug reports or says yes now. Then:
    1. Write the report to a file, for example `bug.md`.
-   2. Check for a duplicate, with the fingerprint in single quotes:
-      `gh issue list --repo baney75/tabkyra --state open --search 'fingerprint-here'`
-   3. If one matches: `gh issue comment <number> --repo baney75/tabkyra --body-file bug.md`.
-      Otherwise: `gh issue create --repo baney75/tabkyra --title 'title-here' --body-file bug.md`.
+   2. Make the title from the same safe characters as the fingerprint, plus spaces and
+      `:`. Nothing from the error goes into a command any other way.
+   3. Search for the exact fingerprint line, then read each candidate:
+      `gh issue list --repo baney75/tabkyra --state open --search '"fingerprint: fp-here" in:body'`
+      and `gh issue view <number> --repo baney75/tabkyra --json body`. It is a duplicate only
+      if that body contains the exact `fingerprint:` line.
+   4. Duplicate: `gh issue comment <number> --repo baney75/tabkyra --body-file bug.md`.
+      Otherwise: `gh issue create --repo baney75/tabkyra --title 'safe title' --body-file bug.md`.
    If `gh` isn't signed in, give the user the text to paste at
    github.com/baney75/tabkyra/issues/new.
 

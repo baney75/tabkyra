@@ -187,3 +187,55 @@ test("tunnel ports are validated, and Funnel is refused when other paths share p
 	assert.match(r.out, /\/grafana/);
 	assert.throws(() => readFileSync(join(root, "funnel.log"), "utf8"), "funnel was never called");
 });
+
+test("safety rules reach every scoped session, with a sign-in fallback when tabs_show is missing", async () => {
+	const client = await connect(token("actor", "browser.read,browser.act"));
+	try {
+		const text = client.getInstructions() ?? "";
+		assert.match(text, /Do not enter passwords or payment details\./);
+		assert.match(text, /Ask the user before you act under their sign-in/);
+		assert.match(text, /stop and ask the user to handle it in their browser/);
+		assert.doesNotMatch(text, /call tabs_show/);
+	} finally {
+		await client.close();
+	}
+});
+
+test("a token can hold at most 8 sessions, and a malformed record doesn't break auth", async () => {
+	const secret = token("many", "library.read");
+	const clients = [];
+	try {
+		for (let i = 0; i < 8; i++) clients.push(await connect(secret));
+		await assert.rejects(connect(secret), /429|open sessions/);
+	} finally {
+		for (const c of clients) await c.close().catch(() => {});
+	}
+	const file = join(env.HOME, ".config", "tabkyra", "tokens.json");
+	const data = JSON.parse(readFileSync(file, "utf8"));
+	data.tokens.push({ id: "badbadba", name: "broken", scopes: ["library.read"], sha256: "zz", createdAt: "x" });
+	writeFileSync(file, JSON.stringify(data));
+	const c = await connect(token("after-bad", "library.read"));
+	await c.close();
+});
+
+test("tailscale serve is refused while Funnel is on for 443; the cloudflare URL is never the API host", () => {
+	const bin = join(root, "bin-funnel-on");
+	mkdirSync(bin, { recursive: true });
+	writeFileSync(
+		join(bin, "tailscale"),
+		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.tail1234.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"AllowFunnel":{"mac.tail1234.ts.net:443":true}}'; exit 0; fi\necho "$@" >> ${join(root, "serve-on.log")}\n`,
+	);
+	chmodSync(join(bin, "tailscale"), 0o755);
+	const r = cliRun(["tunnel", "tailscale"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /Funnel is on/);
+	const cf = join(root, "bin-cf");
+	mkdirSync(cf, { recursive: true });
+	symlinkSync(process.execPath, join(cf, "node"));
+	writeFileSync(join(cf, "cloudflared"), `#!/bin/sh\necho 'failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": EOF'\nsleep 30\n`);
+	chmodSync(join(cf, "cloudflared"), 0o755);
+	const res = cliRun(["tunnel", "cloudflare"], { PATH: cf, TABKYRA_TUNNEL_TIMEOUT_MS: "1500" });
+	assert.equal(res.code, 1, res.out);
+	assert.match(res.out, /printed no URL in time, so it was stopped/);
+	assert.doesNotMatch(res.out, /reachable at https:\/\/api\./);
+});
