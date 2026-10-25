@@ -42,9 +42,9 @@ export function repoRoot(): string {
 	return join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
 
-/** The unpacked extension folder users load in the browser. */
+/** The unpacked extension folder users load in the browser. TABKYRA_EXTENSION_DIR overrides it (tests). */
 export function extensionDir(): string {
-	return join(repoRoot(), "dist-chrome");
+	return process.env.TABKYRA_EXTENSION_DIR || join(repoRoot(), "dist-chrome");
 }
 
 /** Files a loadable build must have; a half-written dist-chrome unloads the extension. */

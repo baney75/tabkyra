@@ -1,35 +1,45 @@
 // `tabkyra setup` and `tabkyra doctor` against a throwaway HOME, an empty socket
-// directory and a PATH holding only node plus fake harness CLIs. Nothing here can
-// reach a real browser, bridge or harness config.
+// directory, a fake extension build and a PATH holding only a node link plus fake
+// harness CLIs. Nothing here can reach a real browser, bridge or harness config.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const cli = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
-const extensionDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist-chrome");
+const here = dirname(fileURLToPath(import.meta.url));
+const cli = join(here, "..", "dist", "index.js");
+const sourceVersion = JSON.parse(readFileSync(join(here, "..", "..", "static", "manifest.chrome.json"), "utf8")).version;
 let root;
 let home;
 let bin;
 let socketDir;
+let extensionDir;
 let harnessLog;
 
 const helium = () =>
 	process.platform === "darwin"
 		? join(home, "Library", "Application Support", "net.imput.helium")
 		: join(home, ".config", "net.imput.helium");
+const launcher = () => join(home, ".config", "tabkyra", "tabkyra");
 
-/** A fake `claude` or `codex`: `mcp get` fails (not configured), everything is logged. */
-function fakeHarness(name) {
+/** A fake `claude` or `codex`. `mcp get` answers with `configured` (a command) or exit 1. */
+function fakeHarness(name, configured) {
 	const file = join(bin, name);
-	writeFileSync(
-		file,
-		`#!/bin/sh\necho "${name} $*" >> "${harnessLog}"\nif [ "$2" = "get" ]; then exit 1; fi\nexit 0\n`,
-	);
+	const get = configured
+		? `if [ "$2" = "get" ]; then printf '  Command: %s\\n  command: %s\\n' "${configured}" "${configured}"; exit 0; fi`
+		: `if [ "$2" = "get" ]; then exit 1; fi`;
+	writeFileSync(file, `#!/bin/sh\necho "${name} $*" >> "${harnessLog}"\n${get}\nexit 0\n`);
 	chmodSync(file, 0o755);
+}
+
+/** A loadable-looking build: the files `tabkyra` checks for, with a chosen version. */
+function fakeBuild(version) {
+	mkdirSync(extensionDir, { recursive: true });
+	for (const f of ["background.js", "sidepanel.js", "sidepanel.html", "app.css"]) writeFileSync(join(extensionDir, f), "");
+	writeFileSync(join(extensionDir, "manifest.json"), JSON.stringify({ name: "Tabkyra", version }));
 }
 
 function run(args, extraEnv = {}) {
@@ -37,12 +47,14 @@ function run(args, extraEnv = {}) {
 		encoding: "utf8",
 		env: {
 			HOME: home,
-			PATH: `${bin}:${dirname(process.execPath)}`,
+			PATH: bin,
 			TABKYRA_SOCKET_DIR: socketDir,
+			TABKYRA_EXTENSION_DIR: extensionDir,
 			TERM: "xterm-256color",
 			...extraEnv,
 		},
 		input: "",
+		timeout: 20000,
 	});
 	return { code: result.status, out: result.stdout + result.stderr };
 }
@@ -52,12 +64,15 @@ before(() => {
 	home = join(root, "home");
 	bin = join(root, "bin");
 	socketDir = join(root, "sock");
+	extensionDir = join(root, "dist-chrome");
 	harnessLog = join(root, "harness.log");
 	mkdirSync(home);
 	mkdirSync(bin);
+	symlinkSync(process.execPath, join(bin, "node"));
 	mkdirSync(socketDir, { mode: 0o700 });
 	mkdirSync(helium(), { recursive: true });
 	writeFileSync(harnessLog, "");
+	fakeBuild(sourceVersion);
 });
 after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -68,13 +83,27 @@ test("doctor fails with one fix per problem on a fresh machine", () => {
 	assert.equal(report.ok, false);
 	const byId = Object.fromEntries(report.checks.map((c) => [c.id, c]));
 	assert.equal(byId.node.status, "ok");
+	assert.equal(byId.build.status, "ok");
 	assert.equal(byId["host:Helium"].status, "fail");
 	assert.equal(byId["host:Helium"].fix, "tabkyra install --force");
 	assert.equal(byId.connected.status, "fail");
 	for (const check of report.checks) if (check.status === "fail") assert.ok(check.fix, `${check.id} has no fix`);
 });
 
-test("setup --yes registers the host, prints the load step and wires harnesses by absolute path", { skip: !existsSync(join(extensionDir, "manifest.json")) && "needs dist-chrome" }, () => {
+test("doctor flags a build from another version of the checkout", () => {
+	fakeBuild("0.0.1");
+	try {
+		const build = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "build");
+		assert.equal(build.status, "fail");
+		assert.match(build.label, /older than this checkout/);
+		assert.equal(build.fix, "tabkyra setup");
+	} finally {
+		fakeBuild(sourceVersion);
+	}
+});
+
+test("setup --yes registers the host, wires harnesses to the launcher, then shows the load step", () => {
+	writeFileSync(harnessLog, "");
 	fakeHarness("claude");
 	fakeHarness("codex");
 	const { code, out } = run(["setup", "--yes", "--no-wait"]);
@@ -84,14 +113,31 @@ test("setup --yes registers the host, prints the load step and wires harnesses b
 	assert.match(out, /Load unpacked/);
 	assert.ok(out.includes(extensionDir), "prints the exact extension folder");
 	assert.match(out, /Allow user scripts/);
+	assert.ok(out.indexOf("Connect your coding agents") < out.indexOf("Load unpacked"), "agents are wired before the wait");
 
 	const calls = readFileSync(harnessLog, "utf8");
-	const self = cli;
-	assert.ok(calls.includes(`claude mcp add --scope user tabkyra -- ${self} mcp`), calls);
-	assert.ok(calls.includes(`codex mcp add tabkyra -- ${self} mcp`), calls);
+	assert.ok(calls.includes(`claude mcp add --scope user tabkyra -- ${launcher()} mcp`), calls);
+	assert.ok(calls.includes(`codex mcp add tabkyra -- ${launcher()} mcp`), calls);
+	// The launcher pins node by absolute path, so GUI-started harnesses need no PATH.
+	assert.match(readFileSync(launcher(), "utf8"), new RegExp(`exec "/[^"]+node" "${cli.replaceAll("/", "\\/")}" "\\$@"`));
 
 	const doctor = JSON.parse(run(["doctor", "--json"]).out);
 	assert.equal(doctor.checks.find((c) => c.id === "host:Helium").status, "ok");
+});
+
+test("a harness entry that runs some other command is stale, and setup replaces it", () => {
+	writeFileSync(harnessLog, "");
+	fakeHarness("claude", "/somewhere/else/tabkyra");
+	fakeHarness("codex", launcher());
+	const check = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+	assert.equal(check.status, "fail");
+	assert.match(check.label, /runs a different command/);
+	assert.match(check.fix, /^claude mcp remove --scope user tabkyra && claude mcp add/);
+
+	run(["setup", "--yes", "--no-wait"]);
+	const calls = readFileSync(harnessLog, "utf8");
+	assert.ok(calls.includes("claude mcp remove --scope user tabkyra"), calls);
+	assert.ok(!calls.includes("codex mcp add"), "a current entry is left alone");
 });
 
 test("setup without --yes and without a terminal never edits a harness config", () => {
@@ -101,6 +147,12 @@ test("setup without --yes and without a terminal never edits a harness config", 
 	const calls = readFileSync(harnessLog, "utf8");
 	assert.ok(calls.includes("claude mcp get tabkyra"), calls);
 	assert.ok(!calls.includes("mcp add"), calls);
+});
+
+test("setup rejects unknown flags and bad timeouts", () => {
+	assert.equal(run(["setup", "--yse"]).code, 2);
+	assert.equal(run(["setup", "--timeout=abc"]).code, 2);
+	assert.equal(run(["setup", "--timeout", "0"]).code, 2);
 });
 
 test("color only when asked for, and NO_COLOR wins", () => {

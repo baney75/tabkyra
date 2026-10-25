@@ -9,9 +9,9 @@ import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 import { BridgeClient, listSockets } from "./client.ts";
 import { harnesses, shellJoin } from "./harness.ts";
 import { browserDirs, EXTENSION_ID, launcherPath } from "./install.ts";
-import { EXTENSION_FILES, extensionDir } from "./paths.ts";
+import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { banner, c, sym } from "./ui.ts";
-import { EXTENSION_VERSION, VERSION } from "./version.ts";
+import { VERSION } from "./version.ts";
 
 export interface Check {
 	id: string;
@@ -48,28 +48,39 @@ export function builtVersion(): string | undefined {
 	}
 }
 
+/** Version in the checkout's static/manifest.chrome.json, which every build copies. */
+export function sourceVersion(): string | undefined {
+	try {
+		return (JSON.parse(readFileSync(join(repoRoot(), "static", "manifest.chrome.json"), "utf8")) as { version?: string }).version;
+	} catch {
+		return undefined;
+	}
+}
+
+/** "missing", "stale" (built from another version of this checkout) or "ok". */
+export function buildState(): "missing" | "stale" | "ok" {
+	const built = builtVersion();
+	if (!built) return "missing";
+	const source = sourceVersion();
+	return source && source !== built ? "stale" : "ok";
+}
+
 function buildCheck(): Check {
 	const dir = extensionDir();
-	const version = builtVersion();
-	if (!version) {
+	const state = buildState();
+	if (state === "missing") {
+		return { id: "build", status: "fail", label: "Extension build missing", detail: `${dir} is missing or incomplete.`, fix: "tabkyra setup" };
+	}
+	if (state === "stale") {
 		return {
 			id: "build",
 			status: "fail",
-			label: "Extension build missing",
-			detail: `${dir} is missing or incomplete.`,
+			label: `Extension build ${builtVersion()} is older than this checkout (${sourceVersion()})`,
+			detail: "The checkout changed since dist-chrome was built.",
 			fix: "tabkyra setup",
 		};
 	}
-	if (EXTENSION_VERSION !== "unknown" && version !== EXTENSION_VERSION) {
-		return {
-			id: "build",
-			status: "fail",
-			label: `Extension build ${version} does not match this CLI (${EXTENSION_VERSION})`,
-			detail: "The CLI and the extension were built from different checkouts.",
-			fix: `cd ${join(dir, "..")} && npm run build && (cd cli && npm run build)`,
-		};
-	}
-	return { id: "build", status: "ok", label: `Extension build ${version}`, detail: dir };
+	return { id: "build", status: "ok", label: `Extension build ${builtVersion()}`, detail: dir };
 }
 
 function hostChecks(): Check[] {
@@ -138,7 +149,15 @@ async function connectionChecks(): Promise<Check[]> {
 		const client = new BridgeClient({ name: "doctor" });
 		try {
 			await client.connect(path);
-			if (!client.extensionConnected) continue;
+		} catch {
+			client.close();
+			continue;
+		}
+		if (!client.extensionConnected) {
+			client.close();
+			continue;
+		}
+		try {
 			const info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
 			const checks: Check[] = [{ id: "connected", status: "ok", label: `Extension connected (${info.version ?? "unknown version"})`, detail: path }];
 			const built = builtVersion();
@@ -159,8 +178,16 @@ async function connectionChecks(): Promise<Check[]> {
 				});
 			}
 			return checks;
-		} catch {
-			/* try the next socket */
+		} catch (err) {
+			return [
+				{
+					id: "connected",
+					status: "fail",
+					label: "Extension connected but not responding",
+					detail: err instanceof Error ? err.message : String(err),
+					fix: "tabkyra reload",
+				},
+			];
 		} finally {
 			client.close();
 		}
@@ -172,14 +199,19 @@ function harnessChecks(): Check[] {
 	return harnesses()
 		.filter((h) => h.detected)
 		.map((h): Check => {
-			if (h.configured) return { id: `mcp:${h.id}`, status: "ok", label: `${h.name}: Tabkyra MCP server configured` };
-			const fix = h.addCommand ? shellJoin(h.addCommand) : `Add this to ${h.configFile}:\n${h.snippet}`;
+			if (h.configured === true) return { id: `mcp:${h.id}`, status: "ok", label: `${h.name}: Tabkyra MCP server configured` };
+			const stale = h.configured === "stale";
+			let fix: string;
+			if (h.addCommand) fix = stale && h.removeCommand ? `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}` : shellJoin(h.addCommand);
+			else if (h.snippet?.startsWith("{")) fix = `${stale ? "Replace the tabkyra entry in" : "Add this to"} ${h.configFile}:\n${h.snippet}`;
+			else fix = h.snippet ?? "";
+			const state = stale ? "runs a different command" : h.configured === undefined ? "unknown (config unreadable)" : "not configured";
 			return {
 				id: `mcp:${h.id}`,
-				// A harness the user doesn't use for browsing shouldn't fail the run; Claude Code
-				// and Codex can be fixed with one command, so those count.
-				status: h.id === "claude" || h.id === "codex" ? "fail" : "warn",
-				label: `${h.name}: Tabkyra MCP server ${h.configured === undefined ? "unknown (config unreadable)" : "not configured"}`,
+				// A harness the user doesn't browse from shouldn't fail the run; Claude Code and
+				// Codex are fixed with one command, and a stale entry is always broken, so those count.
+				status: stale || h.id === "claude" || h.id === "codex" ? "fail" : "warn",
+				label: `${h.name}: Tabkyra MCP server ${state}`,
 				fix,
 			};
 		});

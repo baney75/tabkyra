@@ -75,7 +75,8 @@ export class BridgeClient {
 		return this.socket !== undefined && !this.socket.destroyed;
 	}
 
-	async connect(path?: string): Promise<void> {
+	/** Dial the host and wait for its welcome; gives up after `timeoutMs` (a wedged host). */
+	async connect(path?: string, timeoutMs = 5000): Promise<void> {
 		const target = path ?? listSockets()[0];
 		if (!target) {
 			throw new Error(
@@ -87,7 +88,13 @@ export class BridgeClient {
 			const socket = connect(target);
 			const parser = new FrameParser(MAX_FRAME_FROM_EXTENSION);
 			let welcomed = false;
+			const timer = setTimeout(() => {
+				if (welcomed) return;
+				reject(new Error(`The bridge at ${target} did not answer within ${timeoutMs} ms`));
+				socket.destroy();
+			}, timeoutMs);
 			socket.once("error", (err) => {
+				clearTimeout(timer);
 				if (!welcomed) reject(err);
 			});
 			socket.on("data", (chunk) => {
@@ -102,6 +109,7 @@ export class BridgeClient {
 					const msg = m as HostToClient;
 					if (msg.type === "welcome") {
 						welcomed = true;
+						clearTimeout(timer);
 						this.clientId = msg.clientId;
 						this.extensionConnected = msg.extensionConnected;
 						resolve();
@@ -109,6 +117,9 @@ export class BridgeClient {
 				}
 			});
 			socket.on("close", () => {
+				clearTimeout(timer);
+				// Closed before the welcome: the promise would otherwise never settle.
+				if (!welcomed) reject(new Error("Bridge connection closed"));
 				for (const p of this.pending.values()) {
 					clearTimeout(p.timer);
 					p.reject(new Error("Bridge connection closed"));

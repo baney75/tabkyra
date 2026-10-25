@@ -23,8 +23,12 @@ const browsers = {
 };
 const absent = process.platform === "darwin" ? join(base, "Microsoft Edge") : join(base, "microsoft-edge");
 
+// A private, empty socket directory: `status` must never reach the user's running browser.
+const socketDir = join(home, "sock");
+mkdirSync(socketDir, { mode: 0o700 });
+
 function run(...args) {
-	const env = { ...process.env, HOME: home };
+	const env = { ...process.env, HOME: home, TABKYRA_SOCKET_DIR: socketDir };
 	delete env.XDG_CONFIG_HOME;
 	try {
 		return execFileSync(process.execPath, [cli, ...args], { env, encoding: "utf8" });

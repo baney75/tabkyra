@@ -7,13 +7,13 @@ import { hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
-import { runSetup } from "./setup.ts";
+import { runSetup, type SetupOptions } from "./setup.ts";
 import { VERSION } from "./version.ts";
 
 const HELP = `tabkyra ${VERSION} - browser bridge for coding harnesses
 
 Usage:
-  tabkyra setup           Build, register, load and connect everything (--yes accepts every offer)
+  tabkyra setup           Build, register, connect agents, load the extension (--yes accepts every offer)
   tabkyra doctor          Check every piece and print one fix per problem
   tabkyra mcp             Run the MCP server on stdio (installs the native host on first run)
   tabkyra install         Write the native messaging manifest for every Chromium browser found
@@ -32,6 +32,23 @@ Harness setup:
   omp:    add an MCP server entry running "tabkyra mcp"
   pi:     tabkyra pi-extension
 `;
+
+/** Parse `setup` flags strictly: a typo should not silently change what setup does. */
+function parseSetupArgs(args: string[]): SetupOptions | string {
+	const options: SetupOptions = { yes: false, wait: true, timeoutS: 0 };
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--yes" || arg === "-y") options.yes = true;
+		else if (arg === "--no-wait") options.wait = false;
+		else if (arg === "--timeout" || arg.startsWith("--timeout=")) {
+			const raw = arg === "--timeout" ? args[++i] : arg.slice("--timeout=".length);
+			const seconds = Number(raw);
+			if (!raw || !Number.isFinite(seconds) || seconds <= 0) return `--timeout needs a number of seconds above 0, got "${raw ?? ""}".`;
+			options.timeoutS = seconds;
+		} else return `Unknown option "${arg}".`;
+	}
+	return options;
+}
 
 async function status(): Promise<void> {
 	const sockets = listSockets();
@@ -63,13 +80,13 @@ async function main(): Promise<void> {
 	const [command] = process.argv.slice(2);
 	switch (command) {
 		case "setup": {
-			const args = process.argv.slice(3);
-			const timeoutArg = args.find((a) => a.startsWith("--timeout="));
-			process.exitCode = await runSetup({
-				yes: args.includes("--yes") || args.includes("-y"),
-				wait: !args.includes("--no-wait"),
-				timeoutS: timeoutArg ? Number(timeoutArg.slice("--timeout=".length)) || 0 : 0,
-			});
+			const parsed = parseSetupArgs(process.argv.slice(3));
+			if (typeof parsed === "string") {
+				console.error(`${parsed}\nUsage: tabkyra setup [--yes] [--no-wait] [--timeout <seconds>]`);
+				process.exitCode = 2;
+				return;
+			}
+			process.exitCode = await runSetup(parsed);
 			return;
 		}
 		case "doctor":

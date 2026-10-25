@@ -8,7 +8,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
+import { cliLauncherPath } from "./install.ts";
+
+export type Configured = boolean | "stale" | undefined;
 
 export type HarnessId = "claude" | "codex" | "opencode" | "cursor" | "omp" | "pi";
 
@@ -17,8 +20,10 @@ export interface Harness {
 	name: string;
 	/** True when the harness is installed for this user. */
 	detected: boolean;
-	/** true/false when we can tell, undefined when we can't read its config. */
-	configured: boolean | undefined;
+	/** true: runs this CLI; "stale": runs another command; undefined: config unreadable. */
+	configured: Configured;
+	/** Command that removes a stale entry before re-adding it. */
+	removeCommand?: string[];
 	/** Command that adds the server, when the harness has one. */
 	addCommand?: string[];
 	/** Where to paste `snippet`, when there is no add command. */
@@ -28,29 +33,33 @@ export interface Harness {
 
 /** First match for `name` on PATH, or undefined. */
 export function which(name: string): string | undefined {
+	const extensions = process.platform === "win32" ? ["", ...(process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";")] : [""];
 	for (const dir of (process.env.PATH ?? "").split(delimiter)) {
 		if (!dir) continue;
-		const candidate = join(dir, name);
-		if (existsSync(candidate)) return candidate;
+		for (const ext of extensions) {
+			const candidate = join(dir, name + ext);
+			if (existsSync(candidate)) return candidate;
+		}
 	}
 	return undefined;
 }
 
-/**
- * The absolute path harness configs should run. Prefer the `tabkyra` on PATH when it is
- * this same CLI (a stable npm link path); otherwise this script's own resolved path.
- */
+/** The absolute path harness configs run: the launcher `tabkyra install` writes. */
 export function tabkyraBinary(): string {
-	const self = realpathSync(process.argv[1]);
-	const onPath = which("tabkyra");
-	if (onPath) {
-		try {
-			if (realpathSync(onPath) === self) return onPath;
-		} catch {
-			/* broken link */
-		}
+	return cliLauncherPath();
+}
+
+/** Does a configured command run this CLI? Accepts the launcher, or any path to this script. */
+export function runsThisCli(command: string | undefined): boolean {
+	if (!command) return false;
+	if (command === cliLauncherPath()) return true;
+	const resolved = isAbsolute(command) ? command : which(command);
+	if (!resolved) return false;
+	try {
+		return realpathSync(resolved) === realpathSync(process.argv[1]);
+	} catch {
+		return false;
 	}
-	return self;
 }
 
 function readJson(file: string): Record<string, unknown> | undefined {
@@ -61,30 +70,38 @@ function readJson(file: string): Record<string, unknown> | undefined {
 	}
 }
 
-/** Does the JSON file at `file` have `tabkyra` under `key`? undefined if unreadable. */
-function jsonHasServer(file: string, key: string): boolean | undefined {
+/**
+ * Is `tabkyra` configured under `key` in the JSON file, running this CLI? undefined when
+ * the file can't be parsed (JSONC, hand edits); "stale" when it runs some other command.
+ */
+function jsonServerState(file: string, key: string, commandOf: (entry: Record<string, unknown>) => unknown): Configured {
 	if (!existsSync(file)) return false;
 	const data = readJson(file);
 	if (!data) {
-		// JSONC or hand-edited: fall back to a plain text search for the server name.
 		try {
 			return /"tabkyra"\s*:/.test(readFileSync(file, "utf8")) || undefined;
 		} catch {
 			return undefined;
 		}
 	}
-	const servers = data[key];
-	return typeof servers === "object" && servers !== null && "tabkyra" in servers;
+	const servers = data[key] as Record<string, Record<string, unknown>> | undefined;
+	const entry = servers?.tabkyra;
+	if (!entry || typeof entry !== "object") return false;
+	const command = commandOf(entry);
+	return runsThisCli(typeof command === "string" ? command : undefined) || "stale";
+}
+
+/** `claude mcp get` / `codex mcp get`: not found, found running this CLI, or found running something else. */
+function cliServerState(binary: string, commandLine: RegExp): Configured {
+	const result = spawnSync(binary, ["mcp", "get", "tabkyra"], { encoding: "utf8", timeout: 15000 });
+	if (result.status !== 0) return false;
+	const command = (result.stdout ?? "").match(commandLine)?.[1]?.trim();
+	return command === undefined || runsThisCli(command) || "stale";
 }
 
 /** Pretty JSON with short arrays kept on one line, ready to paste into a config. */
 function snippet(value: unknown): string {
 	return JSON.stringify(value, null, 2).replace(/\[\s+([^[\]{}]*?)\s+\]/g, (_m, inner: string) => `[${inner.split(/,\s+/).join(", ")}]`);
-}
-
-function commandSucceeds(command: string, args: string[]): boolean {
-	const result = spawnSync(command, args, { stdio: "ignore", timeout: 15000 });
-	return result.status === 0;
 }
 
 export function harnesses(binary = tabkyraBinary()): Harness[] {
@@ -97,8 +114,9 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		id: "claude",
 		name: "Claude Code",
 		detected: Boolean(claude),
-		configured: claude ? commandSucceeds(claude, ["mcp", "get", "tabkyra"]) : undefined,
+		configured: claude ? cliServerState(claude, /^\s*Command:\s*(.+)$/m) : undefined,
 		addCommand: ["claude", "mcp", "add", "--scope", "user", "tabkyra", "--", binary, "mcp"],
+		removeCommand: ["claude", "mcp", "remove", "--scope", "user", "tabkyra"],
 	});
 
 	const codex = which("codex");
@@ -106,8 +124,9 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		id: "codex",
 		name: "Codex",
 		detected: Boolean(codex),
-		configured: codex ? commandSucceeds(codex, ["mcp", "get", "tabkyra"]) : undefined,
+		configured: codex ? cliServerState(codex, /^\s*command:\s*(.+)$/m) : undefined,
 		addCommand: ["codex", "mcp", "add", "tabkyra", "--", binary, "mcp"],
+		removeCommand: ["codex", "mcp", "remove", "tabkyra"],
 	});
 
 	const opencodeFile = join(configHome, "opencode", "opencode.json");
@@ -115,7 +134,7 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		id: "opencode",
 		name: "OpenCode",
 		detected: Boolean(which("opencode")) || existsSync(join(configHome, "opencode")),
-		configured: jsonHasServer(opencodeFile, "mcp"),
+		configured: jsonServerState(opencodeFile, "mcp", (e) => (Array.isArray(e.command) ? e.command[0] : e.command)),
 		configFile: opencodeFile,
 		snippet: snippet({ mcp: { tabkyra: { type: "local", command: [binary, "mcp"], enabled: true } } }),
 	});
@@ -125,7 +144,7 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		id: "cursor",
 		name: "Cursor",
 		detected: Boolean(which("cursor") || which("cursor-agent")) || existsSync(join(home, ".cursor")),
-		configured: jsonHasServer(cursorFile, "mcpServers"),
+		configured: jsonServerState(cursorFile, "mcpServers", (e) => e.command),
 		configFile: cursorFile,
 		snippet: snippet({ mcpServers: { tabkyra: { command: binary, args: ["mcp"] } } }),
 	});
@@ -135,12 +154,13 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		id: "omp",
 		name: "OMP",
 		detected: Boolean(which("omp")) || existsSync(join(home, ".omp")),
-		configured: jsonHasServer(ompFile, "mcpServers"),
+		configured: jsonServerState(ompFile, "mcpServers", (e) => e.command),
 		configFile: ompFile,
 		snippet: snippet({ mcpServers: { tabkyra: { type: "stdio", command: binary, args: ["mcp"], enabled: true } } }),
 	});
 
 	// pi has no MCP client; `tabkyra pi-extension` writes a native pi extension instead.
+	// Setup prints that command rather than running it, like the other print-only harnesses.
 	const piFile = join(home, ".pi", "agent", "extensions", "tabkyra.ts");
 	list.push({
 		id: "pi",
@@ -148,7 +168,7 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		detected: Boolean(which("pi")) || existsSync(join(home, ".pi")),
 		configured: existsSync(piFile),
 		configFile: piFile,
-		addCommand: [binary, "pi-extension"],
+		snippet: `${binary} pi-extension`,
 	});
 
 	return list;
