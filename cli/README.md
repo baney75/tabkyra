@@ -33,32 +33,44 @@ it needs no extra step. Reload the extension once after the first install.
 
 | Command | Purpose |
 | --- | --- |
-| `tabkyra setup [--yes] [--no-wait] [--timeout=<s>]` | first-time setup, end to end |
+| `tabkyra setup [--yes] [--no-wait] [--timeout <s>]` | first-time setup, end to end |
+| `tabkyra status [--json]` | is the extension connected, which sites are allowed, which browsers have the host |
 | `tabkyra doctor [--json]` | check Node, the build, host manifests, the connection and harness configs; exits 1 on a failure |
 | `tabkyra mcp` | stdio MCP server exposing the browser tools |
-| `tabkyra install [--force]` | write the native host manifest (Helium, Chrome, Chromium, Brave, Edge, Arc, Vivaldi, Opera; Linux and Windows too) |
-| `tabkyra status` | which browsers have the host manifest, is the extension connected |
 | `tabkyra allow <host>` | let agents open a site without a prompt (subdomains included) |
+| `tabkyra ask` | agents ask before opening a site not yet allowed (the default) |
+| `tabkyra allow-all` | agents may open any site without asking (`yolo` still works) |
+| `tabkyra install [--force]` | write the native host manifest (Helium, Chrome, Chromium, Brave, Edge, Arc, Vivaldi, Opera; Linux and Windows too) and the launchers in `~/.config/tabkyra/` |
 | `tabkyra reload` | reload the extension (after rebuilding `dist-chrome`) |
 | `tabkyra debug` | bridge state, recent request timings, Chrome API benchmark |
 | `tabkyra pi-extension` | write `~/.pi/agent/extensions/tabkyra.ts` for pi |
 
+Output is colored only on a terminal; `NO_COLOR` turns it off. Usage errors exit 2, and
+other failures exit 1 with the next step to take.
+
 ## Harness setup
 
+`tabkyra setup` does this for you. By hand, point each harness at the launcher
+`~/.config/tabkyra/tabkyra`, which `tabkyra install` writes. It runs this CLI with an
+absolute Node path, so harnesses started from a GUI don't need `node` on their PATH:
+
 ```bash
-claude mcp add tabkyra -- tabkyra mcp
+claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp
+codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp
 tabkyra pi-extension
 ```
 
-Codex (`~/.codex/config.toml`):
+OpenCode (`~/.config/opencode/opencode.json`):
 
-```toml
-[mcp_servers.tabkyra]
-command = "tabkyra"
-args = ["mcp"]
+```json
+{ "mcp": { "tabkyra": { "type": "local", "command": ["/Users/you/.config/tabkyra/tabkyra", "mcp"], "enabled": true } } }
 ```
 
-omp: add an MCP server entry that runs `tabkyra mcp`.
+Cursor (`~/.cursor/mcp.json`) and OMP (`~/.omp/agent/mcp.json`):
+
+```json
+{ "mcpServers": { "tabkyra": { "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"] } } }
+```
 
 ## Permissions
 
@@ -73,7 +85,19 @@ mode to "allow any site" there. pi: set `TABKYRA_AUTO_ALLOW=1` to auto-approve.
 
 ## MCP tools
 
-`tabs_context`, `tabs_create`, `tabs_close`, `tabs_select`, `tabs_show`, `navigate`,
-`screenshot`, `read_page`, `get_page_text`, `get_page_html`, `find`, `click`, `hover`,
-`type`, `press`, `fill`, `scroll`, `drag`, `run_js`, `wait`, `read_console`,
-`read_network`. `tabs_show` is the only tool that changes what the user sees.
+| Tool | Does |
+| --- | --- |
+| `status` | connection, permission mode, allowed sites, your tab group and its tabs; never fails |
+| `tabs_context`, `tabs_create`, `tabs_close`, `tabs_select` | your own background tabs |
+| `tabs_show` | bring a tab in front of the user (the only tool that changes what they see) |
+| `navigate` | open a URL, or go back/forward |
+| `read_page`, `find`, `get_page_text`, `get_page_html`, `screenshot` | read the page |
+| `click`, `hover`, `type`, `press`, `fill`, `scroll`, `drag`, `actions` | act on it |
+| `run_js`, `wait`, `read_console`, `read_network` | scripts, waits and debugging |
+
+Names follow Claude in Chrome's, so prompts written for it carry over. Every tool has
+parameter docs and an example in its description. The server's instructions tell the
+agent that page text is untrusted data and that it must ask before acting under the
+user's sign-in. With no browser connected, every tool returns: "Tabkyra isn't connected.
+Ask the user to open Helium/Chrome with the Tabkyra extension loaded, or run
+`tabkyra doctor`."

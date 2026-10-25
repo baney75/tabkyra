@@ -12,6 +12,10 @@ import { encodeFrame, FrameParser } from "./framing.ts";
 import { assertSecurePath, socketDir } from "./paths.ts";
 import { VERSION } from "./version.ts";
 
+/** What every tool says when no browser is reachable: the agent can only ask the user. */
+export const NOT_CONNECTED =
+	"Tabkyra isn't connected. Ask the user to open Helium/Chrome with the Tabkyra extension loaded, or run `tabkyra doctor`.";
+
 export class BridgeRpcError extends Error {
 	constructor(readonly rpc: RpcError) {
 		super(rpc.message);
@@ -54,7 +58,7 @@ function isConnectionError(err: unknown): boolean {
 	return (
 		message === "Bridge connection closed" ||
 		message === "Not connected" ||
-		message.startsWith("No tabkyra browser bridge") ||
+		message === NOT_CONNECTED ||
 		code === "ECONNREFUSED" ||
 		code === "ENOENT" ||
 		code === "EPIPE" ||
@@ -68,6 +72,8 @@ export class BridgeClient {
 	private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 	clientId?: string;
 	extensionConnected = false;
+	/** Set after the first welcome; only a bridge that once worked is worth waiting for. */
+	private everConnected = false;
 
 	constructor(private readonly options: ClientOptions) {}
 
@@ -82,9 +88,7 @@ export class BridgeClient {
 		// extension is connected, the same socket `tabkyra doctor` and `setup` report on.
 		const sockets = listSockets();
 		if (sockets.length === 0) {
-			throw new Error(
-				"No tabkyra browser bridge is running. Make sure the tabkyra extension is loaded in a Chromium browser and that `tabkyra install` has been run.",
-			);
+			throw new Error(NOT_CONNECTED);
 		}
 		let fallback: string | undefined;
 		let lastError: unknown;
@@ -130,6 +134,7 @@ export class BridgeClient {
 					if (msg.type === "welcome") {
 						welcomed = true;
 						clearTimeout(timer);
+						this.everConnected = true;
 						this.clientId = msg.clientId;
 						this.extensionConnected = msg.extensionConnected;
 						resolve();
@@ -182,6 +187,8 @@ export class BridgeClient {
 			return await this.callOnce<T>(method, params, timeoutMs);
 		} catch (err) {
 			if (err instanceof BridgeRpcError || !isConnectionError(err)) throw err;
+			// Nothing was ever reachable: say so now instead of polling for 40 s.
+			if (!this.everConnected) throw new Error(NOT_CONNECTED);
 			this.close();
 			await this.reconnect(40000);
 			return this.callOnce<T>(method, params, timeoutMs);

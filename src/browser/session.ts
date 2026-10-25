@@ -279,6 +279,11 @@ export class BrowserSession {
 		return this.state.homeTabId;
 	}
 
+	/** The tab group title this session uses ("Tabkyra · claude"), whether or not it exists yet. */
+	get groupName(): string {
+		return this.groupTitle();
+	}
+
 	/**
 	 * Bind this session to the tab its panel lives on, so reopening the panel there restores
 	 * it. Exclusive: any other session that claimed this tab as its home tab gives it up, so a

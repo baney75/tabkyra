@@ -138,6 +138,7 @@ export const ERR = {
 
 /** Methods the extension implements; the CLI maps MCP tools onto these. */
 export const BRIDGE_METHODS = [
+	"status",
 	"tabs.context",
 	"tabs.create",
 	"tabs.close",

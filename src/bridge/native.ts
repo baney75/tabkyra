@@ -288,7 +288,7 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			if (message.method === "permission.setMode") {
-				// `tabkyra yolo` / `tabkyra ask`: a local user process flipping the site-permission mode,
+				// `tabkyra allow-all` / `tabkyra ask`: a local user process flipping the site-permission mode,
 				// same trust as the Settings > Bridge toggle.
 				const mode = String(message.params?.mode ?? "");
 				if (mode !== "ask" && mode !== "allow_all") {
