@@ -105,13 +105,19 @@ function withLock<T>(fn: () => T): T {
 	const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	const deadline = Date.now() + 10_000;
 	for (;;) {
+		// Build the lock in a private folder, then rename it into place: rename onto an existing,
+		// non-empty lock fails, so a lock is never visible half made.
+		const pending = `${lock}.new-${token}`;
 		try {
-			mkdirSync(lock);
-			writeFileSync(join(lock, "pid"), String(process.pid));
-			writeFileSync(join(lock, "token"), token);
+			mkdirSync(pending);
+			writeFileSync(join(pending, "pid"), String(process.pid));
+			writeFileSync(join(pending, "token"), token);
+			renameSync(pending, lock);
 			break;
 		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+			rmSync(pending, { recursive: true, force: true });
+			const code = (err as NodeJS.ErrnoException).code;
+			if (code !== "EEXIST" && code !== "ENOTEMPTY") throw err;
 			let owner = Number.NaN;
 			try {
 				owner = Number(readFileSync(join(lock, "pid"), "utf8"));
@@ -228,6 +234,7 @@ function cleanNames(value: unknown): CslName[] | undefined {
 	if (!Array.isArray(value)) return undefined;
 	const names = value
 		.slice(0, 100)
+		.filter((n): n is Record<string, unknown> => Boolean(n) && typeof n === "object")
 		.map((n: Record<string, unknown>) => ({ family: clean(n.family, 200) || undefined, given: clean(n.given, 200) || undefined, literal: clean(n.literal ?? n.name, 300) || undefined }))
 		.filter((n) => n.family || n.literal);
 	return names.length ? names : undefined;
@@ -236,8 +243,14 @@ function cleanNames(value: unknown): CslName[] | undefined {
 function cleanIssued(value: unknown): LibraryItem["issued"] {
 	const parts = (value as { "date-parts"?: unknown })?.["date-parts"];
 	if (!Array.isArray(parts) || !Array.isArray(parts[0])) return undefined;
-	const nums = (parts[0] as unknown[]).slice(0, 3).map(Number).filter((n) => Number.isInteger(n) && n > 0);
-	return nums.length ? { "date-parts": [nums] } : undefined;
+	const [y, m, d] = (parts[0] as unknown[]).slice(0, 3).map(Number);
+	if (!Number.isInteger(y) || y < 1000 || y > 9999) return undefined;
+	const date = [y];
+	if (Number.isInteger(m) && m >= 1 && m <= 12) {
+		date.push(m);
+		if (Number.isInteger(d) && d >= 1 && d <= 31) date.push(d);
+	}
+	return { "date-parts": [date] };
 }
 
 /** A DOI as a URL path: each segment encoded, so "#" and "?" in a suffix stay part of the DOI. */
@@ -266,9 +279,13 @@ async function fetchCsl(doi: string): Promise<Record<string, unknown>> {
 	if ((res.status === 429 || res.status >= 500) && finalHost === doiHost) {
 		throw new Error(`doi.org couldn't answer for ${doi} (HTTP ${res.status}). Nothing was checked; try again later.`);
 	}
-	const type = res.headers.get("content-type") ?? "";
-	if (!res.ok || !/json/i.test(type)) {
-		throw new Error(`DOI ${doi} is registered, but its agency returned no citation metadata (${res.status} ${type || "no type"} from ${finalHost}). Check it by hand before citing.`);
+	const type = clean(res.headers.get("content-type") ?? "", 100);
+	const host = clean(finalHost, 255);
+	// Metadata counts only from doi.org or a registration agency's metadata service, never
+	// from a registrant's own site that a redirect landed on.
+	const registry = finalHost === doiHost || /(^|\.)(crossref\.org|datacite\.org|medra\.org|jalc\.or\.jp|kisti\.re\.kr|doi\.org)$/i.test(finalHost);
+	if (!res.ok || !/json/i.test(type) || !registry) {
+		throw new Error(`DOI ${doi} is registered, but its agency returned no citation metadata (${res.status} ${type || "no type"} from ${host}). Check it by hand before citing.`);
 	}
 	return (await res.json()) as Record<string, unknown>;
 }
@@ -277,7 +294,7 @@ async function fetchCsl(doi: string): Promise<Record<string, unknown>> {
  * Retraction and access checks. A check that fails leaves the answer unknown (complete:
  * false). A retraction already recorded in `previous` is never cleared by a failed check.
  */
-async function verify(doi: string, previous?: Verification, agency = "crossref"): Promise<Verification> {
+async function verify(doi: string, previous?: Verification, agency = ""): Promise<Verification> {
 	const v: Verification = { at: new Date().toISOString(), sources: ["doi.org"], retracted: false, notices: [], checks: { openalex: "failed", crossref: "failed" } };
 	const checks = v.checks as NonNullable<Verification["checks"]>;
 	try {
@@ -300,6 +317,7 @@ async function verify(doi: string, previous?: Verification, agency = "crossref")
 	} catch {
 		/* left as failed */
 	}
+	// Unknown agency: Crossref is still asked, but completeness waits for the agency (below).
 	if (agency && agency !== "crossref") checks.crossref = "n/a";
 	else {
 		try {
@@ -333,7 +351,8 @@ async function verify(doi: string, previous?: Verification, agency = "crossref")
 		}
 	}
 	// OpenAlex not knowing the work leaves the question open, so it isn't complete.
-	v.complete = checks.openalex === "ok" && (checks.crossref === "ok" || checks.crossref === "n/a");
+	// Without the registration agency, it isn't known which notices apply.
+	v.complete = Boolean(agency) && checks.openalex === "ok" && (checks.crossref === "ok" || checks.crossref === "n/a");
 	return previous ? keepRetraction(v, previous) : v;
 }
 
@@ -352,7 +371,7 @@ const CROSSREF_TYPES: Record<string, string> = {
 };
 
 function cslType(type: string): string {
-	return CROSSREF_TYPES[type] ?? (type || "article");
+	return Object.hasOwn(CROSSREF_TYPES, type) ? CROSSREF_TYPES[type] : /^[a-z][a-z-]{0,40}$/.test(type) ? type : "article";
 }
 
 // --- Citekeys ----------------------------------------------------------------------------
@@ -374,7 +393,7 @@ export function citekey(item: Pick<LibraryItem, "author" | "issued" | "title">, 
 	const stem = `${who}${year}${word}`;
 	if (!taken.has(stem)) return stem;
 	for (const suffix of "abcdefghijklmnopqrstuvwxyz") if (!taken.has(`${stem}${suffix}`)) return `${stem}${suffix}`;
-	return `${stem}${taken.size}`;
+	for (let n = 2; ; n++) if (!taken.has(`${stem}${n}`)) return `${stem}${n}`;
 }
 
 // --- Commands ----------------------------------------------------------------------------
@@ -392,7 +411,7 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 	const known = loadLibrary().items.find((i) => i.DOI?.toLowerCase() === doi.toLowerCase());
 	// Network first; the library is read and written only after, so a parallel add isn't lost.
 	const csl = known ? undefined : await fetchCsl(doi);
-	const agency = known?.tabkyra.agency ?? (await registrationAgency(doi));
+	const agency = known?.tabkyra.agency || (await registrationAgency(doi));
 	let verified = await verify(doi, known?.tabkyra.verified, agency);
 	const record = csl;
 	// An alias DOI answers with its primary DOI; notices attach to the primary, so check both.
@@ -404,6 +423,7 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 		if (existing) {
 			// Adding again re-checks retractions, so a source retracted since is caught.
 			existing.tabkyra.verified = keepRetraction(verified, existing.tabkyra.verified);
+			if (agency) existing.tabkyra.agency = agency;
 			mergeAnnotations(existing, options);
 			return { item: existing, existed: true };
 		}
@@ -427,7 +447,14 @@ export async function addSource(input: string, options: AddOptions = {}): Promis
 		const item: LibraryItem = {
 			id: citekey(draft, new Set(library.items.map((i) => i.id))),
 			...draft,
-			tabkyra: { addedAt: new Date().toISOString(), verified, tags: [], ...(primary ? { primaryDoi: primary } : {}), ...(agency ? { agency } : {}) },
+			tabkyra: {
+				addedAt: new Date().toISOString(),
+				// A title that announces a retraction counts, even when no notice is linked.
+				verified: /^\s*(retracted|withdrawn|retraction( notice)?)\b\s*:?/i.test(title) ? { ...verified, retracted: true } : verified,
+				tags: [],
+				...(primary ? { primaryDoi: primary } : {}),
+				...(agency ? { agency } : {}),
+			},
 		};
 		mergeAnnotations(item, options);
 		library.items.push(item);
@@ -479,9 +506,12 @@ export async function reverify(keys: string[]): Promise<{ items: LibraryItem[]; 
 	// Keyed by id and DOI: a result applies only to the very item it was computed for.
 	const results = new Map<string, Verification>();
 	const keyOf = (i: LibraryItem) => `${i.id}\u0000${i.DOI}\u0000${i.tabkyra.addedAt}`;
+	const agencies = new Map<string, string>();
 	for (const item of targets) {
 		if (!item.DOI) continue;
-		let v = await verify(item.DOI, item.tabkyra.verified, item.tabkyra.agency);
+		const agency = item.tabkyra.agency || (await registrationAgency(item.DOI));
+		agencies.set(keyOf(item), agency);
+		let v = await verify(item.DOI, item.tabkyra.verified, agency);
 		if (item.tabkyra.primaryDoi) v = mergeVerification(v, await verify(item.tabkyra.primaryDoi, item.tabkyra.verified, await registrationAgency(item.tabkyra.primaryDoi)));
 		results.set(keyOf(item), v);
 	}
@@ -490,6 +520,8 @@ export async function reverify(keys: string[]): Promise<{ items: LibraryItem[]; 
 		for (const item of library.items) {
 			const v = results.get(keyOf(item));
 			if (v) item.tabkyra.verified = keepRetraction(v, item.tabkyra.verified);
+			const agency = agencies.get(keyOf(item));
+			if (agency) item.tabkyra.agency = agency;
 		}
 		return library.items.filter((i) => results.has(keyOf(i)));
 	});
@@ -521,7 +553,7 @@ const STYLE_ALIASES: Record<string, string> = { mla: "modern-language-associatio
 export async function cite(key: string, style = "apa"): Promise<string> {
 	const item = loadLibrary().items.find((i) => i.id === key);
 	if (!item) throw new Error(`No source with key ${key}. Run tabkyra library search.`);
-	const csl = STYLE_ALIASES[style] ?? style;
+	const csl = Object.hasOwn(STYLE_ALIASES, style) ? STYLE_ALIASES[style] : style;
 	if (!STYLES.has(csl)) throw new Error(`Unknown style ${style}. Use apa, mla, chicago, ieee, harvard or vancouver.`);
 	if (!item.DOI) throw new Error(`${key} has no DOI to format.`);
 	const res = await get(`${base.doi()}/${doiPath(item.DOI)}`, `text/x-bibliography; style=${csl}; locale=en-US`);
@@ -574,7 +606,11 @@ function bibEscape(s: string): string {
 /** BibTeX authors; a corporate or literal name is braced so it stays one name. */
 function bibNames(item: LibraryItem): string {
 	return (item.author ?? [])
-		.map((a) => (a.family ? bibEscape(a.given ? `${a.family}, ${a.given}` : a.family) : `{${bibEscape(a.literal ?? "")}}`))
+		.map((a) => {
+			// A part holding " and " or a comma would split or reorder names, so it is braced.
+			const part = (x: string) => (/\band\b|,/i.test(x) ? `{${bibEscape(x)}}` : bibEscape(x));
+			return a.family ? (a.given ? `${part(a.family)}, ${part(a.given)}` : part(a.family)) : `{${bibEscape(a.literal ?? "")}}`;
+		})
 		.join(" and ");
 }
 
@@ -607,7 +643,7 @@ export function toBibtex(items: LibraryItem[]): string {
 				.filter(([, v]) => v)
 				.map(([k, v]) => `  ${k} = {${k === "url" ? (v as string).replace(/[{}\\]/g, "") : k === "author" || k === "doi" ? v : bibEscape(v as string)}}`)
 				.join(",\n");
-			return `@${BIBTEX_TYPE[i.type] ?? "misc"}{${i.id},\n${body}\n}`;
+			return `@${Object.hasOwn(BIBTEX_TYPE, i.type) ? BIBTEX_TYPE[i.type] : "misc"}{${i.id},\n${body}\n}`;
 		})
 		.join("\n\n")
 		.concat(items.length ? "\n" : "");
@@ -628,7 +664,7 @@ export function toRis(items: LibraryItem[]): string {
 		.map((i) => {
 			const [sp, ep] = (i.page ?? "").split("-");
 			const lines = [
-				`TY  - ${RIS_TYPE[i.type] ?? "GEN"}`,
+				`TY  - ${Object.hasOwn(RIS_TYPE, i.type) ? RIS_TYPE[i.type] : "GEN"}`,
 				`ID  - ${i.id}`,
 				...(i.author ?? []).map((a) => `AU  - ${a.family ? (a.given ? `${a.family}, ${a.given}` : a.family) : (a.literal ?? "")}`),
 				`TI  - ${i.title}`,

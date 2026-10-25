@@ -79,6 +79,14 @@ Object.assign(RECORDS, {
 	"10.1000/nullnotice": { type: "journal-article", title: "Null notice", author: [{ family: "Null", given: "N." }], issued: { "date-parts": [[2009]] }, DOI: "10.1000/nullnotice" },
 	"10.1000/smuggle": { type: "journal-article", title: `Visible${String.fromCodePoint(0xe0100, 0xe0101)} title`, author: [{ family: "Smug", given: "S." }], issued: { "date-parts": [[2008]] }, DOI: "10.1000/smuggle" },
 	"10.48550/arXiv.hep-th/9901001": { type: "article", title: "Old style arXiv", author: [{ family: "Old", given: "O." }], issued: { "date-parts": [[1999]] }, DOI: "10.48550/arXiv.hep-th/9901001" },
+	"10.1000/odd": {
+		type: "__proto__",
+		title: "RETRACTED: Odd record",
+		author: [null, { family: "Smith and Mallory", given: "J." }],
+		issued: { "date-parts": [[1e21]] },
+		DOI: "10.1000/odd",
+	},
+	"10.1000/noagency": { type: "journal-article", title: "No agency", author: [{ family: "Nobody", given: "N." }], issued: { "date-parts": [[2007]] }, DOI: "10.1000/noagency" },
 	"10.1000/alias": { type: "journal-article", title: "Alias target", author: [{ family: "Alias", given: "A." }], issued: { "date-parts": [[2017]] }, DOI: "10.9999/someone-else" },
 });
 
@@ -95,8 +103,15 @@ before(async () => {
 			return res.end("<html>publisher landing page</html>");
 		}
 		if (url.pathname.startsWith("/doi/") && mock.doiDown) return json(503, {});
+		if (url.pathname === "/doi/10.1000/redirected") {
+			// A registrant's own site, on another host, answering with JSON that claims to be a record.
+			res.writeHead(302, { location: `http://localhost:${server.address().port}/landing.json` });
+			return res.end();
+		}
+		if (url.pathname === "/landing.json") return json(200, { type: "journal-article", title: "Self-published claim", DOI: "10.1000/redirected" });
 		if (url.pathname.startsWith("/doi/ra/")) {
 			const doi = decodeURIComponent(url.pathname.slice("/doi/ra/".length));
+			if (doi === "10.1000/noagency") return json(404, {});
 			return json(200, [{ DOI: doi, RA: doi.startsWith("10.48550/") ? "DataCite" : "Crossref" }]);
 		}
 		if (url.pathname.startsWith("/doi/")) {
@@ -537,4 +552,21 @@ test("BibTeX keeps the doi field verbatim, marks combine, and an inherited name 
 	await lib("add", "10.1000/springer_13");
 	assert.match((await lib("export", "--format", "bibtex")).out, /doi = \{10\.1000\/springer_13\}/);
 	assert.equal((await lib("constructor", "--x")).code, 2);
+});
+
+test("odd records are saved sanely: null authors, absurd years, prototype type names, names with 'and', retraction in the title", async () => {
+	const r = await lib("add", "10.1000/odd");
+	assert.equal(r.code, 3, r.out);
+	const odd = items().find((i) => i.DOI === "10.1000/odd");
+	assert.match(odd.id, /^[a-z0-9]+$/);
+	assert.equal(odd.issued, undefined);
+	assert.equal(typeof odd.type, "string");
+	assert.match((await lib("export", "--format", "bibtex")).out, /author = \{\{Smith and Mallory\}, J\.\}/);
+});
+
+test("metadata from a registrant's own site isn't accepted, and an unknown agency is incomplete", async () => {
+	const r = await lib("add", "10.1000/redirected");
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /no citation metadata/);
+	assert.equal((await lib("add", "10.1000/noagency")).code, 4);
 });
