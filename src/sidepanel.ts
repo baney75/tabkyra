@@ -36,6 +36,7 @@ import { ApiKeysTab } from "./dialogs/ApiKeysTab.js";
 import { BridgeTab } from "./dialogs/BridgeTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
 import { CustomProvidersTab } from "./dialogs/CustomProvidersTab.js";
+import { PrivacyTab } from "./dialogs/PrivacyTab.js";
 import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
@@ -50,6 +51,8 @@ import {
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { refreshDiscoveredModels } from "./models/registry.js";
+import { installBugCapture } from "./privacy/capture.js";
+import { PRIVATE_MODE_KEY, privateModel } from "./privacy/private-mode.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { Recorder } from "./recording/recorder.js";
 import { TabkyraAppStorage } from "./storage/app-storage.js";
@@ -107,6 +110,7 @@ setCdpMessageHandler(async (message) => {
 // ============================================================================
 const storage = new TabkyraAppStorage();
 setAppStorage(storage);
+installBugCapture(storage);
 
 // ============================================================================
 // APP STATE
@@ -371,6 +375,7 @@ function openApiKeysDialog(): Promise<void> {
 				new CostsTab(),
 				new SkillsTab(),
 				new BridgeTab(),
+				new PrivacyTab(),
 				new ProxyTab(),
 				new AboutTab(),
 			],
@@ -512,6 +517,8 @@ function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(
 	return (async (model: Model<any>, ...rest: any[]) => {
 		// A removed subscription sign-in must not run, whatever left the model selected.
 		if (isBlockedModel(model)) throw new RemovedSignInError(model.provider);
+		// Private mode: only zero-data-retention OpenRouter routes and local models.
+		if (await storage.settings.get<boolean>(PRIVATE_MODE_KEY)) model = privateModel(model);
 		if (model.api === "openai-completions") {
 			const custom = await storage.customProviders.getAll().catch(() => []);
 			if (custom.some((p) => p.name === model.provider)) {
@@ -960,6 +967,7 @@ const renderApp = () => {
 								new CostsTab(),
 								new SkillsTab(),
 								new BridgeTab(),
+								new PrivacyTab(),
 								new ProxyTab(),
 								new AboutTab(),
 							]),

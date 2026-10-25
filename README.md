@@ -229,6 +229,11 @@ Your browser is signed in as you, so the defaults are conservative.
   Claude Pro/Max login. The side panel takes API keys, which each provider bills. The
   sources and dates are in [docs/auth-policy.md](docs/auth-policy.md).
 
+- **Private mode** (Settings > Privacy) keeps the side panel agent to OpenRouter with zero
+  data retention enforced per request, or to models on your own machine or network.
+- **Bug reports are off unless you turn them on,** and even then nothing leaves the browser
+  until you open the redacted report and submit it on GitHub yourself.
+
 ## Updating
 
 ```sh

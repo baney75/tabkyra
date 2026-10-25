@@ -4,6 +4,8 @@ import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { html } from "lit";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { helmMark } from "../components/HelmMark.js";
+import { BUG_REPORTS_KEY } from "../privacy/bug-reports.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 
 /**
  * Shown on first launch when no API keys are configured.
@@ -42,6 +44,14 @@ export class WelcomeSetupDialog extends DialogBase {
 						by the provider.
 					</p>
 					${agentSetupPromptButton("To let your own agent drive this browser, paste this prompt into Claude Code, Codex, pi, OMP or any agent. It needs no API key here.")}
+					<label class="flex items-start gap-2 text-xs text-muted-foreground">
+						<input
+							type="checkbox"
+							class="mt-0.5"
+							@change=${(e: Event) => void getTabkyraStorage().settings.set(BUG_REPORTS_KEY, (e.target as HTMLInputElement).checked)}
+						/>
+						<span>Keep error reports I can choose to send (optional, off by default; Settings &gt; Privacy)</span>
+					</label>
 					<div class="flex justify-end">
 						${Button({
 							variant: "default",
