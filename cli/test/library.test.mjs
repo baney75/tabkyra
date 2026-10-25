@@ -70,6 +70,9 @@ Object.assign(RECORDS, {
 	"10.1000/oaonly": { type: "journal-article", title: "Flagged by OpenAlex only", author: [{ family: "Oa", given: "O." }], issued: { "date-parts": [[2016]] }, DOI: "10.1000/oaonly" },
 	"10.1000/many-notices": { type: "journal-article", title: "Many notices", author: [{ family: "Many", given: "M." }], issued: { "date-parts": [[2015]] }, DOI: "10.1000/many-notices" },
 	"10.1000/alias2": { type: "journal-article", title: "Alias of a retracted work", author: [{ family: "Alias", given: "B." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary-retracted" },
+	"10.1000/alias3": { type: "journal-article", title: "Alias sharing a notice", author: [{ family: "Shared", given: "S." }], issued: { "date-parts": [[2013]] }, DOI: "10.1000/primary3" },
+	"10.1000/primary3": { type: "journal-article", title: "Primary sharing a notice", author: [{ family: "Shared", given: "S." }], issued: { "date-parts": [[2013]] }, DOI: "10.1000/primary3" },
+	"10.1000/nodoi-notices": { type: "journal-article", title: "Two corrections without DOIs", author: [{ family: "Nodoi", given: "N." }], issued: { "date-parts": [[2012]] }, DOI: "10.1000/nodoi-notices" },
 	"10.1000/primary-retracted": { type: "journal-article", title: "Primary", author: [{ family: "Alias", given: "B." }], issued: { "date-parts": [[2014]] }, DOI: "10.1000/primary-retracted" },
 	"10.1000/marker": { type: "journal-article", title: "A title with tabkyra-generated: inside it", author: [{ family: "Marker", given: "M." }], issued: { "date-parts": [[2013]] }, DOI: "10.1000/marker" },
 	"10.1000/percent": { type: "journal-article", title: "Vaccine outcomes %% hidden", author: [{ literal: "World Health Organization" }], issued: { "date-parts": [[2012]] }, DOI: "10.1000/percent" },
@@ -140,13 +143,22 @@ before(async () => {
 			if (mock.failChecks) return json(429, {});
 			const doi = decodeURIComponent(url.pathname.slice("/crossref/works/".length));
 			// Like the real Crossref, a notice found by filter=updates is listed again on the work's own record.
-			const updatedBy = { "10.1000/updatedby": [{ type: "retraction", DOI: "10.1000/rw" }], "10.1000/retracted": [{ type: "retraction", DOI: "10.1000/NOTICE" }] };
+			const updatedBy = {
+				"10.1000/updatedby": [{ type: "retraction", DOI: "10.1000/rw" }],
+				"10.1000/retracted": [{ type: "retraction", DOI: "10.1000/NOTICE" }],
+				// Two notices of one type with no DOI: distinct notices, both kept.
+				"10.1000/nodoi-notices": [{ type: "correction" }, { type: "correction" }],
+			};
 			return json(200, { message: { "updated-by": updatedBy[doi] ?? [] } });
 		}
 		if (url.pathname === "/crossref/works") {
 			if (mock.failChecks) return json(429, {});
 			const doi = (url.searchParams.get("filter") ?? "").replace(/^updates:/, "");
 			const retracted = doi === "10.1000/retracted" || doi === "10.1000/primary-retracted" || mock.retractedNow.has(doi);
+			// An alias and its primary that both point at the same notice.
+			if (doi === "10.1000/alias3" || doi === "10.1000/primary3") {
+				return json(200, { message: { "total-results": 1, items: [{ DOI: "10.1000/shared-notice", "update-to": [{ type: "retraction", DOI: doi }] }] } });
+			}
 			const items = retracted ? [{ DOI: "10.1000/notice", "update-to": [{ type: "retraction", DOI: doi }] }] : [];
 			if (doi === "10.1000/many-notices") return json(200, { message: { "total-results": 1500, items: [] } });
 			if (doi === "10.1000/nullnotice") return json(200, { message: { "total-results": 1, items: [null] } });
@@ -426,6 +438,40 @@ test("an alias DOI is checked under its primary DOI too", async () => {
 	const r = await lib("add", "10.1000/alias2");
 	assert.equal(r.code, 3, r.out);
 	assert.ok(items().some((i) => i.DOI === "10.1000/alias2"));
+});
+
+test("a notice that an alias and its primary both report is listed once", async () => {
+	const r = await lib("add", "10.1000/alias3");
+	assert.equal(r.code, 3, r.out);
+	assert.equal(r.out.match(/notice: retraction 10\.1000\/shared-notice/g)?.length, 1, r.out);
+	assert.equal(items().find((i) => i.DOI === "10.1000/alias3").tabkyra.verified.notices.length, 1);
+});
+
+test("notices without a DOI are each kept", async () => {
+	const r = await lib("add", "10.1000/nodoi-notices");
+	assert.equal(r.out.match(/notice: correction/g)?.length, 2, r.out);
+});
+
+test("duplicate notices saved by an older version are shown and kept once", async () => {
+	const file = join(env.TABKYRA_LIBRARY_DIR, "library.json");
+	const library = JSON.parse(readFileSync(file, "utf8"));
+	const base = library.items.find((i) => i.DOI === "10.1000/retracted");
+	const notice = { type: "retraction", doi: "10.1000/legacy-notice" };
+	library.items.push({
+		...structuredClone(base),
+		id: "legacy1998dup",
+		DOI: "10.1000/legacy",
+		tabkyra: { ...structuredClone(base.tabkyra), verified: { ...base.tabkyra.verified, retracted: true, notices: [notice, notice, notice] } },
+	});
+	writeFileSync(file, JSON.stringify(library));
+	mock.failChecks = true;
+	try {
+		// The re-check fails, so the stored retraction and its notices are kept.
+		assert.equal((await lib("verify", "legacy1998dup")).code, 3);
+	} finally {
+		mock.failChecks = false;
+	}
+	assert.deepEqual(items().find((i) => i.id === "legacy1998dup").tabkyra.verified.notices, [notice]);
 });
 
 test("doi.org being down isn't reported as registered or made up; a bare % doesn't crash", async () => {
