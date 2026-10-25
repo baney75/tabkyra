@@ -32,25 +32,25 @@ Not for problems with a website itself, or with the user's own code.
    square brackets, such as `[email]`. Never include page text from the user's signed-in
    sites.
 5. **Fingerprint it.** Write one line in this form, with numbers and paths taken out of
-   the error: `fingerprint: <component>/<error>`
+   the error: `fingerprint: [component]/[error]`
 6. **Check for a duplicate.** Run this, with the fingerprint in the quotes:
-   `gh issue list --repo baney75/tabkyra --state open --search "<fingerprint>"`
+   `gh issue list --repo baney75/tabkyra --state open --search "[fingerprint]"`
    If one matches, plan a comment on it instead of a new issue.
 7. **Write the report** in exactly this shape:
 
    ```
-   Title: <component>: <what went wrong, under 70 characters>
+   Title: [component]: [what went wrong, under 70 characters]
 
    What I did
    1. ...
    What happened
-   <exact error, scrubbed>
+   [exact error, scrubbed]
    What I expected
    ...
    Versions
-   Extension x.y.z, CLI x.y.z, <browser> <version>, <OS>
+   Extension x.y.z, CLI x.y.z, [browser] [version], [OS]
    Doctor
-   <failed lines, or "all passed">
+   [failed lines, or "all passed"]
    fingerprint: ...
    ```
 
