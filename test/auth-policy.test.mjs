@@ -1,7 +1,9 @@
 // Fails if a removed subscription sign-in, or any identifier that poses as another app,
 // comes back. docs/auth-policy.md has the provider terms behind each entry.
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -26,7 +28,8 @@ const FORBIDDEN = [
 	["Copilot internal token endpoint", "copilot_internal"],
 	["Gemini Code Assist endpoint", "cloudcode-pa.googleapis.com"],
 	["Gemini CLI user agent", "google-api-nodejs-client"],
-	["Gemini CLI client header", "X-Goog-Api-Client"],
+	// The Google GenAI SDK sends its own x-goog-api-client legitimately; the spoof was this value.
+	["Gemini CLI client header value", "gl-node/22.17.0"],
 	["ChatGPT subscription backend", "chatgpt.com/backend-api"],
 	["OpenAI OAuth host", "auth.openai.com"],
 	["Claude OAuth host", "claude.ai/oauth"],
@@ -35,13 +38,20 @@ const FORBIDDEN = [
 	["Claude Code beta flag", "claude-code-20250219"],
 	["Claude Code user agent", "claude-cli/"],
 	["Codex user agent", "codex_cli_rs"],
+	["Claude Code system prompt", "You are Claude Code"],
 ];
 
-// Base64 hides an id from a plain grep; the old code did exactly that.
+// Base64 hides an id from a plain grep; the old code did exactly that. Plain needles match
+// case-insensitively (HTTP header names are); base64 is case-sensitive by nature.
 const NEEDLES = FORBIDDEN.flatMap(([what, text]) => [
-	[what, text],
-	[`${what} (base64)`, b64(text)],
+	[what, text.toLowerCase(), true],
+	[`${what} (base64)`, b64(text), false],
 ]);
+
+function scan(text) {
+	const lower = text.toLowerCase();
+	return NEEDLES.filter(([, needle, folded]) => (folded ? lower : text).includes(needle));
+}
 
 const ROOTS = ["src", "static", "cli/src", "cli/scripts", "scripts"];
 const SKIP_DIRS = new Set(["node_modules", "dist", "bench", "probe"]);
@@ -62,25 +72,31 @@ test("no borrowed client ids, headers or subscription endpoints in shipped sourc
 		const dir = join(repo, root);
 		if (!existsSync(dir)) continue;
 		for (const file of files(dir)) {
-			const text = readFileSync(file, "utf8");
-			for (const [what, needle] of NEEDLES) {
-				if (text.includes(needle)) hits.push(`${relative(repo, file)}: ${what} (${needle})`);
-			}
+			for (const [what, needle] of scan(readFileSync(file, "utf8"))) hits.push(`${relative(repo, file)}: ${what} (${needle})`);
 		}
 	}
 	assert.deepEqual(hits, [], `Removed sign-in identifiers came back:\n${hits.join("\n")}`);
 });
 
-test("the built extension bundle carries none of them either", (t) => {
-	const dist = join(repo, "dist-chrome");
-	if (!existsSync(join(dist, "sidepanel.js"))) return t.skip("dist-chrome is not built");
-	const hits = [];
-	for (const file of files(dist)) {
-		if (file.endsWith(".map")) continue;
-		const text = readFileSync(file, "utf8");
-		for (const [what, needle] of NEEDLES) if (text.includes(needle)) hits.push(`${relative(repo, file)}: ${what}`);
+test("a fresh build of the extension carries none of them either", () => {
+	// Build a throwaway copy (never the dist-chrome a browser may have loaded) and scan it.
+	const out = mkdtempSync(join(tmpdir(), "tabkyra-auth-build-"));
+	try {
+		execFileSync(process.execPath, [join(repo, "scripts", "build.mjs")], {
+			cwd: repo,
+			env: { ...process.env, TABKYRA_NO_BUMP: "1", TABKYRA_OUT_DIR: out },
+			stdio: "pipe",
+		});
+		assert.ok(existsSync(join(out, "sidepanel.js")), "the build produced no sidepanel.js");
+		const hits = [];
+		for (const file of files(out)) {
+			if (file.endsWith(".map")) continue;
+			for (const [what] of scan(readFileSync(file, "utf8"))) hits.push(`${relative(out, file)}: ${what}`);
+		}
+		assert.deepEqual(hits, [], `The bundle still ships removed sign-in code:\n${hits.join("\n")}`);
+	} finally {
+		rmSync(out, { recursive: true, force: true });
 	}
-	assert.deepEqual(hits, [], `The bundle still ships removed sign-in code:\n${hits.join("\n")}`);
 });
 
 test("the removed sign-in modules stay removed", () => {

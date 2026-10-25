@@ -550,6 +550,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	const corsProxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
 	const corsProxyUrl = await storage.settings.get<string>("proxy.url");
 
+	// A chat saved on a removed subscription provider reopens on a working model instead.
+	if (initialState?.model && isBlockedModel(initialState.model)) initialState = { ...initialState, model: undefined };
+
 	// Determine default model: saved > default for a provider with key > gemini flash fallback
 	let defaultModel: Model<any> | undefined;
 	if (!initialState?.model) {
@@ -577,13 +580,15 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	}
 
 	agent = new Agent({
-		initialState: initialState || {
-			systemPrompt: SYSTEM_PROMPT,
-			model: defaultModel,
-			thinkingLevel: "medium",
-			messages: [],
-			tools: [],
-		},
+		initialState: initialState
+			? { ...initialState, model: initialState.model ?? defaultModel }
+			: {
+					systemPrompt: SYSTEM_PROMPT,
+					model: defaultModel,
+					thinkingLevel: "medium",
+					messages: [],
+					tools: [],
+				},
 		convertToLlm: browserMessageTransformer,
 		toolExecution: "sequential",
 		streamFn: uncappedStreamFn(
@@ -1150,6 +1155,13 @@ async function initApp() {
 		return;
 	}
 
+	// Tokens from the removed subscription sign-ins only worked through borrowed clients.
+	// Cleared before any chat is restored, so no path can still use them.
+	const cleared = await purgeRemovedSignIns(storage.providerKeys).catch(() => []);
+	if (cleared.length > 0) {
+		Toast.error(`Removed subscription sign-in for ${cleared.join(", ")}. Add an API key in Settings.`);
+	}
+
 	// Which chat should this panel show?
 	//  - ?session=<id>  : explicit (a history-list click)
 	//  - ?new=true      : a fresh task on this tab (New chat)
@@ -1204,12 +1216,6 @@ async function initApp() {
 	}
 
 	renderApp();
-
-	// Tokens from the removed subscription sign-ins only worked through borrowed clients.
-	const cleared = await purgeRemovedSignIns(storage.providerKeys).catch(() => []);
-	if (cleared.length > 0) {
-		Toast.error(`Removed subscription sign-in for ${cleared.join(", ")}. Add an API key in Settings.`);
-	}
 
 	// If no API keys configured, show welcome dialog, open settings, then auto-select model
 	if (!(await hasAnyApiKey())) {

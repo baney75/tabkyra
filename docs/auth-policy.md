@@ -31,7 +31,12 @@ Checked 2026-10-25 against the providers' own pages.
   (`openai-codex-responses`, `google-gemini-cli`). `resolveApiKey` refuses stored OAuth
   credentials and Claude subscription tokens. The stream function refuses any model on a
   removed provider or API, so a model saved before the update can't run.
-- On startup the side panel deletes tokens left by the removed sign-ins and says so once.
+- On startup, before any chat is restored, the side panel deletes tokens left by the
+  removed sign-ins and says so once. A saved chat on a removed provider reopens on a
+  working model.
+- `scripts/build.mjs` strips pi-ai's Codex, Gemini CLI and Copilot provider code, their
+  model entries, and the Claude Code identity (user agent, `x-app`, beta flag, system
+  prompt) from the bundle. If upstream moves any of those files, the build fails.
 - The CORS rules for `auth.openai.com`, `github.com/login` and `platform.claude.com` are
   gone, as are model discovery for ChatGPT and Copilot.
 - The Settings tab is "API Keys". The tab, the first-run dialog and the key prompt say
@@ -41,7 +46,9 @@ Checked 2026-10-25 against the providers' own pages.
 - `test/auth-policy.test.mjs` (run by `./check.sh`) fails if any of the removed client
   ids (plain or base64), `originator`, `codex_cli_simplified_flow`, the Copilot or Gemini
   CLI headers, `copilot_internal`, `cloudcode-pa` or the removed OAuth hosts come back
-  in `src/`, `static/` or `cli/src/`, or if a removed provider gets a sign-in again.
+  in `src/`, `static/`, `cli/src/` or `scripts/`, or in a fresh build of the extension
+  (it builds a throwaway copy), or if a removed provider gets a sign-in again. Header
+  names match case-insensitively.
 
 ## Adding a sanctioned sign-in later
 
