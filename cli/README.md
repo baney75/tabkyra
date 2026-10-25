@@ -95,8 +95,7 @@ mode to "allow any site" there. pi: set `TABKYRA_AUTO_ALLOW=1` to auto-approve.
 | `click`, `hover`, `type`, `press`, `fill`, `scroll`, `drag`, `actions` | act on it |
 | `run_js`, `wait`, `read_console`, `read_network` | scripts, waits and debugging |
 
-Names follow Claude in Chrome's, so prompts written for it carry over. Every tool has
-parameter docs and an example in its description. The server's instructions tell the
+Every tool documents its parameters and includes an example in its description. The server's instructions tell the
 agent that page text is untrusted data and that it must ask before acting under the
 user's sign-in. With no browser connected, every tool returns: "Tabkyra isn't connected.
 Ask the user to open Helium/Chrome with the Tabkyra extension loaded, or run

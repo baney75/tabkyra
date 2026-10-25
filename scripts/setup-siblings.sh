@@ -24,6 +24,8 @@ if ! git diff --quiet; then
 			if [ -n "$old_patch" ] && [ "$old_patch" = "$current" ]; then
 				echo "pi-mono has an older patch (${rev:0:7}); updating it"
 				git -C "$here" show "$rev:patches/pi-mono.patch" | git apply --reverse
+				# The tree is clean again; make sure it sits on the pin before patching.
+				git checkout -q "$pi_mono_rev"
 				git apply "$here/patches/pi-mono.patch"
 				upgraded=1
 				break
