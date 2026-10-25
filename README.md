@@ -180,8 +180,8 @@ tabkyra skill list               # what each one is for
 tabkyra skill print >> AGENTS.md # the tabkyra skill as an AGENTS.md section, for any other agent
 ```
 
-`tabkyra skill install` skips a same-name skill that Tabkyra didn't write unless you pass
-`--force`. The core skill ([skills/tabkyra/SKILL.md](skills/tabkyra/SKILL.md)) is short and
+`tabkyra skill install` skips a same-name skill that Tabkyra didn't write. To replace one,
+name it: `tabkyra skill install bug --force` (a bare `--force` replaces only `tabkyra`). The core skill ([skills/tabkyra/SKILL.md](skills/tabkyra/SKILL.md)) is short and
 written for small models: when to use Tabkyra, `status` first, then the loop (navigate,
 `read_page` for refs, act by ref, read back), with stale refs, waits, dialogs, the safety
 rules, cleanup and three worked examples. A test keeps it in step with the MCP server's
@@ -348,11 +348,16 @@ window in front. Protocol and design notes are in
 
 ## Updating
 
-From a source checkout, pull and rebuild:
+From a source checkout, update the code, then rebuild. A local build can bump
+`static/manifest.chrome.json`, so restore it before updating:
 
 ```bash
-git pull && ./scripts/setup-siblings.sh
-(cd cli && npm run build)
+git restore static/manifest.chrome.json
+git pull                                   # on a branch
+# or, if the setup prompt checked out a release tag:
+# git fetch --tags && git checkout v<new version>
+./scripts/setup-siblings.sh
+(cd cli && npm ci && npm run build)
 TABKYRA_NO_BUMP=1 npm run build && tabkyra reload
 ```
 
@@ -405,6 +410,8 @@ bridge never leaves your machine unless you run `tabkyra serve` and a tunnel. Bu
 an agent reads through it (page text, screenshots) goes to that agent's model provider, as
 with any tool the agent uses. The side panel likewise talks to the provider you configure,
 and [private mode](#private-mode-and-bug-reports) limits which ones it may use.
+`tabkyra library` looks up each source you add at its DOI registry (or arXiv), OpenAlex and
+Crossref, and `tabkyra update` checks GitHub for releases.
 
 **Can I add my own skill?** Yes, locally with `tabkyra skill apply`, or for everyone
 through a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) explains the gates. Skills with

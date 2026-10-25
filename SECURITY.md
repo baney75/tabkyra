@@ -65,12 +65,17 @@ Out of scope, or known and documented:
   here is welcome too.
 - Model providers, harnesses (Claude Code, Codex and others), Tailscale and Cloudflare.
 
+## What to expect
+
+We aim to acknowledge a report within seven days and to agree on a disclosure date with
+you once a fix is planned.
+
 ## Please don't
 
 - Test against accounts, browsers or machines that aren't yours.
 - Read, keep or share other people's data, even to prove a point.
 - Run denial-of-service or high-volume tests against anyone's service.
 - Use social engineering or phishing against the maintainer or users.
-- Publish details before a fix is out, or before we agree on a date.
+- Publish details before a fix is out and we've agreed on a date.
 
 Good-faith research that follows these rules is welcome.

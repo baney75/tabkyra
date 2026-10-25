@@ -54,7 +54,8 @@ it needs no extra step. Reload the extension once after the first install.
 | `tabkyra library list\|search\|verify\|cite\|export\|obsidian\|remove` | find, re-check, cite (apa, mla, chicago, ieee, harvard, vancouver), export (bibtex, ris, csl) or write Obsidian notes |
 | `tabkyra serve [--port 8787]` | MCP over Streamable HTTP at `/mcp`, loopback only; every request needs a token |
 | `tabkyra token create <name> --scope a,b` | a scoped, revocable token, shown once (`token list`, `token revoke <id\|name>`, `token scopes`) |
-| `tabkyra tunnel tailscale\|cloudflare [--port N] [--public] [--off]` | reach `serve` over HTTPS through your tailnet or a cloudflared quick tunnel |
+| `tabkyra tunnel tailscale [--port N] [--public] [--off]` | reach `serve` over HTTPS through your tailnet (`--public` uses Funnel) |
+| `tabkyra tunnel cloudflare [--port N] [--off]` | reach `serve` through a cloudflared quick tunnel |
 | `tabkyra update [--check] [--rollback] [--channel stable\|nightly]` | install the latest signed release ([docs/updates.md](../docs/updates.md)) |
 
 Output is colored only on a terminal; `NO_COLOR` turns it off. Usage errors exit 2, and

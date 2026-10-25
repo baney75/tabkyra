@@ -36,6 +36,7 @@ npx tsc --noEmit
 node --import tsx --test test/*.test.mjs
 (cd cli && npx tsc --noEmit && npm test)
 node cli/dist/index.js skill lint skills
+(cd cli && node --test test/skill-lint.test.mjs)
 ```
 
 `./check.sh` runs the first three (formatting with `--write`) plus the site check, and the
