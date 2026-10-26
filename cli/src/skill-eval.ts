@@ -335,6 +335,26 @@ export function parseDrops(text: string | undefined): AcceptedDrop[] {
 	});
 }
 
+/** The `removed` list of accepted-drops.json: skills a pull request deletes on purpose, each with a reason. */
+export function parseRemoved(text: string | undefined): Array<{ skill: string; reason: string }> {
+	if (text === undefined) return [];
+	let data: unknown;
+	try {
+		data = JSON.parse(text);
+	} catch {
+		throw new EvalError("accepted-drops.json is not JSON.");
+	}
+	const removed = (data as { removed?: unknown }).removed ?? [];
+	if (!Array.isArray(removed)) throw new EvalError('accepted-drops.json "removed" must be a list.');
+	return removed.map((r, i) => {
+		const e = r as { skill?: unknown; reason?: unknown };
+		if (typeof e.skill !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(e.skill) || typeof e.reason !== "string" || !e.reason.trim()) {
+			throw new EvalError(`accepted-drops.json removed entry ${i + 1} needs {"skill": "<name>", "reason": "..."}.`);
+		}
+		return { skill: e.skill, reason: e.reason.trim() };
+	});
+}
+
 /**
  * Checks a pull request against its base branch, run by the base branch's build with the
  * pull request's skills bundled. `head` is the pull request's files and its skill-eval.ts
@@ -361,6 +381,20 @@ export function runBaseCheck(
 
 	const names = new Set(skills.map((s) => s.name));
 	const baseBaseline = base.baseline === undefined ? undefined : parseBaseline(base.baseline);
+	// A skill the base measures must still exist, or be listed as removed on purpose: deleting
+	// a folder would otherwise erase its cases' coverage without a trace.
+	const removedOk = new Set(parseRemoved(head.drops).map((r) => r.skill));
+	const gone = Object.keys(baseBaseline?.accuracy ?? {}).filter((n) => n !== "none" && !names.has(n));
+	const unexplained = gone.filter((n) => !removedOk.has(n));
+	gates.push({
+		gate: "skills kept",
+		ok: unexplained.length === 0,
+		detail: unexplained.length
+			? `missing from skills/ without a "removed" entry in accepted-drops.json: ${unexplained.join(", ")}`
+			: gone.length
+				? `removed on purpose: ${gone.join(", ")}`
+				: "every skill the base measures is still there",
+	});
 	const headBaseline = head.baseline === undefined ? { accuracy: {} } : parseBaseline(head.baseline);
 	const old = new Set(parseDrops(base.drops).map((d) => `${d.skill}\u0000${d.value}`));
 	const added = parseDrops(head.drops).filter((d) => !old.has(`${d.skill}\u0000${d.value}`));
@@ -424,27 +458,17 @@ export function runBaseCheck(
 			detail: failed.length ? failed.map((g) => `${g.gate}: ${g.detail}`).join("; ") : `top-1 ${pct(report.top1)}, false invokes ${pct(report.falseInvoke)} on the base cases, ${names.size} skills indexed`,
 		});
 	}
-	// The base code's gates and thresholds over the pull request's whole case files, so gate
-	// logic the pull request changes can't loosen anything for its new cases either.
+	// The base code's gates and thresholds over the pull request's whole case files and its
+	// baseline, accepted floors included: every skill and none must measure at least what the
+	// pull request's baseline claims, skills it adds included, and have enough cases.
 	if (head.cases !== undefined && base.cases !== undefined) {
-		const all = runEval(skills, parseCases(head.cases), undefined, head.heldout === undefined ? undefined : parseCases(head.heldout, "router-heldout.jsonl"));
-		const failed = all.gates.filter((g) => !g.ok && g.gate !== "baseline");
+		const floors = new Map(parseDrops(head.drops).map((d) => [d.skill, d.value]));
+		const all = runEval(skills, parseCases(head.cases), headBaseline, head.heldout === undefined ? undefined : parseCases(head.heldout, "router-heldout.jsonl"), { floors });
+		const failed = all.gates.filter((g) => !g.ok);
 		gates.push({
 			gate: "base-code full eval",
 			ok: failed.length === 0,
-			detail: failed.length ? failed.map((g) => `${g.gate}: ${g.detail}`).join("; ") : `top-1 ${pct(all.top1)}, false invokes ${pct(all.falseInvoke)} on all ${all.cases} cases of the pull request`,
-		});
-	}
-	// Skills the pull request adds: the base code's coverage and baseline gates, on the pull
-	// request's cases and baseline, so a weakened eval in the pull request can't wave them through.
-	const addedSkills = new Set([...names].filter((n) => !known.has(n)));
-	if (addedSkills.size && head.cases !== undefined && base.cases !== undefined) {
-		const fresh = runEval(skills, parseCases(head.cases), headBaseline, undefined, { covered: addedSkills, checkNone: false });
-		const failed = fresh.gates.filter((g) => !g.ok && (g.gate === "cases per skill" || g.gate === "baseline"));
-		gates.push({
-			gate: "base-code new skills",
-			ok: failed.length === 0,
-			detail: failed.length ? failed.map((g) => `${g.gate}: ${g.detail}`).join("; ") : `${[...addedSkills].join(", ")}: enough cases and a baseline they meet`,
+			detail: failed.length ? failed.map((g) => `${g.gate}: ${g.detail}`).join("; ") : `top-1 ${pct(all.top1)}, false invokes ${pct(all.falseInvoke)} on all ${all.cases} cases of the pull request, and its baseline holds`,
 		});
 	}
 	return { ok: gates.every((g) => g.ok), skills: names.size, gates, report };

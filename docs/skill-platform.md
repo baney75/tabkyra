@@ -179,10 +179,13 @@ scripts and runs:
    - has skills that, under the base code, route the base cases worse than the base
      baseline (no tolerance; an accepted drop's value is the floor instead) or fail the base
      gates;
-   - adds skills that fail the base code's cases-per-skill or baseline gates on the pull
-     request's own cases and baseline. New skills need no base cases;
+   - deletes a skill the base measures without listing it under `removed` in
+     `accepted-drops.json`, with a reason: `{"removed": [{"skill": "old-skill", "reason":
+     "merged into osint"}]}`;
    - fails the base gates and thresholds (top-1, false invokes, cases per skill, latency,
-     held-out floors) over all of its own case files, judged with its own router.
+     held-out floors, and the baseline for every skill and `none`, accepted floors
+     included) over all of its own case files and its own baseline, judged with its own
+     router. Skills it adds need no base cases, but they are held to these gates.
 
    The scorer's own constants in `skill-router.ts` may change in a pull request; that is how
    routing improves, and the base gates measure the result. The threshold check compares

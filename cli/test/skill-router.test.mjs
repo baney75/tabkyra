@@ -466,17 +466,17 @@ test("--base holds a skill the pull request adds to the base code's coverage and
 			.join("\n");
 	const { [added]: _dropped, ...rest } = accuracy;
 	const base = baseCheckout({ "router-cases.jsonl": without(casesFile), "router-heldout.jsonl": without(heldoutFile), "baseline.json": JSON.stringify({ accuracy: rest }) });
-	assert.ok(baseRun(headCheckout(), base).gates["base-code new skills"].ok);
+	assert.ok(baseRun(headCheckout(), base).gates["base-code full eval"].ok);
 	// Only three cases for the new skill: the base code's cases-per-skill gate catches it.
 	const lines = readFileSync(casesFile, "utf8").split("\n");
 	let kept = 0;
 	const few = lines.filter((l) => !l.includes(`"skill": "${added}"`) || kept++ < 3).join("\n");
 	const thin = baseRun(headCheckout({ cases: few }), base);
-	assert.equal(thin.gates["base-code new skills"].ok, false);
-	assert.match(thin.gates["base-code new skills"].detail, new RegExp(`cases per skill: under \\d+: ${added} \\(3\\)`));
+	assert.equal(thin.gates["base-code full eval"].ok, false);
+	assert.match(thin.gates["base-code full eval"].detail, new RegExp(`cases per skill: under \\d+: ${added} \\(3\\)`));
 	// No baseline for the new skill: caught too.
 	const unbased = baseRun(headCheckout({ baseline: JSON.stringify({ accuracy: rest }) }), base);
-	assert.match(unbased.gates["base-code new skills"].detail, new RegExp(`no valid baseline .*${added}`));
+	assert.match(unbased.gates["base-code full eval"].detail, new RegExp(`no valid baseline .*${added}`));
 });
 
 test("a malformed baseline.json is a clean error that names the file", () => {
@@ -650,4 +650,32 @@ test("'..., debug it' after a use-verb is about the work, not the skill", () => 
 	// Without a use-verb, "fix it" still points back at the skill.
 	assert.equal(name("The proton-pass skill gave my small model a bad result, fix it"), "fix");
 	assert.equal(name("The autoresearch skill gave a weak report on my 8B model. Fix it"), "fix");
+});
+
+test("--base checks the pull request's baseline for every skill against what the base gates measure", () => {
+	// An existing skill's baseline raised above what the router measures fails, even though the
+	// base cases and the aggregate gates still pass.
+	const accuracy = repoBaseline();
+	const weak = Object.entries(accuracy).find(([name, v]) => name !== "none" && v <= 0.9)[0];
+	const r = baseRun(headCheckout({ baseline: JSON.stringify({ accuracy: { ...accuracy, [weak]: Math.min(1, accuracy[weak] + 0.03) } }) }), baseCheckout());
+	assert.equal(r.gates["base-code full eval"].ok, false);
+	assert.match(r.gates["base-code full eval"].detail, new RegExp(`claims more than the router measures: ${weak}`));
+	// An accepted floor above what it measures fails there too.
+	const floor = baseRun(headCheckout({ drops: dropsFile({ skill: weak, value: Math.min(1, accuracy[weak] + 0.03), reason: "x" }) }), baseCheckout());
+	assert.match(floor.gates["base-code full eval"].detail, new RegExp(`below the accepted drop: ${weak}`));
+});
+
+test("--base fails a pull request that deletes a measured skill without saying so", () => {
+	const accuracy = repoBaseline();
+	// The base measured a skill this checkout doesn't have, as if the pull request deleted it.
+	const base = baseCheckout({ "baseline.json": JSON.stringify({ accuracy: { ...accuracy, "old-skill": 0.9 } }) });
+	const r = baseRun(headCheckout(), base);
+	assert.equal(r.gates["skills kept"].ok, false);
+	assert.match(r.gates["skills kept"].detail, /old-skill/);
+	const said = baseRun(headCheckout({ drops: JSON.stringify({ drops: [], removed: [{ skill: "old-skill", reason: "merged into osint" }] }) }), base);
+	assert.ok(said.gates["skills kept"].ok, said.gates["skills kept"].detail);
+	assert.match(said.gates["skills kept"].detail, /removed on purpose: old-skill/);
+	const bad = run(["skill", "eval", "--json", "--base", base, "--cases", join(headCheckout({ drops: JSON.stringify({ drops: [], removed: [{ skill: "old-skill" }] }) }), "skills-eval", "router-cases.jsonl")]);
+	assert.equal(bad.code, 1);
+	assert.match(bad.out, /removed entry 1 needs/);
 });
