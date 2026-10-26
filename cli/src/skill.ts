@@ -23,6 +23,8 @@ import { banner, c, sym } from "./ui.ts";
 /** Written under the frontmatter, so a later install knows the file is ours to replace. */
 const MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
 const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** A usable skill name: "none" is reserved for the router's "no skill fits". */
+const isName = (n: string) => NAME.test(n) && n !== "none";
 /** The skills that govern skill editing change only through a reviewed pull request. */
 const PROTECTED_SKILLS = new Set(["rsi", "kyraskillmaker"]);
 
@@ -31,6 +33,7 @@ export class SkillError extends Error {}
 /** Every name reaches a path, so every name is checked first: no "..", no slashes. */
 export function assertName(name: string): string {
 	if (!NAME.test(name) || name.length > 64) throw new SkillError(`"${name}" is not a skill name (lowercase-kebab-case).`);
+	if (name === "none") throw new SkillError('"none" is reserved: the router answers "none" when no skill fits.');
 	return name;
 }
 
@@ -102,7 +105,7 @@ function readIndex(): LocalIndex {
 	if (!existsSync(file)) return {};
 	try {
 		const data = JSON.parse(readFileSync(file, "utf8")) as LocalIndex;
-		return Object.fromEntries(Object.entries(data).filter(([name]) => NAME.test(name)));
+		return Object.fromEntries(Object.entries(data).filter(([name]) => isName(name)));
 	} catch {
 		return {};
 	}
@@ -210,7 +213,7 @@ function isLink(path: string): boolean {
 function localNames(): string[] {
 	if (!existsSync(localSkillsDir())) return [];
 	const index = readIndex();
-	return readdirSync(localSkillsDir()).filter((n) => NAME.test(n) && index[n] && existsSync(join(localSkillsDir(), n, "SKILL.md")));
+	return readdirSync(localSkillsDir()).filter((n) => isName(n) && index[n] && existsSync(join(localSkillsDir(), n, "SKILL.md")));
 }
 
 /** Bundled skills, plus local-only skills whose copy is usable. */
@@ -230,7 +233,7 @@ function skillText(name: string): string {
 /** Warnings for local edits: unusable, or based on an older bundled version. */
 function localWarnings(): string[] {
 	const index = readIndex();
-	const names = existsSync(localSkillsDir()) ? readdirSync(localSkillsDir()).filter((n) => NAME.test(n)) : [];
+	const names = existsSync(localSkillsDir()) ? readdirSync(localSkillsDir()).filter((n) => isName(n)) : [];
 	const warnings: string[] = [];
 	for (const name of names) {
 		const local = localText(name);

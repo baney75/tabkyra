@@ -533,3 +533,16 @@ test("an edit can't add a new section to an existing skill", () => {
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /adds section "Exceptions"/);
 });
+
+test("the name none is reserved: lint, apply and the router all refuse it", () => {
+	const dir = skill("none");
+	const linted = lint(dir);
+	assert.equal(linted.code, 1, linted.out);
+	assert.match(linted.out, /"none" is reserved/);
+	const home = mkdtempSync(join(root, "none-"));
+	const applied = runIn(home, "skill", "apply", dir, "--yes");
+	assert.equal(applied.code, 1, applied.out);
+	assert.match(applied.out, /reserved/);
+	assert.equal(runIn(home, "skill", "edit", "none").code, 1);
+	assert.equal(runIn(home, "skill", "versions", "none").code, 1);
+});

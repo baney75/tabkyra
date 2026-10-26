@@ -6,7 +6,7 @@
 // extra cases, including cases for a skill that isn't bundled yet.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -761,4 +761,19 @@ test("--router with a missing script is a clean error", () => {
 	assert.equal(r.code, 1);
 	assert.match(r.out, /No router script at/);
 	assert.doesNotMatch(r.out, /ENOENT|\n\s+at /);
+});
+
+test("the catalog script refuses a skill folder named none", () => {
+	const scratch = mkdtempSync(join(root, "catalog-none-"));
+	mkdirSync(join(scratch, "cli", "src"), { recursive: true });
+	mkdirSync(join(scratch, "cli", "scripts"), { recursive: true });
+	copyFileSync(join(here, "..", "scripts", "skills-catalog.mjs"), join(scratch, "cli", "scripts", "skills-catalog.mjs"));
+	for (const name of ["tabkyra", "none"]) {
+		mkdirSync(join(scratch, "skills", name), { recursive: true });
+		writeFileSync(join(scratch, "skills", name, "SKILL.md"), "x");
+	}
+	const r = spawnSync(process.execPath, [join(scratch, "cli", "scripts", "skills-catalog.mjs")], { encoding: "utf8" });
+	assert.equal(r.status, 1);
+	assert.match(r.stderr, /"none" is reserved/);
+	assert.equal(existsSync(join(scratch, "cli", "src", "skills-catalog.ts")), false);
 });

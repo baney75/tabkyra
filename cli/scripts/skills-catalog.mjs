@@ -13,6 +13,11 @@ const names = readdirSync(skillsDir)
 	.sort((a, b) => (a === "tabkyra" ? -1 : b === "tabkyra" ? 1 : a.localeCompare(b)));
 // SKILL_ plus the name: always a valid identifier ("1password" -> SKILL_1PASSWORD), and never
 // SKILLS, the export below. Names are lowercase-kebab-case, so no two map to the same one.
+// "none" is the router's answer when no skill fits; a skill by that name would look like no match.
+if (names.includes("none")) {
+	console.error('skills/none: the name "none" is reserved for "no skill fits". Rename the skill.');
+	process.exit(1);
+}
 const constant = (n) => `SKILL_${n.toUpperCase().replace(/-/g, "_")}`;
 const imports = [...names].sort().map((n) => `import ${constant(n)} from "../../skills/${n}/SKILL.md";`);
 const text = `/**

@@ -367,6 +367,8 @@ export function lintText(file: string, text: string, options: { reference?: bool
 		else {
 			for (const p of meta.problems) add(p.line, "frontmatter", p.message);
 			if (!meta.name || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(meta.name) || meta.name.length > 64) add(2, "frontmatter", "name must be lowercase-kebab-case, 64 characters or fewer.");
+			// The router answers "none" when no skill fits; a skill by that name would look like no match.
+			else if (meta.name === "none") add(2, "frontmatter", 'name "none" is reserved: the router answers "none" when no skill fits.');
 			else if (options.dirName && meta.name !== options.dirName) add(2, "frontmatter", `name "${meta.name}" must match its folder "${options.dirName}".`);
 			if (!meta.description) add(3, "frontmatter", "description is missing.");
 			else {

@@ -57,6 +57,9 @@ How a task names a skill ("<name> skill") decides what the name does:
   "tabkyra cli", not a request for the tabkyra skill.
 - **Requested:** otherwise ("use the osint skill on this landlord"), +6 for that skill.
 
+The name `none` is reserved for "no skill fits": lint, `skill apply`, `skill edit` and the
+catalog script refuse a skill by that name, so a real match can't look like no match.
+
 A skill matches when it scores at least 2.5 and has two pieces of evidence (specific words,
 word pairs, a phrase or a command), or one piece and a score of 4.5. Otherwise the answer is
 `none`: a small model does better with no skill than with the wrong one. A word that
