@@ -296,8 +296,20 @@ const EDIT_VERB = "(?:fix(?:es|ed|ing)?|repair\\w*|edit\\w*|updat\\w*|rewrit\\w*
 const GOVERNS = new RegExp(`\\b${EDIT_VERB}\\s+(?:(?:to|of|on|for)\\s+)?(?:(?:the|this|my|our|that|your)\\s+)?(?:[a-z0-9'-]+\\s+){0,2}$`);
 /** "..., fix it" after the mention, pointing back at it. */
 const POINTS_BACK = new RegExp(`\\b${EDIT_VERB}\\s+(?:it|them)\\b`);
-/** A word in the same clause before the mention that turns the request around. */
-const EXCLUDES = /\b(?:don'?t|do not|never|without|instead of|skip(?:ping)?|not|no|rather than|avoid(?:ing)?)\b/;
+/**
+ * A negation that governs the mention, within a few words before it: "don't use the osint
+ * skill", "never run my dorks skill", "without the osint skill", "instead of the dorks skill",
+ * "skip the tabkyra skill", "not the osint skill". A "no" or "not" elsewhere ("no rush, use
+ * the osint skill", "why not use the osint skill") doesn't.
+ */
+const DET = "(?:(?:the|this|that|my|our|your|any)\\s+)?(?:[a-z0-9'-]+\\s+)?";
+const EXCLUDES = new RegExp(
+	[
+		`\\b(?:don'?t|do not|never)\\s+(?:use|run|apply|follow|invoke|load)\\s+${DET}$`,
+		`\\b(?:without|instead of|rather than|skip(?:ping)?|avoid(?:ing)?)\\s+(?:(?:using|running|use|run)\\s+)?${DET}$`,
+		"\\bnot\\s+(?:(?:the|this|that|my|our|your)\\s+)?$",
+	].join("|"),
+);
 /** `tabkyra skill <subcommand>` is the Tabkyra CLI (read as "tabkyra cli"), not a mention of the tabkyra skill. */
 const CLI_SUBCOMMAND = /^\s+(?:install|list|print|lint|apply|revert|edit|eval|match|versions|rollback)\b/;
 
@@ -324,8 +336,8 @@ interface ReadTask {
  *   skill", "rewrite my old dorks skill", "the osint skill failed, repair it") or a slash
  *   command comes first: the name is dropped so it doesn't score for itself. An edit-like
  *   word elsewhere ("the latest updates", "review what you find") doesn't count.
- * - It is ruled out when a negation comes before it in the same clause ("don't use the
- *   osint skill", "instead of the dorks skill"): that skill is never returned.
+ * - It is ruled out when a negation governs it ("don't use the osint skill", "instead of the
+ *   dorks skill", see EXCLUDES): that skill is never returned.
  * - `tabkyra skill install` and the other subcommands are the CLI, not the tabkyra skill.
  * - Otherwise ("use the osint skill on this landlord") it is a request for that skill.
  */
@@ -352,8 +364,7 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 			const after = all.slice(offset + whole.length);
 			if (n.name === "tabkyra" && CLI_SUBCOMMAND.test(after)) return "tabkyra cli";
 			const before = all.slice(0, offset);
-			const clause = before.slice(Math.max(...[".", ",", ";", ":", "!", "?"].map((p) => before.lastIndexOf(p))) + 1);
-			if (EXCLUDES.test(clause)) {
+			if (EXCLUDES.test(before)) {
 				excluded.add(n.name);
 				return " ";
 			}

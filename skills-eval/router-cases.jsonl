@@ -268,3 +268,6 @@
 {"task": "tabkyra skill install wrote to the wrong folder, report it", "skill": "bug"}
 {"task": "tabkyra skill versions shows nothing for my local skill", "skill": "bug"}
 {"task": "how do I use tabkyra skill rollback", "skill": "none"}
+{"task": "I have no idea who runs this website so use the osint skill", "skill": "osint"}
+{"task": "Why not use the osint skill on this landlord?", "skill": "osint"}
+{"task": "No rush, use the osint skill", "skill": "osint"}
