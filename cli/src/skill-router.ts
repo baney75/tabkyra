@@ -51,6 +51,8 @@ interface Doc {
 export interface RouterIndex {
 	docs: Doc[];
 	idf: Map<string, number>;
+	/** Words held by few enough skills to count as evidence. */
+	specific: ReadonlySet<string>;
 	avg: Record<Field, number>;
 	/** Per skill, the pattern for "<name> skill" (or "<name> skills"), hyphen or space. */
 	named: Array<{ name: string; pattern: RegExp }>;
@@ -69,8 +71,8 @@ const PAIR_BONUS = 2;
 /** The floor for any match. */
 export const MIN_SCORE = 2.5;
 /** A match on one piece of evidence alone needs a word this specific ("osint", "dorks"). */
-export const SINGLE_SCORE = 4.5;
-/** A word in more than about a quarter of the skills is too common to count as evidence. */
+export const SINGLE_SCORE = 4.8;
+/** A word with lower IDF is too common to count as evidence: held by more than two of 13 skills (see buildRouterIndex). */
 const EVIDENCE_IDF = 1.5;
 
 const STOPWORDS = new Set(
@@ -266,6 +268,13 @@ function parse(skill: RouterSkill, names: ReadonlySet<string>): Doc {
 	};
 }
 
+/** The catalog size the score thresholds were calibrated on (skills-eval, 2026-10-25). */
+const REFERENCE_SKILLS = 13;
+
+function idfOf(n: number, k: number): number {
+	return Math.log(1 + (n - k + 0.5) / (k + 0.5));
+}
+
 /** Build the index once; matching is then a few map lookups per word. */
 export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 	const names = new Set(skills.map((s) => s.name));
@@ -276,15 +285,24 @@ export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 		for (const t of seen) df.set(t, (df.get(t) ?? 0) + 1);
 	}
 	const n = docs.length;
-	const idf = new Map([...df].map(([t, k]) => [t, Math.log(1 + (n - k + 0.5) / (k + 0.5))]));
-	for (const d of docs) for (const p of d.phrases) p.strong = terms(p.seq.join(" ")).some((t) => (idf.get(t) ?? 0) >= EVIDENCE_IDF);
+	// Plain IDF grows with the number of skills: in a larger catalog a word unique to one skill
+	// weighs more, and a word in three skills turns into evidence. Past REFERENCE_SKILLS, IDF is
+	// scaled so a word unique to one skill weighs what it did there, and a word or word pair
+	// counts as evidence only if it would have at REFERENCE_SKILLS (held by at most two skills).
+	// MIN_SCORE, SINGLE_SCORE and EVIDENCE_IDF keep their meaning as skills are added; smaller
+	// catalogs are unchanged.
+	const ref = Math.min(n, REFERENCE_SKILLS);
+	const scale = n > REFERENCE_SKILLS ? idfOf(REFERENCE_SKILLS, 1) / idfOf(n, 1) : 1;
+	const idf = new Map([...df].map(([t, k]) => [t, idfOf(n, k) * scale]));
+	const specific = new Set([...df].filter(([, k]) => idfOf(ref, k) >= EVIDENCE_IDF).map(([t]) => t));
+	for (const d of docs) for (const p of d.phrases) p.strong = terms(p.seq.join(" ")).some((t) => specific.has(t));
 	const pairDf = new Map<string, number>();
 	for (const d of docs) for (const p of d.pairs) pairDf.set(p, (pairDf.get(p) ?? 0) + 1);
-	const pairIdf = new Map([...pairDf].map(([p, k]) => [p, Math.log(1 + (n - k + 0.5) / (k + 0.5))]));
+	const pairIdf = new Map([...pairDf].map(([p, k]) => [p, idfOf(ref, k)]));
 	const mean = (f: Field) => (n ? docs.reduce((s, d) => s + d.len[f], 0) / n : 1) || 1;
 	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern.
 	const named = [...names].map((name) => ({ name, pattern: new RegExp(`\\b${name.replace(/-/g, "[- ]?")}\\s+skills?\\b`, "g") }));
-	return { docs, idf, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names, pairIdf };
+	return { docs, idf, specific, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names, pairIdf };
 }
 
 function containsSequence(haystack: string[], needle: string[]): boolean {
@@ -423,7 +441,7 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 			}
 			if (tf > 0) {
 				score += (idf * tf * (K1 + 1)) / (K1 + tf);
-				if (idf >= EVIDENCE_IDF) evidence++;
+				if (index.specific.has(t)) evidence++;
 			}
 		}
 		if (command === d.name || invoked.has(d.name)) {

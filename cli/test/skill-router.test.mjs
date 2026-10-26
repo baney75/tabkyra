@@ -422,6 +422,29 @@ test("common words alone never make a match, however many add up", () => {
 	assert.equal(top("harbor quartz lantern zephyr")[0], "shared-one");
 });
 
+test("adding unrelated skills doesn't turn a lone ordinary word into a match", () => {
+	const home = mkdtempSync(join(root, "grow-"));
+	// Twenty skills about things no case mentions: the catalog grows, so plain IDF would rise.
+	for (let i = 0; i < 20; i++) {
+		const name = `grown-${String.fromCharCode(97 + i)}`;
+		const word = `zq${String.fromCharCode(97 + i)}${String.fromCharCode(122 - i)}x`;
+		const dir = join(home, "drafts", name);
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, "SKILL.md"),
+			`---\nname: ${name}\ndescription: Handles ${word} and ${word}q records. Use when the user asks about ${word} or ${word}q.\n---\n# ${name}\n\n## When to use\n\n- The user asks about ${word}.\n\n## Steps\n\n1. **Read.** Read the ${word} record.\n2. **Answer.** Answer.\n\n## Done when\n\n- The ${word} question is answered.\n`,
+		);
+		assert.equal(run(["skill", "apply", dir, "--yes"], { home }).code, 0);
+	}
+	const top = (task) => JSON.parse(run(["skill", "match", "--json", task], { home }).stdout)[0].name;
+	// One ordinary word from a bundled skill ("good" in fix, "bug" in bug) stays below the bar.
+	assert.equal(top("What's a good name for a golden retriever puppy?"), "none");
+	assert.equal(top("There's a bug in my login handler; the session cookie isn't set"), "none");
+	// Real matches still route.
+	assert.equal(top("Find peer-reviewed studies on sleep and memory"), "academic-research");
+	assert.equal(top("compare the zqazx and zqazxq figures"), "grown-a");
+});
+
 test("an accepted drop is a floor, not an exemption, in the head eval and the base-code eval", () => {
 	const accuracy = repoBaseline();
 	const weak = Object.entries(accuracy).find(([name, v]) => name !== "none" && v <= 0.85)[0];
