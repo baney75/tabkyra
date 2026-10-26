@@ -53,6 +53,8 @@ export interface RouterIndex {
 	idf: Map<string, number>;
 	/** Words held by few enough skills to count as evidence. */
 	specific: ReadonlySet<string>;
+	/** The score one piece of evidence needs: SINGLE_SCORE, or SINGLE_SCORE_LARGE past REFERENCE_SKILLS. */
+	single: number;
 	avg: Record<Field, number>;
 	/** Per skill, the pattern for "<name> skill" (or "<name> skills"), hyphen or space. */
 	named: Array<{ name: string; pattern: RegExp }>;
@@ -71,7 +73,12 @@ const PAIR_BONUS = 2;
 /** The floor for any match. */
 export const MIN_SCORE = 2.5;
 /** A match on one piece of evidence alone needs a word this specific ("osint", "dorks"). */
-export const SINGLE_SCORE = 4.8;
+export const SINGLE_SCORE = 4.5;
+/**
+ * The same bar past REFERENCE_SKILLS. Scaled IDF still lets a mid-frequency word in an old skill
+ * score a little higher than it did at 13 skills, so one such word needs a little more.
+ */
+export const SINGLE_SCORE_LARGE = 4.8;
 /** A word with lower IDF is too common to count as evidence: held by more than two of 13 skills (see buildRouterIndex). */
 const EVIDENCE_IDF = 1.5;
 
@@ -289,8 +296,9 @@ export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 	// weighs more, and a word in three skills turns into evidence. Past REFERENCE_SKILLS, IDF is
 	// scaled so a word unique to one skill weighs what it did there, and a word or word pair
 	// counts as evidence only if it would have at REFERENCE_SKILLS (held by at most two skills).
-	// MIN_SCORE, SINGLE_SCORE and EVIDENCE_IDF keep their meaning as skills are added; smaller
-	// catalogs are unchanged.
+	// MIN_SCORE, the single-evidence bar and EVIDENCE_IDF keep their meaning as skills are added.
+	// The bar is SINGLE_SCORE up to REFERENCE_SKILLS and SINGLE_SCORE_LARGE past it. A catalog of
+	// REFERENCE_SKILLS or fewer scores and matches exactly as before.
 	const ref = Math.min(n, REFERENCE_SKILLS);
 	const scale = n > REFERENCE_SKILLS ? idfOf(REFERENCE_SKILLS, 1) / idfOf(n, 1) : 1;
 	const idf = new Map([...df].map(([t, k]) => [t, idfOf(n, k) * scale]));
@@ -302,7 +310,8 @@ export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 	const mean = (f: Field) => (n ? docs.reduce((s, d) => s + d.len[f], 0) / n : 1) || 1;
 	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern.
 	const named = [...names].map((name) => ({ name, pattern: new RegExp(`\\b${name.replace(/-/g, "[- ]?")}\\s+skills?\\b`, "g") }));
-	return { docs, idf, specific, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names, pairIdf };
+	const single = n > REFERENCE_SKILLS ? SINGLE_SCORE_LARGE : SINGLE_SCORE;
+	return { docs, idf, specific, single, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names, pairIdf };
 }
 
 function containsSequence(haystack: string[], needle: string[]): boolean {
@@ -469,19 +478,19 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 }
 
 /**
- * Whether a raw score counts as a match: two pieces of evidence, or one that reaches
- * SINGLE_SCORE. Common words alone never match, however many there are, and one ordinary
+ * Whether a raw score counts as a match: two pieces of evidence, or one that reaches the
+ * single-evidence bar (the index's `single`: SINGLE_SCORE, or SINGLE_SCORE_LARGE past 13 skills). Common words alone never match, however many there are, and one ordinary
  * shared word ("fix the test", "a bug in my code") is a coincidence.
  */
-export function isMatch(s: RawScore): boolean {
-	return s.score >= MIN_SCORE && (s.evidence >= 2 || (s.evidence >= 1 && s.score >= SINGLE_SCORE));
+export function isMatch(s: RawScore, single = SINGLE_SCORE): boolean {
+	return s.score >= MIN_SCORE && (s.evidence >= 2 || (s.evidence >= 1 && s.score >= single));
 }
 
 /** Ranked matches for a task, best first; an empty list means no skill fits. */
 export function matchSkills(index: RouterIndex, task: string, top = 3): SkillMatch[] {
 	const byName = new Map(index.docs.map((d) => [d.name, d]));
 	return scoreSkills(index, task)
-		.filter(isMatch)
+		.filter((s) => isMatch(s, index.single))
 		.slice(0, Math.max(1, top))
 		.map((s) => ({ name: s.name, score: Math.round(s.score * 100) / 100, description: oneLine(byName.get(s.name)?.description ?? "") }));
 }

@@ -61,18 +61,20 @@ The name `none` is reserved for "no skill fits": lint, `skill apply`, `skill edi
 catalog script refuse a skill by that name, so a real match can't look like no match.
 
 A skill matches when it scores at least 2.5 and has two pieces of evidence (specific words,
-word pairs, a phrase or a command), or one piece and a score of 4.8. Otherwise the answer is
-`none`: a small model does better with no skill than with the wrong one. A word held by more
-than two skills doesn't count as evidence (in a catalog under 13 skills the bar is set by
-IDF and is stricter), so common words alone never make a match, however high they add up.
+word pairs, a phrase or a command), or one piece and a score of 4.5 (4.8 past 13 skills).
+Otherwise the answer is `none`: a small model does better with no skill than with the wrong
+one. A word or word pair counts as evidence when its IDF is at least 1.5: held by at most two
+skills in a catalog of 11 or more, by only one in a catalog of 6 to 10, and by none in a
+catalog of 5 or fewer. So common words alone never make a match, however high they add up.
 
 Plain IDF rises as skills are added: in a larger catalog a word unique to one skill weighs
 more, and a word in three skills would turn into evidence. Past 13 skills, the catalog the
 thresholds were calibrated on, IDF is scaled so a word unique to one skill weighs what it
-did at 13, and a word or word pair is evidence only if at most two skills hold it. Without that, adding 19
-skills made one ordinary word in an old skill enough for a match ("a good name for a
-puppy" went to `fix`, "a bug in my login handler" to `bug`). A catalog of 13 skills or
-fewer scores exactly as before.
+did at 13, a word or word pair is evidence only if at most two skills hold it, and one piece
+of evidence needs a score of 4.8, because mid-frequency words still score a little higher than
+they did at 13. Without that, adding 19 skills made one ordinary word in an old skill enough
+for a match ("a good name for a puppy" went to `fix`, "a bug in my login handler" to `bug`).
+A catalog of 13 skills or fewer scores and matches exactly as before.
 
 The router indexes the skills in use: the bundled skills and the user's applied local
 copies (`tabkyra skill apply`). The index is built once per process and rebuilt only when

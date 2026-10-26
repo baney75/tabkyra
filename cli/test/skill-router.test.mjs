@@ -445,6 +445,43 @@ test("adding unrelated skills doesn't turn a lone ordinary word into a match", (
 	assert.equal(top("compare the zqazx and zqazxq figures"), "grown-a");
 });
 
+test("the single-evidence bar is 4.5 up to 13 skills and 4.8 past it", async () => {
+	const { build } = await import("esbuild");
+	const out = join(mkdtempSync(join(root, "router-unit-")), "router.mjs");
+	await build({ entryPoints: [join(here, "..", "src", "skill-router.ts")], bundle: true, platform: "node", format: "esm", outfile: out, logLevel: "silent" });
+	const r = await import(out);
+	assert.equal(r.SINGLE_SCORE, 4.5);
+	assert.equal(r.SINGLE_SCORE_LARGE, 4.8);
+	const skill = (name, body) => ({
+		name,
+		text: `---\nname: ${name}\ndescription: ${body}. Use when the user asks about ${body}.\n---\n# ${name}\n\n## When to use\n\n- ${body}.\n`,
+	});
+	// Filler skills share one common word, so only the target's own word can be evidence.
+	const catalog = (n, reps) => [
+		skill("target", `${Array(reps).fill("quillwort").join(" ")} plants and common matters`),
+		...Array.from({ length: n - 1 }, (_, i) => skill(`filler-${String.fromCharCode(97 + i)}`, `zz${String.fromCharCode(97 + i)}q records and common matters`)),
+	];
+	// Find a catalog where the target's one piece of evidence scores in [4.5, 4.8).
+	const inBand = (n) => {
+		for (let reps = 1; reps <= 12; reps++) {
+			const index = r.buildRouterIndex(catalog(n, reps));
+			const top = r.scoreSkills(index, "quillwort")[0];
+			if (top.name === "target" && top.evidence === 1 && top.score >= 4.5 && top.score < 4.8) return index;
+		}
+		return undefined;
+	};
+	for (const n of [13]) {
+		const index = inBand(n);
+		assert.ok(index, `a ${n}-skill catalog with a score between 4.5 and 4.8`);
+		assert.equal(index.single, 4.5);
+		assert.equal(r.matchSkills(index, "quillwort", 1)[0]?.name, "target", `${n} skills: one piece of evidence at 4.5 or more matches, as on main`);
+	}
+	const large = inBand(20);
+	assert.ok(large, "a 20-skill catalog with a score between 4.5 and 4.8");
+	assert.equal(large.single, 4.8);
+	assert.equal(r.matchSkills(large, "quillwort", 1).length, 0, "20 skills: the same evidence below 4.8 is none");
+});
+
 test("an accepted drop is a floor, not an exemption, in the head eval and the base-code eval", () => {
 	const accuracy = repoBaseline();
 	const weak = Object.entries(accuracy).find(([name, v]) => name !== "none" && v <= 0.85)[0];
