@@ -85,7 +85,12 @@ function historyDir(): string {
 }
 
 interface LocalIndex {
-	[name: string]: { baseSha256: string | null; appliedAt: string };
+	/**
+	 * `budget`: applied by a version that enforces the size budget (skill-lint.ts). An edit
+	 * applied before then is still used when it's over budget, with a warning; new applies
+	 * must fit.
+	 */
+	[name: string]: { baseSha256: string | null; appliedAt: string; budget?: boolean };
 }
 
 function sha256(text: string): string {
@@ -164,7 +169,7 @@ function changedProtectedSections(current: string, draft: string): string[] {
 }
 
 /** Why a local copy can't be used, or its text. */
-function localText(name: string): { text?: string; problem?: string } {
+function localText(name: string): { text?: string; problem?: string; overBudget?: boolean } {
 	const file = localFile(name);
 	if (!existsSync(file) && !isLink(file)) return {};
 	if (!readIndex()[name]) return { problem: `${file} wasn't added with tabkyra skill apply` };
@@ -172,7 +177,11 @@ function localText(name: string): { text?: string; problem?: string } {
 	if (isLink(file) || isLink(dirname(file))) return { problem: `${file} is a symlink` };
 	if (!lstatSync(file).isFile()) return { problem: `${file} is not a file` };
 	const text = readFileSync(file, "utf8");
-	const errors = lintText(file, text, { dirName: name }).filter((f) => f.severity === "error");
+	const all = lintText(file, text, { dirName: name }).filter((f) => f.severity === "error");
+	// The budget came after some edits were applied: those stay in use, with a warning.
+	const grandfathered = readIndex()[name]?.budget !== true;
+	const overBudget = all.some((f) => f.rule === "budget");
+	const errors = grandfathered ? all.filter((f) => f.rule !== "budget") : all;
 	if (errors.length) return { problem: `${file} fails lint (${errors[0].rule})` };
 	const bundled = SKILLS.get(name);
 	const missing = bundled === undefined ? [] : headings(bundled).filter((h) => !headings(text).includes(h));
@@ -181,7 +190,7 @@ function localText(name: string): { text?: string; problem?: string } {
 	if (added.length) return { problem: `${file} adds the section "${added[0]}"` };
 	const changed = bundled === undefined ? [] : changedProtectedSections(bundled, text);
 	if (changed.length) return { problem: `${file} changes the protected section "${changed[0]}"` };
-	return { text };
+	return { text, overBudget: overBudget && grandfathered };
 }
 
 /** Refuse to touch anything under a symbolic link: a link could lead outside Tabkyra's folders. */
@@ -226,6 +235,11 @@ function localWarnings(): string[] {
 	for (const name of names) {
 		const local = localText(name);
 		if (local.problem) warnings.push(`Your local copy of ${name} is not used: ${local.problem}. Fix it, re-apply it, or run tabkyra skill revert ${name}.`);
+		if (local.overBudget) {
+			warnings.push(
+				`Your local copy of ${name} (${localFile(name)}) is over the skill budget (lint rule "budget": 150 lines and 8,000 characters). It was applied before the budget, so it is still used; trim it and apply it again, since a new apply must fit.`,
+			);
+		}
 		const bundled = SKILLS.get(name);
 		const base = index[name]?.baseSha256;
 		if (local.text !== undefined && bundled !== undefined && base && base !== sha256(bundled)) {
@@ -411,7 +425,7 @@ export function applySkill(plan: ApplyPlan): { backup?: string; results: Install
 	renameSync(tmp, localFile(plan.name));
 	const index = readIndex();
 	const bundled = SKILLS.get(plan.name);
-	index[plan.name] = { baseSha256: bundled === undefined ? null : sha256(bundled), appliedAt: new Date().toISOString() };
+	index[plan.name] = { baseSha256: bundled === undefined ? null : sha256(bundled), appliedAt: new Date().toISOString(), budget: true };
 	writeIndex(index);
 	return { backup, results: installSkills({ force: false, all: false, only: [plan.name] }) };
 }

@@ -151,7 +151,9 @@ scripts and runs:
 
 1. `tabkyra skill lint skills`, which includes the `budget` rule: every SKILL.md is 150
    lines and 8,000 characters or fewer. `tabkyra skill apply` runs the same lint, so a local
-   edit can't grow a skill past the budget either.
+   edit can't grow a skill past the budget either. A local edit applied before the budget
+   existed is still used when it's over; `tabkyra skill list` and `install` warn, naming the
+   file and the rule, until it is trimmed and applied again.
 2. `tabkyra skill eval`, the seven gates above. `--router <script>` runs a router built
    from `cli/src/router-worker.ts` (`dist/router-worker.js`) in a child process instead of
    this one.

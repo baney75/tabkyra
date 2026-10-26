@@ -338,3 +338,29 @@ test("edit refuses to apply when the skill changed while the editor was open", (
 	assert.doesNotMatch(now, /from the editor/);
 	assert.match(readFileSync(join(home, ".config", "tabkyra", "skill-drafts", "dorks", "SKILL.md"), "utf8"), /from the editor/, "the draft is kept");
 });
+
+test("an edit applied before the budget stays in use with a warning; a new apply must fit", () => {
+	const home = newHome();
+	// Lay out a local edit the way an older version applied it: over budget, no budget flag.
+	const big = bundled("dorks").replace("## Done when", `${Array.from({ length: 60 }, (_, i) => `- Older lesson ${i}.`).join("\n")}\n\n## Done when`);
+	const dir = join(home, ".config", "tabkyra", "skills-local");
+	mkdirSync(join(dir, "dorks"), { recursive: true });
+	writeFileSync(join(dir, "dorks", "SKILL.md"), big);
+	const old = { dorks: { baseSha256: createHash("sha256").update(bundled("dorks")).digest("hex"), appliedAt: "2026-01-01T00:00:00.000Z" } };
+	writeFileSync(join(dir, "index.json"), JSON.stringify(old));
+	const list = run(home, ["skill", "list"]);
+	assert.match(list.out, /dorks.*\(your edit\)/);
+	assert.match(list.out, new RegExp(`${local(home, "dorks").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*over the skill budget \\(lint rule "budget"`));
+	assert.equal(run(home, ["skill", "print", "dorks", "--raw"]).stdout, big, "the older edit is still the one in use");
+	// Re-applying the same text now has to fit.
+	const draft = join(home, "drafts", "dorks");
+	mkdirSync(draft, { recursive: true });
+	writeFileSync(join(draft, "SKILL.md"), big);
+	const again = run(home, ["skill", "apply", draft, "--yes"]);
+	assert.equal(again.code, 1);
+	assert.match(again.out, /budget/);
+	// An over-budget copy recorded by this version (budget flag set) isn't used.
+	writeFileSync(join(dir, "index.json"), JSON.stringify({ dorks: { ...old.dorks, budget: true } }));
+	assert.match(run(home, ["skill", "list"]).out, /not used: .*fails lint \(budget\)/);
+	assert.equal(run(home, ["skill", "print", "dorks", "--raw"]).stdout, bundled("dorks"));
+});
