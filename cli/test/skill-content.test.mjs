@@ -38,8 +38,12 @@ test("notes: the rename helper leaves external URLs alone and takes titles liter
 	const linker = join(vault, "Links.md");
 	writeFileSync(
 		linker,
-		"[[Bio]] [[School/Bio|b]] ![[bio#Cells]] [local](School/Bio.md) [ext](https://example.org/Bio.md) [[MyBio]]\n",
+		[
+			"[[Bio]] [[School/Bio|b]] ![[bio#Cells]] [local](School/Bio.md) [ext](https://example.org/Bio.md) [[MyBio]]",
+			"| [[Bio\\|b]] | [ab](<School/Bio.md>) | [t](School/Bio.md \"lecture\") | [h](<School/Bio.md#Cells> 'x') |",
+		].join("\n"),
 	);
+	for (const bad of ["Bio #2", "Plan | v2", "a/b", "x:y"]) assert.equal(py("check", vault, "School/Bio.md", bad).status, 1, bad);
 	assert.equal(py("check", vault, "School/Bio.md", "Biology 101").status, 0);
 	renameSync(join(vault, "School", "Bio.md"), join(vault, "School", "Biology 101.md"));
 	assert.equal(py("relink", vault, "School/Bio.md", "Biology 101").status, 0);
@@ -49,6 +53,15 @@ test("notes: the rename helper leaves external URLs alone and takes titles liter
 	assert.match(text, /\[local\]\(School\/Biology%20101\.md\)/);
 	assert.match(text, /\[\[Biology 101\]\] \[\[School\/Biology 101\|b\]\] !\[\[Biology 101#Cells\]\]/);
 	assert.match(text, /\[\[MyBio\]\]/);
+	assert.ok(text.includes("| [[Biology 101\\|b]] |"), "a table-escaped alias link is relinked");
+	assert.ok(text.includes("[ab](<School/Biology 101.md>)"), "an angle-bracket destination is relinked");
+	assert.ok(text.includes('[t](School/Biology%20101.md "lecture")'), "a titled destination is relinked");
+	assert.ok(text.includes("[h](<School/Biology 101.md#Cells> 'x')"));
+	for (const left of ["| [[Bio\\|b]] |", "[a](<School/Bio.md>)", '[t](School/Bio.md "lecture")']) {
+		writeFileSync(join(vault, "Left.md"), `${left}\n`);
+		assert.equal(py("verify", vault, "School/Bio.md", "Biology 101").status, 1, `verify sees ${left}`);
+	}
+	rmSync(join(vault, "Left.md"));
 
 	// A title with regex metacharacters: a leftover link fails verify instead of passing.
 	writeFileSync(join(vault, "Q&A (2024).md"), "x\n");
@@ -65,7 +78,9 @@ test("video-editing: captions on a trimmed clip are shifted by the in point", ()
 	const shift = text.match(/^ffmpeg -copyts -i cap\.srt .* cap-clip\.srt$/m);
 	assert.ok(shift, "the worked example shifts the captions");
 	assert.match(text, /-i clip\.mp4 -i cap-clip\.srt /, "the shifted file is the one muxed");
-	assert.doesNotMatch(text, /-i clip\.mp4 -i cap\.srt /);
+	for (const line of text.split("\n").filter((l) => /-i cap\.srt|subtitles=cap\.srt/.test(l))) {
+		assert.match(line, /-output_ts_offset/, `only the shift reads the unshifted cap.srt: ${line.trim()}`);
+	}
 	assert.match(text, /-map 0:s:0 check\.srt/, "a soft track is checked by extracting it");
 	if (!has("ffmpeg")) return;
 	const dir = mkdtempSync(join(root, "srt-"));
@@ -77,7 +92,7 @@ test("video-editing: captions on a trimmed clip are shifted by the in point", ()
 	assert.deepEqual(times, ["00:00:01,000", "00:00:34,000"], "13 s and 46 s in the source land at 1 s and 34 s");
 });
 
-test("video-editing: clips that differ are normalized to one size, rate and audio format before a join", () => {
+test("video-editing: clips that differ, or have no audio, are normalized before a join", () => {
 	const text = skill("video-editing");
 	const norm = text.match(/`(ffmpeg -i a\.mp4 -vf "scale=[^`]+ n-a\.mp4)`/);
 	assert.ok(norm, "step 5 has a normalize command");
@@ -93,15 +108,22 @@ test("video-editing: clips that differ are normalized to one size, rate and audi
 		).status;
 	assert.equal(make("a.mp4", "1280x720", 24, 44100, "1"), 0);
 	assert.equal(make("b.mp4", "1920x1080", 30, 48000, "2"), 0);
-	for (const c of ["a", "b"]) {
-		const cmd = norm[1].replaceAll("a.mp4", `${c}.mp4`).replace("-crf 18", "-crf 18 -preset ultrafast");
+	const silence = text.match(/gets silence: add `([^`]+)`/);
+	assert.ok(silence, "step 5 says how a clip without audio gets silence");
+	const r0 = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=2", "-c:v", "libx264", "-preset", "ultrafast", "s.mp4"], { cwd: dir });
+	assert.equal(r0.status, 0);
+	for (const c of ["s", "a", "b"]) {
+		let cmd = norm[1].replaceAll("a.mp4", `${c}.mp4`).replace("-crf 18", "-crf 18 -preset ultrafast");
+		if (c === "s") cmd = cmd.replace("-i s.mp4", `-i s.mp4 ${silence[1]}`);
 		const r = spawnSync("bash", ["-c", cmd.replace(/^ffmpeg /, "ffmpeg -v error -y ")], { cwd: dir, encoding: "utf8" });
 		assert.equal(r.status, 0, r.stderr);
 	}
-	writeFileSync(join(dir, "list.txt"), "file 'n-a.mp4'\nfile 'n-b.mp4'\n");
+	writeFileSync(join(dir, "list.txt"), "file 'n-s.mp4'\nfile 'n-a.mp4'\nfile 'n-b.mp4'\n");
 	assert.equal(spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "joined.mp4"], { cwd: dir }).status, 0);
-	const probe = spawnSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", "joined.mp4"], { cwd: dir, encoding: "utf8" });
-	assert.ok(Math.abs(Number(probe.stdout) - 4) < 0.1, `joined length ${probe.stdout}`);
+	const probe = (sel) =>
+		Number(spawnSync("ffprobe", ["-v", "error", "-select_streams", sel, "-show_entries", "stream=duration", "-of", "csv=p=0", "joined.mp4"], { cwd: dir, encoding: "utf8" }).stdout);
+	assert.ok(Math.abs(probe("v:0") - 6) < 0.1, `joined video ${probe("v:0")}`);
+	assert.ok(Math.abs(probe("a:0") - 6) < 0.15, `joined audio ${probe("a:0")}, silent intro included`);
 });
 
 test("email-organization: read-back checks the row's own mail, and every count in the example was searched", () => {
@@ -132,11 +154,15 @@ test("office-docs: the Downloads snapshot goes to a private mktemp file, never a
 	assert.match(text, /rm -f "\[snap\]"/);
 });
 
-test("proton: a username in a Pass result row is list text, not a sign of an open item", () => {
+test("proton: a username in a Pass result row is list text; navigate and wait are allowed on Pass", () => {
 	const text = skill("proton");
 	assert.doesNotMatch(text, /shows a username, password or code, an item is open/);
 	assert.match(text, /Each result row shows a username or email under its title/);
 	assert.match(text, /an item's detail pane means an item is open/);
+	// Steps 1 and 2 navigate and wait on Pass; step 15 and Done when must allow that.
+	assert.match(text, /\(`status`, `navigate`, `wait` and `tabs_show` are fine\)/);
+	assert.doesNotMatch(text, /On pass\.proton\.me only `find`, `type`, `click` and `press` ran/);
+	assert.match(text, /On pass\.proton\.me no `get_page_text`, `get_page_html`, `screenshot` or `read_page` ran/);
 });
 
 test("skill-platform doc states the evidence rule at min(catalog size, 13) skills", () => {
