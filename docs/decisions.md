@@ -125,7 +125,8 @@ skill directly.
 The owner asked that skills not bloat context, "especially for the super small models"
 (2026-10-25). He set no number; the figures below are Claude's. Harnesses see only each skill's name and its one-line description. The full SKILL.md
 loads when the skill is invoked. Each first-party skill stays under 150 lines and
-8,000 characters (about 2,000 tokens). Claude first set 1,500 tokens and raised it the same
+8,000 characters (about 2,000 tokens; `BUDGET_LINES` and `BUDGET_CHARS` in
+`cli/src/skill-lint.ts`). Claude first set 1,500 tokens and raised it the same
 day, because every well-specified skill exceeded it; the owner hasn't ruled on the number. Enforced by the lint's `budget` rule, and longer material is
 split into separate skills, not appendices. The
 router (DC-3) picks at most one skill per task for small models. The `rsi` and `fix`

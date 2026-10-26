@@ -423,7 +423,7 @@ with any tool the agent uses. The side panel likewise talks to the provider you 
 and [private mode](#private-mode-and-bug-reports) limits which ones it may use.
 `tabkyra library` looks up each source you add at its DOI registry (or arXiv), OpenAlex and
 Crossref, and `tabkyra update` checks GitHub for releases. The side panel also fetches
-model details from models.dev and the provider you configure.
+model details from models.dev.
 
 **Can I add my own skill?** Yes, locally with `tabkyra skill apply`, or for everyone
 through a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) explains the gates. Skills with

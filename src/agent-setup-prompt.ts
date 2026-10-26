@@ -11,7 +11,7 @@ export function agentSetupPrompt(version: string): string {
 1. Note the directory you started in, then check that Node 20+ and git are installed: pwd && node -v && git --version
    Remember the directory pwd printed: it is my project.
 2. Install the CLI that matches the extension.
-   - First, if ~/tabkyra-src/tabkyra exists and git status there shows that the only change is skill text an earlier Tabkyra setup appended to its AGENTS.md, show me that diff and offer to undo it:
+   - First, if ~/tabkyra-src/tabkyra exists and git status there lists AGENTS.md as the only changed file, run git diff AGENTS.md there. If the diff only adds lines, starting with a "## Browser: Tabkyra" section an earlier Tabkyra setup appended, show me that diff and offer to undo it:
      (cd ~/tabkyra-src/tabkyra && git restore AGENTS.md)
      Run it only if I say yes.
    - If tabkyra is on PATH and tabkyra doctor reports no problems with the CLI or the build, skip the rest of this step and go to step 3. Otherwise:
@@ -26,7 +26,7 @@ export function agentSetupPrompt(version: string): string {
    - Any MCP client: a stdio server named "tabkyra" that runs ~/.config/tabkyra/tabkyra with the argument "mcp". JSON configs need the full path, not ~.
    - pi has no MCP client: run tabkyra pi-extension instead.
 5. Install the skills: tabkyra skill install
-   If this harness reads AGENTS.md instead of skill folders: cd back to the directory step 1 printed (my project, not the Tabkyra clone). If its AGENTS.md already has a "## Browser: Tabkyra" section, leave it as it is. Otherwise run tabkyra skill print >> AGENTS.md
+   If this harness reads AGENTS.md instead of skill folders: cd back to the directory step 1 printed (my project, not the Tabkyra clone); if you aren't sure it's my project's root, ask me. If its AGENTS.md already has a "## Browser: Tabkyra" section, leave it as it is. Otherwise run tabkyra skill print >> AGENTS.md
 6. Run tabkyra doctor and fix anything it reports with the command it prints.
 7. Restart or reload MCP servers if this harness needs it, then call the tabkyra status tool. Tell me whether it says connected.
 

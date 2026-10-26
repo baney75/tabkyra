@@ -35,7 +35,7 @@ test("the setup prompt refuses to build without a version to pin", () => {
 	assert.match(prompt, /git checkout v1\.2\.3/);
 	assert.match(prompt, /any local change, stop and ask me/);
 	// The existing-checkout branch comes before the clone, so an agent reading in order doesn't clone over it.
-	assert.ok(prompt.indexOf("tabkyra exists") < prompt.indexOf("git clone"), "existing checkout is handled before cloning");
+	assert.ok(prompt.indexOf("If ~/tabkyra-src/tabkyra exists: cd into it") < prompt.indexOf("git clone"), "existing checkout is handled before cloning");
 	// A working install elsewhere skips only the CLI install, never connecting this harness.
 	assert.match(prompt, /go to step 3\./);
 	assert.doesNotMatch(prompt, /skip to step [4-9]/);
@@ -45,7 +45,7 @@ test("the setup prompt refuses to build without a version to pin", () => {
 test("the setup prompt appends skills to the user's project AGENTS.md, not the clone's", () => {
 	// Step 2 leaves the shell in ~/tabkyra-src/tabkyra; appending there would dirty the clone and stop the next update.
 	const line = prompt.split("\n").find((l) => l.includes(">> AGENTS.md"));
-	assert.match(line, /cd back to the directory step 1 printed \(my project, not the Tabkyra clone\)\. If its AGENTS\.md already has a "## Browser: Tabkyra" section, leave it as it is\. Otherwise run tabkyra skill print >> AGENTS\.md/);
+	assert.match(line, /cd back to the directory step 1 printed \(my project, not the Tabkyra clone\); if you aren't sure it's my project's root, ask me\. If its AGENTS\.md already has a "## Browser: Tabkyra" section, leave it as it is\. Otherwise run tabkyra skill print >> AGENTS\.md/);
 	assert.match(prompt, /1\. Note the directory you started in[^\n]*pwd && node -v && git --version/);
 	// Clones dirtied by the old step: offer to restore, only on the user's yes.
 	// The restore offer comes before the doctor skip, so a working install still gets it, and the
@@ -57,10 +57,9 @@ test("the setup prompt appends skills to the user's project AGENTS.md, not the c
 });
 
 test("the setup prompt passes the skill security lint", () => {
-	// Appending to AGENTS.md is the one agent-config write the prompt makes, at the user's request.
 	// The two agent-config writes the prompt makes, each on its own line, only at the user's request:
 	// the append to the project's AGENTS.md and the offered restore of the clone's.
-	const allowed = (line) => /^\s+- First, if ~\/tabkyra-src\/tabkyra exists and git status there shows that the only change is skill text an earlier Tabkyra setup appended to its AGENTS\.md, show me that diff and offer to undo it:$/.test(line) || /Otherwise run tabkyra skill print >> AGENTS\.md$/.test(line);
+	const allowed = (line) => /^\s+- First, if ~\/tabkyra-src\/tabkyra exists and git status there lists AGENTS\.md as the only changed file, run git diff AGENTS\.md there\. If the diff only adds lines, starting with a "## Browser: Tabkyra" section an earlier Tabkyra setup appended, show me that diff and offer to undo it:$/.test(line) || /Otherwise run tabkyra skill print >> AGENTS\.md$/.test(line);
 	const findings = lintText("setup prompt", prompt, { reference: true }).filter((f) => !(f.rule === "config-tamper" && allowed(prompt.split("\n")[f.line - 1])));
 	assert.deepEqual(findings, [], findings.map((f) => `${f.rule}: ${f.message}`).join("\n"));
 	assert.doesNotMatch(prompt, /\|\s*(sh|bash)\b/);
