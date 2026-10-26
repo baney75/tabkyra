@@ -480,6 +480,16 @@ test("the single-evidence bar is 4.5 up to 13 skills and 4.8 past it", async () 
 	assert.ok(large, "a 20-skill catalog with a score between 4.5 and 4.8");
 	assert.equal(large.single, 4.8);
 	assert.equal(r.matchSkills(large, "quillwort", 1).length, 0, "20 skills: the same evidence below 4.8 is none");
+	// isMatch takes the bar from the index, so it agrees with matchSkills at every size.
+	assert.equal(r.isMatch.length, 2);
+	assert.equal(r.isMatch(large, r.scoreSkills(large, "quillwort")[0]), false);
+	assert.equal(r.isMatch(inBand(13), r.scoreSkills(inBand(13), "quillwort")[0]), true);
+	// The eval and the judge's router worker decide through matchSkills, never a bar of their own.
+	for (const file of ["skill-eval.ts", "router-worker.ts"]) {
+		const source = readFileSync(join(here, "..", "src", file), "utf8");
+		assert.match(source, /matchSkills\(index, task, 1\)/, file);
+		assert.doesNotMatch(source, /isMatch|SINGLE_SCORE/, file);
+	}
 });
 
 test("an accepted drop is a floor, not an exemption, in the head eval and the base-code eval", () => {

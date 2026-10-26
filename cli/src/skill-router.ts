@@ -479,18 +479,20 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 
 /**
  * Whether a raw score counts as a match: two pieces of evidence, or one that reaches the
- * single-evidence bar (the index's `single`: SINGLE_SCORE, or SINGLE_SCORE_LARGE past 13 skills). Common words alone never match, however many there are, and one ordinary
- * shared word ("fix the test", "a bug in my code") is a coincidence.
+ * single-evidence bar of the index the score came from (`index.single`: SINGLE_SCORE, or
+ * SINGLE_SCORE_LARGE past 13 skills). The bar comes only from the index, so no caller can judge
+ * a 32-skill score by the 13-skill bar. Common words alone never match, however many there are,
+ * and one ordinary shared word ("fix the test", "a bug in my code") is a coincidence.
  */
-export function isMatch(s: RawScore, single = SINGLE_SCORE): boolean {
-	return s.score >= MIN_SCORE && (s.evidence >= 2 || (s.evidence >= 1 && s.score >= single));
+export function isMatch(index: RouterIndex, s: RawScore): boolean {
+	return s.score >= MIN_SCORE && (s.evidence >= 2 || (s.evidence >= 1 && s.score >= index.single));
 }
 
 /** Ranked matches for a task, best first; an empty list means no skill fits. */
 export function matchSkills(index: RouterIndex, task: string, top = 3): SkillMatch[] {
 	const byName = new Map(index.docs.map((d) => [d.name, d]));
 	return scoreSkills(index, task)
-		.filter((s) => isMatch(s, index.single))
+		.filter((s) => isMatch(index, s))
 		.slice(0, Math.max(1, top))
 		.map((s) => ({ name: s.name, score: Math.round(s.score * 100) / 100, description: oneLine(byName.get(s.name)?.description ?? "") }));
 }
