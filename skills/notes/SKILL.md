@@ -43,19 +43,23 @@ For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, e
 5. **Rename: prefer Obsidian.** If the user has Obsidian open, ask them to rename the note
    there; with "Automatically update internal links" on, it fixes every link. Otherwise go
    on with steps 6 to 8. Rename in place only; a move to another folder is the user's job.
-6. **Rename: check for clashes.** `find "[vault]" -name "Old title.md"` must return one
-   file, and `grep -rn "aliases" "[vault]" --include=*.md | grep "Old title"` must return
-   nothing outside that note. If either fails, links may point to another note: stop and ask.
-7. **Rename: move the file and fix links.** `mv` the file to the new title in the same
-   folder. Write this to `relink.py` outside the vault and run
-   `python3 -I relink.py "[vault]" "Old title" "New title"`. It changes only exact targets:
-   `[[Old title]]`, `|`, `#` and embed forms, folder-qualified links and Markdown links.
+6. **Rename: check for clashes.** Obsidian matches note names in any case, so check that way.
+   `find "[vault]" -iname "Old title.md"` must return one file, and
+   `find "[vault]" -iname "New title.md"` must return nothing; a hit means the rename would
+   replace or shadow a note. `grep -rniE '^(aliases:.*[^a-z]|\s*- *"?)Old title("|,|\]|\s*$)' "[vault]" --include=*.md`
+   must return nothing outside that note. If any check fails, stop and ask.
+7. **Rename: move without overwriting, then fix links.**
+   `mv -n "[folder]/Old title.md" "[folder]/New title.md"`, then
+   `test -f "[folder]/New title.md" && test ! -f "[folder]/Old title.md"` must succeed. Write
+   this to `relink.py` outside the vault and run `python3 -I relink.py "[vault]" "Old title" "New title"`.
+   It changes only exact targets, in any case: `[[Old title]]`, `|`, `#` and embed forms,
+   folder-qualified links and Markdown links.
 
    ```python
    import pathlib, re, sys
    vault, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
-   wiki = re.compile(r"(!?\[\[(?:[^\]|#]*/)?)" + re.escape(old) + r"(\.md)?(?=\]\]|\||#)")
-   md = re.compile(r"(\]\((?:[^)\s]*/)?)" + re.escape(old.replace(" ", "%20")) + r"(\.md)(?=[)#])")
+   wiki = re.compile(r"(!?\[\[(?:[^\]|#]*/)?)" + re.escape(old) + r"(\.md)?(?=\]\]|\||#)", re.I)
+   md = re.compile(r"(\]\((?:[^)\s]*/)?)" + re.escape(old.replace(" ", "%20")) + r"(\.md)(?=[)#])", re.I)
    for p in pathlib.Path(vault).rglob("*.md"):
        if ".obsidian" in p.parts or ".trash" in p.parts:
            continue
@@ -67,10 +71,10 @@ For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, e
            print("updated", p)
    ```
 
-8. **Rename: verify.** This must print nothing (put the old title in both places):
-   `grep -rnE '\[\[([^]|#]*/)?Old title(\.md)?(\]\]|\||#)|\]\(([^)]*/)?Old%20title\.md' "[vault]" --include=*.md`.
-   Then `grep -rn "New title" "[vault]" --include=*.md` and check each updated file's links
-   read right, with text such as `[[Biology]]` unchanged.
+8. **Rename: verify.** This must print nothing (old title in both places):
+   `grep -rniE '\[\[([^]|#]*/)?Old title(\.md)?(\]\]|\||#)|\]\(([^)]*/)?Old%20title\.md' "[vault]" --include=*.md`.
+   Then check each updated file: `[[bio]]` and `[[BIO|biology]]` now point to the new title,
+   and `[[Biology]]` is unchanged.
 9. **Archive, don't delete.** Move notes the user wants gone to the vault's archive folder.
 10. **Verify.** `cat` the new note and `grep` the links you added.
 
@@ -91,7 +95,7 @@ For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, e
 
 - The note exists where the user's conventions put it, with no duplicate made.
 - It links to related notes, and a related note links back.
-- After any rename, no link points to the old title.
+- After any rename, no link points to the old title in any case, and no note was overwritten.
 - Nothing was deleted, shared or published.
 
 ## When something goes wrong
