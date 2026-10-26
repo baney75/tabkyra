@@ -48,8 +48,10 @@ under 40 lines. Tell the user the path the first time.
    then write the profile into that file.
 8. **Show the profile** to the user and ask what is wrong. Fix it. Close the tab you
    created with `tabs_close {"tabId":[the id from step 3]}`. Close no other tab.
-9. **Draft with it.** Read the profile, write with the `writing` skill's steps, then check
-   the draft against each profile line: length, greeting, sign-off, words used and avoided.
+9. **Draft with it.** Read the profile, draft the reply or note directly with the rules in
+   the `writing` skill's "Rules for the draft" (lead with the point, plain words, no invented
+   facts), then check the draft against each profile line: length, greeting, sign-off,
+   words used and avoided.
 10. **Hand over** the draft. Don't send it.
 
 ## Profile template

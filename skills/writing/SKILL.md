@@ -87,27 +87,29 @@ fill a document in Google Docs or Word online, use `office-docs` for the editor 
 
 ## Worked example
 
-The user says: "Write an email to my landlord. The heater has been broken since Monday and
-I want it fixed this week."
+The user pastes rough notes from a planning meeting and says: "Turn these into a one-page
+summary for my manager." The notes say: launch moved from May 3 to May 17; cause is the
+payment vendor's API change; Priya owns the vendor fix; QA needs one more week; open
+question is whether marketing keeps the May 3 email.
 
-Reader: the landlord. Purpose: book a repair this week.
-Facts: heater broken since Monday (from the user). Today's date from the system. The user's
-unit number, if known; otherwise `[unit number]`.
+Reader: the manager. Purpose: know the new date, why, who owns what, and the one decision
+needed. Facts: only the five items in the notes. No source, no claim.
 
-Draft:
+Outline: the new date and the ask first, then cause, owners, open question.
 
 ```
-Subject: Heater repair needed this week - Unit [unit number]
+Subject: Launch moves to May 17 - one decision needed
 
-Hi [landlord name],
+The launch moves from May 3 to May 17. One decision is needed from you: whether marketing
+still sends the May 3 announcement email.
 
-The heater in my unit has not worked since Monday. Could you send someone to repair it
-this week? I'm available [days and times the user can be home], or you can tell me when
-someone can come.
+Why: the payment vendor changed its API, and our checkout must be updated before launch.
+QA needs one more week after that fix.
 
-Thanks,
-[user name]
+Owners: Priya owns the vendor fix. [QA owner] owns the extra test week.
+
+Decision needed by [date]: keep, move or cancel the May 3 email.
 ```
 
-Needed from the user before sending: unit number, landlord name, and when they can be
-home. The draft states only the facts the user gave. Nothing was sent.
+Needed from the user: the QA owner and the decision deadline, which the notes don't give.
+Every other sentence traces to the notes. Nothing was sent.
