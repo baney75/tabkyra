@@ -9,12 +9,18 @@ steady four-on-the-floor sections, clean final hit, no vocals". It was then trim
 peak-limited, set to about -14 LUFS and encoded as AAC.
 
 **The model.** [ACE-Step/Ace-Step1.5](https://huggingface.co/ACE-Step/Ace-Step1.5/tree/19671f406d603126926c1b7e2adc169acbcade22)
-at revision `19671f406d603126926c1b7e2adc169acbcade22`. The repository is MIT-licensed. Every
-component the generator loaded ships inside it under that license: the `acestep-v15-turbo`
-diffusion model, the `acestep-5Hz-lm-1.7B` planner LM, the VAE and the bundled
-`Qwen3-Embedding-0.6B` text encoder. Upstream, Qwen3-Embedding-0.6B is Apache-2.0. The MIT
-license places no restriction on what the model generates. The model card, at that revision,
-says of its outputs:
+at revision `19671f406d603126926c1b7e2adc169acbcade22`. Every component the generator loaded
+ships inside that repository, and their licenses are:
+
+| Component | License |
+| --- | --- |
+| `acestep-v15-turbo` diffusion model | MIT (the repository's license) |
+| VAE | MIT (the repository's license) |
+| `acestep-5Hz-lm-1.7B` planner LM | MIT (the repository's license); the model card lists it as pretrained from Qwen3-1.7B, which is Apache-2.0 |
+| `Qwen3-Embedding-0.6B` text encoder | Apache-2.0 (Qwen's license; bundling it in an MIT repository doesn't relicense it) |
+
+Neither MIT nor Apache-2.0 restricts what the model generates. The model card, at that
+revision, says of its outputs:
 
 > Commercial-Ready: Unlike many models trained on ambiguous datasets, ACE-Step v1.5 is designed
 > for creators. You can strictly use the generated music for **commercial purposes**.

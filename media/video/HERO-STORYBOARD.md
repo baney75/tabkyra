@@ -41,7 +41,7 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
 
 ## 1. Cold open (B0–B3, 0.06–1.97 s)
 
-- The helm's ring draws itself over B0–B2 while the eight pegs light clockwise on 8th notes;
+- The helm's ring draws itself over B0–B2 while the eight pegs light clockwise, evenly over B0–B3 (one every 3/8 beat);
   the pointer pops at B3. Brass flash on the impact; a push from 1.4× to 1.0×.
 - **Out:** hard cut on B4.
 
@@ -88,7 +88,10 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
   (`navigate`), B53 results (`type`), B54 the hold form (`click`), B55 the filled form (both
   `fill` calls), B56 the confirmation (`click`). B57: the recorded `get_page_text {}` call and
   its result, "Hold placed for Ada Lovelace...", punch in; **"Filled."** (B58) **"Read back."**
-  (B59).
+  (B59). The calls are found by content in the recorded order (`catalogRunFrom` in `src/hero/claims.ts`);
+  the `//` labels on the two clicks ("Place hold", "Confirm hold") are the button names in the
+  recorded `read_page` the agent acted on, and the filled fields are checked against it too. The render fails if a step is
+  missing.
 - **Out:** cut on B61.
 
 ## 8. Refused (B61–B71, 29.15–34.36 s)
@@ -133,7 +136,7 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
 
 ## 13. End card (B110 to 57.6 s)
 
-- The helm assembles in one beat (pegs on 16th notes); the wordmark **Tabkyra** (B111); the
+- The helm assembles within one beat, B110–B111 (its eight pegs one every 1/8 beat); the wordmark **Tabkyra** (B111); the
   line **"You steer. Your agents work the tabs."** (B111.5–B112.5); `tabkyra setup` types on
   (B113) with "builds the extension, registers your browser, offers to add your agents"
   (B113.5); **dbaney.com/tabkyra** and github.com/baney75/tabkyra (B114). B120: the final hit
@@ -154,5 +157,7 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
   turned 11° and cropped off the edge, at 7% opacity on ink".
 - **Vertical layout.** Side-by-side shots stack; every beat is checked in the 9:16 cut.
 - **Loudness.** About -14 LUFS with a -1 dBTP ceiling, re-measured on the final MP4s.
-- **Re-captures.** The stamped lines, lint lines and router figures are read from the capture
-  by content and the render fails if one is missing.
+- **Re-captures.** Every stamped or highlighted claim is checked against the recording before
+  render: the refusal line and a non-zero exit, the retraction lines and exit 3, four lint
+  errors and a non-zero exit, the shipped skills' "✓ Clean." with no errors and exit 0, the
+  catalog calls in order, and the router figures. The render fails if one doesn't hold.

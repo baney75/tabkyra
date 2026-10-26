@@ -118,6 +118,7 @@ export const EndCard: React.FC = () => {
 	const at = useBeat();
 	const size = useSize();
 	const { vertical } = useLayout();
+	// The eight pegs light clockwise within one beat, B110 to B111 (one every 1/8 beat).
 	const step = (at(111) - at(110)) / 8;
 	const command = "tabkyra setup";
 	const typed = command.slice(0, Math.max(0, Math.floor((frame - at(113)) / 1.4)));

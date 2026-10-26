@@ -2,38 +2,19 @@ import { AbsoluteFill, useCurrentFrame } from "remotion";
 import { DATA } from "../data";
 import { C, FONT } from "../theme";
 import { useBeat } from "./beat";
+import { checkCli } from "./claims";
 import { Backdrop, CountUp, ease, Flash, shake, Stamp, useLayout, Whip, Words } from "./motion";
 import { Center, Term, useSize } from "./parts";
 
 const madeUp = DATA.cli.libraryMadeUp;
 const retracted = DATA.cli.libraryRetracted;
-const lint = DATA.cli.lintBad;
 
-/** The citation count the CLI printed, e.g. "cited by 3011". */
-const citedBy = (() => {
-	const m = retracted.out.match(/cited by (\d+)/);
-	if (!m) throw new Error("capture.json: the retracted add has no citation count");
-	return Number(m[1]);
-})();
+// Every line a stamp or highlight lands on is checked against the recorded run (claims.ts);
+// a recording that doesn't back REFUSED, FLAGGED, BLOCKED or "passes" fails the render.
+const { refusal, retractedTitle, retractedWarning, citedBy, lintErrors, lintLines, cleanLine } = checkCli(DATA.cli);
+const shipped = DATA.cli.lintShipped;
 
-/** A line of recorded output picked by its content; a capture without it fails the render. */
-const lineWith = (out: string, test: RegExp, what: string): string => {
-	const found = out.split("\n").find((l) => test.test(l));
-	if (!found) throw new Error(`capture.json: no ${what} line in the recorded output`);
-	return found;
-};
-
-/** The retracted add's title line and the line FLAGGED is stamped over. */
-const retractedTitle = lineWith(retracted.out, /^Added .*\[RETRACTED/, "retracted title");
-const retractedWarning = lineWith(retracted.out, /RETRACTED: don't cite/, "retraction warning");
-
-/** The lint errors, the SKILL.md lines they name, and the slice of the file shown around them. */
-const lintErrors = lint.out.split("\n").filter((l) => /\berror\b/.test(l));
-const lintLines = lintErrors.map((l) => Number(l.match(/SKILL\.md:(\d+)/)?.[1]));
-// The edit gives the errors four beats (B80–B83) before BLOCKED lands on B84.
-if (lintErrors.length !== 4 || lintLines.some((n) => !(n > 0))) {
-	throw new Error(`capture.json: expected 4 lint errors with line numbers, got ${lintErrors.length}`);
-}
+/** The SKILL.md slice shown around the lint errors. The edit gives them B80–B83 before BLOCKED on B84. */
 const skillFile = DATA.cli.badSkill.trimEnd().split("\n");
 // Two lines of context above the first flagged line and one below the last.
 const shownFrom = Math.max(1, Math.min(...lintLines) - 2);
@@ -55,7 +36,7 @@ export const Refused: React.FC = () => {
 						size={size(40, 34)}
 						lines={[
 							{ text: madeUp.shown, at: 0, typed: true },
-							{ text: madeUp.out, at: at(64), color: C.alarm },
+							{ text: refusal, at: at(64), color: C.alarm },
 						]}
 					/>
 					<div style={{ height: size(170, 200), display: "flex", alignItems: "center" }}>
@@ -173,8 +154,8 @@ export const Blocked: React.FC = () => {
 								width={size(1300, 1000)}
 								size={size(46, 40)}
 								lines={[
-									{ text: DATA.cli.lintShipped.shown, at: at(88), typed: true },
-									{ text: DATA.cli.lintShipped.out, at: at(89), color: C.tide },
+									{ text: shipped.shown, at: at(88), typed: true },
+									{ text: cleanLine, at: at(89), color: C.tide },
 								]}
 							/>
 							<Words words={["Every", "bundled", "skill", "passes."]} ats={[at(89), at(89) + 3, at(89) + 6, at(90)]} size={size(110, 100)} colors={[C.paper, C.paper, C.paper, C.tide]} />

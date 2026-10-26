@@ -6,11 +6,11 @@ import { Helm } from "./Helm";
 import { Backdrop, ease, Flash, shake, slam, useLayout, Whip, Words } from "./motion";
 import { Center, Label, PanelPart, Shot, useSize } from "./parts";
 
-/** Peg i lights on the ith 8th note after `start`. */
+/** Peg i lights `i * step` frames after `start`. */
 const pegsAt = (frame: number, start: number, step: number) =>
 	Array.from({ length: 8 }, (_, i) => ease(frame, start + i * step, 5));
 
-/** B0–B3: the helm assembles on the impact, pegs lighting clockwise on 8th notes. */
+/** B0–B3: the helm assembles on the impact, its eight pegs lighting clockwise evenly over B0–B3 (one every 3/8 beat). */
 export const ColdOpen: React.FC = () => {
 	const frame = useCurrentFrame();
 	const at = useBeat();

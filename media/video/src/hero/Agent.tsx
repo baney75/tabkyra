@@ -1,5 +1,5 @@
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
-import { args, argsWhere, DATA } from "../data";
+import { catalogRun, DATA } from "../data";
 import { C, FONT } from "../theme";
 import { BrowserWindow } from "../ui";
 import { useBeat } from "./beat";
@@ -159,17 +159,20 @@ export const Form: React.FC = () => {
 	const at = useBeat();
 	const size = useSize();
 	const steps = [
-		// Each cut shows the recorded call that produced its screenshot.
-		{ b: 52, src: "capture/catalog-home.jpg", call: args("navigate", 0) },
-		{ b: 53, src: "capture/catalog-results.jpg", call: args("type", 0) },
-		{ b: 54, src: "capture/catalog-hold.jpg", call: `${args("click", 0)}  // Place hold` },
-		{ b: 55, src: "capture/catalog-form.jpg", call: `${args("fill", 0)}\n${args("fill", 1)}` },
-		{ b: 56, src: "capture/catalog-done.jpg", call: `${args("click", 1)}  // Confirm hold` },
+		// Each cut shows the recorded call that produced its screenshot, found by content in
+		// order (catalogRunFrom in claims.ts); the // labels on the clicks are the button names
+		// from the recorded read_page the agent acted on.
+		{ b: 52, src: "capture/catalog-home.jpg", call: catalogRun.navigate },
+		{ b: 53, src: "capture/catalog-results.jpg", call: catalogRun.type },
+		{ b: 54, src: "capture/catalog-hold.jpg", call: catalogRun.clickHold },
+		{ b: 55, src: "capture/catalog-form.jpg", call: catalogRun.fills },
+		{ b: 56, src: "capture/catalog-done.jpg", call: catalogRun.clickConfirm },
 	];
 	const readBack = frame >= at(57);
 	const current = [...steps].reverse().find((s) => frame >= at(s.b)) ?? steps[0];
 	const local = frame - at(current.b);
-	const w = size(1500, 1000);
+	// Wide: leaves room under the shot for a two-line call panel (the fills).
+	const w = size(1360, 1000);
 	return (
 		<AbsoluteFill>
 			<Backdrop />
@@ -204,7 +207,7 @@ export const Form: React.FC = () => {
 					<Center gap={size(40, 50)} style={{ padding: size(100, 60) }}>
 						<div style={{ fontFamily: FONT.mono, fontSize: size(40, 36), color: C.paper }}>
 							<span style={{ color: C.brass }}>› </span>
-							{argsWhere("get_page_text", "Hold placed")}
+							{catalogRun.readBack}
 						</div>
 						<div
 							style={{

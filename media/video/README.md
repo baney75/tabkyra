@@ -62,19 +62,30 @@ prompt's message and choices, the tab group name, tab titles, URLs, every tool c
 and result, all CLI output and the router's matches and timing come from `public/capture/`.
 Drawn are the browser frame around the page screenshots, the box around the inline prompt, the
 panels that hold calls and terminal output, and the motion graphics: the helm, the stamps
-(REFUSED, FLAGGED, BLOCKED), the count-ups and the type. Lines the video stamps or highlights
-are found in the recorded output by their content, and the render fails if one is missing.
+(REFUSED, FLAGGED, BLOCKED), the count-ups and the type.
+
+Every claim a stamp or highlight makes is checked against the recording before render: the
+made-up DOI's refusal line and non-zero exit, the retraction lines and exit 3, the four lint
+errors and non-zero exit, the shipped skills' "✓ Clean." with no errors and exit 0, and the
+catalog calls, found by content in recorded order, each acting on the latest recorded
+`read_page`, with the `//` labels on the two clicks taken from that snapshot's button names. The
+checks live in `src/hero/claims.ts`; the scenes show the lines it returns, and the render fails if
+one doesn't hold. `npm test` runs the same checks on the real capture and on doctored copies (a
+doi.org outage, a failing shipped lint, an extra click before the hold) and expects each doctored
+copy to fail.
 
 ```bash
 cd media/video && npm install
+npm test                 # the checks above, on the real capture and on doctored copies
 npm run render:hero      # out/hero.mp4, out/hero-vertical.mp4, out/hero-poster.jpg
 npm run publish-hero     # copies all three to media/
 ```
 
 **Music.** `public/hero/music.m4a` is an instrumental made for this video on the maintainer's
 own machine (Parish1) with [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) at revision
-`19671f406d603126926c1b7e2adc169acbcade22`, seed 302. The model repository is MIT-licensed, which
-places no restriction on outputs, and its model card says "You can strictly use the generated
+`19671f406d603126926c1b7e2adc169acbcade22`, seed 302. Its components are MIT-licensed, except
+the bundled Qwen3-Embedding-0.6B text encoder, which is Apache-2.0; neither license restricts
+outputs, and the model card says "You can strictly use the generated
 music for **commercial purposes**." The track is distributed here under the repository's
 AGPL-3.0, like every other asset. Prompt, components and their licenses, and the quote's source
 are in [public/hero/NOTICE.md](public/hero/NOTICE.md). No paid or credit-based service was used.
