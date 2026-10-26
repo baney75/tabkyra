@@ -277,3 +277,4 @@
 {"task": "Don’t run the dorks skill, write me a plain search query", "skill": "none"}
 {"task": "Don’t use the tabkyra skill; fetch the URL directly", "skill": "none"}
 {"task": "Don’t apply the osint skill, just tell me what you know about the landlord", "skill": "none"}
+{"task": "Don't use the `osint` skill; do a background check on this landlord.", "skill": "none"}

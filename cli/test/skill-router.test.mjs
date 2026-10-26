@@ -710,3 +710,10 @@ export function matchSkills(index, task, top = 3) {
 	assert.match(r.out, /router process failed/);
 	assert.match(r.out, /ERR_ACCESS_DENIED|permission/i);
 });
+
+test("inline code around a skill name reads as the name, for requests and exclusions alike", () => {
+	const all = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "5", task]).stdout).map((m) => m.name);
+	assert.ok(!all("Don't use the `osint` skill; do a background check on this landlord.").includes("osint"));
+	assert.equal(all("Use the `dorks` skill to find PDFs about flood maps")[0], "dorks");
+	assert.notEqual(all("Fix the `osint` skill, it keeps failing on small models")[0], "osint");
+});

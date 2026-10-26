@@ -351,6 +351,8 @@ interface ReadTask {
 function readTask(index: RouterIndex, task: string): ReadTask {
 	// Curly apostrophes and quotes (smart punctuation) read as straight ones: "don’t" is "don't".
 	let text = task.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
+	// Inline code around a skill name ("the `osint` skill") reads as the bare name.
+	text = text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (index.names.has(inner) ? inner : whole));
 	let command: string | undefined;
 	let changesSkill = false;
 	const lead = /^\s*\/([a-z0-9-]+)(?=$|[\s:,;!?])/.exec(text);
