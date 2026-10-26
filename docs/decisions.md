@@ -187,17 +187,18 @@ The owner asked for a `visual-explainer` skill adapted from nicobailon/visual-ex
 - **Adapt, don't vendor.** A skill folder holds `SKILL.md` and a license only, under the
   D12 budget, so upstream's `references/` files, its CSS/JS kit, its renderer and its
   slide and video tooling are not copied. Their rules (figure choice, grid layout, shape
-  meanings, captions, motion restraint) are rewritten into one `SKILL.md`, and the MIT
-  notice with Nico Bailon's copyright sits in `skills/visual-explainer/LICENSE`. The skill
+  meanings, captions, motion restraint) are rewritten into one `SKILL.md`. The MIT notice
+  with Nico Bailon's copyright is at the end of that `SKILL.md`, because `tabkyra skill
+  install` copies only `SKILL.md`, and also in `skills/visual-explainer/LICENSE`. The skill
   is MIT; the rest of Tabkyra stays AGPL-3.0.
 - **Inline SVG, not Mermaid.** Upstream loads Mermaid, Chart.js and three.js from a CDN.
   The `artifacts` rules forbid outside scripts, and inlining Mermaid would add megabytes of
   layout code to every page for diagrams a model can draw by hand. Upstream itself makes
   hand-drawn SVG the default and Mermaid opt-in. A user's Mermaid source is redrawn as SVG
   and kept as text in the page.
-- **Upstream's checks are replaced by Tabkyra's**: serve locally, `navigate`,
-  `screenshot`, `read_console`, `read_network`, and a `run_js` count of uncaptioned
-  figures and unlabeled SVGs.
+- **Upstream's checks are replaced by Tabkyra's**: serve the page's own folder,
+  `navigate`, start `read_console` and `read_network` and reload, `screenshot`, and
+  `run_js` checks for captions, SVG labels, inline event attributes and 375px overflow.
 - **Link the mechanism dataset, never bundle it.** Its images were scraped from a YouTube
   channel, DMG-lib and Artobolevsky's book, partly under copyright, and its code repository
   states no license. `mechanism-design` cites the paper and points to the repository as a

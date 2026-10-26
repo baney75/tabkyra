@@ -60,14 +60,19 @@ for ideas only. Verify kinematics by calculation or in CAD.
    - Transmission angle mu, crank a, coupler b, rocker c, ground d, crank angle t:
      cos mu = (b^2 + c^2 - a^2 - d^2 + 2 a d cos t) / (2 b c). Keep mu between 40 and 140
      degrees over the whole turn.
+   - Rocker swing: at the two dead centres, cos phi = (c^2 + d^2 - (b + a)^2) / (2 c d) and
+     cos phi = (c^2 + d^2 - (b - a)^2) / (2 c d); the swing is the difference of the two phi.
    - Slider-crank: stroke = 2 x crank; connecting rod at least 3 x crank.
    - Cam: pressure angle 30 degrees or less for a translating follower; grow the base
      circle until it is. Cycloidal motion for high speed.
    - Gears: ratio = driven teeth / driver teeth; mating gears share a module; center
      distance = module x (N1 + N2) / 2; at least 17 teeth at 20 degrees pressure angle
-     to avoid undercut.
-   - Ratchet: put the pawl pivot so the tooth force line passes inside it, so load pulls
-     the pawl in.
+     to avoid undercut. Keep one spur stage at about 6:1 or less; for more, add stages and
+     multiply their ratios.
+   - Ratchet: put the pawl pivot on or near the tangent to the wheel at the tooth tip.
+     Shape the tooth face so its normal at the contact point passes between the pawl pivot
+     and the wheel center; then load pulls the pawl in. Check it on the sketch, and add a
+     spring that holds the pawl engaged.
 7. **Check the motion by calculation.** For a four-bar, sweep t from 0 to 359 degrees in a
    short script: at each step compute the diagonal z^2 = a^2 + d^2 - 2 a d cos t and
    cos mu from step 6. If the absolute value of cos mu exceeds 1, the linkage does not
@@ -80,7 +85,9 @@ for ideas only. Verify kinematics by calculation or in CAD.
    a clearance coupon first. Export STL in millimeters and check it in the slicer.
 10. **Report.** Mechanism and reference link, dimensions, M, Grashof, mu range, output
     motion, and which checks passed. Say "calculated", "checked in CAD" or "not checked"
-    for each; never call it working before a print moved.
+    for each; never call it working before a print moved. These checks are kinematic only:
+    add "strength: not checked", and if the part holds a load that can fall or hurt
+    someone (winch, hoist, brake, lift), say a printed part is not proven safe for it.
 
 ## Done when
 
