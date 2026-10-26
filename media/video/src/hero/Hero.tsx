@@ -1,6 +1,6 @@
-import { AbsoluteFill, Audio, interpolate, staticFile, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, staticFile } from "remotion";
 import { Moment, Form, TabGroup } from "./Agent";
-import { BEATS, HERO_FRAMES, Seg } from "./beat";
+import { BEATS, Seg } from "./beat";
 import { Blocked, Flagged, Refused } from "./Checks";
 import { Finish } from "./motion";
 import { Build, ColdOpen, Gap, Line } from "./Open";
@@ -11,14 +11,10 @@ import { EndCard, Router, WorksWith } from "./Outro";
  * cuts land on the music. `Hero` (16:9) and `HeroVertical` (9:16) render this same edit.
  */
 export const Hero: React.FC = () => {
-	const { fps } = useVideoConfig();
 	return (
 		<AbsoluteFill style={{ background: "#0F1B24" }}>
-			<Audio
-				src={staticFile("hero/music.m4a")}
-				// The master already ends cleanly at 57.4 s; a short fade keeps the end click-free.
-				volume={(f) => interpolate(f, [HERO_FRAMES - fps * 0.4, HERO_FRAMES], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })}
-			/>
+			{/* The master ends cleanly: a 0.2 s fade-out ending at 57.6 s, the video's last frame. */}
+			<Audio src={staticFile("hero/music.m4a")} />
 			<Seg name="Cold open" start={0} end={4}>
 				<ColdOpen />
 			</Seg>

@@ -6,8 +6,8 @@ import music from "./music.json";
 // Every cut and slam is a beat index into the measured beat map (scripts/analyze_music.py).
 export const BEATS: number[] = music.beats;
 export const FPS = 30;
-/** The video holds the end card past the final hit (B120) and the music's end at 57.4 s. */
-export const HERO_FRAMES = Math.round(59 * FPS);
+/** The video ends with the music: the master is trimmed to its end (57.6 s) and fades itself out. */
+export const HERO_FRAMES = Math.round(music.duration * FPS);
 
 /** The frame a beat lands on, rounded to the nearest frame. */
 export const beatFrame = (b: number): number => {
