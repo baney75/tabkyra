@@ -34,7 +34,8 @@ works the tabs.
 
 <p align="center">
   <a href="media/demo.mp4"><img src="media/demo-poster.jpg" alt="Tabkyra demo video: the agent asks before a new site, works in its own tab group, fills a form, checks sources and lints skills" width="760"></a>
-  <br><sub><a href="media/demo.mp4">Watch the 85-second demo</a> (MP4, no sound needed). Recorded from a real run by <code>scripts/demo/capture-video.mjs</code>; source in <a href="media/video"><code>media/video</code></a>.</sub>
+  <br><sub><a href="media/demo.mp4">Watch the 85-second demo</a> (MP4, no sound needed). Recorded from a real run by <code>scripts/demo/capture-video.mjs</code>; source in <a href="media/video"><code>media/video</code></a>.
+  <br>Short version with music: <a href="media/hero.mp4">58-second hero cut</a> (<a href="media/hero-vertical.mp4">vertical 9:16</a>).</sub>
 </p>
 
 **Credit where it's due.** The agent bridge is the work of **[0xSero](https://github.com/0xSero)**

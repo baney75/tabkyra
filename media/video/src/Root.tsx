@@ -2,6 +2,9 @@ import "./theme";
 import { Composition, Folder, Still } from "remotion";
 import { DEMO_FRAMES, Demo, SCENES } from "./Demo";
 import { Poster } from "./Poster";
+import { HERO_FRAMES } from "./hero/beat";
+import { Hero } from "./hero/Hero";
+import { HeroPoster } from "./hero/HeroPoster";
 import { AsksFirst } from "./scenes/AsksFirst";
 import { BrowserWork } from "./scenes/BrowserWork";
 import { EndCard } from "./scenes/EndCard";
@@ -14,6 +17,9 @@ export const RemotionRoot: React.FC = () => (
 	<>
 		<Composition id="Demo" component={Demo} durationInFrames={DEMO_FRAMES} fps={30} width={1920} height={1080} />
 		<Still id="Poster" component={Poster} width={1280} height={720} defaultProps={{ scale: 2 / 3 }} />
+		<Composition id="Hero" component={Hero} durationInFrames={HERO_FRAMES} fps={30} width={1920} height={1080} />
+		<Composition id="HeroVertical" component={Hero} durationInFrames={HERO_FRAMES} fps={30} width={1080} height={1920} />
+		<Still id="HeroPoster" component={HeroPoster} width={1280} height={720} defaultProps={{ scale: 2 / 3 }} />
 		<Folder name="Scenes">
 			<Composition id="Title" component={Title} durationInFrames={SCENES.title} fps={30} width={1920} height={1080} />
 			<Composition id="AsksFirst" component={AsksFirst} durationInFrames={SCENES.asks} fps={30} width={1920} height={1080} />

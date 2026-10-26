@@ -48,3 +48,51 @@ check the captions still match before publishing.
 
 Fonts are Instrument Serif, Instrument Sans and JetBrains Mono under the OFL; their licenses
 are in `public/fonts/`.
+
+## Hero video
+
+`media/hero.mp4` (1920×1080) and `media/hero-vertical.mp4` (1080×1920, the same edit for
+social), both H.264 with AAC audio at 30 fps and 58 s, plus `media/hero-poster.jpg`
+(1280×720). The shot plan is in [HERO-STORYBOARD.md](HERO-STORYBOARD.md); the source is
+`src/hero/`, registered as the `Hero`, `HeroVertical` and `HeroPoster` compositions. Every frame
+that looks like the product is a capture from `public/capture/` or output from
+`capture.json`. The helm, stamps (REFUSED, FLAGGED, BLOCKED), count-ups and type are motion
+graphics on top.
+
+```bash
+cd media/video && npm install
+npm run render:hero      # out/hero.mp4, out/hero-vertical.mp4, out/hero-poster.jpg
+npm run publish-hero     # copies all three to media/
+```
+
+**Music.** `public/hero/music.m4a` is an instrumental made for this video on Donovan's own
+machine (Parish1) with [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5)
+(`acestep-v15-turbo` with the 1.7B planner LM, model revision
+`19671f406d603126926c1b7e2adc169acbcade22`), seed 302, 60 s, with this prompt: "High-energy
+electronic trap instrumental, 126 BPM, cinematic brass and synth lead, intro build with riser
+and filtered drums, big drop with heavy 808 bass and hard-hitting drums, triumphant launch
+trailer energy, steady four-on-the-floor sections, clean final hit, no vocals". The model and
+its code are MIT-licensed, and its model card states that generated music can be used
+commercially. No paid or credit-based service was used.
+
+Five takes were generated (a 30 s test and four 60 s takes) and compared by analysis rather
+than by ear: tempo, beat regularity, an energy curve per second and where the drop lands.
+Seed 302 was the only take with every part the edit needs: an impact in the first second, a
+quieter build, a full second of silence before a +13 dB drop at 15.3 s, two drum breaks and
+a clean end at 57.4 s, all on a steady 126 BPM grid. Of the others, two were flat with no
+build or drop, and one ran at 99 BPM. Whisper heard no words in it.
+
+The master was trimmed to 57.6 s, peak-limited and set to about -14 LUFS integrated with a
+true peak under -1 dBTP, then encoded as AAC. To rebuild the beat map the edit reads:
+
+```bash
+ffmpeg -i public/hero/music.m4a -ac 1 -ar 22050 /tmp/hero-music.wav
+python3 scripts/analyze_music.py /tmp/hero-music.wav src/hero/music.json   # needs librosa
+```
+
+Every cut and slam in `src/hero/` is a beat index into that map, so a new track only needs a
+new map (and the scenes re-checked).
+
+**The skill router slot.** Segment 12 (`RouterSlot` in `src/hero/Outro.tsx`, beats 92–95)
+is reserved for the skill router, which isn't merged yet. Until it is, it shows the side
+panel's setup prompt button.
