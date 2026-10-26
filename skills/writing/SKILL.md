@@ -1,6 +1,6 @@
 ---
 name: writing
-description: Draft and edit long-form documents - reports, proposals, essays, guides, instructions, announcements and write-ups from a transcript or rough outline - by fixing the reader and purpose, outlining, cutting and checking every fact. Use when the user asks to draft, restructure, edit, tighten or shorten a report, proposal, essay, guide, manual or announcement, make wordy prose clearer, or turn a transcript into a report or summary. Not for short emails, texts, cover letters, thank-you notes, poems or stories.
+description: Draft and edit long-form documents - reports, proposals, essays, guides, instructions, announcements and write-ups from a transcript or rough outline - by fixing the reader and purpose, outlining, cutting and checking every number and name. Use when the user asks to draft, restructure, edit, tighten or shorten a report, proposal, essay, guide, manual or announcement, make wordy prose clearer, or turn a transcript into a report or summary. Not for short emails, texts, cover letters, thank-you notes, poems or stories.
 license: AGPL-3.0
 ---
 

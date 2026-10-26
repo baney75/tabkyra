@@ -69,7 +69,7 @@ IDF and is stricter), so common words alone never make a match, however high the
 Plain IDF rises as skills are added: in a larger catalog a word unique to one skill weighs
 more, and a word in three skills would turn into evidence. Past 13 skills, the catalog the
 thresholds were calibrated on, IDF is scaled so a word unique to one skill weighs what it
-did at 13, and evidence is still "held by at most two skills". Without that, adding 19
+did at 13, and a word or word pair is evidence only if at most two skills hold it. Without that, adding 19
 skills made one ordinary word in an old skill enough for a match ("a good name for a
 puppy" went to `fix`, "a bug in my login handler" to `bug`). A catalog of 13 skills or
 fewer scores exactly as before.
@@ -157,8 +157,8 @@ Matching takes about 0.2 ms at p95 and the index build about 20 ms on the CI run
 0.1 ms and under 10 ms on an Apple-silicon Mac).
 
 With the 19 skills from pull request #19 (32 skills, measured 2026-10-25): on the tuned set of
-483 cases, top-1 93.3% (387 of 415) and false invokes 0% (0 of 68); on the 110 held-out cases,
-top-1 88.5% (85 of 96) and false invokes 0% (0 of 14). The top-1 gate needs 374 of 415.
+490 cases, top-1 93.3% (389 of 417) and false invokes 0% (0 of 73); on the 110 held-out cases,
+top-1 88.5% (85 of 96) and false invokes 0% (0 of 14). The top-1 gate needs 376 of 417.
 
 ## CI gates
 
