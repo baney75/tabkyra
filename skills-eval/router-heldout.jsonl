@@ -47,3 +47,64 @@
 {"task": "Write a limerick about a cat", "skill": "none"}
 {"task": "What's going on with my Kubernetes pods restarting?", "skill": "none"}
 {"task": "Review this SQL migration for mistakes", "skill": "none"}
+{"task": "Put numbered comments on this screenshot of the signup form so the dev knows what to change", "skill": "annotation"}
+{"task": "Highlight the parts of page 2 of the lease PDF that talk about pets and add my notes", "skill": "annotation"}
+{"task": "Mark up our homepage with callouts for everything that looks off and give me a list of the notes", "skill": "annotation"}
+{"task": "Cut the dead air out of the first minute of my screen recording and export an mp4", "skill": "video-editing"}
+{"task": "Add subtitles to interview.mp4 from the srt file I made", "skill": "video-editing"}
+{"task": "Shrink this 4K clip down to 1080p for Instagram and keep the audio", "skill": "video-editing"}
+{"task": "Find a footprint for the BME280 sensor and check it against the datasheet", "skill": "pcb-design"}
+{"task": "My KiCad DRC shows unconnected items, how do I fix them before ordering boards?", "skill": "pcb-design"}
+{"task": "Which distributor has the STM32F103C8T6 in stock and what does it cost for 25?", "skill": "pcb-design"}
+{"task": "Archive all the LinkedIn notifications in my Gmail and make a filter so they skip my inbox", "skill": "email-organization"}
+{"task": "Sort my Outlook inbox into folders for bills, school and work", "skill": "email-organization"}
+{"task": "Which emails in my inbox from the last week still need a reply from me?", "skill": "email-organization"}
+{"task": "Turn my rough notes into a clean two-page project report", "skill": "writing"}
+{"task": "Edit this grant proposal draft so it's tighter and the main ask comes first", "skill": "writing"}
+{"task": "Restructure my user guide so the steps are in order and the headings make sense", "skill": "writing"}
+{"task": "Draft my reply to Sam the way I normally write, check my sent mail for how I sound", "skill": "writing-voice"}
+{"task": "Learn my writing style from my essays in Google Docs", "skill": "writing-voice"}
+{"task": "Make this email sound more like me", "skill": "writing-voice"}
+{"task": "How long is the walk from the train station to the museum?", "skill": "maps"}
+{"task": "Get me driving directions to Indianapolis avoiding tolls", "skill": "maps"}
+{"task": "Find a 24 hour pharmacy near me in Columbus", "skill": "maps"}
+{"task": "Turn this spreadsheet of addresses into a GeoJSON file with lat and lon", "skill": "map-data"}
+{"task": "Query OpenStreetMap for every playground in Ann Arbor and export a CSV", "skill": "map-data"}
+{"task": "My KML has the points in the wrong place, I think latitude and longitude are swapped", "skill": "map-data"}
+{"task": "What was Brazil's GDP growth rate last year according to the World Bank?", "skill": "world-data"}
+{"task": "Chart the share of people with internet access in India since 2000 with sources", "skill": "world-data"}
+{"task": "How many people live in Lagos according to UN data?", "skill": "world-data"}
+{"task": "Prove that the square root of 2 is irrational", "skill": "mathematics"}
+{"task": "Find the derivative of x^3 sin x and verify it", "skill": "mathematics"}
+{"task": "Check my work on this integral, I got 2/3 for the integral of x^2 from 0 to 1", "skill": "mathematics"}
+{"task": "What's the molecular weight of glucose and its formula?", "skill": "chemistry"}
+{"task": "Is it safe to store hydrogen peroxide next to bleach? Check the SDS", "skill": "chemistry"}
+{"task": "How many moles are in 10 grams of calcium carbonate?", "skill": "chemistry"}
+{"task": "What does the hemoglobin beta protein do and where is it found?", "skill": "biology"}
+{"task": "Give me the taxonomy of the red fox from kingdom to species", "skill": "biology"}
+{"task": "Find the UniProt accession for human myoglobin", "skill": "biology"}
+{"task": "What does ClinVar say about rs80357906?", "skill": "genetics"}
+{"task": "Where is the HTT gene and what variant causes Huntington's?", "skill": "genetics"}
+{"task": "How common is the rs4988235 lactase persistence variant?", "skill": "genetics"}
+{"task": "Add a note to my Obsidian vault about today's lecture on mitochondria", "skill": "notes"}
+{"task": "Find all my Obsidian notes tagged #project and link them from an index note", "skill": "notes"}
+{"task": "Make a new page in Notion for my book notes on Atomic Habits", "skill": "notes"}
+{"task": "Make a Google Doc for the meeting agenda with headings for each topic", "skill": "office-docs"}
+{"task": "Create an Excel online sheet that tracks my hours with a total at the bottom", "skill": "office-docs"}
+{"task": "Export my Google Slides deck as a PowerPoint file", "skill": "office-docs"}
+{"task": "Find the receipt email from Amazon in my Proton Mail", "skill": "proton"}
+{"task": "Create a share link in Proton Drive for my vacation photos folder", "skill": "proton"}
+{"task": "What do I have on my Proton calendar tomorrow?", "skill": "proton"}
+{"task": "Save the color palette from my portfolio site into my design library", "skill": "design-library"}
+{"task": "Show me the type pairings I've saved before", "skill": "design-library"}
+{"task": "Use the brand kit I saved for the bakery on this flyer", "skill": "design-library"}
+{"task": "Collect five examples of good onboarding screens with links and their licenses", "skill": "reference"}
+{"task": "Can I use this icon set from GitHub in a paid app?", "skill": "reference"}
+{"task": "I want my site to feel like Stripe's without copying it, find references", "skill": "reference"}
+{"task": "Come up with a name for my lawn care business and check it isn't trademarked", "skill": "branding"}
+{"task": "Make a brand kit with colors, fonts and logo ideas for my podcast", "skill": "branding"}
+{"task": "Write a tagline and pick brand colors for my food truck", "skill": "branding"}
+{"task": "Write a thank-you email to my coworker for covering my shift", "skill": "none"}
+{"task": "What's the square root of 144?", "skill": "none"}
+{"task": "Convert 5 miles to kilometers", "skill": "none"}
+{"task": "Sort these hex color codes by brightness", "skill": "none"}
