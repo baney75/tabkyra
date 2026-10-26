@@ -152,25 +152,42 @@ scripts and runs:
 1. `tabkyra skill lint skills`, which includes the `budget` rule: every SKILL.md is 150
    lines and 8,000 characters or fewer. `tabkyra skill apply` runs the same lint, so a local
    edit can't grow a skill past the budget either.
-2. `tabkyra skill eval`, the seven gates above.
+2. `tabkyra skill eval`, the seven gates above. `--router <script>` runs a router built
+   from `cli/src/router-worker.ts` (`dist/router-worker.js`) in a child process instead of
+   this one.
 3. `cli/test/skill-router.test.mjs` and `cli/test/skill-platform.test.mjs`.
-4. On a pull request, CI builds a judge from both branches and runs
-   `tabkyra skill eval --base <base checkout>` from the pull request's checkout.
+4. On a pull request that changes `cli/src/skill-eval.ts` or `cli/src/skill-router.ts`, CI
+   fails unless a maintainer adds the `skill-judge-change` label (only maintainers can add
+   labels). Those files are the judge and what it measures most. CI can't judge a change to
+   its own judge: a weakened gate would pass in its own pull request and then judge every
+   later one, so a person reviews it.
+5. On every pull request, CI builds a judge from both branches and runs
+   `tabkyra skill eval --base <base files> --router <script>`.
 
    | From the pull request (what is judged) | From the base branch (the judge) |
    | --- | --- |
    | `skills/`, with the catalog regenerated from it by `cli/scripts/skills-catalog.mjs` | `cli/src/skill-eval.ts`: every gate's logic and threshold |
-   | `skills-eval/`: case files, `baseline.json`, `accepted-drops.json` | the rest of the CLI (`skill.ts`, `index.ts`) |
-   | `cli/src/skill-router.ts` | the base branch's own `skills-eval/` files, for the comparisons |
+   | `skills-eval/`: case files, `baseline.json`, `accepted-drops.json` | the rest of the CLI (`skill.ts`, `index.ts`), built with the base router |
+   | `cli/src/skill-router.ts`, built alone into the base's `cli/src/router-worker.ts` | the base branch's own `skills-eval/` files, for the comparisons |
 
-   A pull request therefore can't loosen a gate, in its constants or its logic, because its
-   `skill-eval.ts` never runs here. A router improvement can still merge: the base gates
-   judge the pull request's router. If the pull request's `skill-router.ts` doesn't
-   type-check against the base's `skill-eval.ts` and CLI, the router and the eval API
-   changed together; CI fails with that message, with no fallback, and a maintainer reviews
-   it. The regenerated catalog means new skills are indexed and removed ones don't break the
-   build, and CI checks the judge indexed as many skills as `skills/` holds. It fails when
-   the pull request:
+   The pull request's router runs in a child process of its own. The judge sends it skill
+   texts and tasks as JSON over stdin and gets back one ranking per task; no judge code runs
+   in the router's process, so a router can't patch the judge (say, its `Array.prototype`).
+   The router is passed as code under Node's permission model, so it can't read or write
+   files or start processes, and before it starts CI moves both case files out of every
+   checkout to a folder only the judge reads. Every answer is checked: one ranking per task,
+   each a real skill or `none`.
+
+   That limits what a router can do, not what it is. A router written to game its eval can
+   still do it without reading anything, for example by carrying the public case texts in its
+   own source. The real control is review: the `skill-judge-change` label above, and
+   `.github/CODEOWNERS` on these files.
+
+   If the pull request's `skill-router.ts` doesn't type-check against the base's
+   `skill-eval.ts`, `router-worker.ts` and CLI, the router and the eval API changed
+   together; CI fails with that message, with no fallback. The regenerated catalog means new
+   skills are indexed and removed ones don't break the build, and CI checks the judge
+   indexed as many skills as `skills/` holds. It fails when the pull request:
    - removed or relabeled a case from either case file;
    - lowered a skill's value in `baseline.json` below the base branch's, or dropped it,
      without an accepted drop;
@@ -187,12 +204,12 @@ scripts and runs:
      included) over all of its own case files and its own baseline, judged with its own
      router. Skills it adds need no base cases, but they are held to these gates.
 
-   The scorer's own constants in `skill-router.ts` may change in a pull request; that is how
-   routing improves, and the base gates measure the result. The threshold check compares
-   the constants' declarations, so a stricter threshold can merge; the gate logic itself
-   comes from the base, and a change to it takes effect only after it merges, which is why
-   `.github/CODEOWNERS` requires a maintainer for `skills-eval/` (`accepted-drops.json` included),
-   `skill-eval.ts`, `skill-router.ts` and the catalog script.
+   The router may improve in a pull request (with the label), and the base gates measure the
+   result. The threshold check compares the constants' declarations, so a stricter threshold
+   can merge; a change to gate logic takes effect only after it merges, which is why it needs
+   the label and why `.github/CODEOWNERS` requires a maintainer for `skills-eval/`
+   (`accepted-drops.json` included), `skill-eval.ts`, `skill-router.ts`,
+   `router-worker.ts` and the catalog script.
 
 ## Versions
 

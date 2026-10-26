@@ -246,11 +246,11 @@ const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
 	debug: { flags: [], positional: 0 },
 	mcp: { flags: [], positional: 0 },
 	"pi-extension": { flags: [], positional: 1 },
-	skill: { flags: ["--force", "--all", "--raw", "--yes", "--json", "--top", "--to", "--cases", "--base", "--update-baseline", "--draft-only"], positional: 64 },
+	skill: { flags: ["--force", "--all", "--raw", "--yes", "--json", "--top", "--to", "--cases", "--base", "--router", "--update-baseline", "--draft-only"], positional: 64 },
 };
 
 /** Options that take a value (`--top 3` or `--top=3`); the value isn't a positional argument. */
-const VALUE_FLAGS = new Set(["--top", "--to", "--cases", "--base"]);
+const VALUE_FLAGS = new Set(["--top", "--to", "--cases", "--base", "--router"]);
 
 function checkArgs(command: string, args: string[]): void {
 	const accepts = ACCEPTS[command];
@@ -370,7 +370,7 @@ async function main(): Promise<void> {
 				apply: { flags: ["--yes"], max: 1 },
 				revert: { flags: [], max: 1 },
 				match: { flags: ["--json", "--top"], max: 64 },
-				eval: { flags: ["--json", "--update-baseline", "--cases", "--base"], max: 0 },
+				eval: { flags: ["--json", "--update-baseline", "--cases", "--base", "--router"], max: 0 },
 				versions: { flags: ["--json"], max: 1 },
 				rollback: { flags: ["--to", "--yes"], max: 1 },
 				edit: { flags: ["--yes", "--draft-only"], max: 1 },
@@ -382,7 +382,7 @@ async function main(): Promise<void> {
 			}
 			if (!sub || !spec) {
 				throw new UsageError(
-					'Usage: tabkyra skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only]',
+					'Usage: tabkyra skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] [--router <script>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only]',
 				);
 			}
 			for (const name of VALUE_FLAGS) {
@@ -400,6 +400,7 @@ async function main(): Promise<void> {
 				to: option("--to"),
 				cases: option("--cases"),
 				base: option("--base"),
+				router: option("--router"),
 			});
 			return;
 		}

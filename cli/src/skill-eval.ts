@@ -20,8 +20,70 @@
  * reviews (CODEOWNERS). So a pull request can't lower its own bar, in one step or many.
  */
 
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { buildRouterIndex, matchSkills, type RouterSkill } from "./skill-router.ts";
+
+/** Rank every task: the top skill (or "none") per task, plus timings. */
+export type Ranker = (skills: RouterSkill[], tasks: string[], rounds: number) => { buildMs: number; top: string[]; timesMs: number[] };
+
+/** The router in this process: what `tabkyra skill eval` uses by default. */
+export const inProcessRanker: Ranker = (skills, tasks, rounds) => {
+	const started = performance.now();
+	const index = buildRouterIndex(skills);
+	const buildMs = performance.now() - started;
+	const top: string[] = [];
+	const timesMs: number[] = [];
+	for (let r = 0; r < rounds; r++) {
+		for (const task of tasks) {
+			const t0 = performance.now();
+			const name = matchSkills(index, task, 1)[0]?.name ?? "none";
+			timesMs.push(performance.now() - t0);
+			if (r === 0) top.push(name);
+		}
+	}
+	return { buildMs, top, timesMs };
+};
+
+/**
+ * A router built as its own script (cli/src/router-worker.ts), run in a child process under
+ * Node's permission model, given as code: it can't read or write any file or start processes. It gets skill texts and tasks, never labels, and none of the judge's code runs
+ * in its process. Every answer is checked before a gate sees it.
+ */
+export function processRanker(file: string): Ranker {
+	// The script is passed as code, so the router process needs no file access at all.
+	const source = readFileSync(file, "utf8");
+	return (skills, tasks, rounds) => {
+		const permission = process.allowedNodeEnvironmentFlags.has("--permission") ? "--permission" : "--experimental-permission";
+		const r = spawnSync(process.execPath, [permission, "--input-type=module", "-e", source], {
+			input: JSON.stringify({ skills, tasks, rounds }),
+			encoding: "utf8",
+			maxBuffer: 256 * 1024 * 1024,
+			timeout: 300_000,
+			env: { PATH: process.env.PATH ?? "" },
+		});
+		const lines = (r.stderr || String(r.error ?? "")).trim().split("\n");
+		const why = (lines.find((l) => /\bERR_[A-Z_]+|Error\b/.test(l)) ?? lines[0] ?? "").trim();
+		if (r.status !== 0) throw new EvalError(`The router process failed (exit ${r.status ?? r.signal}): ${why || "no output"}`);
+		let reply: { buildMs?: unknown; top?: unknown; timesMs?: unknown };
+		try {
+			reply = JSON.parse(r.stdout);
+		} catch {
+			throw new EvalError("The router process didn't answer with JSON.");
+		}
+		const names = new Set([...skills.map((s) => s.name), "none"]);
+		const top = reply.top;
+		const times = reply.timesMs;
+		if (!Array.isArray(top) || top.length !== tasks.length || !top.every((n) => typeof n === "string" && names.has(n))) {
+			throw new EvalError("The router process answered with the wrong number of rankings, or named a skill that doesn't exist.");
+		}
+		if (!Array.isArray(times) || !times.every((t) => typeof t === "number" && Number.isFinite(t) && t >= 0) || typeof reply.buildMs !== "number") {
+			throw new EvalError("The router process answered without valid timings.");
+		}
+		return { buildMs: reply.buildMs, top: top as string[], timesMs: times as number[] };
+	};
+}
 
 export const TOP1_MIN = 0.9;
 export const FALSE_INVOKE_MAX = 0.05;
@@ -143,14 +205,13 @@ function percentile(sorted: number[], p: number): number {
 const round = (n: number, places = 3) => Math.round(n * 10 ** places) / 10 ** places;
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
-/** Top-1 and false invokes of `cases` that name a known skill or none. */
-function scoreSet(match: (task: string) => string, cases: EvalCase[], names: Set<string>): SetScore {
-	const usable = cases.filter((c) => c.skill === "none" || names.has(c.skill));
+/** Top-1 and false invokes of `usable` cases, given the router's answer for each. */
+function scoreSet(answers: string[], usable: EvalCase[]): SetScore {
 	const misses: SetScore["misses"] = [];
 	let correct = 0;
 	let falseInvokes = 0;
-	for (const c of usable) {
-		const got = match(c.task);
+	for (const [i, c] of usable.entries()) {
+		const got = answers[i];
 		if (got === c.skill) {
 			if (c.skill !== "none") correct++;
 		} else {
@@ -178,33 +239,32 @@ export interface EvalOptions {
 	floors?: ReadonlyMap<string, number>;
 	/** Check the none cases' baseline too; default true. */
 	checkNone?: boolean;
+	/** Who ranks the tasks; default the router in this process. */
+	ranker?: Ranker;
 }
 
 /** Run every case through a fresh index of `skills` and check each gate. */
 export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Baseline, heldout?: EvalCase[], options: EvalOptions = {}): EvalReport {
-	const started = performance.now();
-	const index = buildRouterIndex(skills);
-	const buildMs = performance.now() - started;
 	const names = new Set(skills.map((s) => s.name));
-	const usable = cases.filter((c) => c.skill === "none" || names.has(c.skill));
-	const skipped = cases.filter((c) => c.skill !== "none" && !names.has(c.skill)).map((c) => ({ line: c.line, skill: c.skill }));
-	const top = (task: string) => matchSkills(index, task, 1)[0]?.name ?? "none";
+	const known = (c: EvalCase) => c.skill === "none" || names.has(c.skill);
+	const usable = cases.filter(known);
+	const heldUsable = heldout?.filter(known) ?? [];
+	const skipped = cases.filter((c) => !known(c)).map((c) => ({ line: c.line, skill: c.skill }));
+	// One call ranks every task, held-out included; the gates below work only from the answers.
+	const ranked = (options.ranker ?? inProcessRanker)(skills, [...usable, ...heldUsable].map((c) => c.task), ROUNDS);
+	const answers = ranked.top.slice(0, usable.length);
+	const buildMs = ranked.buildMs;
+	const times = [...ranked.timesMs];
 
 	const perSkill: EvalReport["perSkill"] = {};
 	for (const name of [...names, "none"]) perSkill[name] = { cases: 0, correct: 0, accuracy: 0 };
 	const misses: EvalReport["misses"] = [];
-	const times: number[] = [];
-	for (let r = 0; r < ROUNDS; r++) {
-		for (const c of usable) {
-			const t0 = performance.now();
-			const got = top(c.task);
-			times.push(performance.now() - t0);
-			if (r > 0) continue;
-			const entry = perSkill[c.skill];
-			entry.cases++;
-			if (got === c.skill) entry.correct++;
-			else misses.push({ task: c.task, expected: c.skill, got });
-		}
+	for (const [i, c] of usable.entries()) {
+		const got = answers[i];
+		const entry = perSkill[c.skill];
+		entry.cases++;
+		if (got === c.skill) entry.correct++;
+		else misses.push({ task: c.task, expected: c.skill, got });
 	}
 	for (const [name, entry] of Object.entries(perSkill)) {
 		entry.accuracy = entry.cases ? entry.correct / entry.cases : 0;
@@ -219,7 +279,7 @@ export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Bas
 	const none = perSkill.none;
 	const falseInvoke = none.cases ? 1 - none.accuracy : 0;
 	const speed = { buildMs: round(buildMs), p50Ms: round(percentile(times, 0.5), 4), p95Ms: round(percentile(times, 0.95), 4), maxMs: round(times.at(-1) ?? 0, 4), matches: times.length };
-	const held = heldout ? scoreSet(top, heldout, names) : undefined;
+	const held = heldout ? scoreSet(ranked.top.slice(usable.length), heldUsable) : undefined;
 
 	const covered = options.covered ?? names;
 	const checked = (name: string) => (name === "none" ? options.checkNone !== false : covered.has(name));
@@ -365,6 +425,7 @@ export function runBaseCheck(
 	skills: RouterSkill[],
 	head: BaseFiles & { evalSource?: string },
 	base: BaseFiles,
+	ranker?: Ranker,
 ): { ok: boolean; skills: number; gates: Gate[]; report?: EvalReport } {
 	const gates: Gate[] = [];
 	const key = (c: EvalCase) => `${c.skill}\u0000${c.task}`;
@@ -450,6 +511,7 @@ export function runBaseCheck(
 			floors: acceptedValue,
 			// An accepted drop for none replaces its baseline with the floor; false invokes stay gated.
 			checkNone: !acceptedValue.has("none"),
+			ranker,
 		});
 		const failed = report.gates.filter((g) => !g.ok && !(g.gate.startsWith("held-out") && base.heldout === undefined));
 		gates.push({
@@ -463,7 +525,7 @@ export function runBaseCheck(
 	// pull request's baseline claims, skills it adds included, and have enough cases.
 	if (head.cases !== undefined && base.cases !== undefined) {
 		const floors = new Map(parseDrops(head.drops).map((d) => [d.skill, d.value]));
-		const all = runEval(skills, parseCases(head.cases), headBaseline, head.heldout === undefined ? undefined : parseCases(head.heldout, "router-heldout.jsonl"), { floors });
+		const all = runEval(skills, parseCases(head.cases), headBaseline, head.heldout === undefined ? undefined : parseCases(head.heldout, "router-heldout.jsonl"), { floors, ranker });
 		const failed = all.gates.filter((g) => !g.ok);
 		gates.push({
 			gate: "base-code full eval",

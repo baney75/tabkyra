@@ -553,33 +553,34 @@ test("the catalog script makes valid, distinct identifiers for any skill name", 
 });
 
 /**
- * The CI base-code build in miniature: this checkout's CLI and skill-eval.ts (the judge), with
- * `routerSource` in place of cli/src/skill-router.ts (the pull request's router).
+ * The CI judge in miniature: this checkout's CLI (the judge, with its skill-eval.ts) runs
+ * `skill eval --base --router`, and `routerSource` (the pull request's skill-router.ts) is
+ * built into cli/src/router-worker.ts as a script of its own, run in a child process.
  */
 async function baseCodeWith(routerSource) {
 	const { build } = await import("esbuild");
-	const dir = mkdtempSync(join(root, "base-code-"));
+	const dir = mkdtempSync(join(root, "router-"));
 	const router = join(dir, "skill-router.ts");
 	writeFileSync(router, routerSource);
-	const out = join(dir, "index.mjs");
+	const worker = join(dir, "router-worker.mjs");
 	await build({
-		entryPoints: [join(here, "..", "src", "index.ts")],
+		entryPoints: [join(here, "..", "src", "router-worker.ts")],
 		bundle: true,
 		platform: "node",
 		format: "esm",
-		outfile: out,
-		loader: { ".md": "text", ".pub": "text" },
+		outfile: worker,
 		logLevel: "silent",
 		plugins: [{ name: "pr-router", setup: (b) => b.onResolve({ filter: /skill-router\.ts$/ }, () => ({ path: router })) }],
 	});
 	return (head, base) => {
-		const r = spawnSync(process.execPath, [out, "skill", "eval", "--json", "--base", base, "--cases", join(head, "skills-eval", "router-cases.jsonl")], {
-			cwd: repo,
-			encoding: "utf8",
-			env: { HOME: mkdtempSync(join(root, "home-")), PATH: dirname(process.execPath), NO_COLOR: "1" },
-		});
-		const outJson = JSON.parse(r.stdout);
-		return { code: r.status, gates: Object.fromEntries(outJson.gates.map((g) => [g.gate, g])) };
+		const r = run(["skill", "eval", "--json", "--base", base, "--router", worker, "--cases", join(head, "skills-eval", "router-cases.jsonl")]);
+		let out;
+		try {
+			out = JSON.parse(r.stdout);
+		} catch {
+			return { code: r.code, out: r.out, gates: {} };
+		}
+		return { code: r.code, out: r.out, gates: Object.fromEntries(out.gates.map((g) => [g.gate, g])) };
 	};
 }
 
@@ -678,4 +679,34 @@ test("--base fails a pull request that deletes a measured skill without saying s
 	const bad = run(["skill", "eval", "--json", "--base", base, "--cases", join(headCheckout({ drops: JSON.stringify({ drops: [], removed: [{ skill: "old-skill" }] }) }), "skills-eval", "router-cases.jsonl")]);
 	assert.equal(bad.code, 1);
 	assert.match(bad.out, /removed entry 1 needs/);
+});
+
+test("the PR's router runs in its own process: patching the judge's built-ins does nothing", async () => {
+	// A router that makes every "every" return true. In the judge's process this would turn
+	// every gate green; in its own process it changes only itself.
+	const patched = `Array.prototype.every = function () { return true; };\n${routerSource}`;
+	const wrong = Array.from({ length: 40 }, (_, i) => `{"task": "Convert this JSON file number ${i} to YAML", "skill": "dorks"}`).join("\n");
+	const r = (await baseCodeWith(patched))(headCheckout({ cases: `${readFileSync(casesFile, "utf8")}${wrong}\n` }), baseCheckout());
+	assert.equal(r.code, 1, r.out);
+	assert.equal(r.gates["base-code full eval"].ok, false);
+});
+
+test("the PR's router can't read the labels: a router that memorises the case file fails", async () => {
+	const head = headCheckout();
+	const labels = join(head, "skills-eval", "router-cases.jsonl");
+	assert.ok(readFileSync(labels, "utf8").length > 0, "the file is there to steal");
+	// A router that answers every case from the labelled file.
+	const cheat = `import { readFileSync as readLabels } from "node:fs";
+const LABELS = new Map(readLabels(${JSON.stringify(labels)}, "utf8").split("\\n").filter(Boolean).map((l) => { const c = JSON.parse(l); return [c.task, c.skill]; }));
+${routerSource.replace("export function matchSkills(", "function realMatchSkills(")}
+export function matchSkills(index, task, top = 3) {
+	const label = LABELS.get(task);
+	if (label) return label === "none" ? [] : [{ name: label, score: 99, description: "" }];
+	return realMatchSkills(index, task, top);
+}
+`;
+	const r = (await baseCodeWith(cheat))(head, baseCheckout());
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /router process failed/);
+	assert.match(r.out, /ERR_ACCESS_DENIED|permission/i);
 });

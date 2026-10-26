@@ -14,7 +14,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { which } from "./harness.ts";
-import { EvalError, formatBaseline, parseBaseline, parseCases, parseDrops, runBaseCheck, runEval } from "./skill-eval.ts";
+import { EvalError, formatBaseline, parseBaseline, parseCases, parseDrops, processRanker, type Ranker, runBaseCheck, runEval } from "./skill-eval.ts";
 import { formatFindings, lintPath, lintText, parseFrontmatter } from "./skill-lint.ts";
 import { buildRouterIndex, matchSkills, oneLine, type RouterIndex, type RouterSkill, type SkillMatch } from "./skill-router.ts";
 import { SKILLS } from "./skills-catalog.ts";
@@ -698,11 +698,12 @@ export interface SkillFlags {
 	json?: boolean;
 	updateBaseline?: boolean;
 	draftOnly?: boolean;
-	/** Values of --top, --to, --cases and --base. */
+	/** Values of --top, --to, --cases, --base and --router. */
 	top?: string;
 	to?: string;
 	cases?: string;
 	base?: string;
+	router?: string;
 }
 
 export function runSkill(sub: string | undefined, args: string[], flags: SkillFlags): number {
@@ -744,17 +745,20 @@ function runEvalCommand(flags: SkillFlags): number {
 	const baselineFile = join(dir, "baseline.json");
 	const heldoutText = readIfExists(join(dir, "router-heldout.jsonl"));
 	const skills = [...SKILLS].map(([name, text]) => ({ name, text }));
-	if (flags.base) return runBaseCommand(flags, skills, casesFile, heldoutText);
+	// --router: a router built as its own script (cli/src/router-worker.ts), run in a child process.
+	const ranker = flags.router ? processRanker(resolve(flags.router)) : undefined;
+	if (flags.router && !existsSync(resolve(flags.router))) throw new SkillError(`No router script at ${flags.router}.`);
+	if (flags.base) return runBaseCommand(flags, skills, casesFile, heldoutText, ranker);
 	const cases = parseCases(readFileSync(casesFile, "utf8"));
 	const heldout = heldoutText === undefined ? undefined : parseCases(heldoutText, "router-heldout.jsonl");
 	// Each accepted drop is that skill's floor, with no tolerance (the last entry for a skill wins).
 	const floors = new Map(parseDrops(readIfExists(join(dir, "accepted-drops.json"))).map((d) => [d.skill, d.value]));
 	let baseline = existsSync(baselineFile) ? parseBaseline(readFileSync(baselineFile, "utf8")) : undefined;
 	if (flags.updateBaseline) {
-		writeFileSync(baselineFile, formatBaseline(runEval(skills, cases)));
+		writeFileSync(baselineFile, formatBaseline(runEval(skills, cases, undefined, undefined, { ranker })));
 		baseline = parseBaseline(readFileSync(baselineFile, "utf8"));
 	}
-	const report = runEval(skills, cases, baseline, heldout, { floors });
+	const report = runEval(skills, cases, baseline, heldout, { floors, ranker });
 	if (flags.json) {
 		console.log(JSON.stringify(report, null, "\t"));
 		return report.ok ? 0 : 1;
@@ -781,7 +785,7 @@ function runEvalCommand(flags: SkillFlags): number {
  * skills bundled, from the pull request's checkout. The pull request's eval source sits at
  * cli/src/skill-eval.ts beside its skills-eval folder.
  */
-function runBaseCommand(flags: SkillFlags, skills: RouterSkill[], casesFile: string, heldoutText: string | undefined): number {
+function runBaseCommand(flags: SkillFlags, skills: RouterSkill[], casesFile: string, heldoutText: string | undefined, ranker?: Ranker): number {
 	const baseDir = join(resolve(flags.base ?? ""), "skills-eval");
 	if (!existsSync(baseDir)) throw new SkillError(`No skills-eval folder in ${flags.base}.`);
 	const headRoot = dirname(dirname(casesFile));
@@ -801,6 +805,7 @@ function runBaseCommand(flags: SkillFlags, skills: RouterSkill[], casesFile: str
 			baseline: readIfExists(join(baseDir, "baseline.json")),
 			drops: readIfExists(join(baseDir, "accepted-drops.json")),
 		},
+		ranker,
 	);
 	if (flags.json) console.log(JSON.stringify({ ok, skills: indexed, gates }, null, "\t"));
 	else {
