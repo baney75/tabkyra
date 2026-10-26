@@ -278,3 +278,47 @@
 {"task": "Don’t use the tabkyra skill; fetch the URL directly", "skill": "none"}
 {"task": "Don’t apply the osint skill, just tell me what you know about the landlord", "skill": "none"}
 {"task": "Don't use the `osint` skill; do a background check on this landlord.", "skill": "none"}
+{"task": "Draw an architecture diagram of this repo's services and how they talk to each other", "skill": "visual-explainer"}
+{"task": "Give me a visual diff review of my current branch against main", "skill": "visual-explainer"}
+{"task": "Visualize how a request flows through the API, the cache and the database", "skill": "visual-explainer"}
+{"task": "Turn this implementation plan into a visual plan page with the decisions I need to make", "skill": "visual-explainer"}
+{"task": "Show me how the auth middleware works as a diagram", "skill": "visual-explainer"}
+{"task": "Make a project recap page of what we shipped this sprint from the git log", "skill": "visual-explainer"}
+{"task": "Diagram the state machine in order_status.ts step by step", "skill": "visual-explainer"}
+{"task": "Review PR 57 visually: what changed, before and after, and the risks", "skill": "visual-explainer"}
+{"task": "Explain this codebase visually with diagrams", "skill": "visual-explainer"}
+{"task": "Draw the data flow of the ingestion pipeline as an HTML page", "skill": "visual-explainer"}
+{"task": "Use the visual-explainer skill on this diff", "skill": "visual-explainer"}
+{"task": "I have a Mermaid flowchart; turn it into a proper diagram page", "skill": "visual-explainer"}
+{"task": "Make a diagram page showing how our deploy pipeline works", "skill": "visual-explainer"}
+{"task": "Make an HTML dashboard of the deploy frequency numbers", "skill": "artifacts"}
+{"task": "Build a report page comparing the three vendors' prices, with sources", "skill": "artifacts"}
+{"task": "Design a four-bar linkage that rocks an arm 60 degrees from a motor", "skill": "mechanism-design"}
+{"task": "Is this crank-rocker Grashof? Links are 20, 60, 45 and 55 mm", "skill": "mechanism-design"}
+{"task": "What gear ratio do I need to slow a 3000 rpm motor to 100 rpm, and how many teeth?", "skill": "mechanism-design"}
+{"task": "I need a cam profile that lifts a follower 10 mm with a dwell", "skill": "mechanism-design"}
+{"task": "Turn rotary motion into straight back-and-forth motion for a 3D printed toy", "skill": "mechanism-design"}
+{"task": "Make a ratchet and pawl so this winch only turns one way", "skill": "mechanism-design"}
+{"task": "Count the degrees of freedom of this linkage with Gruebler's equation", "skill": "mechanism-design"}
+{"task": "Find a mechanism in DMG-lib that indexes 90 degrees per turn", "skill": "mechanism-design"}
+{"task": "This AI-generated image shows a gearbox; would it actually work?", "skill": "mechanism-design"}
+{"task": "Size a slider-crank for a 40 mm stroke", "skill": "mechanism-design"}
+{"task": "Check the transmission angle of my linkage over a full rotation", "skill": "mechanism-design"}
+{"task": "Explain what this function does", "skill": "none"}
+{"task": "Explain the mechanism of action of aspirin", "skill": "none"}
+{"task": "Replace the gear icon in the settings menu with a cog SVG", "skill": "none"}
+{"task": "What gear should I bring for a weekend camping trip?", "skill": "none"}
+{"task": "Draw a cat in ASCII art", "skill": "none"}
+{"task": "Sketch out how the job queue and workers interact as a diagram I can open in the browser", "skill": "visual-explainer"}
+{"task": "Can you make a visual walkthrough of what changed in this commit?", "skill": "visual-explainer"}
+{"task": "Show how the payment service, webhook handler and ledger fit together in a diagram", "skill": "visual-explainer"}
+{"task": "Give me a visual review of the migration plan before I approve it", "skill": "visual-explainer"}
+{"task": "Turn the spreadsheet of grant spending into a printable summary page", "skill": "artifacts"}
+{"task": "Make a page with a timeline of the lawsuit's filings and sources", "skill": "artifacts"}
+{"task": "How do I make a Geneva drive that stops six times per revolution?", "skill": "mechanism-design"}
+{"task": "Pick a linkage to open a lid 110 degrees with a small servo", "skill": "mechanism-design"}
+{"task": "Will a 12-tooth pinion mesh with a 48-tooth gear at module 1, and what's the center distance?", "skill": "mechanism-design"}
+{"task": "Design a mechanism that converts the rotation of a hand crank into a pumping motion", "skill": "mechanism-design"}
+{"task": "Explain how garbage collection works in Java", "skill": "none"}
+{"task": "What gear do I need for ice fishing?", "skill": "none"}
+{"task": "Describe the mechanism by which vaccines create immunity", "skill": "none"}

@@ -12,11 +12,13 @@ import SKILL_BUG from "../../skills/bug/SKILL.md";
 import SKILL_DORKS from "../../skills/dorks/SKILL.md";
 import SKILL_FIX from "../../skills/fix/SKILL.md";
 import SKILL_KYRASKILLMAKER from "../../skills/kyraskillmaker/SKILL.md";
+import SKILL_MECHANISM_DESIGN from "../../skills/mechanism-design/SKILL.md";
 import SKILL_NEWS_RESEARCH from "../../skills/news-research/SKILL.md";
 import SKILL_OSINT from "../../skills/osint/SKILL.md";
 import SKILL_PROTON_PASS from "../../skills/proton-pass/SKILL.md";
 import SKILL_RSI from "../../skills/rsi/SKILL.md";
 import SKILL_TABKYRA from "../../skills/tabkyra/SKILL.md";
+import SKILL_VISUAL_EXPLAINER from "../../skills/visual-explainer/SKILL.md";
 
 /** Name to SKILL.md text. `tabkyra` first: it's the one every other skill builds on. */
 export const SKILLS: ReadonlyMap<string, string> = new Map([
@@ -29,8 +31,10 @@ export const SKILLS: ReadonlyMap<string, string> = new Map([
 	["dorks", SKILL_DORKS],
 	["fix", SKILL_FIX],
 	["kyraskillmaker", SKILL_KYRASKILLMAKER],
+	["mechanism-design", SKILL_MECHANISM_DESIGN],
 	["news-research", SKILL_NEWS_RESEARCH],
 	["osint", SKILL_OSINT],
 	["proton-pass", SKILL_PROTON_PASS],
 	["rsi", SKILL_RSI],
+	["visual-explainer", SKILL_VISUAL_EXPLAINER],
 ]);

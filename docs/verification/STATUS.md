@@ -48,7 +48,8 @@ item until that item's own Check runs. Review records are in each PR's Review bl
 | DC-11 | Check: 30 sources 100% metadata, fabricated rejected, Obsidian round-trip | none | Fabricated DOI rejection tested on a stand-in, not the 30-source set |
 | DC-12 | academic, osint, news, rsi, autoresearch, dorks, proton-pass, artifacts, kyraskillmaker | prepared | #13; lint clean; no evals |
 | DC-12 | ghost, blackboard, canvas, google classroom, other classroom, outlook, proton, office, 3d modeling, 3d printing, design, data, scripts, shopping, login, dashboard | none | |
-| DC-12 | Forked skills with THIRD_PARTY.md | none | None forked; reasons in docs/skill-security.md |
+| DC-12 | Forked skills with THIRD_PARTY.md | prepared (partial) | `visual-explainer` adapted from nicobailon/visual-explainer (MIT): notice in `skills/visual-explainer/LICENSE`, D17; no THIRD_PARTY.md |
+| DC-12 | visual-explainer, mechanism-design; artifacts improved | prepared | Lint clean; router eval cases and held-out cases pass (docs/skill-platform.md); small-model runs in the PR |
 | DC-13 | Unchecked first-run box | prepared | #15; rendered headless |
 | DC-13 | Autonomous filing via gh (D5), dedupe, scrubber, payload view | prepared (partial) | Redaction and payload view exist; filing is manual |
 | DC-14 | STRIDE threat model, SBOM, signed reproducible CLI build | prepared (partial) | Releases are minisign-signed (existing); no SBOM, threat model or reproducible build |

@@ -1,6 +1,6 @@
 ---
 name: artifacts
-description: Build a polished, self-contained HTML artifact (report, briefing, comparison table, dashboard, plan, slide-style page) from research or data, with citations, accessible markup and no outside scripts, then open it in Tabkyra and check how it actually renders before handing it over. Use when the user asks for a report, page, one-pager, visual summary, dashboard, printable or shareable page, HTML file or "artifact", or when research results or data need a readable deliverable.
+description: Build a polished, self-contained HTML artifact (report, briefing, comparison table, dashboard, slide-style page) from research or data, with citations, accessible markup and no outside scripts, then open it in Tabkyra and check how it actually renders before handing it over. Use when the user asks for a report, page, one-pager, visual summary, dashboard, printable or shareable page, static page, HTML file or "artifact", or when research results, a table of numbers or data need a readable deliverable.
 license: AGPL-3.0
 ---
 
@@ -12,38 +12,66 @@ browser before you call it done.
 
 ## When to use
 
-- The user wants a report, briefing, plan, comparison or dashboard they can open or share.
-- Research results (from `autoresearch`, `academic-research`, `news-research`) need a
-  readable deliverable.
+- The user wants a report, briefing, plan, comparison or dashboard they can open or share,
+  or a page that compares options, prices or vendors.
+- Research results (from `autoresearch`, `academic-research`, `news-research`) or a table
+  of numbers need a readable deliverable.
 
-For a quick answer, write plain text in chat instead.
+To explain code, a diff, a system or an implementation plan with diagrams, use
+`visual-explainer`. For a quick answer, write plain text in chat instead.
 
 ## Steps
 
 1. **Write the one-sentence takeaway.** The page leads with it. If you can't write it, you
    aren't ready to build.
 2. **Outline the sections** in reading order: takeaway, key numbers, details, sources.
-   Each section answers one question.
-3. **Build the file** from the skeleton below. Rules:
+   Each section answers one question, and its heading states the answer ("Costs fell 12%"),
+   not the topic ("Costs").
+3. **Pick a form for each set of numbers.**
+
+   | Data | Form |
+   | --- | --- |
+   | Fewer than six numbers | a table, or a row of 3-6 key-number tiles |
+   | Trend over time | line chart, about 2:1 to 3:1 wide |
+   | Size or rank | horizontal bars, sorted, starting at zero |
+   | Share of a whole | one stacked bar with labels on the parts |
+   | Dated events | a timeline: one rail, dated marks, the newest highlighted |
+   | Options side by side | a comparison table, one row per criterion |
+
+4. **Build the file** from the skeleton below. Rules:
    - One file. CSS in a `style` block in the head. No outside fonts, scripts or images.
-   - Charts as inline SVG drawn from the data, or as a plain table. A table beats a
-     chart when there are fewer than six numbers.
+   - Charts as inline SVG drawn from the data. Label values on the marks, with units; no
+     legend under five series. No 3D, shadows or gridlines unless values must be read.
+   - Write one scale per axis before drawing, such as y = top + (max - v) / (max - min) x
+     height, and place every point, bar and gridline with it. Then check two points by hand.
+     An `aria-label` states only what the data shows.
    - Every fact from research has a numbered citation linking to its source.
    - Semantic tags (`header`, `main`, `section`, `table`, `figure`), `alt` text on SVGs
      (`role="img"` plus `aria-label`), contrast of at least 4.5:1.
+   - Look: about 90% neutral, one accent color for the one thing to see first. Never
+     color alone: pair it with a word or shape. Numbers right-aligned with
+     `font-variant-numeric: tabular-nums`. Body text about 65 characters wide.
+   - No gradient text, glass effects, emoji markers or centered body text.
    - Works at 375px wide and prints cleanly (`@media print`).
    - If you need JavaScript (sorting, tabs), keep it inline and short, with no network calls.
-4. **Serve it locally** from its folder: `python3 -m http.server 8765 --bind 127.0.0.1`
+   - Motion only if it explains a change; animate only transform and opacity, and turn it
+     off under `prefers-reduced-motion: reduce`.
+5. **Serve it locally** from its folder: `python3 -m http.server 8765 --bind 127.0.0.1`
    (run it in the background).
-5. **Open it in Tabkyra:** `navigate {"url":"http://127.0.0.1:8765/report.html"}`.
-6. **Check it:**
-   - `screenshot {}`: layout, nothing overlapping, charts drawn.
+6. **Open it in Tabkyra:** `navigate {"url":"http://127.0.0.1:8765/report.html"}`.
+7. **Check it.** Every `run_js` below is one expression; wrap statements in `(()=>{ ... })()`.
+   - `screenshot {"fullPage":true}`: layout, nothing overlapping, charts drawn.
    - `read_console {}`: no errors.
    - `read_page {}`: headings in order, every table has a header row.
-   - Resize check: `run_js {"code":"window.innerWidth"}`, then look at the narrow layout
-     by asking the user, or trust the CSS only if you used a single fluid column.
-7. **Fix what you saw** and check again. Two rounds at most, then report anything left.
-8. **Clean up.** Stop the local server, `tabs_close` your tab, and give the user the file path.
+   - Outside requests: `run_js {"code":"[...document.querySelectorAll('[src],link[href]')].map(e=>e.src||e.href).concat(document.documentElement.outerHTML.match(/(url\\(|@import)\\s*['\"]?https?:/g)||[]).filter(u=>!u.startsWith(location.origin)&&!u.startsWith('data:'))"}`
+     must return an empty list.
+   - Print check: `run_js {"code":"[...document.styleSheets].some(s=>[...s.cssRules].some(r=>r.media&&r.media.mediaText.includes('print')))"}` returns true.
+   - Narrow check, last because it replaces the page: `run_js {"code":"(()=>{const f=document.createElement('iframe');f.src=location.href;f.style.cssText='width:375px;height:700px;border:0';document.body.replaceChildren(f);return 'ok'})()"}`,
+     then `screenshot {}`, then `run_js {"code":"(()=>{const d=document.querySelector('iframe').contentDocument.documentElement;return d.scrollWidth+' wide in '+d.clientWidth})()"}`:
+     the two numbers must match.
+8. **Fix what you saw** and check again. Two rounds at most, then report anything left.
+9. **Clean up.** Stop the local server, close your tab with `tabs_close {"tabId":123}`
+   (the `tabId` that `navigate` returned), and give the user the file path.
 
 ## Skeleton
 
@@ -57,6 +85,7 @@ Build the file in this order. Write the tags yourself; this list says what goes 
    them. Body: system-ui font at 16px, line height 1.55, max width 760px, centered, 1rem side
    padding. Tables collapse borders, full width, a 1px `--line` rule under each row.
    An `@media print` block removes the max width and link colors.
+   Use a named palette only when the user names one; keep the same five properties.
 4. Body: a header with the h1 title and a muted line giving the date and the number of sources;
    a main element with the lede paragraph (the takeaway, with a superscript citation link),
    a "Key numbers" section holding a table with a header row, and a "Sources" section with
@@ -67,7 +96,8 @@ Build the file in this order. Write the tags yourself; this list says what goes 
 - The file opens in Tabkyra with no console errors and a clean screenshot.
 - The first screen states the takeaway.
 - Every research fact has a working citation.
-- The file has no outside requests (`read_network {}` shows only the page itself).
+- The narrow check shows no sideways overflow, and the print check returns true.
+- The outside-requests check returns an empty list.
 - The user has the path.
 
 ## When something goes wrong
@@ -77,6 +107,7 @@ Build the file in this order. Write the tags yourself; this list says what goes 
 | Port in use | Use another port, such as 8766 |
 | Site permission prompt for 127.0.0.1 | Ask the user to allow it, or to run `tabkyra allow 127.0.0.1` |
 | Chart unreadable | Replace it with a table |
+| Wider than 375px | Wrap wide tables and SVGs in a container with `overflow-x: auto` |
 | Page too long | Move detail into a collapsed `details` block |
 
 ## Safety
