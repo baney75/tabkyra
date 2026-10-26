@@ -6,9 +6,8 @@ license: AGPL-3.0
 
 # Notes: one idea per note, linked, findable
 
-Notes are useful when they can be found again and they link to related notes. Obsidian
-notes are plain Markdown files, so edit them on disk. Notion notes live in the browser.
-In both, never lose a note: move to an archive, don't delete.
+Obsidian notes are Markdown files on disk; Notion notes live in the browser. Never lose a
+note: archive, don't delete.
 
 ## When to use
 
@@ -23,12 +22,10 @@ For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, e
 
 ## Obsidian basics
 
-- A vault is a folder with a `.obsidian` folder inside. Find vaults with
+- A vault is a folder holding `.obsidian` (the app's settings: don't edit it). Find one with
   `find ~ -maxdepth 4 -type d -name .obsidian -not -path '*/Library/*'`, or ask the user.
-- The file name is the note title. Links are `[[Note title]]` or `[[Note title|shown text]]`.
-- Properties go in a front block at the top, between two `---` lines: `tags`, `aliases`,
-  `created`, and any field the vault already uses.
-- Don't edit files inside `.obsidian/`. That is the app's settings.
+- The file name is the title. Links: `[[Note title]]`, `[[Note title|shown text]]`.
+  Properties sit between two `---` lines at the top: `tags`, `aliases`, `created`.
 
 ## Steps for Obsidian
 
@@ -43,38 +40,54 @@ For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, e
 5. **Rename: prefer Obsidian.** If the user has Obsidian open, ask them to rename the note
    there; with "Automatically update internal links" on, it fixes every link. Otherwise go
    on with steps 6 to 8. Rename in place only; a move to another folder is the user's job.
-6. **Rename: check for clashes.** Obsidian matches note names in any case, so check that way.
-   `find "[vault]" -iname "Old title.md"` must return one file, and
-   `find "[vault]" -iname "New title.md"` must return nothing; a hit means the rename would
-   replace or shadow a note. `grep -rniE '^(aliases:.*[^a-z]|\s*- *"?)Old title("|,|\]|\s*$)' "[vault]" --include=*.md`
-   must return nothing outside that note. If any check fails, stop and ask.
-7. **Rename: move without overwriting, then fix links.**
-   `mv -n "[folder]/Old title.md" "[folder]/New title.md"`, then
-   `test -f "[folder]/New title.md" && test ! -f "[folder]/Old title.md"` must succeed. Write
-   this to `relink.py` outside the vault and run `python3 -I relink.py "[vault]" "Old title" "New title"`.
-   It changes only exact targets, in any case: `[[Old title]]`, `|`, `#` and embed forms,
-   folder-qualified links and Markdown links.
+6. **Rename: write the helper** to `note_rename.py` outside the vault. It ignores case, as
+   Obsidian does, and treats titles like "Q&A (2024)" literally. It changes `[[...]]` links
+   and local Markdown links to the note, never an external URL. Exit 0 means clean.
 
    ```python
-   import pathlib, re, sys
-   vault, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
-   wiki = re.compile(r"(!?\[\[(?:[^\]|#]*/)?)" + re.escape(old) + r"(\.md)?(?=\]\]|\||#)", re.I)
-   md = re.compile(r"(\]\((?:[^)\s]*/)?)" + re.escape(old.replace(" ", "%20")) + r"(\.md)(?=[)#])", re.I)
-   for p in pathlib.Path(vault).rglob("*.md"):
-       if ".obsidian" in p.parts or ".trash" in p.parts:
-           continue
-       t = p.read_text(encoding="utf-8")
-       u = wiki.sub(lambda m: m.group(1) + new + (m.group(2) or ""), t)
-       u = md.sub(lambda m: m.group(1) + new.replace(" ", "%20") + m.group(2), u)
-       if u != t:
-           p.write_text(u, encoding="utf-8")
-           print("updated", p)
+   import os, re, sys, urllib.parse as U
+   from pathlib import Path
+   mode, vault, rel, new = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+   old, home = Path(rel).stem, Path(rel).parent
+   key = lambda p: os.path.normpath(str(p)).lower()
+   notes = [p for p in vault.rglob("*.md") if not {".obsidian", ".trash"} & set(p.parts)]
+   def local(note, dest):
+       if re.match(r"[a-z][a-z0-9+.-]*:|//|#", dest, re.I): return False
+       p = U.unquote(dest.split("#")[0])
+       bases = [vault / p.lstrip("/")] + ([] if p.startswith("/") else [note.parent / p])
+       return key(home / (old + ".md")) in [key(os.path.relpath(b, vault)) for b in bases]
+   def wiki(m):
+       t = m[2]; stem = t[:-3] if t.lower().endswith(".md") else t
+       folder, _, base = stem.rpartition("/")
+       if base.lower() != old.lower() or not key(home).endswith(folder.lower()): return m[0]
+       return m[1] + stem[: len(folder) + bool(folder)] + new + t[len(stem):] + m[3]
+   def fix(note, t):
+       md = lambda m: m[1] + m[2][: m[2].split("#")[0].rfind("/") + 1] + U.quote(new + ".md") + m[2][len(m[2].split("#")[0]):] + m[3] if local(note, m[2]) else m[0]
+       t = re.sub(r"(!?\[\[)([^\]|#]+)((?:#[^\]|]*)?(?:\|[^\]]*)?\]\])", wiki, t)
+       return re.sub(r"(\]\()((?:[^()\s]|\([^()\s]*\))+)(\))", md, t)
+   def aliases(t):
+       fm = re.match(r"---\n(.*?)\n---", t, re.S)
+       m = re.search(r"^aliases:(.*(?:\n\s*-.*)*)", fm[1] if fm else "", re.M | re.I)
+       return [a.strip(" -'\"[]").lower() for a in re.split(r",|\n", m[1])] if m else []
+   bad = []
+   if mode == "check":
+       same = [p for p in notes if p.stem.lower() == old.lower()]
+       if len(same) != 1: bad.append(f"{len(same)} notes are named {old}")
+       bad += [f"{new} exists: {p}" for p in notes if p.stem.lower() == new.lower()]
+       bad += [f"alias {old} in {p}" for p in notes if p not in same and old.lower() in aliases(p.read_text(encoding="utf-8"))]
+   for p in notes if mode != "check" else []:
+       t = p.read_text(encoding="utf-8"); u = fix(p, t)
+       if u != t and mode == "relink": p.write_text(u, encoding="utf-8"); print("updated", p)
+       elif u != t: bad.append(f"link to {old} left in {p}")
+   bad and print("\n".join(bad)); sys.exit(1 if bad else 0)
    ```
 
-8. **Rename: verify.** This must print nothing (old title in both places):
-   `grep -rniE '\[\[([^]|#]*/)?Old title(\.md)?(\]\]|\||#)|\]\(([^)]*/)?Old%20title\.md' "[vault]" --include=*.md`.
-   Then check each updated file: `[[bio]]` and `[[BIO|biology]]` now point to the new title,
-   and `[[Biology]]` is unchanged.
+7. **Rename: check.** `python3 -I note_rename.py check "[vault]" "[folder]/Old title.md" "New title"`
+   must exit 0: one note has the old name, none has the new name in any case, and no other
+   note lists the old title as an alias. Otherwise stop and ask.
+8. **Rename: move, relink, verify.** `mv -n "[vault]/[folder]/Old title.md" "[vault]/[folder]/New title.md"`,
+   then `test -f` on the new path and `test ! -f` on the old must both pass. Run the helper
+   with `relink`, then with `verify`, which must exit 0.
 9. **Archive, don't delete.** Move notes the user wants gone to the vault's archive folder.
 10. **Verify.** `cat` the new note and `grep` the links you added.
 
@@ -84,18 +97,16 @@ For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, e
    page shows, `tabs_show` and ask the user to sign in.
 2. **Find the place.** Use the sidebar search: `read_page {"filter":"interactive"}`, click
    Search, `type` the page name. Open the parent page or database the user named.
-3. **Search before you create,** as in Obsidian step 2.
-4. **Create the page.** Click New page (or the database's New), then type the title and
-   body. Notion turns `# ` into a heading, `- ` into a bullet and `[] ` into a to-do.
-   Type `[[` and a page name to link another page.
-5. **Set database properties** by clicking each property cell and filling it.
-6. **Verify.** `read_page` on the new page and check title, body, links and properties.
+3. **Create the page** if search found none. Click New page (or the database's New), type
+   the title and body. `# ` makes a heading, `- ` a bullet, `[] ` a to-do, `[[` a page link.
+   Fill database properties cell by cell.
+4. **Verify.** `read_page` on the new page and check title, body, links and properties.
 
 ## Done when
 
 - The note exists where the user's conventions put it, with no duplicate made.
 - It links to related notes, and a related note links back.
-- After any rename, no link points to the old title in any case, and no note was overwritten.
+- After any rename, `note_rename.py verify` exits 0 and no note was overwritten.
 - Nothing was deleted, shared or published.
 
 ## When something goes wrong
@@ -103,7 +114,6 @@ For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, e
 | Symptom | Fix |
 | --- | --- |
 | No vault found | Ask the user for the folder. iCloud vaults sit under `~/Library/Mobile Documents/iCloud~md~obsidian/Documents` |
-| A link shows as unresolved in Obsidian | The title in `[[...]]` doesn't match the file name exactly. Fix the spelling or add an alias |
 | Two notes on one topic | Merge into the older one, move the newer to the archive, and fix links to it |
 | Notion block menu hides the input | `press {"key":"Escape"}`, then click the page body again |
 | Notion shows Request access | The page isn't the user's. Tell them; don't request access |
@@ -127,6 +137,5 @@ grep -ril "spaced\|spacing effect" "[vault]" --include=*.md | head  -> Psych/Mem
 grep -ril "study" "[vault]" --include=*.md | head                   -> Study habits.md
 ```
 
-Write `[vault]/Inbox/Spacing effect.md` with `tags: [learning]` and `created: 2026-10-25`,
-three lines on the idea, and links `[[Memory]]` and `[[Study habits]]`. Append
-`- [[Spacing effect]]` under Related in `Study habits.md`. `cat` both to confirm.
+Write `[vault]/Inbox/Spacing effect.md` (`tags: [learning]`) with three lines and links
+`[[Memory]]` and `[[Study habits]]`; append `- [[Spacing effect]]` to `Study habits.md`.
