@@ -615,3 +615,39 @@ test("base-code full eval: a PR that weakens a gate in its own skill-eval.ts sti
 	assert.equal(r.gates["base-code full eval"].ok, false, "the base gate logic judges the cases, not the PR's");
 	assert.match(r.gates["base-code full eval"].detail, /top-1 accuracy/);
 });
+
+test("a pair of words that many skills share isn't evidence either", () => {
+	const home = mkdtempSync(join(root, "common-pairs-"));
+	// Five skills hold the same adjacent words, so the words and their pairs are all common.
+	for (const n of ["one", "two", "three", "four", "five"]) {
+		const dir = join(home, "drafts", `pairs-${n}`);
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, "SKILL.md"),
+			`---\nname: pairs-${n}\ndescription: Sorts quartz lantern harbor items. Use when the user asks about quartz lantern harbor items.\n---\n# Pairs ${n}\n\n## When to use\n\n- The user asks about quartz lantern harbor items.\n\n## Steps\n\n1. **Sort.** Sort them.\n2. **Check.** Check them.\n\n## Done when\n\n- They are sorted.\n`,
+		);
+		assert.equal(run(["skill", "apply", dir, "--yes"], { home }).code, 0);
+	}
+	assert.deepEqual(JSON.parse(run(["skill", "match", "--json", "--top", "5", "quartz lantern harbor"], { home }).stdout).map((m) => m.name), ["none"]);
+});
+
+test("curly apostrophes read as straight ones, so a typed-on-a-phone negation still excludes", () => {
+	const all = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "5", task]).stdout).map((m) => m.name);
+	for (const [task, banned] of [
+		["Don’t use the osint skill, just search the news for the landlord", "osint"],
+		["Don’t run the dorks skill, write me a plain search query", "dorks"],
+		["Don’t use the tabkyra skill; fetch the URL directly", "tabkyra"],
+		["Don’t apply the osint skill, just tell me what you know about the landlord", "osint"],
+	]) {
+		assert.ok(!all(task).includes(banned), `${task} -> ${all(task)}`);
+	}
+});
+
+test("'..., debug it' after a use-verb is about the work, not the skill", () => {
+	const name = (task) => JSON.parse(run(["skill", "match", "--json", task]).stdout)[0].name;
+	assert.equal(name("Use the tabkyra skill to open localhost:3000 and debug it"), "tabkyra");
+	assert.equal(name("Run the osint skill on the landlord and review it"), "osint");
+	// Without a use-verb, "fix it" still points back at the skill.
+	assert.equal(name("The proton-pass skill gave my small model a bad result, fix it"), "fix");
+	assert.equal(name("The autoresearch skill gave a weak report on my 8B model. Fix it"), "fix");
+});

@@ -271,3 +271,9 @@
 {"task": "I have no idea who runs this website so use the osint skill", "skill": "osint"}
 {"task": "Why not use the osint skill on this landlord?", "skill": "osint"}
 {"task": "No rush, use the osint skill", "skill": "osint"}
+{"task": "Use the tabkyra skill to open localhost:3000 and debug it", "skill": "tabkyra"}
+{"task": "Run the osint skill on the landlord and review it", "skill": "osint"}
+{"task": "Don’t use the osint skill, just search the news for the landlord", "skill": "none"}
+{"task": "Don’t run the dorks skill, write me a plain search query", "skill": "none"}
+{"task": "Don’t use the tabkyra skill; fetch the URL directly", "skill": "none"}
+{"task": "Don’t apply the osint skill, just tell me what you know about the landlord", "skill": "none"}

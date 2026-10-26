@@ -55,6 +55,8 @@ export interface RouterIndex {
 	/** Per skill, the pattern for "<name> skill" (or "<name> skills"), hyphen or space. */
 	named: Array<{ name: string; pattern: RegExp }>;
 	names: ReadonlySet<string>;
+	/** Inverse document frequency of each word pair, as for words. */
+	pairIdf: Map<string, number>;
 }
 
 /** Field weights, BM25 constants and bonuses, calibrated on skills-eval/router-cases.jsonl. */
@@ -276,10 +278,13 @@ export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 	const n = docs.length;
 	const idf = new Map([...df].map(([t, k]) => [t, Math.log(1 + (n - k + 0.5) / (k + 0.5))]));
 	for (const d of docs) for (const p of d.phrases) p.strong = terms(p.seq.join(" ")).some((t) => (idf.get(t) ?? 0) >= EVIDENCE_IDF);
+	const pairDf = new Map<string, number>();
+	for (const d of docs) for (const p of d.pairs) pairDf.set(p, (pairDf.get(p) ?? 0) + 1);
+	const pairIdf = new Map([...pairDf].map(([p, k]) => [p, Math.log(1 + (n - k + 0.5) / (k + 0.5))]));
 	const mean = (f: Field) => (n ? docs.reduce((s, d) => s + d.len[f], 0) / n : 1) || 1;
 	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern.
 	const named = [...names].map((name) => ({ name, pattern: new RegExp(`\\b${name.replace(/-/g, "[- ]?")}\\s+skills?\\b`, "g") }));
-	return { docs, idf, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names };
+	return { docs, idf, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names, pairIdf };
 }
 
 function containsSequence(haystack: string[], needle: string[]): boolean {
@@ -296,6 +301,8 @@ const EDIT_VERB = "(?:fix(?:es|ed|ing)?|repair\\w*|edit\\w*|updat\\w*|rewrit\\w*
 const GOVERNS = new RegExp(`\\b${EDIT_VERB}\\s+(?:(?:to|of|on|for)\\s+)?(?:(?:the|this|my|our|that|your)\\s+)?(?:[a-z0-9'-]+\\s+){0,2}$`);
 /** "..., fix it" after the mention, pointing back at it. */
 const POINTS_BACK = new RegExp(`\\b${EDIT_VERB}\\s+(?:it|them)\\b`);
+/** "use the osint skill", "run my dorks skill": a use-verb governs the mention, so a later "debug it" is about something else. */
+const USE_GOVERNS = /\b(?:use|run|apply|follow|invoke|load)\s+(?:(?:the|this|that|my|our|your)\s+)?(?:[a-z0-9'-]+\s+)?$/;
 /**
  * A negation that governs the mention, within a few words before it: "don't use the osint
  * skill", "never run my dorks skill", "without the osint skill", "instead of the dorks skill",
@@ -342,7 +349,8 @@ interface ReadTask {
  * - Otherwise ("use the osint skill on this landlord") it is a request for that skill.
  */
 function readTask(index: RouterIndex, task: string): ReadTask {
-	let text = task.toLowerCase();
+	// Curly apostrophes and quotes (smart punctuation) read as straight ones: "don’t" is "don't".
+	let text = task.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
 	let command: string | undefined;
 	let changesSkill = false;
 	const lead = /^\s*\/([a-z0-9-]+)(?=$|[\s:,;!?])/.exec(text);
@@ -368,7 +376,11 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 				excluded.add(n.name);
 				return " ";
 			}
-			if (command !== undefined || GOVERNS.test(before) || POINTS_BACK.test(after)) {
+			// "..., fix it" points back at the mention, unless a use-verb governs the mention: in
+			// "use the tabkyra skill to open the app and debug it", "it" is the app. Not limited to
+			// the clause: "The autoresearch skill gave a weak report. Fix it" is a fix request.
+			const backReference = !USE_GOVERNS.test(before) && POINTS_BACK.test(after);
+			if (command !== undefined || GOVERNS.test(before) || backReference) {
 				changesSkill = true;
 				return " skill ";
 			}
@@ -421,7 +433,8 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 		for (const p of queryPairs) {
 			if (d.pairs.has(p)) {
 				score += PAIR_BONUS;
-				evidence++;
+				// A pair shared by many skills ranks a skill but isn't evidence, like a common word.
+				if ((index.pairIdf.get(p) ?? 0) >= EVIDENCE_IDF) evidence++;
 			}
 		}
 		for (const p of d.phrases) {
