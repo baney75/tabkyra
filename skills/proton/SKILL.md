@@ -81,8 +81,10 @@ they never pass through you. For sorting mail and filters, use `email-organizati
 16. **Close any open item first.** `press {"key":"Escape"}` twice, before any `find`.
 17. **Search.** `find {"query":"search","limit":3}` for the search box ref, `type` the name
     into it, then `find {"query":"[name]","limit":10}` to read the result titles. Don't
-    click a result. If a `find` result shows a username, password or code, an item is open:
-    press Escape and don't repeat what it showed.
+    click a result. Each result row shows a username or email under its title; that is list
+    text, not an open item, so search on and leave it out of your answer. Only a password,
+    a one-time code or an item's detail pane means an item is open: press Escape and
+    don't repeat what it showed.
 18. **Report title, vault and website only.** Never reveal a stored password. Never copy a
     stored password. When a program needs it, hand off to `proton-pass`.
 
