@@ -8,7 +8,7 @@ If the user did not give you a concrete task, read README.md first.
 
 ## Commands
 - After code changes: run `./check.sh`. Fix all errors and warnings before committing.
-- The user runs `./dev.sh` in a separate tmux session. Don't start `npm run dev`. Run `npm run build` only for bridge work, as "Bridge development" below says, or with `TABKYRA_OUT_DIR` set to build elsewhere.
+- The user runs `./dev.sh` in a separate tmux session. Don't start `npm run dev`. Run `npm run build` only for bridge work, as "Bridge development" below says, or as `TABKYRA_NO_BUMP=1 TABKYRA_OUT_DIR=<dir> npm run build` to build elsewhere without bumping the version in the checkout.
 - NEVER commit unless the user asks.
 
 ## Testing

@@ -45,7 +45,10 @@ test("the setup prompt refuses to build without a version to pin", () => {
 test("the setup prompt appends skills to the user's project AGENTS.md, not the clone's", () => {
 	// Step 2 leaves the shell in ~/tabkyra-src/tabkyra; appending there would dirty the clone and stop the next update.
 	const line = prompt.split("\n").find((l) => l.includes(">> AGENTS.md"));
-	assert.match(line, /cd back to the project you started in \(not the Tabkyra clone\), then run tabkyra skill print >> AGENTS\.md/);
+	assert.match(line, /cd back to the directory step 1 printed \(my project, not the Tabkyra clone\), then run tabkyra skill print >> AGENTS\.md/);
+	assert.match(prompt, /1\. Note the directory you started in[^\n]*pwd && node -v && git --version/);
+	// Clones dirtied by the old step: offer to restore, only on the user's yes.
+	assert.match(prompt, /offer to run git restore AGENTS\.md; run it only if I say yes/);
 });
 
 test("the setup prompt passes the skill security lint", () => {
