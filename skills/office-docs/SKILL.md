@@ -56,11 +56,12 @@ Downloads folder. Microsoft files export from File > Save as or File > Download.
 6. **Add slides** with the New slide button, or `Meta+m` (macOS) or `Control+m` in Google Slides. Click each
    placeholder before typing.
 7. **Check by screenshot** after each batch. Fix typos with `press` and `type`.
-8. **Verify by export.** Before exporting, snapshot Downloads:
-   `ls -1 ~/Downloads | sort > /tmp/dl-before.txt`. Export to `txt` or `csv` with the URL
-   table, `wait {"ms":3000}`, then list only new files:
-   `ls -1 ~/Downloads | sort | comm -13 /tmp/dl-before.txt -`. Expect exactly one file
-   named after the document (a Sheet export is `[title] - [tab name].csv`), not ending in
+8. **Verify by export.** Before exporting, snapshot Downloads to a private temp file:
+   `snap=$(mktemp) && ls -1 ~/Downloads | sort > "$snap" && echo "$snap"`. Use the printed
+   path as `[snap]` below; a shell variable may not survive to the next command. Export to
+   `txt` or `csv` with the URL table, `wait {"ms":3000}`, then list only new files:
+   `ls -1 ~/Downloads | sort | comm -13 "[snap]" -`, and `rm -f "[snap]"` when done. Expect exactly
+   one file named after the document (a Sheet export is `[title] - [tab name].csv`), not ending in
    `.crdownload` or `.download`. Zero files, several, or another name: wait once more,
    then stop and tell the user. Never read any other file in Downloads. `cat` that one
    file and compare it with what you meant to write.
@@ -109,11 +110,12 @@ actions {"steps":[{"click":{"x":90,"y":210}},{"type":"Service"},{"press":"Tab"},
   {"type":"Cloud storage"},{"press":"Tab"},{"type":"2.99"},{"press":"Enter"},
   {"type":"News"},{"press":"Tab"},{"type":"4"},{"press":"Enter"},
   {"type":"Total"},{"press":"Tab"},{"type":"=SUM(B2:B4)"},{"press":"Enter"}],"screenshot":true}
-ls -1 ~/Downloads | sort > /tmp/dl-before.txt
+snap=$(mktemp) && ls -1 ~/Downloads | sort > "$snap" && echo "$snap"   -> [snap]
 navigate {"url":"https://docs.google.com/spreadsheets/d/[ID]/export?format=csv&gid=0"}
 wait {"ms":3000}
-ls -1 ~/Downloads | sort | comm -13 /tmp/dl-before.txt -   -> Subscriptions - Sheet1.csv
-cat ~/Downloads/"Subscriptions - Sheet1.csv"               -> last row Total,17.98
+ls -1 ~/Downloads | sort | comm -13 "[snap]" -   -> Subscriptions - Sheet1.csv
+cat ~/Downloads/"Subscriptions - Sheet1.csv"     -> last row Total,17.98
+rm -f "[snap]"
 ```
 
 Answer: the sheet link, the total 17.98, and the CSV path.
