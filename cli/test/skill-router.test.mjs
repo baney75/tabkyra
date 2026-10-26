@@ -551,3 +551,67 @@ test("the catalog script makes valid, distinct identifiers for any skill name", 
 	assert.ok(!ids.includes("SKILLS"));
 	assert.ok(ids.every((id) => /^[A-Za-z_$][\w$]*$/.test(id)), ids.join(","));
 });
+
+/**
+ * The CI base-code build in miniature: this checkout's CLI and skill-eval.ts (the judge), with
+ * `routerSource` in place of cli/src/skill-router.ts (the pull request's router).
+ */
+async function baseCodeWith(routerSource) {
+	const { build } = await import("esbuild");
+	const dir = mkdtempSync(join(root, "base-code-"));
+	const router = join(dir, "skill-router.ts");
+	writeFileSync(router, routerSource);
+	const out = join(dir, "index.mjs");
+	await build({
+		entryPoints: [join(here, "..", "src", "index.ts")],
+		bundle: true,
+		platform: "node",
+		format: "esm",
+		outfile: out,
+		loader: { ".md": "text", ".pub": "text" },
+		logLevel: "silent",
+		plugins: [{ name: "pr-router", setup: (b) => b.onResolve({ filter: /skill-router\.ts$/ }, () => ({ path: router })) }],
+	});
+	return (head, base) => {
+		const r = spawnSync(process.execPath, [out, "skill", "eval", "--json", "--base", base, "--cases", join(head, "skills-eval", "router-cases.jsonl")], {
+			cwd: repo,
+			encoding: "utf8",
+			env: { HOME: mkdtempSync(join(root, "home-")), PATH: dirname(process.execPath), NO_COLOR: "1" },
+		});
+		const outJson = JSON.parse(r.stdout);
+		return { code: r.status, gates: Object.fromEntries(outJson.gates.map((g) => [g.gate, g])) };
+	};
+}
+
+const routerSource = readFileSync(join(here, "..", "src", "skill-router.ts"), "utf8");
+/** Forty cases only a router that knows the word "zorblax" means OSINT gets right. */
+const zorblaxCases = Array.from({ length: 40 }, (_, i) => `{"task": "Zorblax check number ${i} on the Acme supplier", "skill": "osint"}`).join("\n");
+/** The same router, improved: "zorblax" asks for the osint skill. */
+const improvedRouter = routerSource.replace(
+	"\tfor (const name of excluded) invoked.delete(name);",
+	'\tif (/\\bzorblax\\b/.test(text)) invoked.add("osint");\n\tfor (const name of excluded) invoked.delete(name);',
+);
+
+test("base-code full eval: base gate logic over the PR's router, so a router improvement can merge", async () => {
+	assert.notEqual(improvedRouter, routerSource, "the improvement applied");
+	const head = headCheckout({ cases: `${readFileSync(casesFile, "utf8")}${zorblaxCases}\n` });
+	// Judged with the PR's improved router, the new cases pass under the base gates.
+	const improved = (await baseCodeWith(improvedRouter))(head, baseCheckout());
+	assert.ok(improved.gates["base-code full eval"].ok, improved.gates["base-code full eval"].detail);
+	// Judged with the old router, the same cases fail: the full eval really uses the PR's router.
+	const old = (await baseCodeWith(routerSource))(head, baseCheckout());
+	assert.equal(old.gates["base-code full eval"].ok, false);
+	assert.match(old.gates["base-code full eval"].detail, /top-1 accuracy/);
+});
+
+test("base-code full eval: a PR that weakens a gate in its own skill-eval.ts still fails it", async () => {
+	const source = readFileSync(join(here, "..", "src", "skill-eval.ts"), "utf8");
+	const weakened = source.replace("top1 >= TOP1_MIN", "top1 >= TOP1_MIN - 0.5");
+	assert.notEqual(weakened, source, "the weakening applied");
+	const wrong = Array.from({ length: 40 }, (_, i) => `{"task": "Convert this JSON file number ${i} to YAML", "skill": "dorks"}`).join("\n");
+	const head = headCheckout({ evalSource: weakened, cases: `${readFileSync(casesFile, "utf8")}${wrong}\n` });
+	const r = (await baseCodeWith(routerSource))(head, baseCheckout());
+	assert.equal(r.gates["base thresholds"].ok, true, "the constants are untouched, so only the logic changed");
+	assert.equal(r.gates["base-code full eval"].ok, false, "the base gate logic judges the cases, not the PR's");
+	assert.match(r.gates["base-code full eval"].detail, /top-1 accuracy/);
+});

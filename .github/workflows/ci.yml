@@ -112,9 +112,10 @@ jobs:
         working-directory: cli
         run: node --test test/skill-router.test.mjs test/skill-platform.test.mjs
 
-      # The base branch's eval code, built around the pull request's skills, checks that the
-      # pull request kept every base case, didn't lower a baseline more than the regression
-      # threshold or loosen a threshold, and that its skills pass the base gates.
+      # The base branch's eval code (gate logic and thresholds), built around the pull
+      # request's router and skills, checks that the pull request kept every base case,
+      # didn't lower a baseline or loosen a threshold, and meets the base gates over all its
+      # cases. A PR can't loosen the judge, and a router improvement can still merge.
       - name: Router gates from the base branch
         if: github.event_name == 'pull_request'
         env:
@@ -127,12 +128,22 @@ jobs:
             exit 0
           fi
           git worktree add --detach ../base-code "$BASE_SHA"
-          rm -rf ../base-code/skills
+          # From the pull request: what is being judged, its skills, case files, baseline,
+          # accepted drops and router. From the base: the judge, cli/src/skill-eval.ts with
+          # its gate logic and thresholds, and the rest of the CLI.
+          rm -rf ../base-code/skills ../base-code/skills-eval
           cp -R skills ../base-code/skills
-          # The base build bundles the pull request's skills: new ones are indexed, and removed
-          # or renamed ones can't break the build on a stale import.
+          cp -R skills-eval ../base-code/skills-eval
+          cp cli/src/skill-router.ts ../base-code/cli/src/skill-router.ts
+          # The catalog follows the pull request's skills/: new ones are indexed, and removed or
+          # renamed ones can't break the build on a stale import.
           node ../base-code/cli/scripts/skills-catalog.mjs
-          (cd ../base-code/cli && npm ci --ignore-scripts --no-audit --no-fund && node node_modules/esbuild/install.js && npm run build)
+          (cd ../base-code/cli && npm ci --ignore-scripts --no-audit --no-fund && node node_modules/esbuild/install.js)
+          if ! (cd ../base-code/cli && npx tsc --noEmit); then
+            echo "::error::The pull request's cli/src/skill-router.ts doesn't compile against the base branch's skill-eval.ts and CLI. The router and the eval API changed together, so this needs a maintainer's review; there is no fallback."
+            exit 1
+          fi
+          (cd ../base-code/cli && npm run build)
           status=0
           node ../base-code/cli/dist/index.js skill eval --base ../base --json > ../base-eval.json || status=$?
           expected=$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')

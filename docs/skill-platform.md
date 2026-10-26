@@ -154,11 +154,23 @@ scripts and runs:
    edit can't grow a skill past the budget either.
 2. `tabkyra skill eval`, the seven gates above.
 3. `cli/test/skill-router.test.mjs` and `cli/test/skill-platform.test.mjs`.
-4. On a pull request, the base branch's code, built around the pull request's `skills/`
-   (`cli/scripts/skills-catalog.mjs` regenerates its catalog from that folder, so new skills
-   are indexed and removed ones don't break the build), runs
-   `tabkyra skill eval --base <base checkout>` from the pull request's checkout. CI checks
-   that it indexed as many skills as `skills/` holds. It fails when the pull request:
+4. On a pull request, CI builds a judge from both branches and runs
+   `tabkyra skill eval --base <base checkout>` from the pull request's checkout.
+
+   | From the pull request (what is judged) | From the base branch (the judge) |
+   | --- | --- |
+   | `skills/`, with the catalog regenerated from it by `cli/scripts/skills-catalog.mjs` | `cli/src/skill-eval.ts`: every gate's logic and threshold |
+   | `skills-eval/`: case files, `baseline.json`, `accepted-drops.json` | the rest of the CLI (`skill.ts`, `index.ts`) |
+   | `cli/src/skill-router.ts` | the base branch's own `skills-eval/` files, for the comparisons |
+
+   A pull request therefore can't loosen a gate, in its constants or its logic, because its
+   `skill-eval.ts` never runs here. A router improvement can still merge: the base gates
+   judge the pull request's router. If the pull request's `skill-router.ts` doesn't
+   type-check against the base's `skill-eval.ts` and CLI, the router and the eval API
+   changed together; CI fails with that message, with no fallback, and a maintainer reviews
+   it. The regenerated catalog means new skills are indexed and removed ones don't break the
+   build, and CI checks the judge indexed as many skills as `skills/` holds. It fails when
+   the pull request:
    - removed or relabeled a case from either case file;
    - lowered a skill's value in `baseline.json` below the base branch's, or dropped it,
      without an accepted drop;
@@ -169,17 +181,14 @@ scripts and runs:
      gates;
    - adds skills that fail the base code's cases-per-skill or baseline gates on the pull
      request's own cases and baseline. New skills need no base cases;
-   - fails the base code's gates and thresholds (top-1, false invokes, cases per skill,
-     latency, held-out floors) over all of its own case files, so gate logic the pull request
-     changes can't loosen anything for its new cases. A pull request that improves the
-     router and adds cases only the new router gets right can fail here; that is the price of
-     judging every case with the base code.
+   - fails the base gates and thresholds (top-1, false invokes, cases per skill, latency,
+     held-out floors) over all of its own case files, judged with its own router.
 
    The scorer's own constants in `skill-router.ts` may change in a pull request; that is how
-   routing improves, and the gates measure the result. The threshold check reads only the
-   constants' declarations; the gate logic around them, in the pull request's code, is
-   covered by the base-code runs above and, after merge, by review: `.github/CODEOWNERS`
-   requires a maintainer for `skills-eval/` (`accepted-drops.json` included),
+   routing improves, and the base gates measure the result. The threshold check compares
+   the constants' declarations, so a stricter threshold can merge; the gate logic itself
+   comes from the base, and a change to it takes effect only after it merges, which is why
+   `.github/CODEOWNERS` requires a maintainer for `skills-eval/` (`accepted-drops.json` included),
    `skill-eval.ts`, `skill-router.ts` and the catalog script.
 
 ## Versions
