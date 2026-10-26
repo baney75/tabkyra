@@ -760,8 +760,8 @@ function runEvalCommand(flags: SkillFlags): number {
 	const heldoutText = readIfExists(join(dir, "router-heldout.jsonl"));
 	const skills = [...SKILLS].map(([name, text]) => ({ name, text }));
 	// --router: a router built as its own script (cli/src/router-worker.ts), run in a child process.
-	const ranker = flags.router ? processRanker(resolve(flags.router)) : undefined;
 	if (flags.router && !existsSync(resolve(flags.router))) throw new SkillError(`No router script at ${flags.router}.`);
+	const ranker = flags.router ? processRanker(resolve(flags.router)) : undefined;
 	if (flags.base) return runBaseCommand(flags, skills, casesFile, heldoutText, ranker);
 	const cases = parseCases(readFileSync(casesFile, "utf8"));
 	const heldout = heldoutText === undefined ? undefined : parseCases(heldoutText, "router-heldout.jsonl");

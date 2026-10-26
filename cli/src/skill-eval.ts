@@ -26,7 +26,17 @@ import { performance } from "node:perf_hooks";
 import { buildRouterIndex, matchSkills, type RouterSkill } from "./skill-router.ts";
 
 /** Rank every task: the top skill (or "none") per task, plus timings. */
-export type Ranker = (skills: RouterSkill[], tasks: string[], rounds: number) => { buildMs: number; top: string[]; timesMs: number[] };
+export type Ranker = (
+	skills: RouterSkill[],
+	tasks: string[],
+	rounds: number,
+) => {
+	buildMs: number;
+	top: string[];
+	timesMs: number[];
+	/** Wall-clock time per match measured by the judge around a router process: a floor for p95. */
+	wallPerMatchMs?: number;
+};
 
 /** The router in this process: what `tabkyra skill eval` uses by default. */
 export const inProcessRanker: Ranker = (skills, tasks, rounds) => {
@@ -47,22 +57,38 @@ export const inProcessRanker: Ranker = (skills, tasks, rounds) => {
 };
 
 /**
- * A router built as its own script (cli/src/router-worker.ts), run in a child process under
- * Node's permission model, given as code: it can't read or write any file or start processes. It gets skill texts and tasks, never labels, and none of the judge's code runs
- * in its process. Every answer is checked before a gate sees it.
+ * The loader the router process runs: fixed, tiny, and from the judge. It reads the router
+ * bundle and the request from stdin and imports the bundle from memory, so the router needs
+ * no file access, and a large router isn't limited by the command line.
+ */
+const ROUTER_LOADER = [
+	"const chunks = [];",
+	"for await (const chunk of process.stdin) chunks.push(chunk);",
+	'const { source, request } = JSON.parse(Buffer.concat(chunks).toString("utf8"));',
+	'const router = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);',
+	"process.stdout.write(JSON.stringify(router.rank(request)));",
+].join("\n");
+
+/**
+ * A router built from cli/src/router-worker.ts, run in a child process under Node's
+ * permission model: it can't read or write any file or start processes, and none of the
+ * judge's code runs in its process. It gets skill texts and tasks, never labels. Every
+ * answer is checked before a gate sees it, and the judge times the whole process, so a
+ * router can't report itself fast.
  */
 export function processRanker(file: string): Ranker {
-	// The script is passed as code, so the router process needs no file access at all.
 	const source = readFileSync(file, "utf8");
 	return (skills, tasks, rounds) => {
 		const permission = process.allowedNodeEnvironmentFlags.has("--permission") ? "--permission" : "--experimental-permission";
-		const r = spawnSync(process.execPath, [permission, "--input-type=module", "-e", source], {
-			input: JSON.stringify({ skills, tasks, rounds }),
+		const started = performance.now();
+		const r = spawnSync(process.execPath, [permission, "--input-type=module", "-e", ROUTER_LOADER], {
+			input: JSON.stringify({ source, request: { skills, tasks, rounds } }),
 			encoding: "utf8",
 			maxBuffer: 256 * 1024 * 1024,
 			timeout: 300_000,
 			env: { PATH: process.env.PATH ?? "" },
 		});
+		const wallMs = performance.now() - started;
 		const lines = (r.stderr || String(r.error ?? "")).trim().split("\n");
 		const why = (lines.find((l) => /\bERR_[A-Z_]+|Error\b/.test(l)) ?? lines[0] ?? "").trim();
 		if (r.status !== 0) throw new EvalError(`The router process failed (exit ${r.status ?? r.signal}): ${why || "no output"}`);
@@ -78,10 +104,11 @@ export function processRanker(file: string): Ranker {
 		if (!Array.isArray(top) || top.length !== tasks.length || !top.every((n) => typeof n === "string" && names.has(n))) {
 			throw new EvalError("The router process answered with the wrong number of rankings, or named a skill that doesn't exist.");
 		}
-		if (!Array.isArray(times) || !times.every((t) => typeof t === "number" && Number.isFinite(t) && t >= 0) || typeof reply.buildMs !== "number") {
-			throw new EvalError("The router process answered without valid timings.");
+		const matches = tasks.length * Math.max(1, rounds);
+		if (!Array.isArray(times) || times.length !== matches || !times.every((t) => typeof t === "number" && Number.isFinite(t) && t >= 0) || typeof reply.buildMs !== "number") {
+			throw new EvalError(`The router process answered without one valid timing per match (${matches} expected).`);
 		}
-		return { buildMs: reply.buildMs, top: top as string[], timesMs: times as number[] };
+		return { buildMs: reply.buildMs, top: top as string[], timesMs: times as number[], wallPerMatchMs: matches ? wallMs / matches : 0 };
 	};
 }
 
@@ -278,7 +305,10 @@ export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Bas
 	const top1 = positives ? positive.reduce((n, [, s]) => n + s.correct, 0) / positives : 0;
 	const none = perSkill.none;
 	const falseInvoke = none.cases ? 1 - none.accuracy : 0;
-	const speed = { buildMs: round(buildMs), p50Ms: round(percentile(times, 0.5), 4), p95Ms: round(percentile(times, 0.95), 4), maxMs: round(times.at(-1) ?? 0, 4), matches: times.length };
+	// A router process's own timings are checked against the judge's clock: p95 is at least
+	// the wall-clock time per match, so a router can't report itself fast.
+	const p95 = Math.max(percentile(times, 0.95), ranked.wallPerMatchMs ?? 0);
+	const speed = { buildMs: round(buildMs), p50Ms: round(percentile(times, 0.5), 4), p95Ms: round(p95, 4), maxMs: round(times.at(-1) ?? 0, 4), matches: times.length };
 	const held = heldout ? scoreSet(ranked.top.slice(usable.length), heldUsable) : undefined;
 
 	const covered = options.covered ?? names;

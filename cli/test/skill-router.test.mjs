@@ -557,7 +557,8 @@ test("the catalog script makes valid, distinct identifiers for any skill name", 
  * `skill eval --base --router`, and `routerSource` (the pull request's skill-router.ts) is
  * built into cli/src/router-worker.ts as a script of its own, run in a child process.
  */
-async function baseCodeWith(routerSource) {
+/** Build cli/src/router-worker.ts around `routerSource`, as CI does; returns the script. */
+async function routerWorker(routerSource) {
 	const { build } = await import("esbuild");
 	const dir = mkdtempSync(join(root, "router-"));
 	const router = join(dir, "skill-router.ts");
@@ -572,6 +573,15 @@ async function baseCodeWith(routerSource) {
 		logLevel: "silent",
 		plugins: [{ name: "pr-router", setup: (b) => b.onResolve({ filter: /skill-router\.ts$/ }, () => ({ path: router })) }],
 	});
+	return worker;
+}
+
+async function baseCodeWith(routerSource) {
+	const worker = await routerWorker(routerSource);
+	return baseRunWith(worker);
+}
+
+function baseRunWith(worker) {
 	return (head, base) => {
 		const r = run(["skill", "eval", "--json", "--base", base, "--router", worker, "--cases", join(head, "skills-eval", "router-cases.jsonl")]);
 		let out;
@@ -583,6 +593,7 @@ async function baseCodeWith(routerSource) {
 		return { code: r.code, out: r.out, gates: Object.fromEntries(out.gates.map((g) => [g.gate, g])) };
 	};
 }
+
 
 const routerSource = readFileSync(join(here, "..", "src", "skill-router.ts"), "utf8");
 /** Forty cases only a router that knows the word "zorblax" means OSINT gets right. */
@@ -716,4 +727,38 @@ test("inline code around a skill name reads as the name, for requests and exclus
 	assert.ok(!all("Don't use the `osint` skill; do a background check on this landlord.").includes("osint"));
 	assert.equal(all("Use the `dorks` skill to find PDFs about flood maps")[0], "dorks");
 	assert.notEqual(all("Fix the `osint` skill, it keeps failing on small models")[0], "osint");
+});
+
+test("the judge times the router process itself: a slow router can't report itself fast", async () => {
+	// A router that takes 12 ms a match and stops the clock it reports with.
+	const slow = `globalThis.performance.now = () => 0;\n${routerSource.replace(
+		"export function matchSkills(index: RouterIndex, task: string, top = 3): SkillMatch[] {",
+		"export function matchSkills(index: RouterIndex, task: string, top = 3): SkillMatch[] {\n\tconst until = Date.now() + 12;\n\twhile (Date.now() < until);",
+	)}`;
+	assert.notEqual(slow.indexOf("const until"), -1, "the slowdown applied");
+	const worker = await routerWorker(slow);
+	const dir = mkdtempSync(join(root, "slow-"));
+	writeFileSync(join(dir, "router-cases.jsonl"), '{"task": "Find peer-reviewed studies on sleep", "skill": "academic-research"}\n{"task": "Write a haiku", "skill": "none"}\n');
+	writeFileSync(join(dir, "router-heldout.jsonl"), '{"task": "/rsi", "skill": "rsi"}\n');
+	const r = run(["skill", "eval", "--json", "--router", worker, "--cases", join(dir, "router-cases.jsonl")]);
+	const report = JSON.parse(r.stdout);
+	assert.ok(report.speed.p95Ms >= 10, `p95 ${report.speed.p95Ms} ms`);
+	assert.equal(report.gates.find((g) => g.gate === "p95 latency").ok, false);
+});
+
+test("a router script past 128 KiB runs: it reaches the router process over stdin, not argv", async () => {
+	// A side effect, so the bundler keeps it: a router with a big table of its own.
+	const padded = `globalThis.routerTable = ${JSON.stringify("x".repeat(200 * 1024))};\n${routerSource}`;
+	const worker = await routerWorker(padded);
+	assert.ok(readFileSync(worker, "utf8").length > 128 * 1024);
+	const r = run(["skill", "eval", "--json", "--router", worker]);
+	assert.equal(r.code, 0, r.out.slice(0, 500));
+	assert.ok(JSON.parse(r.stdout).ok);
+});
+
+test("--router with a missing script is a clean error", () => {
+	const r = run(["skill", "eval", "--router", join(root, "no-such-router.mjs")]);
+	assert.equal(r.code, 1);
+	assert.match(r.out, /No router script at/);
+	assert.doesNotMatch(r.out, /ENOENT|\n\s+at /);
 });

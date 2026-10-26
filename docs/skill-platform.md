@@ -175,10 +175,14 @@ scripts and runs:
    The pull request's router runs in a child process of its own. The judge sends it skill
    texts and tasks as JSON over stdin and gets back one ranking per task; no judge code runs
    in the router's process, so a router can't patch the judge (say, its `Array.prototype`).
-   The router is passed as code under Node's permission model, so it can't read or write
-   files or start processes, and before it starts CI moves both case files out of every
-   checkout to a folder only the judge reads. Every answer is checked: one ranking per task,
-   each a real skill or `none`.
+   A small fixed loader from the judge reads the router bundle and the request from stdin
+   and imports the bundle from memory, under Node's permission model, so the router can't
+   read or write files or start processes, and its size isn't limited by the command line.
+   Before it starts, CI moves both case files out of every checkout to a folder only the
+   judge reads. Every answer is checked: one ranking per task, each a real skill or `none`,
+   and one timing per match. The judge also times the whole process, and the p95 gate uses
+   the larger of the router's p95 and the wall-clock time per match, so a router can't
+   report itself fast.
 
    That limits what a router can do, not what it is. A router written to game its eval can
    still do it without reading anything, for example by carrying the public case texts in its

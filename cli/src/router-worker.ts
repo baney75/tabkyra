@@ -1,24 +1,22 @@
 /**
- * The skill router in a process of its own, for `tabkyra skill eval --router`. CI builds this
- * shim (from the base branch) around a pull request's skill-router.ts and runs it with Node's
- * permission model, so the router reads nothing from disk. The judge (the base branch's
- * skill-eval.ts) sends one JSON request on stdin, `{skills, tasks, rounds}`, with skill texts
- * and task strings only, never the labels. It gets back `{buildMs, top, timesMs}`: the top
- * skill (or "none") for each task, and how long each match took.
+ * The skill router as a module of its own, for `tabkyra skill eval --router`. CI builds this
+ * shim (from the base branch) around a pull request's skill-router.ts. The judge runs it in a
+ * child process under Node's permission model: a small fixed loader reads the bundle and the
+ * request from stdin and imports the bundle from memory, so the router needs no file access
+ * and its size isn't limited by the command line. The request holds skill texts and tasks
+ * only, never the labels. The reply is the top skill (or "none") for each task, and how long
+ * each match took; the judge times the whole process too and doesn't trust these alone.
  */
 
 import { buildRouterIndex, matchSkills, type RouterSkill } from "./skill-router.ts";
 
-interface RouterRequest {
+export interface RouterRequest {
 	skills: RouterSkill[];
 	tasks: string[];
 	rounds: number;
 }
 
-const chunks: Buffer[] = [];
-process.stdin.on("data", (chunk: Buffer) => chunks.push(chunk));
-process.stdin.on("end", () => {
-	const request = JSON.parse(Buffer.concat(chunks).toString("utf8")) as RouterRequest;
+export function rank(request: RouterRequest): { buildMs: number; top: string[]; timesMs: number[] } {
 	const started = performance.now();
 	const index = buildRouterIndex(request.skills);
 	const buildMs = performance.now() - started;
@@ -32,5 +30,5 @@ process.stdin.on("end", () => {
 			if (r === 0) top.push(name);
 		}
 	}
-	process.stdout.write(JSON.stringify({ buildMs, top, timesMs }));
-});
+	return { buildMs, top, timesMs };
+}
