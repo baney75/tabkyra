@@ -28,6 +28,7 @@ function fenced(text, lang) {
 }
 
 test("notes: the rename helper leaves external URLs alone and takes titles literally", { skip: !hasPython && "no python3" }, () => {
+	assert.ok(skill("notes").includes('none of\n   `# | ^ [ ] \\ / : * " < > ?`'), "step 7 lists every character check refuses");
 	const helper = join(root, "note_rename.py");
 	writeFileSync(helper, fenced(skill("notes"), "python"));
 	const py = (...args) => spawnSync("python3", ["-I", helper, ...args], { encoding: "utf8" });
@@ -43,6 +44,11 @@ test("notes: the rename helper leaves external URLs alone and takes titles liter
 			"| [[Bio\\|b]] | [ab](<School/Bio.md>) | [t](School/Bio.md \"lecture\") | [h](<School/Bio.md#Cells> 'x') |",
 		].join("\n"),
 	);
+	mkdirSync(join(vault, "Other"));
+	const rel = join(vault, "Other", "Rel.md");
+	const near = join(vault, "School", "Near.md");
+	writeFileSync(rel, "[[../School/Bio]] [[chool/Bio]] `[[Bio]]`\n```\n[[Bio]] [x](School/Bio.md)\n```\n");
+	writeFileSync(near, "[[./Bio|here]]\n");
 	for (const bad of ["Bio #2", "Plan | v2", "a/b", "x:y"]) assert.equal(py("check", vault, "School/Bio.md", bad).status, 1, bad);
 	assert.equal(py("check", vault, "School/Bio.md", "Biology 101").status, 0);
 	renameSync(join(vault, "School", "Bio.md"), join(vault, "School", "Biology 101.md"));
@@ -62,6 +68,15 @@ test("notes: the rename helper leaves external URLs alone and takes titles liter
 		assert.equal(py("verify", vault, "School/Bio.md", "Biology 101").status, 1, `verify sees ${left}`);
 	}
 	rmSync(join(vault, "Left.md"));
+	assert.equal(readFileSync(rel, "utf8"), "[[../School/Biology 101]] [[chool/Bio]] `[[Bio]]`\n```\n[[Bio]] [x](School/Bio.md)\n```\n", "relative link relinked; suffix and code untouched");
+	assert.equal(readFileSync(near, "utf8"), "[[./Biology 101|here]]\n");
+	for (const left of ["[[../School/Bio]]", "[[./Bio]]"]) {
+		writeFileSync(join(vault, "Other", "Left.md"), `${left}\n`);
+		writeFileSync(join(vault, "School", "Left.md"), `${left}\n`);
+		assert.equal(py("verify", vault, "School/Bio.md", "Biology 101").status, 1, `verify sees ${left}`);
+	}
+	rmSync(join(vault, "Other", "Left.md"));
+	rmSync(join(vault, "School", "Left.md"));
 
 	// A title with regex metacharacters: a leftover link fails verify instead of passing.
 	writeFileSync(join(vault, "Q&A (2024).md"), "x\n");
@@ -73,23 +88,33 @@ test("notes: the rename helper leaves external URLs alone and takes titles liter
 	assert.equal(py("check", vault, "Q&A (2024).md", "QA 2024").status, 1, "an alias clash stops the rename");
 });
 
-test("video-editing: captions on a trimmed clip are shifted by the in point", () => {
+test("video-editing: captions on a trimmed clip are cut to it: straddling cues clipped, none past the end", { skip: !hasPython && "no python3" }, () => {
 	const text = skill("video-editing");
-	const shift = text.match(/^ffmpeg -copyts -i cap\.srt .* cap-clip\.srt$/m);
-	assert.ok(shift, "the worked example shifts the captions");
-	assert.match(text, /-i clip\.mp4 -i cap-clip\.srt /, "the shifted file is the one muxed");
-	for (const line of text.split("\n").filter((l) => /-i cap\.srt|subtitles=cap\.srt/.test(l))) {
-		assert.match(line, /-output_ts_offset/, `only the shift reads the unshifted cap.srt: ${line.trim()}`);
+	const cut = text.match(/^python3 -I srt_cut\.py 12 47 < cap\.srt > cap-clip\.srt$/m);
+	assert.ok(cut, "the worked example cuts the captions");
+	assert.match(text, /-i clip\.mp4 -i cap-clip\.srt /, "the cut file is the one muxed");
+	for (const line of text.split("\n").filter((l) => /cap\.srt/.test(l) && /-i |subtitles=|< /.test(l))) {
+		assert.match(line, /srt_cut\.py/, `only srt_cut.py reads the source-timed cap.srt: ${line.trim()}`);
 	}
+	assert.doesNotMatch(text, /-itsoffset|-output_ts_offset/, "ffmpeg's packet shift drops a cue that starts before the cut");
 	assert.match(text, /-map 0:s:0 check\.srt/, "a soft track is checked by extracting it");
-	if (!has("ffmpeg")) return;
 	const dir = mkdtempSync(join(root, "srt-"));
-	const cue = (n, a, b) => `${n}\n00:00:${a},000 --> 00:00:${b},000\nline ${n}\n`;
-	writeFileSync(join(dir, "cap.srt"), [cue(1, "05", "07"), cue(2, "13", "15"), cue(3, "46", "50"), cue(4, "55", "57")].join("\n"));
-	const r = spawnSync("bash", ["-c", `ffmpeg -v error -y ${shift[0].slice("ffmpeg ".length)}`], { cwd: dir, encoding: "utf8" });
+	writeFileSync(join(dir, "srt_cut.py"), fenced(text, "python"));
+	const cue = (n, a, b) => `${n}\r\n00:00:${a} --> 00:00:${b}\r\nline ${n}\r\n`;
+	writeFileSync(join(dir, "cap.srt"), `\ufeff${[cue(1, "05,000", "07,000"), cue(2, "11,000", "14,000"), cue(3, "20,250", "21,000"), cue(4, "46,000", "50,000"), cue(5, "55,000", "57,000")].join("\r\n")}`);
+	const r = spawnSync("bash", ["-c", cut[0]], { cwd: dir, encoding: "utf8" });
 	assert.equal(r.status, 0, r.stderr);
-	const times = [...readFileSync(join(dir, "cap-clip.srt"), "utf8").matchAll(/^(\S+) -->/gm)].map((m) => m[1]);
-	assert.deepEqual(times, ["00:00:01,000", "00:00:34,000"], "13 s and 46 s in the source land at 1 s and 34 s");
+	const out = readFileSync(join(dir, "cap-clip.srt"), "utf8");
+	const cues = [...out.matchAll(/^(\S+) --> (\S+)$/gm)].map((m) => `${m[1]}-${m[2]}`);
+	assert.deepEqual(cues, ["00:00:00,000-00:00:02,000", "00:00:08,250-00:00:09,000", "00:00:34,000-00:00:35,000"]);
+	assert.match(out, /^1\n00:00:00,000 --> 00:00:02,000\nline 2\n/, "renumbered, text kept, BOM and CRLF read");
+	if (!has("ffmpeg")) return;
+	const mk = ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=35", "-c:v", "libx264", "-preset", "ultrafast", "clip.mp4"];
+	assert.equal(spawnSync("ffmpeg", mk, { cwd: dir }).status, 0);
+	const mux = text.match(/^(ffmpeg -i clip\.mp4 -i cap-clip\.srt .*clip-cc\.mp4)$/m)[1].replace("-c:a copy ", "");
+	assert.equal(spawnSync("bash", ["-c", mux.replace(/^ffmpeg /, "ffmpeg -v error -y ")], { cwd: dir }).status, 0);
+	const dur = spawnSync("ffprobe", ["-v", "error", "-show_entries", "stream=duration", "-of", "csv=p=0", "clip-cc.mp4"], { cwd: dir, encoding: "utf8" });
+	for (const d of dur.stdout.trim().split("\n")) assert.ok(Number(d) <= 35.05, `no stream runs past the clip: ${dur.stdout}`);
 });
 
 test("video-editing: clips that differ, or have no audio, are normalized before a join", () => {
