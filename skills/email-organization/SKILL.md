@@ -17,7 +17,7 @@ always ends its first pass with a written plan and waits for the user's yes.
 - Archiving old promotions and newsletters, or unsubscribing.
 - A Sieve filter for a webmail inbox.
 
-To draft replies, use `writing`. To learn how the user writes, use `writing-voice`.
+To draft a reply in the user's voice, use `writing-voice`, or draft it directly.
 
 ## Where things are
 
@@ -45,12 +45,13 @@ Search URL: `https://mail.google.com/mail/u/0/#search/is%3Aunread+newer_than%3A7
    If the header says "many", write "more than 50" and say so.
 4. **Find what needs the user.** List messages that ask a question, have a deadline, or
    come from a person the user wrote to recently. These come first in the report.
-5. **Draft the plan.** A table with one row per change:
+5. **Draft the plan.** A table with one row per change. "Existing mail" says whether the
+   row changes mail already there, and the count says what it counts:
 
-   | Change | Matches | Count now | Effect |
-   | --- | --- | --- | --- |
-   | New label `Receipts` + filter | `from:(receipts@shop.example OR billing@isp.example)` | 214 | Label only |
-   | Archive | `category:promotions older_than:30d` | 1,380 | Leaves inbox, still searchable |
+   | Change | Matches | Existing mail | Count | Effect |
+   | --- | --- | --- | --- | --- |
+   | Label `Receipts` + filter | `from:(receipts@shop.example OR billing@isp.example)` | yes | 214 matching now | Label only |
+   | One-off archive, no filter | `category:promotions older_than:30d` | yes | 1,380 matching now | Leaves inbox, searchable |
 
    Gmail's "Skip the Inbox" filter action archives mail, and Outlook's "move to folder"
    takes it out of the inbox. A row with either is an archive row, and its Effect says so.
@@ -58,12 +59,17 @@ Search URL: `https://mail.google.com/mail/u/0/#search/is%3Aunread+newer_than%3A7
 6. **Show the plan and stop.** Ask: "Apply these changes?" Wait for the user's yes. If they
    change rows or add a limit ("don't archive anything"), update the table so no row breaks
    it, and show it again before applying.
-7. **Apply one row at a time.** For a Gmail filter: run the row's search, open the search
-   options panel, click Create filter, tick the actions in the row, and tick "Also apply
-   filter to matching conversations" only if the row says so. Use `read_page
-   {"filter":"interactive"}` for refs before each click.
-8. **Confirm each row.** Reload the filter list, then run the row's search again and read
-   the count header. Check the count matches the plan. If it doesn't, stop and tell the user before the next row.
+7. **Apply one row at a time.** Use `read_page {"filter":"interactive"}` for refs before
+   each click. Filter row: run the row's search, open the search options panel, click
+   Create filter, tick the row's actions, and tick "Also apply filter to matching
+   conversations" only when Existing mail is yes. One-off row: run the search, tick the
+   select-all box, click the link that selects every conversation in the search (not only
+   this page), click the action, and accept the confirmation box only when its count matches the row.
+8. **Read back the effect, not the search.** Label row: search `label:Receipts`; with
+   Existing mail yes the count must match the row. Archive or Skip the Inbox row: search
+   `in:inbox` plus the row's query; it must show none. Filter row: the filter list shows it
+   with the row's actions. A filter whose existing mail wasn't changed when the row said
+   yes is not done. On any mismatch, stop and tell the user before the next row.
 9. **Report.** What was applied, counts, the needs-a-reply list, and how to undo each row
    (delete the filter, remove the label, search the archive).
 
@@ -71,7 +77,8 @@ Search URL: `https://mail.google.com/mail/u/0/#search/is%3Aunread+newer_than%3A7
 
 - The user saw the plan table and said yes before anything changed.
 - Every count came from a search's count header, not from counting list rows.
-- Every applied row was read back and its count matches, or you stopped and reported.
+- Every applied row's effect was read back (`label:` count, `in:inbox` empty, filter listed)
+  and matches the row, or you stopped and reported.
 - No applied row breaks a limit the user stated, such as "don't archive anything".
 - The report lists every change with its undo, plus the messages that need the user.
 
@@ -108,9 +115,10 @@ navigate {"url":"https://mail.google.com/mail/u/0/#search/category%3Apromotions+
 get_page_text {"maxChars":1500}     -> header "1-50 of 1,380"
 ```
 
-Plan shown: label `Receipts` and skip the inbox for 3 senders (214, archives them), label
-`Newsletters` and skip the inbox for 2 lists (402, archives them), archive old promotions
-(1,380). Plus 4 messages that need a reply. The user says "yes, but don't archive
-anything". Skip the Inbox counts as archiving, so revise: rows 1 and 2 become label-only
-filters, row 3 is dropped. Show the revised table, get a yes, apply rows 1 and 2, rerun
-each search to read the counts back, and report the undo for each.
+Plan shown: label `Receipts` and skip the inbox for 3 senders (existing mail yes, 214
+matching now, archives them), the same for 2 newsletters (402), and a one-off archive of
+old promotions (1,380). Plus 4 messages that need a reply. The user says "yes, but don't
+archive anything". Skip the Inbox counts as archiving, so rows 1 and 2 become label-only
+filters and row 3 is dropped. After a yes on the revised table, apply rows 1 and 2 with
+"Also apply filter to matching conversations" ticked, then read back: `label:Receipts`
+shows 214, `label:Newsletters` shows 402, and both filters are listed. Report the undo.
