@@ -63,9 +63,11 @@ catalog script refuse a skill by that name, so a real match can't look like no m
 A skill matches when it scores at least 2.5 and has two pieces of evidence (specific words,
 word pairs, a phrase or a command), or one piece and a score of 4.5 (4.8 past 13 skills).
 Otherwise the answer is `none`: a small model does better with no skill than with the wrong
-one. A word or word pair counts as evidence when its IDF is at least 1.5: held by at most two
+one. A word or word pair counts as evidence when its IDF, computed as if the catalog had
+min(catalog size, 13) skills, is at least 1.5: so it is evidence when held by at most two
 skills in a catalog of 11 or more, by only one in a catalog of 6 to 10, and by none in a
-catalog of 5 or fewer. So common words alone never make a match, however high they add up.
+catalog of 5 or fewer. (Past 13 skills the IDF used for scoring is scaled and can be higher;
+it doesn't decide evidence.) So common words alone never make a match, however high they add up.
 
 Plain IDF rises as skills are added: in a larger catalog a word unique to one skill weighs
 more, and a word in three skills would turn into evidence. Past 13 skills, the catalog the
