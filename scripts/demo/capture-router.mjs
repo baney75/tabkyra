@@ -1,6 +1,6 @@
 // Records the skill router beat for the hero video: real `tabkyra skill match` runs and the
 // router's own speed measurement from `tabkyra skill eval`. Writes
-// media/video/public/capture/router.json; the hero video reads every line from it.
+// media/video/public/capture/router.json; every value the hero video shows for the router comes from it.
 //
 //   (cd cli && npm run build) && node scripts/demo/capture-router.mjs
 //
@@ -43,12 +43,12 @@ try {
 			throw new Error(`"${task}" routed to ${top}, expected ${expected}: ${r.out}`);
 		return { task, expected, shown, ...r };
 	});
+	// One eval run: the stored numbers and the line the video shows both come from it.
 	const evalRun = run(["skill", "eval", "--json"]);
 	const report = JSON.parse(evalRun.out);
 	if (!report.ok) throw new Error(`skill eval failed its gates: ${evalRun.out.slice(0, 400)}`);
-	const evalText = run(["skill", "eval"]);
-	const p95Line = evalText.out.split("\n").find((l) => /p95 latency/.test(l));
-	if (!p95Line) throw new Error(`no p95 line in skill eval output: ${evalText.out}`);
+	const { p50Ms, p95Ms, maxMs, buildMs, matches: timed } = report.speed;
+	if (!(p95Ms < 1)) throw new Error(`p95 is ${p95Ms} ms; the video says under a millisecond at p95`);
 	const data = {
 		recordedAt: new Date().toISOString(),
 		matches,
@@ -56,8 +56,7 @@ try {
 			skills: report.skills,
 			cases: report.cases,
 			top1: report.top1,
-			speed: report.speed,
-			p95Line: p95Line.trim(),
+			speed: { p50Ms, p95Ms, maxMs, buildMs, matches: timed },
 		},
 	};
 	const staging = `${target}.new`;

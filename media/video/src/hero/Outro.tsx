@@ -26,13 +26,13 @@ export const Router: React.FC = () => {
 			<AbsoluteFill style={{ padding: size(90, 80), display: "flex", flexDirection: "column", justifyContent: "center", gap: size(40, 46) }}>
 				<div style={{ scale: String(1 - 0.38 * lift), transformOrigin: "50% 0%", marginBottom: -lift * size(110, 90) }}>
 					<Words
-						words={vertical ? ["The right skill,", "in under", "a millisecond."] : ["The right skill,", "in under a millisecond."]}
-						ats={[0, at(93), at(93) + 4]}
-						size={size(120, 110)}
-						colors={[C.paper, C.brass, C.brass]}
+						words={vertical ? ["The right skill,", "in under", "a millisecond", "at p95."] : ["The right skill,", "in under a millisecond at p95."]}
+						ats={[0, at(93), at(93) + 4, at(93) + 8]}
+						size={size(104, 104)}
+						colors={[C.paper, C.brass, C.brass, C.brass]}
 					/>
 					<div style={{ marginTop: size(18, 24), textAlign: "center", fontFamily: FONT.mono, fontSize: size(40, 40), color: C.tide, opacity: ease(frame, at(94), 6) }}>
-						{ROUTER.eval.p95Line} · {ROUTER.eval.skills} skills
+						tabkyra skill eval: p95 {ROUTER.eval.speed.p95Ms} ms per match over {ROUTER.eval.speed.matches.toLocaleString("en-US")} timed matches · {ROUTER.eval.skills} skills
 					</div>
 				</div>
 				<div style={{ display: "flex", flexDirection: "column", gap: size(22, 30), alignItems: "center" }}>
@@ -120,7 +120,7 @@ export const EndCard: React.FC = () => {
 	const { vertical } = useLayout();
 	const step = (at(111) - at(110)) / 8;
 	const command = "tabkyra setup";
-	const typed = command.slice(0, Math.max(0, Math.floor((frame - at(114)) / 1.4)));
+	const typed = command.slice(0, Math.max(0, Math.floor((frame - at(113)) / 1.4)));
 	return (
 		<AbsoluteFill>
 			<Backdrop />
@@ -148,7 +148,7 @@ export const EndCard: React.FC = () => {
 				</div>
 				<Words
 					words={vertical ? ["You steer.", "Your agents", "work the tabs."] : ["You steer.", "Your agents work the tabs."]}
-					ats={[at(112), at(112.5), at(113)]}
+					ats={[at(111.5), at(112), at(112.5)]}
 					size={size(96, 96)}
 					font={FONT.serif}
 					italic
@@ -161,7 +161,7 @@ export const EndCard: React.FC = () => {
 						borderRadius: size(20, 22),
 						background: C.inkDeep,
 						border: `1px solid ${C.inkLine}`,
-						opacity: ease(frame, at(114), 5),
+						opacity: ease(frame, at(113), 5),
 						display: "flex",
 						flexDirection: "column",
 						alignItems: "center",
@@ -172,7 +172,7 @@ export const EndCard: React.FC = () => {
 						<span style={{ color: C.brass }}>$ </span>
 						{typed}
 					</div>
-					<div style={{ fontFamily: FONT.sans, fontSize: size(30, 30), color: C.mist, opacity: ease(frame, at(115), 6), textAlign: "center" }}>
+					<div style={{ fontFamily: FONT.sans, fontSize: size(30, 30), color: C.mist, opacity: ease(frame, at(113.5), 6), textAlign: "center" }}>
 						builds the extension, registers your browser, offers to add your agents
 					</div>
 				</div>
@@ -183,8 +183,8 @@ export const EndCard: React.FC = () => {
 						flexDirection: vertical ? "column" : "row",
 						alignItems: "center",
 						gap: size(50, 18),
-						opacity: ease(frame, at(116), 6),
-						translate: `0 ${(1 - ease(frame, at(116), 10)) * 30}px`,
+						opacity: ease(frame, at(114), 6),
+						translate: `0 ${(1 - ease(frame, at(114), 10)) * 30}px`,
 					}}
 				>
 					<span style={{ fontFamily: FONT.mono, fontSize: size(64, 64), color: C.brass }}>dbaney.com/tabkyra</span>
