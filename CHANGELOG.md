@@ -58,6 +58,7 @@
 - Removed upstream working notes from the repository root (`db.md`, `gmail.md`, `plan.md`).
 
 ### Fixed
+- The agent setup prompt appended skills to the Tabkyra clone's AGENTS.md instead of the user's project (step 2 leaves the shell in `~/tabkyra-src/tabkyra`), which also made the next update stop on local changes. Step 1 now records the starting directory and the AGENTS.md step returns to it. For a clone the old prompt already dirtied, the prompt shows the diff and offers `git restore AGENTS.md`, run only on the user's yes.
 - `tabkyra library add` listed most Crossref notices two to four times (Crossref reports each one from the notice's record and again on the work's record, and alias checks added more). Notices are now kept once per type and DOI; `cli/test/library.test.mjs` fails on a repeated notice.
 - The empty-chat welcome screen now renders. `appendMessage` emits no event, so the chat never redrew to show it.
 - Settings tabs no longer wrap to several lines in a narrow side panel; the tab row scrolls (pi-web-ui `SettingsDialog`, in `patches/pi-mono.patch`).
