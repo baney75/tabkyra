@@ -31,11 +31,13 @@ they never pass through you. For sorting mail and filters, use `email-organizati
 
 ## Steps
 
-1. **Check the browser.** `status {}`, then `navigate` to the app. If the page asks for a
+1. **Check the browser.** For Pass, try step 14 first. `status {}`, then `navigate` to the
+   app. If the page asks for a
    sign-in, a mailbox password or 2FA, `tabs_show` and ask the user to finish. Never type
    a password.
-2. **Wait for decryption.** Proton apps load, then decrypt. `wait {"text":"Inbox","timeoutMs":20000}`
-   for Mail, or `wait {"ms":3000}` and `read_page` for the others.
+2. **Wait for decryption.** Proton apps load, then decrypt. Mail:
+   `wait {"text":"Inbox","timeoutMs":20000}`. Drive and Calendar: `wait {"ms":3000}`, then
+   `read_page`. Pass: `wait {"ms":3000}` only, then go to step 15.
 
 ### Mail
 
@@ -73,12 +75,15 @@ they never pass through you. For sorting mail and filters, use `email-organizati
 
 14. **Prefer the CLI.** If `pass-cli` is installed and signed in, `pass-cli item list`
     lists items by name, as in the `proton-pass` skill.
-15. **Or search the web app with scoped reads.** With no item open, type the name in the
-    Pass search box by ref, then `find {"query":"[name]","limit":10}` to read the result
-    titles. Don't open a result. On pass.proton.me, don't call `get_page_text`,
-    `get_page_html`, `screenshot` or `read_page` without `"filter":"interactive"`: an open
-    item shows its username, one-time code and password.
-16. **Report title, vault and website only.** Never reveal a stored password. Never copy a
+15. **On pass.proton.me, use only `find`, `type`, `click` and `press`.** An open item shows
+    its username, one-time code and password, and any page read would return them. Never
+    call `get_page_text`, `get_page_html`, `screenshot` or `read_page` there.
+16. **Close any open item first.** `press {"key":"Escape"}` twice, before any `find`.
+17. **Search.** `find {"query":"search","limit":3}` for the search box ref, `type` the name
+    into it, then `find {"query":"[name]","limit":10}` to read the result titles. Don't
+    click a result. If a `find` result shows a username, password or code, an item is open:
+    press Escape and don't repeat what it showed.
+18. **Report title, vault and website only.** Never reveal a stored password. Never copy a
     stored password. When a program needs it, hand off to `proton-pass`.
 
 ## Done when
@@ -88,13 +93,14 @@ they never pass through you. For sorting mail and filters, use `email-organizati
 - A share link's access level and expiry, read back from the dialog, match what the user
   approved, or the link is off.
 - No password, 2FA code or Pass item secret appeared in your output.
+- On pass.proton.me only `find`, `type`, `click` and `press` ran, and no item was opened.
 
 ## When something goes wrong
 
 | Symptom | Fix |
 | --- | --- |
 | Mailbox password or 2FA prompt | `tabs_show`, ask the user to enter it, wait |
-| Page stuck on loading | Proton decrypts in the browser. `wait {"ms":5000}`, then `read_page` |
+| Page stuck on loading | Proton decrypts in the browser. `wait {"ms":5000}`, then `read_page` (on Pass, `find` only) |
 | Search misses words in the body | Message content search is off. Tell the user where to turn it on |
 | Link is on but the expiry or access level won't save | Turn Create public link off, confirm it is off, and tell the user |
 | No Create public link option | Free plans limit Editor links. Offer Viewer, or ask the user to choose |
