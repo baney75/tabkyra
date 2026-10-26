@@ -1,6 +1,6 @@
 ---
 name: biology
-description: Look up biological facts in primary databases - NCBI Gene, Taxonomy, Nucleotide and BLAST, UniProt for proteins, PDB and AlphaFold for structures - and back claims with papers through the academic-research skill, citing each record's accession. Use when the user asks about a gene, protein, organism, species, taxonomy, sequence, protein function or structure, or wants biology facts with sources for a class, a lab or a report.
+description: Find what genes, proteins and organisms are and do in NCBI Gene, Taxonomy and BLAST, UniProt, the PDB and AlphaFold, citing each record's accession. Use when the user asks what a protein or gene does, for a UniProt or NCBI Gene record, an organism's taxonomy or scientific name, a BLAST search of a DNA or protein sequence, a protein structure, domains or an AlphaFold prediction.
 license: AGPL-3.0
 ---
 
@@ -12,11 +12,12 @@ ID, UniProt accession, taxonomy ID, PDB ID) or from a paper checked by the
 
 ## When to use
 
-- What a gene or protein does, where it is, how long it is.
-- An organism's classification, common and scientific names.
-- A sequence, or what a sequence matches (BLAST).
-- A protein's structure or domains.
-- Sourced facts for a class assignment or lab report.
+- What a protein does: its function, size and location in human or other cells, from UniProt.
+- What a gene does, from its NCBI Gene record.
+- An organism's taxonomy, lineage, common and scientific names.
+- BLAST of a DNA or protein sequence.
+- Protein structures, domains and AlphaFold predictions.
+- Genes in mouse, zebrafish, E. coli and other lab organisms.
 
 For human variants, disease genes and ClinVar, use `genetics`. For papers and citations,
 use `academic-research`.

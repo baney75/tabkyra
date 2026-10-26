@@ -1,6 +1,6 @@
 ---
 name: reference
-description: Collect design inspiration the legal way - a reference board of links with creator, license and the idea worth borrowing, described in your own words - so new work learns from others without copying protected images, logos, trademarks, fonts or code, and credits its sources. Use when the user asks for design inspiration, references, a mood board, examples of a style, "make it look like" a site or brand, or asks whether they can use an image, font, icon, logo or code snippet they found.
+description: Gather design inspiration the legal way - examples with links, creators and licenses, and the idea worth borrowing in your own words - so new designs learn from others without copying protected images, logos, trademarks, fonts or code, and credit their sources. Use when the user asks for design inspiration, references, examples of a style or layout to learn from, a mood board, "make it look like" a famous site, whether they can copy a famous logo or style, or whether a photo from Google Images, a font, an icon or a code snippet is free for commercial use and how to credit it.
 license: AGPL-3.0
 ---
 
@@ -13,9 +13,9 @@ owner and the license, and says what to borrow at the level of ideas.
 
 ## When to use
 
-- Inspiration or a mood board for a site, app, deck, logo or brand.
-- "Make it look like [site or brand]".
-- Checking whether an image, font, icon or code snippet can be used, and how to credit it.
+- Inspiration, examples or a mood board for a site, app, deck or logo.
+- "Make it look like [site]" without copying it.
+- Whether a photo, image, font, icon or code snippet is licensed for commercial use, and its credit line.
 
 To save the user's own designs, use `design-library`. For a full brand, use `branding`.
 This skill gives practical license guidance, not legal advice. For a real dispute or a

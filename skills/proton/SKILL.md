@@ -1,6 +1,6 @@
 ---
 name: proton
-description: Work in the Proton web apps in the user's browser - read and search Proton Mail, browse Proton Drive and make share links, read and plan Proton Calendar events, and find items in Proton Pass by name - asking before anything is sent, shared, created or deleted. Use when the user asks to find or read a Proton Mail message, find a Proton Drive file or share it by link, check or add to their Proton Calendar, or find which Proton Pass item holds a login. For inbox triage, labels, folders or filters use email-organization, and to learn the user's writing style use writing-voice.
+description: Work in the Proton web apps in the user's browser - read and search Proton Mail, browse Proton Drive and make share links, read and plan Proton Calendar events, and find which Proton Pass entry holds a login - with the user's yes before anything is sent, shared, created or deleted. Use when the user asks to find or read a Proton Mail message, find a Proton Drive document or folder or share it by link, check or add to their Proton Calendar, or find which Proton Pass entry holds a login. Not for inbox triage, labels, folders or filters (email-organization) or learning the user's writing style (writing-voice).
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,10 @@ the user's sign-in, so each needs the user's yes on the exact action.
 
 ## When to use
 
-- Find or summarize Proton Mail messages.
-- Find a file in Proton Drive, or make a share link for one.
-- Read the user's Proton Calendar, or add or change an event.
-- Find which Proton Pass item holds a login, by name or site.
+- Reading, searching or summarizing Proton Mail emails in the inbox.
+- A Proton Drive document or folder, or a public share link for it.
+- Proton Calendar events, read, added or moved.
+- Which Proton Pass entry holds a login.
 
 For a secret a program needs, use `proton-pass`: it injects secrets with `pass-cli run` so
 they never pass through you. For sorting mail and filters, use `email-organization`.

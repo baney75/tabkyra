@@ -1,6 +1,6 @@
 ---
 name: chemistry
-description: Look up chemical structures, identifiers and properties in PubChem and the NIST WebBook, read GHS hazards and the supplier's safety data sheet, and work stoichiometry and concentration problems with a unit check on every line. Use when the user asks about a chemical or compound, its formula, molar mass, structure, SMILES, CAS number, properties, hazards, SDS, safe handling or storage, or needs help balancing an equation or calculating moles, molarity or dilutions.
+description: Find compounds in PubChem and the NIST WebBook - formula, molar mass, SMILES, CAS number and properties - read GHS hazards and safety data sheets, and do stoichiometry, molarity and dilution calculations with units on every line. Use when the user asks about a chemical or compound, its formula, molar mass, CAS number or boiling point, its hazards, SDS or PPE, balancing a chemical equation, grams to moles, molarity, making a solution, dilution or theoretical yield.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,11 @@ every line.
 
 ## When to use
 
-- Identify a compound: formula, molar mass, SMILES, IUPAC name, CAS number.
-- Physical and thermochemical data: boiling point, density, heat of formation.
-- Hazards, safe handling, storage and first aid from GHS data and an SDS.
-- Stoichiometry, molarity, dilution, gas law and yield calculations.
+- A compound's formula, molar mass, SMILES, IUPAC name or CAS number.
+- Physical data such as boiling point, density or heat of formation.
+- Hazards of a chemical, or of mixing chemicals such as bleach, from GHS data and the SDS; PPE and storage.
+- Stoichiometry: grams and moles, molarity, balancing equations and yield.
+- Diluting an acid or a stock solution, with volumes in mL.
 
 For biology databases (genes, proteins), use `biology`. For the math itself, the
 `mathematics` skill's checks apply.

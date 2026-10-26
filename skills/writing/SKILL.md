@@ -1,6 +1,6 @@
 ---
 name: writing
-description: Draft and edit clear documents - emails, reports, proposals, essays, instructions, announcements - by fixing the reader and purpose first, outlining, writing plain short sentences, then cutting and checking every fact. Use when the user asks to write, draft, rewrite, edit, proofread, tighten, shorten or improve a document, email, letter, post, summary or report.
+description: Draft and edit long-form documents - reports, proposals, essays, guides, instructions, announcements and write-ups from a transcript or rough outline - by fixing the reader and purpose, outlining, cutting and checking every fact. Use when the user asks to draft, restructure, edit, tighten or shorten a report, proposal, essay, guide, manual or announcement, make wordy prose clearer, or turn a transcript into a report or summary. Not for short emails, texts, cover letters, thank-you notes, poems or stories.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,11 @@ it must make them do.
 
 ## When to use
 
-- Draft a document, email, letter, report, proposal, essay or post.
-- Edit or proofread the user's draft.
-- Shorten, restructure or change the tone of a text.
-- Turn notes or a meeting transcript into a clear write-up.
+- Drafting a report, proposal, guide or set of instructions.
+- Editing a long document for flow, clarity and length, or making it shorter.
+- Wordy or stiff prose that should read clearer and more direct.
+- A transcript or rough outline turned into a report or summary.
+- An announcement to staff or a group.
 
 To match the user's own style, use `writing-voice` first and apply its profile here. To
 fill a document in Google Docs or Word online, use `office-docs` for the editor steps.

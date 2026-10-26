@@ -156,6 +156,10 @@ invokes 10% (1 of 10). The top-1 gate needs 206 of 228, so the margin is three c
 Matching takes about 0.2 ms at p95 and the index build about 20 ms on the CI runner (about
 0.1 ms and under 10 ms on an Apple-silicon Mac).
 
+With the 19 skills from pull request #19 (32 skills, measured 2026-10-25): on the tuned set of
+483 cases, top-1 93.3% (387 of 415) and false invokes 0% (0 of 68); on the 110 held-out cases,
+top-1 88.5% (85 of 96) and false invokes 0% (0 of 14). The top-1 gate needs 374 of 415.
+
 ## CI gates
 
 The `skill-regression` job in `.github/workflows/ci.yml` builds the CLI without install

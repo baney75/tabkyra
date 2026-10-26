@@ -1,6 +1,6 @@
 ---
 name: map-data
-description: Work with geographic data - geocode and reverse-geocode addresses with Nominatim, query OpenStreetMap features with Overpass, convert results to GeoJSON or CSV, check coordinates, and view or export the data with attribution. Use when the user asks for coordinates, latitude and longitude, geocoding, GeoJSON, a KML or CSV of places, an Overpass query, OpenStreetMap data, or all the features of a kind in an area.
+description: Geocode addresses, query OpenStreetMap with Overpass, and create or repair GeoJSON, KML and CSV files of places with checked coordinates and ODbL attribution. Use when the user asks for latitude and longitude, geocoding or reverse geocoding, GeoJSON, KML, an Overpass query, OpenStreetMap data, or every feature of a kind in an area exported to a file.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,11 @@ and must be credited "(c) OpenStreetMap contributors".
 
 ## When to use
 
-- Geocode addresses to coordinates, or coordinates to an address.
-- Get every feature of a kind in an area: libraries, bike racks, hospitals, roads.
-- Build or fix a GeoJSON, CSV or KML file.
-- View data on a map to check it.
+- Geocoding addresses to latitude and longitude, or reverse geocoding GPS coordinates.
+- The coordinates of a place or landmark to a set precision.
+- OpenStreetMap features of a kind in an area through Overpass, such as parks or hospitals.
+- GeoJSON, KML or CSV of coordinates, created or repaired.
+- Places that land in the wrong spot, such as swapped latitude and longitude.
 
 For directions, travel times or "where is the nearest X", use `maps`.
 

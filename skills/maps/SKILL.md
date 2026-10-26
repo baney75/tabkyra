@@ -1,6 +1,6 @@
 ---
 name: maps
-description: Get directions, travel times, distances and place details (hours, address, ratings, what's nearby) from Google Maps or OpenStreetMap in the user's browser, and report the route with its source and time of lookup. Use when the user asks how to get somewhere, how far or how long a trip is, where the nearest place is, what is open near them, or wants a route, a map link or a list of places.
+description: Get directions, travel times, distances and nearby places (hours, address, ratings) from Google Maps or OpenStreetMap. Use when the user asks how to get somewhere, for a route, how far or how long a drive, walk, bike ride or transit trip takes, the nearest store, gas station or pharmacy, or a Google Maps link.
 license: AGPL-3.0
 ---
 
@@ -11,10 +11,10 @@ open. Travel times change with traffic and schedules, so say when you looked.
 
 ## When to use
 
-- Directions and travel time by car, transit, bike or on foot.
+- Driving, walking, biking or transit directions and travel time.
 - Distance between two places, by road or straight line.
-- Find places: the nearest pharmacy, cafes open now, gas on a route.
-- A map link to send to someone, or a list of stops in order.
+- Nearby places such as coffee shops, restaurants, a pharmacy or a gas station, with hours and ratings.
+- Stops along a route.
 
 For coordinates, GeoJSON, bulk geocoding or OpenStreetMap data queries, use `map-data`.
 

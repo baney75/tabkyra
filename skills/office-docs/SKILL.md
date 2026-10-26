@@ -1,6 +1,6 @@
 ---
 name: office-docs
-description: Create, fill, format and export documents, spreadsheets and slide decks in Google Docs, Sheets and Slides and in Word, Excel and PowerPoint on the web, in the user's browser, using keyboard shortcuts and checking the result by export or screenshot. Use when the user asks to make or edit a Google Doc, Sheet or Slides deck, a Word document, an Excel spreadsheet or a PowerPoint online, fill a template, add a table or formulas, format a document, or export it as PDF, DOCX, XLSX, PPTX or CSV.
+description: Create, fill, format and export Google Docs, Sheets and Slides and Word, Excel and PowerPoint online, typing with keyboard shortcuts and verifying each document by export. Use when the user asks to make or edit a Google Doc, Google Sheet, Slides deck, Word document, Excel spreadsheet or PowerPoint, add formulas or a chart to a spreadsheet, format headings, fill a template, or save one as PDF, DOCX, XLSX or PPTX.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,9 @@ a `screenshot` or by exporting the file and reading it on disk.
 
 ## When to use
 
-- Start a new doc, sheet or deck, or fill one the user names.
-- Add headings, lists, tables, formulas or slides.
-- Format a document to a template.
-- Export to PDF, DOCX, XLSX, PPTX or CSV.
+- A new Google Doc, Google Sheet or Slides deck, or Word, Excel or PowerPoint online.
+- Filling a template; formatting headings, tables, formulas and charts.
+- A doc, spreadsheet or deck saved as PDF, DOCX, XLSX or PPTX.
 
 For what to write, use `writing`. For Obsidian or Notion, use `notes`.
 

@@ -1,6 +1,6 @@
 ---
 name: pcb-design
-description: Research and design printed circuit boards in KiCad - read datasheets for pinouts and layout rules, pick and check footprints, find parts with stock and price on distributor search pages (DigiKey, Mouser, LCSC, Octopart), and run ERC, DRC and fab checks before ordering. Use when the user asks for help with a PCB, schematic, footprint, KiCad, a part or its datasheet, a BOM, Gerbers, DRC errors, or choosing a component or board house.
+description: Design PCBs in KiCad - datasheets, footprints, schematics, design rules, ERC and DRC, Gerbers and BOMs - and find electronic components on DigiKey, Mouser, LCSC and Octopart. Use when the user asks about a PCB, schematic, footprint, KiCad, Gerbers, DRC or ERC errors, trace width or clearance rules, a BOM, a component datasheet or pinout, an in-stock part alternative, or a PCB fab such as JLCPCB.
 license: AGPL-3.0
 ---
 
@@ -11,10 +11,10 @@ part that is out of stock, and a rule the fab can't make. This skill checks all 
 
 ## When to use
 
-- Choose a part, read its datasheet, or find a stocked alternative.
-- Draw or review a schematic, assign footprints, lay out a board in KiCad.
-- Run ERC and DRC, read the errors, and fix them.
-- Build a BOM and Gerbers for a board house.
+- Picking an electronic component such as a voltage regulator or connector, reading its datasheet, or finding an in-stock alternative part.
+- Hand-solderable packages and footprints, schematics and PCB layout in KiCad.
+- Design rules such as trace width, clearance and drill size; ERC and DRC errors.
+- BOM, Gerbers, drill and position files for a PCB fab such as JLCPCB.
 
 For general electronics theory or circuit math, work it out with the `mathematics` skill.
 Never place an order or pay for parts or boards. That is the user's step.

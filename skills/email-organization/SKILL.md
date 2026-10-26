@@ -1,6 +1,6 @@
 ---
 name: email-organization
-description: Triage and organize the user's inbox in Gmail, Proton Mail or Outlook on the web - sort by sender and topic, propose labels, folders and filters, and apply them only after the user approves the plan. Use when the user asks to clean up, sort, triage or organize their email or inbox, find what needs a reply, unsubscribe from clutter, or create labels, folders, filters or rules.
+description: Organize an email inbox in webmail such as Outlook - triage, labels, folders, filters, rules, archiving and unsubscribing - with a plan the user approves before anything changes. Use when the user asks to clean up, triage or organize their inbox, archive or label emails, create mail filters or Outlook rules, find mail that still needs a reply, triage by urgency, or unsubscribe from newsletters and promotions.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,10 @@ always ends its first pass with a written plan and waits for the user's yes.
 
 ## When to use
 
-- The inbox is overloaded and the user wants it sorted or triaged.
-- The user wants labels or folders and filters or rules that keep it sorted.
-- The user wants a list of mail that needs a reply or a decision.
-- The user wants to cut newsletters and promotions.
+- Inbox triage by urgency, including which mail still needs a reply.
+- Labels, folders, mail filters or Outlook rules.
+- Archiving old promotions and newsletters, or unsubscribing.
+- A Sieve filter for a webmail inbox.
 
 To draft replies, use `writing`. To learn how the user writes, use `writing-voice`.
 

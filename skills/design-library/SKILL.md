@@ -1,6 +1,6 @@
 ---
 name: design-library
-description: Keep the user's own designs in a personal design library folder - palettes with contrast checks, type pairings with font licenses, UI components, icons, layouts and brand kits - each with an index line, tags and its source, so they can be found and reused in new work. Use when the user asks to save a design, palette, color scheme, font pairing, component or style for later, to reuse something from their library, to see what they've saved, or to apply their usual style to a new project.
+description: Keep the user's own designs in a personal design library folder - palettes with contrast checks, type pairings with font licenses, UI components, icons, layouts and brand kits - each with an index line and tags, so they can be found again. Use when the user asks to save a design, palette, color scheme, font pairing, component or style for later, to reuse something from their library, to see what they've saved, or to apply their usual style to new work.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,9 @@ submitted, pushed to a public repo, uploaded or put in a shared skill.
 
 ## When to use
 
-- Save a palette, font pairing, component, layout or icon the user likes.
-- Find and reuse something from the library in a new project.
-- Apply the user's house style to a page, deck or document.
-- Store a brand kit made with the `branding` skill.
+- Saving a palette, font pairing, component, layout or icon the user likes.
+- Finding something saved in the library for new work.
+- Applying the user's house style or a saved brand kit to a new design, deck or site.
 
 To collect other people's work as inspiration, use `reference`. It records links and
 licenses, not copies.

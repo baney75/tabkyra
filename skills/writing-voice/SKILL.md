@@ -1,6 +1,6 @@
 ---
 name: writing-voice
-description: Learn how the user writes from their own sent mail and their own documents, read in place in their signed-in tabs, and keep only a short personal style profile (sentence length, word choice, openings, sign-offs, a few short example lines), never the messages. Then draft in that voice. Use when the user asks to write like them, in their voice, in their style, to sound like them, or to learn or update how they write.
+description: Learn the user's personal writing voice from their own mail and Google Docs, keep a compact private style profile (never the messages), and write in that voice. Use when the user asks you to write like them, in their voice or their style, to sound like them, to copy how they talk to clients or friends, or to learn or refresh their writing style from their sent mail or documents.
 license: AGPL-3.0
 ---
 
@@ -12,9 +12,9 @@ storage, pasted into a bug report or added to a shared skill.
 
 ## When to use
 
-- The user wants drafts that sound like them.
-- The user asks you to learn or refresh their writing style.
-- A draft from the `writing` skill should match the user's voice.
+- Replies and drafts that should sound like the user, in their own voice.
+- Learning or refreshing the user's writing style from their mail, essays or documents.
+- Whether a draft sounds like the user.
 
 Don't use it to imitate anyone else. Learning another person's style from their mail is
 out of scope, even if the user can read that mail.

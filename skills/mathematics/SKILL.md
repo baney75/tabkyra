@@ -1,6 +1,6 @@
 ---
 name: mathematics
-description: Solve math problems with a worked, step-by-step solution and then verify the answer by an independent method - substitution, a numeric check, a second technique, SymPy, WolframAlpha or a Desmos graph - before stating it. Use when the user asks to solve, simplify, integrate, differentiate, prove, factor or calculate something, check their math or homework answer, graph a function, or explain how a math result is reached.
+description: Solve math problems with a worked solution - equations, integrals, derivatives, limits, probability, matrices and proofs - then check the answer by an independent method such as substitution, SymPy, WolframAlpha or a Desmos graph. Use when the user asks to solve an equation, find "the integral of" or "the derivative of" an expression, take a limit, find eigenvalues of a matrix, prove a theorem or identity, simplify an expression and find where it is undefined, work out "the probability of" an event or a word problem, check math homework, or graph an equation. Not for quick arithmetic, percentages, unit conversions or a single statistic.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,11 @@ the error before answering.
 
 ## When to use
 
-- Algebra, calculus, linear algebra, probability, statistics, discrete math.
-- Word problems with units.
-- Checking the user's own work or an answer key.
-- Graphing or exploring a function.
+- Equations, integrals, derivatives, limits and series in algebra and calculus.
+- Matrices, eigenvalues, dice and card probability, and combinatorics problems.
+- Proofs of an identity, a sum formula or a theorem.
+- Rate and speed word problems, such as two trains leaving at different times.
+- Checking math homework or an answer key, or graphing an equation in Desmos.
 
 For a class the user is studying, teach the steps and let them try first when they ask
 to learn, not just for the answer.

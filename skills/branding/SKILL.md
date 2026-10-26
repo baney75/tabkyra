@@ -1,6 +1,6 @@
 ---
 name: branding
-description: Build a brand from a brief - name candidates checked against trademark databases, domains and handles, a positioning line, a palette with contrast checks, a type pairing with licenses, a logo direction and usage rules - and save it to the user's design library as a brand kit. Use when the user asks to name a business, product or project, create a brand, brand identity or brand kit, pick brand colors or fonts, write a tagline or positioning line, or plan a logo.
+description: Create a brand - name candidates checked against trademark databases, domains and social handles, a tagline, a palette with contrast checks, a type pairing with licenses, a logo direction and usage rules - and save it to the user's design library as a brand kit. Use when the user asks to name a business, product or app, check a name for trademarks, create a brand or brand kit from scratch, rebrand a business, plan a brand identity, pick brand colors or fonts, write a tagline or positioning line, or plan a logo.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,10 @@ a brand kit the user can hand to anyone.
 
 ## When to use
 
-- Name a business, product, app or project.
-- Create or refresh a brand identity.
-- Pick brand colors and fonts, write a tagline or positioning line.
-- Brief a designer or plan a logo.
+- Naming a business, product or app, with trademark and domain checks.
+- A new brand identity from scratch, or a rebrand.
+- Brand colors and fonts, a tagline and a positioning line.
+- A logo direction for a designer.
 
 For inspiration boards, use `reference`. For storing and reusing the kit, `design-library`.
 Trademark searches here are a first screen, not legal clearance. Before filing or a big

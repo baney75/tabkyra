@@ -1,6 +1,6 @@
 ---
 name: genetics
-description: Look up genes and variants in NCBI Gene, Ensembl, ClinVar and dbSNP - location, function, allele frequency, and the clinical classification with its review status and date - and explain what the records say without diagnosing anyone, pointing health decisions to a doctor or genetic counselor. Use when the user asks about a gene, an rsID or variant, a mutation, a ClinVar classification, allele frequency, a DNA test result, or what a genetic finding means.
+description: Explain human genes and variants from NCBI Gene, Ensembl, ClinVar and dbSNP - genome coordinates, rsIDs, allele frequency in the population and clinical classification with review status - without diagnosing anyone. Use when the user asks about an rsID, a variant or mutation, a ClinVar classification or pathogenic variant, how common a variant is, a dbSNP or Ensembl record, GRCh38 coordinates, a DNA report or test result such as 23andMe, or a hereditary disease gene.
 license: AGPL-3.0
 ---
 
@@ -12,11 +12,12 @@ health. That needs their history, their full test and a professional.
 
 ## When to use
 
-- What a gene does, where it is, its official symbol.
-- An rsID or HGVS variant: location, alleles, frequency, ClinVar classification.
-- How common a variant is in populations.
-- Explaining a ClinVar classification and its review status.
-- Background for a class, report or a conversation with a doctor.
+- A human gene's location and official symbol in NCBI Gene or Ensembl.
+- An rsID or HGVS variant in dbSNP, with genome coordinates, alleles and allele frequency.
+- How common a variant is in the population.
+- A variant's ClinVar classification and its review status.
+- A DNA report or consumer test result such as 23andMe raw data.
+- Genes behind a hereditary disease.
 
 For proteins, organisms and sequences, use `biology`. For papers, use `academic-research`.
 

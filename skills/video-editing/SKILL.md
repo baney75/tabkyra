@@ -1,6 +1,6 @@
 ---
 name: video-editing
-description: Plan and edit video with the tools the user already has, mainly ffmpeg - cuts, joins, captions, b-roll overlays, vertical crops, loudness and export presets - and verify every output with ffprobe and frame grabs before handing it over. Use when the user asks to cut, trim, join, caption, subtitle, resize, compress or export a video, add b-roll or a picture-in-picture, make a vertical short, or plan an edit.
+description: Edit video with ffmpeg - trim, cut and join clips, captions and subtitles, b-roll and picture-in-picture, vertical crops, audio loudness, GIFs and export presets - and check each output with ffprobe and frame grabs. Use when the user asks to trim, cut, join, caption, subtitle, crop, compress or export a video, clip or screen recording, add b-roll, make a vertical short or a GIF, or normalize the audio in a recording.
 license: AGPL-3.0
 ---
 
@@ -11,11 +11,11 @@ no audio, black frames or captions out of sync. Every output gets measured and l
 
 ## When to use
 
-- Trim, cut, join or reorder clips.
-- Add captions, b-roll, a logo or a picture-in-picture.
-- Make a vertical 9:16 short from a 16:9 video.
-- Export for YouTube, a phone, the web or a GIF, or shrink a file.
-- Write an edit plan (shot list with timecodes) before cutting.
+- Trimming, cutting, joining or reordering video clips from MP4 or MOV files.
+- Captions, subtitles, b-roll, a logo or picture-in-picture.
+- A vertical short for TikTok or Reels cropped from a widescreen video.
+- Export presets and compression for video, or an animated GIF from a few seconds of a clip.
+- Quiet or uneven audio in a video or lecture recording.
 
 For motion graphics built in code (Remotion, After Effects), this skill only covers the
 final checks and export. Never upload or post a video for the user without their yes.

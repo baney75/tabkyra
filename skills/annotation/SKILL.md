@@ -1,6 +1,6 @@
 ---
 name: annotation
-description: Mark up web pages, PDFs, images and screenshots for review with highlights, boxes and numbered callouts, and export the notes as a numbered Markdown list that points to each spot. Use when the user asks to annotate, mark up, highlight, circle, call out or comment on a page, PDF, screenshot or design, or wants review notes, redlines or feedback pinned to places in a document.
+description: Annotate web pages, PDFs, screenshots and images with highlights, boxes, arrows and numbered callouts, and export feedback notes keyed to each mark. Use when the user asks to mark up, highlight, circle, redline or draw a box around something on a page, PDF, screenshot or mockup, or wants numbered callouts or feedback pinned to spots.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,10 @@ without a mark.
 
 ## When to use
 
-- Review feedback on a web page, app screen, design mockup or slide.
-- Highlights and comments on a PDF page.
-- Numbered callouts on a screenshot or photo for a bug report or tutorial.
-- An exported list of notes the user can paste into an issue, email or doc.
+- Markup of a web page, app screen, wireframe, mockup or slide with highlights, boxes and numbered callouts.
+- Highlights and margin comments on a PDF.
+- Callouts, arrows and labels on a screenshot, PNG image or photo for a tutorial or an issue.
+- Feedback notes keyed to the numbered marks.
 
 For long written edits to a document's text, use `writing`. For a bug report, use `bug`,
 and attach the annotated image from this skill.

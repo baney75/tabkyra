@@ -1,6 +1,6 @@
 ---
 name: notes
-description: Capture, link and organize notes in Obsidian (Markdown files in a vault on disk, with wikilinks, tags and properties) and in Notion (pages and databases in the browser), keeping links intact when notes move. Use when the user asks to take a note, save this to Obsidian or Notion, add to their vault, link notes, file the inbox, tag or organize notes, find a note, or make a daily or meeting note.
+description: Capture, link and organize notes in an Obsidian vault (Markdown notes with wikilinks, tags and properties) and in Notion pages and databases, keeping links intact when notes are renamed. Use when the user asks to save something to Obsidian or Notion, add a note to their vault, link or tag notes, triage the vault inbox, rename or merge a note, find a note, or make a daily note or a Notion page.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,11 @@ In both, never lose a note: move to an archive, don't delete.
 
 ## When to use
 
-- Capture something into Obsidian or Notion: a thought, a source, a meeting.
-- Link a new note to the notes it relates to.
-- Sort an inbox folder, add tags or properties, rename or merge notes.
-- Find a note by topic or text.
+- Capturing a thought, quote or lecture into Obsidian or Notion.
+- Wikilinks between notes in an Obsidian vault.
+- Tags, properties and inbox triage in a vault.
+- Renaming or merging Obsidian notes without breaking links.
+- Notion pages, checklists and databases.
 
 For Google Docs, Word or Sheets, use `office-docs`. For citations from papers, export with
 `tabkyra library obsidian` from the `academic-research` skill.

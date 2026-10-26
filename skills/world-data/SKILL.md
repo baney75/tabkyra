@@ -1,6 +1,6 @@
 ---
 name: world-data
-description: Find and cite statistics from public datasets - World Bank, Our World in Data, Google Data Commons and UN data - pulling each number from the source with its indicator, year, unit and the source's update date, and comparing sources when they disagree. Use when the user asks for a statistic, a country comparison, a trend, GDP, population, life expectancy, emissions, poverty, health or education figures, or "what is the latest number for".
+description: Pull country and world statistics from the World Bank, Our World in Data, Google Data Commons and UN data, citing each figure with its indicator, data year and the source's update date. Use when the user asks for a statistic such as GDP, population, life expectancy, child mortality, poverty, emissions, literacy or unemployment, a country comparison or trend, UN projections, a chart of public data with sources, or to fact-check a statistic.
 license: AGPL-3.0
 ---
 
@@ -12,10 +12,10 @@ when the source last updated it.
 
 ## When to use
 
-- A country, region or world statistic.
-- A comparison across countries or a trend over years.
-- A chart or table from public data.
-- Checking a number someone quoted.
+- A country, region or global statistic such as GDP, population or life expectancy.
+- A comparison across countries, or a trend over decades.
+- A chart of World Bank, Our World in Data or UN figures with sources.
+- Fact-checking a statistic someone quoted, such as a literacy or poverty rate.
 
 For scholarly studies, use `academic-research`. For news about a figure, use `news-research`.
 
