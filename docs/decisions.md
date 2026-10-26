@@ -129,7 +129,7 @@ loads when the skill is invoked. Each first-party skill stays under 150 lines an
 day, because every well-specified skill exceeded it; the owner hasn't ruled on the number. Enforced by the lint's `budget` rule, and longer material is
 split into separate skills, not appendices. The
 router (DC-3) picks at most one skill per task for small models. The `rsi` and `fix`
-skills also check a skill's size against the same budget, so an improvement can't bloat it.
+skills apply their edits with `tabkyra skill apply`, which runs the same lint, so an improvement can't bloat a skill past it (`fix` also aims for under 150 lines).
 
 ## D13. Local model providers (owner, 2026-10-25)
 
