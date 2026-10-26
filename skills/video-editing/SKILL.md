@@ -11,14 +11,13 @@ or captions out of sync. Every output gets measured and looked at.
 
 ## When to use
 
-- Trimming, cutting, joining or reordering video clips from MP4 or MOV files.
+- Trimming, cutting, joining or reordering MP4 or MOV clips.
 - Captions, subtitles, b-roll, a logo or picture-in-picture.
 - A vertical short for TikTok or Reels cropped from a widescreen video.
 - Export presets and compression for video, or an animated GIF from a few seconds of a clip.
 - Quiet or uneven audio in a video or lecture recording.
 
-For motion graphics built in code (Remotion, After Effects), this skill only covers the
-final checks and export. Never upload or post a video for the user without their yes.
+For motion graphics in code (Remotion, After Effects), it covers only final checks and export.
 
 ## Steps
 
@@ -27,29 +26,29 @@ final checks and export. Never upload or post a video for the user without their
    Note duration, resolution, frame rate and whether audio exists.
 2. **Write the edit plan.** A table: clip, in and out points (`HH:MM:SS.mmm`), what happens
    (cut, caption, b-roll), and the target format. Show it to the user for more than one cut.
-3. **Work on copies.** Write every output to a new file name. Never overwrite an input.
+3. **Work on copies.** Write each output to a new name; never overwrite an input.
 4. **Cut.** Frame-accurate, re-encoded:
    `ffmpeg -ss 00:00:02 -to 00:00:06 -i in.mp4 -c:v libx264 -crf 18 -preset medium -c:a aac -b:a 192k cut.mp4`
-   For a fast cut on keyframes only, use `-c copy` and accept up to a second of drift.
+   `-c copy` cuts fast, on keyframes only, up to a second off.
 5. **Join.** Write `list.txt` with one line per clip, `file 'cut1.mp4'`, then
    `ffmpeg -f concat -safe 0 -i list.txt -c copy joined.mp4`. Clips must share codec,
    size, frame rate and audio format (step 4 keeps each clip's own). If any differ,
-   normalize each clip first, then join the `n-` files:
+   normalize each clip first, then join the `n-` files. A clip with no audio (step 1) also
+   gets silence: add `-f lavfi -i anullsrc=r=48000:cl=stereo -map 0:v -map 1:a -shortest`.
    `ffmpeg -i a.mp4 -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1,setsar=1,fps=30" -c:v libx264 -crf 18 -pix_fmt yuv420p -video_track_timescale 15360 -c:a aac -b:a 192k -ar 48000 -ac 2 n-a.mp4`
 6. **Caption.** Write an `.srt` file: number, `00:00:01,000 --> 00:00:03,000`, text,
    blank line. An .srt timed to the source runs late by the cut's in point. Shift it to the
    cut (12 s to 47 s here): `ffmpeg -copyts -i cap.srt -ss 12 -to 47 -output_ts_offset -12 cap-clip.srt`
-   (`-itsoffset -12` alone is wrong). Check `ffmpeg -hide_banner -filters` for `subtitles`.
-   - If present, burn in: `ffmpeg -i in.mp4 -vf "subtitles=cap.srt" -c:a copy subbed.mp4`
-   - If not, add a soft track: `ffmpeg -i in.mp4 -i cap.srt -map 0 -map 1 -c:v copy -c:a copy -c:s mov_text soft.mp4`
+   (`-itsoffset -12` alone is wrong); untrimmed, use `cap.srt` as `cap-clip.srt`. Check
+   `ffmpeg -hide_banner -filters` for `subtitles`.
+   - If present, burn in: `ffmpeg -i clip.mp4 -vf "subtitles=cap-clip.srt" -c:a copy subbed.mp4`
+   - If not, a soft track: `ffmpeg -i clip.mp4 -i cap-clip.srt -map 0 -map 1 -c:v copy -c:a copy -c:s mov_text soft.mp4`
 7. **B-roll or picture-in-picture.** Show the first 3 s of clip 2 at seconds 2 to 5 of the
    main video, bottom right. `trim` picks the part; `setpts=...+2/TB` starts it at second 2:
    `ffmpeg -i main.mp4 -i broll.mp4 -filter_complex "[1:v]trim=start=0:duration=3,setpts=PTS-STARTPTS+2/TB,scale=480:-2[pip];[0:v][pip]overlay=W-w-40:H-h-40:eof_action=pass:enable='between(t,2,5)'[v]" -map "[v]" -map 0:a? -c:v libx264 -crf 18 -c:a copy out.mp4`
    For another window, change `duration`, `+2` and `between(t,2,5)` together. Check frames
-   at 2.1 s, 4.9 s and 5.1 s.
-   For a full-frame cutaway, cut the b-roll to length and join it in step 5.
-8. **Vertical short.** Center crop to 9:16:
-   `ffmpeg -i in.mp4 -vf "crop=ih*9/16:ih,scale=1080:1920" -c:a copy vertical.mp4`
+   at 2.1, 4.9 and 5.1 s. A full-frame cutaway: cut the b-roll to length, join in step 5.
+8. **Vertical short**, center crop to 9:16: `ffmpeg -i in.mp4 -vf "crop=ih*9/16:ih,scale=1080:1920" -c:a copy vertical.mp4`
 9. **Export with a preset** from the table below.
 10. **Verify length and streams.** Run step 1's `ffprobe` on the output. Duration must
     match the plan within 0.1 s, and the audio stream must exist when the input had one.
@@ -58,10 +57,10 @@ final checks and export. Never upload or post a video for the user without their
 12. **Look at frames.** A contact sheet:
     `ffmpeg -i out.mp4 -vf "fps=1/5,scale=320:-2,tile=4x3" -frames:v 1 sheet.png`
     and single frames at each cut and caption: `ffmpeg -ss 3 -i out.mp4 -frames:v 1 f3.png`.
-    Open the images. Check for black frames, wrong crops and burned-in caption timing.
+    Look for black frames, wrong crops and burned-in caption timing.
     A frame grab doesn't show a soft track: `ffmpeg -i out.mp4 -map 0:s:0 check.srt` and
     compare its first cue time with the plan.
-13. **Hand over.** Output path, duration, resolution, size, loudness and the sheet image.
+13. **Hand over** path, duration, resolution, size, loudness and the sheet image.
 
 ## Export presets
 
@@ -75,7 +74,7 @@ final checks and export. Never upload or post a video for the user without their
 
 ## Done when
 
-- Every output was probed: duration, resolution, frame rate and audio match the plan.
+- Every output's probed duration, resolution, frame rate and audio match the plan.
 - You looked at the contact sheet and a frame at every cut and caption.
 - Captions on a trimmed clip were shifted by its in point; the first cue matches the plan.
 - Speech is near the target loudness (about -14 LUFS for YouTube, -16 for podcasts).
@@ -91,7 +90,7 @@ final checks and export. Never upload or post a video for the user without their
 | Cut starts with a frozen or black frame | You used `-c copy`. Re-encode as in step 4 |
 | Concat fails or audio drifts | Inputs differ. Normalize every clip with step 5's command, then join |
 | Captions late by the cut's start | The .srt was timed to the source. Shift it as in step 6 |
-| Output has no audio | Add `-map 0:v -map 0:a?` and check the input had audio |
+| Output has no audio | Add `-map 0:v -map 0:a?`; check the input had audio |
 | Upload rejected or washed out | Add `-pix_fmt yuv420p` and re-export |
 
 ## Safety
