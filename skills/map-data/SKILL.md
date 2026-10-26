@@ -36,8 +36,10 @@ the user to use a paid geocoder or their own Nominatim for more.
 
 ## Steps
 
-1. **Pin the data.** What features, which area, which fields, which output format.
-2. **Geocode each address,** one per second:
+1. **Pin the data.** What features, which area, which fields, which output format. Ask
+   whether the data is private (customers, homes, GPS tracks). Private data stays local
+   unless the user says yes to sending it to a named service.
+2. **Geocode each address,** one per second, private addresses only after that yes:
    `curl -s -A 'tabkyra-map-data/1.0' 'https://nominatim.openstreetmap.org/search?q=[street+address,+city,+state]&format=jsonv2&limit=1'`
    Keep `lat`, `lon`, `display_name`. If `display_name` names a different place, mark the
    row unmatched. Don't keep a wrong match.
@@ -72,11 +74,14 @@ the user to use a paid geocoder or their own Nominatim for more.
 6. **Check the coordinates.** Every longitude is between -180 and 180, every latitude
    between -90 and 90, and the points fall in the area. A US point with a positive
    longitude means lat and lon are swapped.
-7. **Look at it.** `navigate {"url":"https://geojson.io"}`, paste the file into the editor
-   panel, and `screenshot {}`. Points must sit where the user expects.
+7. **Look at it.** Public data (an Overpass result): `navigate {"url":"https://geojson.io"}`,
+   paste the file into the editor panel, and `screenshot {}`. Private data: stay local with
+   `npx mapshaper@0.7.98 places.geojson -info` (count and bounds), then
+   `npx mapshaper@0.7.98 places.geojson -o format=svg map.svg` and look at the SVG.
+   Points must sit where the user expects.
 8. **Export what the user asked for.** CSV: one row per feature with name, lat, lon, osm id.
-   KML: open the GeoJSON in geojson.io and use its Save menu, or `ogr2ogr -f KML out.kml
-   places.geojson` if GDAL is installed.
+   KML: `ogr2ogr -f KML out.kml places.geojson` if GDAL is installed, or for public data
+   geojson.io's Save menu.
 9. **Hand over.** File paths, feature count, the query, the date run, and the credit line
    "(c) OpenStreetMap contributors, ODbL".
 
@@ -84,6 +89,7 @@ the user to use a paid geocoder or their own Nominatim for more.
 
 - The output has the expected feature count, and every coordinate passed step 6.
 - You looked at the points on a map.
+- No private location or address left the machine without the user's yes for that service.
 - The query, run date and ODbL credit are in the answer.
 
 ## When something goes wrong
@@ -102,6 +108,8 @@ the user to use a paid geocoder or their own Nominatim for more.
   are not for you.
 - Don't geocode a list of private people's home addresses for someone else (see the
   `osint` skill's limits).
+- Never paste or upload the user's private locations, tracks or addresses into geojson.io,
+  Nominatim or any other web tool until the user says yes to that tool. Offer the local route in step 7 first.
 - Don't edit OpenStreetMap or upload data to it under the user's account without their yes.
 
 ## Worked example
