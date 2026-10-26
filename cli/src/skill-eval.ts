@@ -8,7 +8,7 @@
  * The gates, all checked by CI (the skill-regression job and cli/test/skill-router.test.mjs):
  * top-1 accuracy over positive cases, the false-invoke rate on "none" cases, at least
  * MIN_CASES cases for every bundled skill, p95 match latency, a baseline value for every
- * bundled skill with none more than REGRESSION_POINTS below it, and the held-out floors.
+ * bundled skill, none of them above what the router measures, and the held-out floors.
  * Cases that name a skill the catalog doesn't have are skipped and listed, so cases for a
  * skill can land before or after the skill itself.
  *
@@ -27,8 +27,6 @@ export const TOP1_MIN = 0.9;
 export const FALSE_INVOKE_MAX = 0.05;
 export const MIN_CASES = 8;
 export const P95_MAX_MS = 10;
-/** Percentage points a skill's accuracy may fall below its baseline. */
-export const REGRESSION_POINTS = 10;
 export const HELDOUT_TOP1_MIN = 0.8;
 export const HELDOUT_FALSE_INVOKE_MAX = 0.1;
 /** baseline.json keeps four decimals; a difference this small (in points) is rounding. */
@@ -42,7 +40,6 @@ export const THRESHOLDS = {
 	FALSE_INVOKE_MAX: { value: FALSE_INVOKE_MAX, stricter: "lower" },
 	MIN_CASES: { value: MIN_CASES, stricter: "higher" },
 	P95_MAX_MS: { value: P95_MAX_MS, stricter: "lower" },
-	REGRESSION_POINTS: { value: REGRESSION_POINTS, stricter: "lower" },
 	HELDOUT_TOP1_MIN: { value: HELDOUT_TOP1_MIN, stricter: "higher" },
 	HELDOUT_FALSE_INVOKE_MAX: { value: HELDOUT_FALSE_INVOKE_MAX, stricter: "lower" },
 } as const;
@@ -169,7 +166,10 @@ function scoreSet(match: (task: string) => string, cases: EvalCase[], names: Set
 export interface EvalOptions {
 	/** Skills that must have cases and a baseline; default every skill indexed. */
 	covered?: ReadonlySet<string>;
-	/** Points a skill may fall below its baseline; default REGRESSION_POINTS. */
+	/**
+	 * Points a skill may measure below its baseline; default 0: a committed baseline can't
+	 * claim more than the router delivers, so every later comparison is like with like.
+	 */
 	tolerance?: number;
 	/**
 	 * Accepted drops: each skill's floor, held with no tolerance. The skill's accuracy must
@@ -223,7 +223,7 @@ export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Bas
 
 	const covered = options.covered ?? names;
 	const checked = (name: string) => (name === "none" ? options.checkNone !== false : covered.has(name));
-	const tolerance = options.tolerance ?? REGRESSION_POINTS;
+	const tolerance = options.tolerance ?? 0;
 	const tooFew = [...names].filter((n) => covered.has(n) && perSkill[n].cases < MIN_CASES);
 	const regressions = Object.entries(perSkill).filter(([name, s]) => checked(name) && s.baseline !== undefined && s.cases > 0 && (s.baseline - s.accuracy) * 100 > tolerance + ROUNDING);
 	const underFloor = Object.entries(perSkill).filter(([name, s]) => {
@@ -245,14 +245,14 @@ export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Bas
 					? `no valid baseline (a number from 0 to 1) for ${unbased.join(", ")}; run tabkyra skill eval --update-baseline and commit it`
 					: regressions.length || underFloor.length
 						? [
-								regressions.length ? `${tolerance ? `dropped more than ${tolerance} points` : "below the baseline"}: ${regressions.map(([n, s]) => `${n} ${pct(s.accuracy)} (baseline ${pct(s.baseline ?? 0)})`).join(", ")}` : "",
+								regressions.length ? `${tolerance ? `dropped more than ${tolerance} points` : "the baseline claims more than the router measures"}: ${regressions.map(([n, s]) => `${n} ${pct(s.accuracy)} (baseline ${pct(s.baseline ?? 0)})`).join(", ")}` : "",
 								underFloor.length ? `below the accepted drop: ${underFloor.map(([n, s]) => `${n} ${pct(s.accuracy)} (accepted ${pct(options.floors?.get(n) ?? 0)})`).join(", ")}` : "",
 							]
 								.filter(Boolean)
 								.join("; ")
 						: tolerance
 							? `no skill more than ${tolerance} points below its baseline`
-							: "no skill below its baseline",
+							: "every skill measures at least its baseline",
 		},
 		{
 			gate: "held-out top-1",
@@ -413,14 +413,26 @@ export function runBaseCheck(
 		const floorBaseline = baseBaseline && { accuracy: Object.fromEntries(Object.entries(baseBaseline.accuracy).filter(([n]) => !acceptedValue.has(n))) };
 		report = runEval(skills, parseCases(base.cases), floorBaseline, base.heldout === undefined ? undefined : parseCases(base.heldout, "router-heldout.jsonl"), {
 			covered: new Set([...known].filter((n) => !acceptedValue.has(n))),
-			tolerance: 0,
 			floors: acceptedValue,
+			// An accepted drop for none replaces its baseline with the floor; false invokes stay gated.
+			checkNone: !acceptedValue.has("none"),
 		});
 		const failed = report.gates.filter((g) => !g.ok && !(g.gate.startsWith("held-out") && base.heldout === undefined));
 		gates.push({
 			gate: "base-code eval",
 			ok: failed.length === 0,
 			detail: failed.length ? failed.map((g) => `${g.gate}: ${g.detail}`).join("; ") : `top-1 ${pct(report.top1)}, false invokes ${pct(report.falseInvoke)} on the base cases, ${names.size} skills indexed`,
+		});
+	}
+	// The base code's gates and thresholds over the pull request's whole case files, so gate
+	// logic the pull request changes can't loosen anything for its new cases either.
+	if (head.cases !== undefined && base.cases !== undefined) {
+		const all = runEval(skills, parseCases(head.cases), undefined, head.heldout === undefined ? undefined : parseCases(head.heldout, "router-heldout.jsonl"));
+		const failed = all.gates.filter((g) => !g.ok && g.gate !== "baseline");
+		gates.push({
+			gate: "base-code full eval",
+			ok: failed.length === 0,
+			detail: failed.length ? failed.map((g) => `${g.gate}: ${g.detail}`).join("; ") : `top-1 ${pct(all.top1)}, false invokes ${pct(all.falseInvoke)} on all ${all.cases} cases of the pull request`,
 		});
 	}
 	// Skills the pull request adds: the base code's coverage and baseline gates, on the pull
