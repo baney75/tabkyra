@@ -75,7 +75,8 @@ they never pass through you. For sorting mail and filters, use `email-organizati
 
 14. **Prefer the CLI.** If `pass-cli` is installed and signed in, `pass-cli item list`
     lists items by name, as in the `proton-pass` skill.
-15. **On pass.proton.me, use only `find`, `type`, `click` and `press`.** An open item shows
+15. **On pass.proton.me, read and act with only `find`, `type`, `click` and `press`**
+    (`status`, `navigate`, `wait` and `tabs_show` are fine). An open item shows
     its username, one-time code and password, and any page read would return them. Never
     call `get_page_text`, `get_page_html`, `screenshot` or `read_page` there.
 16. **Close any open item first.** `press {"key":"Escape"}` twice, before any `find`.
@@ -95,7 +96,8 @@ they never pass through you. For sorting mail and filters, use `email-organizati
 - A share link's access level and expiry, read back from the dialog, match what the user
   approved, or the link is off.
 - No password, 2FA code or Pass item secret appeared in your output.
-- On pass.proton.me only `find`, `type`, `click` and `press` ran, and no item was opened.
+- On pass.proton.me no `get_page_text`, `get_page_html`, `screenshot` or `read_page` ran;
+  only `find`, `type`, `click` and `press` touched the page, and no item was opened.
 
 ## When something goes wrong
 
