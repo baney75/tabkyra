@@ -1,0 +1,18 @@
+{
+	"accuracy": {
+		"academic-research": 1,
+		"adversarial-review": 0.9375,
+		"artifacts": 0.8235,
+		"autoresearch": 1,
+		"bug": 0.9444,
+		"dorks": 1,
+		"fix": 1,
+		"kyraskillmaker": 0.7778,
+		"news-research": 0.7222,
+		"none": 1,
+		"osint": 0.913,
+		"proton-pass": 1,
+		"rsi": 1,
+		"tabkyra": 0.8421
+	}
+}

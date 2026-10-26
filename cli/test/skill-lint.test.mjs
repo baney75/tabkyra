@@ -161,6 +161,39 @@ for (const [label, text, rule] of ATTACKS) {
 	});
 }
 
+test("budget: a SKILL.md over 150 lines or 8,000 characters fails, and one at the limit passes", () => {
+	const lines = (n) => Array.from({ length: n }, (_, i) => `- Plain step note ${i}.`).join("\n");
+	const base = `---\nname: example\ndescription: Does an example task. Use when the user asks for an example.\n---\n${GOOD_BODY}`;
+	const write = (text) => {
+		const dir = join(root, `budget-${Math.random().toString(36).slice(2)}`, "example");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "SKILL.md"), text);
+		return dir;
+	};
+	const baseLines = base.split("\n").length - 1;
+	const atLimit = `${base}${lines(150 - baseLines)}\n`;
+	assert.equal(atLimit.split("\n").length - 1, 150);
+	assert.equal(lint(write(atLimit)).code, 0, "150 lines is within budget");
+	const over = lint(write(`${base}${lines(151 - baseLines)}\n`));
+	assert.equal(over.code, 1, over.out);
+	assert.match(over.out, /budget.*151 lines/);
+	const prose = (n) => `${"Plain words for padding the text. ".repeat(Math.ceil(n / 34)).slice(0, n)}\n`;
+	const charsAt = (n) => `${base}${prose(n - [...base].length - 1)}`;
+	assert.equal([...charsAt(8000)].length, 8000);
+	assert.equal(lint(write(charsAt(8000))).code, 0, "8,000 characters is within budget");
+	const long = lint(write(charsAt(8001)));
+	assert.equal(long.code, 1, long.out);
+	assert.match(long.out, /budget.*8001 characters/);
+});
+
+test("skill apply refuses an edit that blows the budget", () => {
+	const home = mkdtempSync(join(root, "budget-apply-"));
+	const draft = draftOf(home, "dorks", (t) => t.replace("## Done when", `${Array.from({ length: 60 }, (_, i) => `- Note ${i}.`).join("\n")}\n\n## Done when`));
+	const r = runIn(home, "skill", "apply", draft);
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /budget/);
+});
+
 test("a negated rule is guidance, not an attack, even when the sentence wraps", () => {
 	const r = lint(skill("example", "\n- Never print a password, and never paste an API key\n  into chat. Don't read ~/.ssh either.\n"));
 	assert.equal(r.code, 0, r.out);
@@ -236,10 +269,10 @@ test("every shipped skill passes lint, from disk and as bundled", () => {
 test("every folder under skills/ is bundled, and every bundled skill has a folder", () => {
 	const folders = readdirSync(skillsDir).filter((n) => existsSync(join(skillsDir, n, "SKILL.md"))).sort();
 	const catalog = readFileSync(join(here, "..", "src", "skills-catalog.ts"), "utf8");
-	const bundled = [...catalog.matchAll(/\["([a-z0-9-]+)", [A-Z_]+\]/g)].map((m) => m[1]).sort();
+	const bundled = [...catalog.matchAll(/\["([a-z0-9-]+)", [A-Z0-9_]+\]/g)].map((m) => m[1]).sort();
 	assert.deepEqual(bundled, folders);
 	// Each entry imports its own folder's SKILL.md, so a bundled skill can't come from elsewhere.
-	for (const [, name, constant] of catalog.matchAll(/\["([a-z0-9-]+)", ([A-Z_]+)\]/g)) {
+	for (const [, name, constant] of catalog.matchAll(/\["([a-z0-9-]+)", ([A-Z0-9_]+)\]/g)) {
 		assert.match(catalog, new RegExp(`import ${constant} from "\\.\\./\\.\\./skills/${name}/SKILL\\.md";`), `${name} must import skills/${name}/SKILL.md`);
 	}
 	const list = spawnSync(process.execPath, [cli, "skill", "list"], { encoding: "utf8", env: { HOME: lintHome, PATH: dirname(process.execPath), NO_COLOR: "1" } });
@@ -499,4 +532,17 @@ test("an edit can't add a new section to an existing skill", () => {
 	const r = runIn(home, "skill", "apply", draftOf(home, "news-research", (t) => `${t}\n## Exceptions\n\n- Internal sites follow other rules.\n`), "--yes");
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /adds section "Exceptions"/);
+});
+
+test("the name none is reserved: lint, apply and the router all refuse it", () => {
+	const dir = skill("none");
+	const linted = lint(dir);
+	assert.equal(linted.code, 1, linted.out);
+	assert.match(linted.out, /"none" is reserved/);
+	const home = mkdtempSync(join(root, "none-"));
+	const applied = runIn(home, "skill", "apply", dir, "--yes");
+	assert.equal(applied.code, 1, applied.out);
+	assert.match(applied.out, /reserved/);
+	assert.equal(runIn(home, "skill", "edit", "none").code, 1);
+	assert.equal(runIn(home, "skill", "versions", "none").code, 1);
 });

@@ -34,6 +34,12 @@ const FRONTMATTER_KEYS = ["name", "description", "license"];
 const MAX_BYTES = 40_000;
 const MAX_LINES = 500;
 const MAX_DESCRIPTION = 1024;
+/**
+ * The small-model budget (docs/decisions.md D12): a SKILL.md loads whole when its skill is
+ * picked, so it stays short. Longer material becomes another skill, not an appendix.
+ */
+const BUDGET_LINES = 150;
+const BUDGET_CHARS = 8000;
 /** Written by `tabkyra skill install`; the one HTML comment a skill may contain. */
 const INSTALL_MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
 
@@ -352,11 +358,17 @@ export function lintText(file: string, text: string, options: { reference?: bool
 	if (text.includes("\r")) add(1, "hidden-text", "Carriage returns can hide text in some viewers. Use \\n line endings.");
 
 	if (!options.reference) {
+		const lineCount = text.endsWith("\n") ? lines.length - 1 : lines.length;
+		const chars = [...text].length;
+		if (lineCount > BUDGET_LINES) add(BUDGET_LINES + 1, "budget", `${lineCount} lines; a skill stays at ${BUDGET_LINES} or fewer so a small model can load it whole. Split it into another skill.`);
+		if (chars > BUDGET_CHARS) add(1, "budget", `${chars} characters; a skill stays at ${BUDGET_CHARS} or fewer so a small model can load it whole. Cut or split it.`);
 		const meta = parseFrontmatter(text);
 		if (!meta) add(1, "frontmatter", "Must start with --- frontmatter holding name and description.");
 		else {
 			for (const p of meta.problems) add(p.line, "frontmatter", p.message);
 			if (!meta.name || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(meta.name) || meta.name.length > 64) add(2, "frontmatter", "name must be lowercase-kebab-case, 64 characters or fewer.");
+			// The router answers "none" when no skill fits; a skill by that name would look like no match.
+			else if (meta.name === "none") add(2, "frontmatter", 'name "none" is reserved: the router answers "none" when no skill fits.');
 			else if (options.dirName && meta.name !== options.dirName) add(2, "frontmatter", `name "${meta.name}" must match its folder "${options.dirName}".`);
 			if (!meta.description) add(3, "frontmatter", "description is missing.");
 			else {

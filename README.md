@@ -224,6 +224,12 @@ that weakens the lint must still pass the old one. CODEOWNERS asks for a maintai
 review on `skills/`, the lint and CI. The threat model, every rule and the known gaps are
 in [docs/skill-security.md](docs/skill-security.md).
 
+Agents find the right skill with the `skill_match` MCP tool (or `tabkyra skill match
+"<task>"`) and read only that one with `skill_read`, so a small model's context holds one
+skill, not all of them. `tabkyra skill edit`, `versions` and `rollback` change a skill on
+your machine with a diff, a backup and the lint every time. CI scores the router on
+labeled cases and fails on a regression: [docs/skill-platform.md](docs/skill-platform.md).
+
 Your own edits stay on your machine. `tabkyra skill apply <folder> --yes` backs up the
 current version and installs the edit; `tabkyra skill revert <name>` goes back to the
 bundled text. The safety sections of a bundled skill can't be changed this way.

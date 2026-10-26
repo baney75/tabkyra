@@ -10,6 +10,7 @@ import { z } from "zod";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
 import { addSource, cite, search, summary } from "./library.ts";
+import { matchTask, readSkill } from "./skill.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -105,7 +106,7 @@ function sessionKey(): string {
 }
 
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
-const INSTRUCTION_TOOLS = ["status", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite"];
+const INSTRUCTION_TOOLS = ["status", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read"];
 
 function mentionedTools(sentence: string): string[] {
 	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
@@ -144,7 +145,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"When a page needs a sign-in or captcha, call tabs_show and ask the user to do it.",
 				"Opening a new site may need the user's approval; if a site is denied (\"Not allowed to open\"), tell the user they can allow it in the Tabkyra side panel (Settings > Bridge) or with `tabkyra allow <host>`, and do not try to get around it.",
 				"How to work: you get your own tab group; your tabs never take focus and you cannot see the user's other tabs.",
-				"Call status first; if it is not connected, tell the user and stop. Workflow: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref -> read_page again to confirm the result.",
+				"First call skill_match with the user's task (it needs no browser). If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one. Reading only the chosen skill keeps your context small.",
+				"Call status before any browser tool; if it is not connected, tell the user and stop browser work. Workflow: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref -> read_page again to confirm the result.",
 				"For canvas apps and multi-step input, batch steps with actions (one call, screenshot at the end) instead of one tool call per key or drag.",
 				"Canvas editors (Excalidraw, tldraw, Figma-like): use the app's keyboard shortcuts and mouse drags, check the result on the screenshot, and do not reverse-engineer the app's internals with run_js.",
 				"Reuse your current tab for step-by-step browsing; tabs_create only when two pages must stay open.",
@@ -695,6 +697,42 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			},
 		},
 		(args) => library(() => cite(args.citekey, args.style)),
+	);
+
+	// Skill tools read the bundled skills and the user's applied edits; no browser needed. A
+	// remote or scoped session gets the bundled skills only: local skills stay on the user's
+	// devices (D6), even if a caller forgets to say the session is remote.
+	const bundledOnly = Boolean(options.remote || allowedTools);
+	server.registerTool(
+		"skill_match",
+		{
+			title: "Find the skill for a task",
+			description:
+				"Which Tabkyra skill fits a task, best first, each with its one-line purpose, or none. Call it before reading any skill, then skill_read only the one you pick. " +
+				'Offline and instant. Example: {"task":"find peer-reviewed studies on sleep and memory"}',
+			inputSchema: {
+				task: z.string().min(1).max(2000).describe("The user's task, in their words"),
+				top: z.number().int().min(1).max(5).optional().describe("How many matches to return (default 3)"),
+			},
+		},
+		(args) =>
+			library(() => {
+				const matches = matchTask(args.task, args.top ?? 3, bundledOnly);
+				if (matches.length === 0) return "none: no skill fits this task. Work without one.";
+				const lines = matches.map((m) => `${m.name} (${m.score}): ${m.description}`);
+				return [...lines, `Next: skill_read {"name":"${matches[0].name}"}`].join("\n");
+			}),
+	);
+	server.registerTool(
+		"skill_read",
+		{
+			title: "Read one skill",
+			description:
+				"The full SKILL.md of one skill: the user's applied edit if they made one, otherwise the bundled text (remote sessions always get the bundled text). Read only the skill skill_match chose, then follow its steps. " +
+				'Example: {"name":"academic-research"}',
+			inputSchema: { name: z.string().describe("A skill name from skill_match, lowercase-kebab-case") },
+		},
+		(args) => library(() => readSkill(args.name, bundledOnly)),
 	);
 
 	if (allowedTools) {

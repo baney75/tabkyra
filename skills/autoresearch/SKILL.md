@@ -1,6 +1,6 @@
 ---
 name: autoresearch
-description: Run an autonomous research loop on a hard question - plan sub-questions, search the web and scholarly indexes, read primary sources in the browser, extract claims with citations, cross-check them, and iterate until every sub-question is answered or the budget runs out, then deliver a cited report. Also runs a measured improve-and-keep loop when given a metric. Use when the user types /autoresearch, asks for deep research, a thorough investigation, a literature or market scan, or "keep going until you find out".
+description: Run an autonomous research loop on a hard question - plan sub-questions, search the web and scholarly indexes, read primary sources in the browser, extract claims with citations, cross-check them, and iterate until every sub-question is answered or the budget runs out, then deliver a cited report. Also runs a measured improve-and-keep loop when given a metric. Use when the user types /autoresearch, asks for deep or in-depth research, a thorough or exhaustive investigation, a question that needs many sources, a literature or market scan, or "keep going until you find out".
 license: AGPL-3.0
 ---
 

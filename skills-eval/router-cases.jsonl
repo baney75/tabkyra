@@ -1,0 +1,280 @@
+{"task": "Open my Gmail in the browser and tell me how many unread emails I have", "skill": "tabkyra"}
+{"task": "Log into the staging dashboard in my browser and check whether the new chart renders", "skill": "tabkyra"}
+{"task": "Fill out the contact form on example.com with my name and email", "skill": "tabkyra"}
+{"task": "Click through the checkout flow on my local dev server at localhost:3000 and see if anything breaks", "skill": "tabkyra"}
+{"task": "Go to my GitHub notifications page and list the open review requests", "skill": "tabkyra"}
+{"task": "Check how the landing page I just built looks in a real browser", "skill": "tabkyra"}
+{"task": "In my signed-in Jira tab, find the ticket assigned to me with the highest priority", "skill": "tabkyra"}
+{"task": "Navigate to the Amazon order history page and read me the last three orders", "skill": "tabkyra"}
+{"task": "Take a screenshot of the pricing page after its JavaScript finishes loading", "skill": "tabkyra"}
+{"task": "Use the browser to click the Export button on the analytics site and download the CSV", "skill": "tabkyra"}
+{"task": "The web app needs a login; drive the page and test the signup form", "skill": "tabkyra"}
+{"task": "Read the comments under this YouTube video in my browser tab", "skill": "tabkyra"}
+{"task": "Scroll through my LinkedIn feed and summarize the first ten posts", "skill": "tabkyra"}
+{"task": "Test whether the dropdown menu on my React app opens when clicked", "skill": "tabkyra"}
+{"task": "Find peer-reviewed studies on whether intermittent fasting improves insulin sensitivity", "skill": "academic-research"}
+{"task": "I need five scholarly sources on climate migration for my thesis, in APA format", "skill": "academic-research"}
+{"task": "Is this citation real? Smith et al. 2019, Journal of Applied Psychology, vol 104", "skill": "academic-research"}
+{"task": "What does the research say about screen time and teenage depression?", "skill": "academic-research"}
+{"task": "Build a bibliography on transformer interpretability and export it to BibTeX for LaTeX", "skill": "academic-research"}
+{"task": "Look up papers on arXiv about diffusion models for protein design", "skill": "academic-research"}
+{"task": "Search PubMed for randomized controlled trials of melatonin for jet lag", "skill": "academic-research"}
+{"task": "Do a literature review on microplastics in drinking water", "skill": "academic-research"}
+{"task": "Check whether this paper has been retracted: doi 10.1016/j.cell.2020.01.001", "skill": "academic-research"}
+{"task": "Get me MLA citations for three journal articles on the Marshall Plan", "skill": "academic-research"}
+{"task": "Export my saved sources to Zotero as RIS", "skill": "academic-research"}
+{"task": "Find the original journal article that measured the spacing effect on memory", "skill": "academic-research"}
+{"task": "Pull Google Scholar results on remote work productivity and verify each source", "skill": "academic-research"}
+{"task": "I need academic evidence on how minimum wage increases affect employment", "skill": "academic-research"}
+{"task": "Get a second opinion on this pull request from a different model before I merge it", "skill": "adversarial-review"}
+{"task": "Have another model attack my plan for migrating the database and find the holes", "skill": "adversarial-review"}
+{"task": "Do an adversarial review of the skill edit before we apply it", "skill": "adversarial-review"}
+{"task": "Before we ship this script that runs with my sign-in, have a stronger model review it", "skill": "adversarial-review"}
+{"task": "Red-team this research claim with a separate reviewer model", "skill": "adversarial-review"}
+{"task": "I want an independent critique of my fix from a model at least as capable as you", "skill": "adversarial-review"}
+{"task": "Have Opus try to break this change and block it if it finds a real problem", "skill": "adversarial-review"}
+{"task": "Run a hostile review of the code change and tell me approve or reject", "skill": "adversarial-review"}
+{"task": "Second-opinion review: is my proposed refactor safe?", "skill": "adversarial-review"}
+{"task": "Ask a different model to poke holes in this argument before I publish it", "skill": "adversarial-review"}
+{"task": "Get an adversarial reviewer to check this config change that touches my data", "skill": "adversarial-review"}
+{"task": "Before accepting the rewrite, have a separate model challenge it", "skill": "adversarial-review"}
+{"task": "Have codex review the diff adversarially", "skill": "adversarial-review"}
+{"task": "Critique this plan the way an adversary would", "skill": "adversarial-review"}
+{"task": "Turn these research findings into a polished HTML report I can share", "skill": "artifacts"}
+{"task": "Make a one-pager summarizing the comparison of the three laptops", "skill": "artifacts"}
+{"task": "Build a dashboard page from this CSV of monthly sales", "skill": "artifacts"}
+{"task": "Create a self-contained HTML file with a comparison table of cloud providers", "skill": "artifacts"}
+{"task": "Make me an artifact that visualizes the project timeline", "skill": "artifacts"}
+{"task": "Write up the results as a briefing page with citations", "skill": "artifacts"}
+{"task": "I want a slide-style page presenting the quarterly plan", "skill": "artifacts"}
+{"task": "Package the autoresearch output into a readable deliverable", "skill": "artifacts"}
+{"task": "Generate a visual summary of the survey results as a web page", "skill": "artifacts"}
+{"task": "Create an accessible HTML report with charts and no external scripts", "skill": "artifacts"}
+{"task": "Make a printable plan page for the kitchen remodel", "skill": "artifacts"}
+{"task": "Turn this table of benchmark numbers into a nice-looking report", "skill": "artifacts"}
+{"task": "Build a static page comparing the candidates' positions, with sources", "skill": "artifacts"}
+{"task": "Render the findings as an HTML artifact and check how it looks before sending it", "skill": "artifacts"}
+{"task": "/autoresearch what caused the 2008 financial crisis", "skill": "autoresearch"}
+{"task": "Do deep research on solid-state batteries and keep going until you find out who is closest to production", "skill": "autoresearch"}
+{"task": "Thoroughly investigate whether nuclear power is cheaper than solar over a 30 year horizon", "skill": "autoresearch"}
+{"task": "Run a market scan of AI note-taking apps: pricing, features, users", "skill": "autoresearch"}
+{"task": "I need a thorough investigation of the history of the Chevron doctrine", "skill": "autoresearch"}
+{"task": "Research this in depth with many sources: how do different countries regulate drones?", "skill": "autoresearch"}
+{"task": "Keep going until you find out why my city's water bills tripled", "skill": "autoresearch"}
+{"task": "Technical comparison of Postgres, MySQL and SQLite for embedded analytics, deeply researched with citations", "skill": "autoresearch"}
+{"task": "Improve the test pass rate of this repo; you may change only the src folder", "skill": "autoresearch"}
+{"task": "Optimize page load time and keep only the changes that improve the benchmark", "skill": "autoresearch"}
+{"task": "What is known about long covid treatments? Cover everything and cite it", "skill": "autoresearch"}
+{"task": "Plan sub-questions and research the competitive landscape for e-bike makers", "skill": "autoresearch"}
+{"task": "Deep dive into the policy history of US student loans", "skill": "autoresearch"}
+{"task": "Investigate exhaustively: does a four-day work week raise productivity?", "skill": "autoresearch"}
+{"task": "/bug the side panel froze when I clicked Record", "skill": "bug"}
+{"task": "Tabkyra crashed when I opened the settings tab, please report it", "skill": "bug"}
+{"task": "The tabkyra MCP tools keep timing out; file an issue", "skill": "bug"}
+{"task": "File a bug report: tabkyra skill install wrote to the wrong folder", "skill": "bug"}
+{"task": "Tabkyra's read_page returned nothing on this site, report it", "skill": "bug"}
+{"task": "Something in Tabkyra is broken: the CLI hangs on tabkyra doctor", "skill": "bug"}
+{"task": "I pressed Report in Tabkyra, write it up", "skill": "bug"}
+{"task": "Write an issue for the Tabkyra extension disconnecting every few minutes", "skill": "bug"}
+{"task": "The tabkyra bridge behaved wrong and opened a tab in my window; open a GitHub issue", "skill": "bug"}
+{"task": "Report a Tabkyra bug: screenshots come back black", "skill": "bug"}
+{"task": "The Tabkyra side panel shows a blank screen after the update, can you report this", "skill": "bug"}
+{"task": "Tabkyra skill lint gives a false positive, file it", "skill": "bug"}
+{"task": "Draft a GitHub issue for the Tabkyra CLI error 'Bridge unavailable' after a reboot", "skill": "bug"}
+{"task": "Tabkyra hung while filling a form. Collect versions and the error and file a bug", "skill": "bug"}
+{"task": "Write Google dorks to find PDF annual reports from the city of Austin", "skill": "dorks"}
+{"task": "Search operators to find only .gov pages about lead pipe replacement", "skill": "dorks"}
+{"task": "My search returns nothing but SEO blogs; give me an advanced search query for the actual standard", "skill": "dorks"}
+{"task": "Find slide decks (filetype:pptx) about zero trust from university sites", "skill": "dorks"}
+{"task": "Construct a query with site: and intitle: to find GitHub repos that mention this error", "skill": "dorks"}
+{"task": "Give me search operators for reddit.com pages from before 2020 about this game", "skill": "dorks"}
+{"task": "Find spreadsheets on .edu domains with course enrollment data", "skill": "dorks"}
+{"task": "Write an advanced search that excludes Pinterest so I find original recipes", "skill": "dorks"}
+{"task": "Dorks for finding documents exposed on our own company domain", "skill": "dorks"}
+{"task": "Use inurl: and filetype: to locate the official PDF of the EU AI Act", "skill": "dorks"}
+{"task": "Sharper Bing queries for municipal meeting minutes between 2019 and 2021", "skill": "dorks"}
+{"task": "How do I search GitHub code for a function name across repos with operators?", "skill": "dorks"}
+{"task": "I keep getting noise; craft a query using OR and -exclude terms for Rust jobs", "skill": "dorks"}
+{"task": "Search only nasa.gov for PDFs on lunar regolith", "skill": "dorks"}
+{"task": "/fix news-research", "skill": "fix"}
+{"task": "The osint skill didn't work for my small model, repair it", "skill": "fix"}
+{"task": "My small model got this wrong when following the dorks skill; rewrite it for that tier", "skill": "fix"}
+{"task": "That skill gave a bad result; figure out why and fix the skill", "skill": "fix"}
+{"task": "I recorded a correct run of the task, update the skill to match it", "skill": "fix"}
+{"task": "We chatted until the result was right; update the artifacts skill so it learns from that", "skill": "fix"}
+{"task": "Haiku failed the academic-research skill steps; have a stronger model rewrite it and test it", "skill": "fix"}
+{"task": "Repair the bug skill: Llama keeps skipping the duplicate check", "skill": "fix"}
+{"task": "The skill output was poor on a local model, rewrite the skill and test until it passes", "skill": "fix"}
+{"task": "Fix the tabkyra skill so gpt-mini follows it correctly", "skill": "fix"}
+{"task": "Rewrite this skill for the model tier that failed and verify it on that model", "skill": "fix"}
+{"task": "The autoresearch skill gave a weak report on my 8B model. Fix it", "skill": "fix"}
+{"task": "Use my recording to correct the proton-pass skill", "skill": "fix"}
+{"task": "After a failed run, have a stronger model improve the skill that caused it and test it on the weak one", "skill": "fix"}
+{"task": "Write a new skill for filing expense reports in Concur", "skill": "kyraskillmaker"}
+{"task": "Make a SKILL.md that teaches an agent to book meeting rooms", "skill": "kyraskillmaker"}
+{"task": "Review my skill draft and make it pass tabkyra skill lint", "skill": "kyraskillmaker"}
+{"task": "Port this Claude Code skill to Tabkyra's format", "skill": "kyraskillmaker"}
+{"task": "Shorten this skill so a small model can follow it", "skill": "kyraskillmaker"}
+{"task": "We keep making the same mistake when exporting invoices; turn the steps into a skill", "skill": "kyraskillmaker"}
+{"task": "Create an agent skill for checking flight prices", "skill": "kyraskillmaker"}
+{"task": "Improve the structure of my skill: it needs numbered steps and a done-when section", "skill": "kyraskillmaker"}
+{"task": "Rewrite this skill to the Tabkyra standard", "skill": "kyraskillmaker"}
+{"task": "Draft a skill file for summarizing Slack threads", "skill": "kyraskillmaker"}
+{"task": "Author a skill with When to use, Steps and Done when sections", "skill": "kyraskillmaker"}
+{"task": "Turn my notes on deploying to Fly.io into a reusable skill", "skill": "kyraskillmaker"}
+{"task": "Make this skill lint-clean and easy for a small model", "skill": "kyraskillmaker"}
+{"task": "Build a skill that teaches agents how to triage GitHub issues", "skill": "kyraskillmaker"}
+{"task": "What's going on with the port strike on the East Coast?", "skill": "news-research"}
+{"task": "Give me a news briefing on last week's EU election results", "skill": "news-research"}
+{"task": "Is the viral video of the bridge collapse real?", "skill": "news-research"}
+{"task": "Where did the quote 'be the change you wish to see' actually come from?", "skill": "news-research"}
+{"task": "Build a timeline of the OpenAI board crisis with sources", "skill": "news-research"}
+{"task": "Fact-check the claim that the Senate passed the bill yesterday", "skill": "news-research"}
+{"task": "What happened at the G20 summit today?", "skill": "news-research"}
+{"task": "Summarize the latest news on the ceasefire from outlets across the political spectrum", "skill": "news-research"}
+{"task": "Is this photo of the flooded subway from this week or an old one?", "skill": "news-research"}
+{"task": "What's new in the Boeing investigation this month?", "skill": "news-research"}
+{"task": "Breaking news: what do we know about the earthquake in Japan so far?", "skill": "news-research"}
+{"task": "Find wire service reports on the rail strike and separate confirmed facts from claims", "skill": "news-research"}
+{"task": "Did the president really say that in his speech? Check the transcript and the coverage", "skill": "news-research"}
+{"task": "Catch me up on current events around the TikTok ban", "skill": "news-research"}
+{"task": "Run a background check on the contractor I'm about to hire, Acme Roofing LLC", "skill": "osint"}
+{"task": "Who is behind the website cheap-tickets-now.shop?", "skill": "osint"}
+{"task": "Is this landlord legitimate? He says he owns the building at 12 Elm St", "skill": "osint"}
+{"task": "Do due diligence on this nonprofit before I donate", "skill": "osint"}
+{"task": "Look up WHOIS and certificate logs for this domain", "skill": "osint"}
+{"task": "Find out who runs the public account @deals_daily", "skill": "osint"}
+{"task": "Check court records and filings for this company before we sign", "skill": "osint"}
+{"task": "OSINT on the startup that wants to acquire us", "skill": "osint"}
+{"task": "Is this online seller a scam? Verify the business registration", "skill": "osint"}
+{"task": "What does the internet know about me? Check my own exposure online", "skill": "osint"}
+{"task": "Verify that this recruiter's company actually exists", "skill": "osint"}
+{"task": "Research who owns the LLC that bought the lot next door", "skill": "osint"}
+{"task": "Investigate whether this crypto investment firm is registered with regulators", "skill": "osint"}
+{"task": "Trace the domain registration history and archived versions of this site", "skill": "osint"}
+{"task": "The deploy script needs my Cloudflare API token; it's in Proton Pass", "skill": "proton-pass"}
+{"task": "Run the integration tests with the Stripe key from my 1Password", "skill": "proton-pass"}
+{"task": "Use pass-cli run to inject the database password into the migration command", "skill": "proton-pass"}
+{"task": "I need to call the OpenAI API from this script but don't want to paste the key", "skill": "proton-pass"}
+{"task": "The CI token is stored in Bitwarden Secrets Manager; run the release with it", "skill": "proton-pass"}
+{"task": "Give this command the GitHub token without putting it in the chat", "skill": "proton-pass"}
+{"task": "My npm publish needs an auth token from my password manager", "skill": "proton-pass"}
+{"task": "Inject the AWS credentials from op:// references for the terraform run", "skill": "proton-pass"}
+{"task": "Use my 1Password to provide the SMTP password to the mailer script", "skill": "proton-pass"}
+{"task": "It's in Proton Pass under 'staging db'; connect psql with it", "skill": "proton-pass"}
+{"task": "Set the env var for the Twilio secret from my vault and run the tests", "skill": "proton-pass"}
+{"task": "The curl command needs an API key; get it from Proton Pass without showing it", "skill": "proton-pass"}
+{"task": "Run docker login with the registry password from my password manager", "skill": "proton-pass"}
+{"task": "Don't ask me to paste the key; pull the Sentry auth token from pass://", "skill": "proton-pass"}
+{"task": "/rsi", "skill": "rsi"}
+{"task": "Learn from this: the export button moved and we needed three retries", "skill": "rsi"}
+{"task": "Improve your skills based on what went wrong in this task", "skill": "rsi"}
+{"task": "Remember how to do this next time", "skill": "rsi"}
+{"task": "That took a lot of retries; write the lesson into the relevant skill", "skill": "rsi"}
+{"task": "The tabkyra skill gave outdated steps for this site; update it from what we observed", "skill": "rsi"}
+{"task": "I had to correct you twice; make sure a skill prevents that", "skill": "rsi"}
+{"task": "Turn today's lesson into a small tested edit to a skill", "skill": "rsi"}
+{"task": "Self-improve: capture what you learned in this session in a skill", "skill": "rsi"}
+{"task": "Save this workaround in the skill so you get it right the first time next time", "skill": "rsi"}
+{"task": "After this task, update the skill so the next run doesn't take the same wrong turn", "skill": "rsi"}
+{"task": "Do a self-improvement pass on your skills after this job", "skill": "rsi"}
+{"task": "Record the lesson from this failure as a rule in the skill and apply it", "skill": "rsi"}
+{"task": "Learn from the mistakes you made today and keep the lesson", "skill": "rsi"}
+{"task": "Write a Python function that reverses a linked list", "skill": "none"}
+{"task": "Refactor this React component to use hooks", "skill": "none"}
+{"task": "What is 15 percent of 240?", "skill": "none"}
+{"task": "Translate this paragraph into Spanish", "skill": "none"}
+{"task": "Write a haiku about autumn leaves", "skill": "none"}
+{"task": "Explain the difference between TCP and UDP", "skill": "none"}
+{"task": "Rename all the .jpeg files in this folder to .jpg", "skill": "none"}
+{"task": "Fix the failing unit test in auth.test.ts", "skill": "none"}
+{"task": "There's a bug in my login handler; the session cookie isn't set", "skill": "none"}
+{"task": "Convert this JSON to YAML", "skill": "none"}
+{"task": "Draft a polite email declining the meeting", "skill": "none"}
+{"task": "Sort this list of names alphabetically", "skill": "none"}
+{"task": "Add type annotations to utils.py", "skill": "none"}
+{"task": "What's a good name for a golden retriever puppy?", "skill": "none"}
+{"task": "Summarize this paragraph in one sentence", "skill": "none"}
+{"task": "Write a SQL query that returns the top five customers by revenue", "skill": "none"}
+{"task": "Set up a Python virtual environment and install requests", "skill": "none"}
+{"task": "Explain how a binary search tree works", "skill": "none"}
+{"task": "Make the button in this CSS file blue", "skill": "none"}
+{"task": "Write a cover letter for a junior developer job", "skill": "none"}
+{"task": "Give me a workout plan for three days a week", "skill": "none"}
+{"task": "How do I undo my last git commit?", "skill": "none"}
+{"task": "Optimize this regex for matching email addresses", "skill": "none"}
+{"task": "Plan a weekly menu for a vegetarian family", "skill": "none"}
+{"task": "Debug why my Docker container exits immediately", "skill": "none"}
+{"task": "Write unit tests for the date parsing function", "skill": "none"}
+{"task": "Tell me a joke about programmers", "skill": "none"}
+{"task": "Compute the standard deviation of 3, 7, 9 and 12", "skill": "none"}
+{"task": "Convert 72 degrees Fahrenheit to Celsius", "skill": "none"}
+{"task": "Explain what this bash script does", "skill": "none"}
+{"task": "Check my bank's website in the browser and tell me when the next statement closes", "skill": "tabkyra"}
+{"task": "Open the admin page of my Shopify store and change nothing, just read me the low-stock items", "skill": "tabkyra"}
+{"task": "Find three meta-analyses on mindfulness and anxiety and format them in Chicago style", "skill": "academic-research"}
+{"task": "Is the Stanford prison experiment paper still considered valid, or was it retracted?", "skill": "academic-research"}
+{"task": "Have a different model tear apart my migration plan before I run it", "skill": "adversarial-review"}
+{"task": "I want a second opinion from GPT on this skill change", "skill": "adversarial-review"}
+{"task": "Make a shareable HTML page summarizing the apartment options with a comparison table", "skill": "artifacts"}
+{"task": "Turn the notes into a polished one-page briefing I can open in the browser", "skill": "artifacts"}
+{"task": "Research exhaustively which heat pump brands last longest, with many sources", "skill": "autoresearch"}
+{"task": "/autoresearch the economics of vertical farming", "skill": "autoresearch"}
+{"task": "Tabkyra froze when I opened two windows; report the bug", "skill": "bug"}
+{"task": "The tabkyra doctor command crashes with a stack trace, file an issue", "skill": "bug"}
+{"task": "Give me search operators to find only PDF court filings on uscourts.gov", "skill": "dorks"}
+{"task": "Advanced Google search for spreadsheets of state budget data", "skill": "dorks"}
+{"task": "The news-research skill gave my small model a bad result; fix it", "skill": "fix"}
+{"task": "/fix osint", "skill": "fix"}
+{"task": "Write a skill that teaches an agent to reconcile bank statements", "skill": "kyraskillmaker"}
+{"task": "Port my Cursor rule into a Tabkyra skill that passes lint", "skill": "kyraskillmaker"}
+{"task": "What's the latest on the hurricane heading for Florida?", "skill": "news-research"}
+{"task": "Is the viral claim that the bridge was sold to a foreign company true?", "skill": "news-research"}
+{"task": "Due diligence on the roofing company before I sign the contract", "skill": "osint"}
+{"task": "Who owns the domain that keeps sending me phishing mail?", "skill": "osint"}
+{"task": "The deploy needs my Vercel token from Proton Pass", "skill": "proton-pass"}
+{"task": "Run the seed script with the database password from 1Password", "skill": "proton-pass"}
+{"task": "Learn from this session and improve your skills", "skill": "rsi"}
+{"task": "We needed four retries on that site; keep the lesson in the skill for next time", "skill": "rsi"}
+{"task": "Write a regular expression that matches US phone numbers", "skill": "none"}
+{"task": "Explain recursion to a ten year old", "skill": "none"}
+{"task": "Fix the typo in the README", "skill": "none"}
+{"task": "Format this date as ISO 8601", "skill": "none"}
+{"task": "Write a short story about a lighthouse keeper", "skill": "none"}
+{"task": "Review my essay for grammar mistakes", "skill": "none"}
+{"task": "What's new in Python 3.13?", "skill": "none"}
+{"task": "What's going on with my Docker build?", "skill": "none"}
+{"task": "Fix the artifact upload in my GitHub Actions workflow", "skill": "none"}
+{"task": "Use the osint skill on the landlord at 12 Elm St", "skill": "osint"}
+{"task": "Run the dorks skill to find PDFs about flood maps", "skill": "dorks"}
+{"task": "Use the tabkyra skill to fill in the signup form", "skill": "tabkyra"}
+{"task": "Follow the proton-pass skill to give the deploy its token", "skill": "proton-pass"}
+{"task": "Apply the news-research skill to today's rail strike", "skill": "news-research"}
+{"task": "Invoke the artifacts skill for these quarterly numbers", "skill": "artifacts"}
+{"task": "Rewrite the osint skill so a small model follows it", "skill": "kyraskillmaker"}
+{"task": "Copy the build output to /artifacts in the container", "skill": "none"}
+{"task": "cat /bug/report.txt", "skill": "none"}
+{"task": "ls /fix", "skill": "none"}
+{"task": "Move the logs into ./rsi/old before the next run", "skill": "none"}
+{"task": "Use the news-research skill for the latest updates on the rail strike", "skill": "news-research"}
+{"task": "Use the osint skill on the port authority's new contractor", "skill": "osint"}
+{"task": "Run the osint skill and review what you find on the landlord", "skill": "osint"}
+{"task": "Use the tabkyra skill to fill in my fixed address", "skill": "tabkyra"}
+{"task": "Rewrite the dorks skill to Tabkyra's skill standard", "skill": "kyraskillmaker"}
+{"task": "The proton-pass skill gave my small model a bad result, fix it", "skill": "fix"}
+{"task": "Don't use the osint skill, just search the news for the landlord", "skill": "none"}
+{"task": "Instead of the dorks skill, write me a plain search query", "skill": "none"}
+{"task": "Skip the tabkyra skill and fetch the URL directly", "skill": "none"}
+{"task": "tabkyra skill install wrote to the wrong folder, report it", "skill": "bug"}
+{"task": "tabkyra skill versions shows nothing for my local skill", "skill": "bug"}
+{"task": "how do I use tabkyra skill rollback", "skill": "none"}
+{"task": "I have no idea who runs this website so use the osint skill", "skill": "osint"}
+{"task": "Why not use the osint skill on this landlord?", "skill": "osint"}
+{"task": "No rush, use the osint skill", "skill": "osint"}
+{"task": "Use the tabkyra skill to open localhost:3000 and debug it", "skill": "tabkyra"}
+{"task": "Run the osint skill on the landlord and review it", "skill": "osint"}
+{"task": "Don’t use the osint skill, just search the news for the landlord", "skill": "none"}
+{"task": "Don’t run the dorks skill, write me a plain search query", "skill": "none"}
+{"task": "Don’t use the tabkyra skill; fetch the URL directly", "skill": "none"}
+{"task": "Don’t apply the osint skill, just tell me what you know about the landlord", "skill": "none"}
+{"task": "Don't use the `osint` skill; do a background check on this landlord.", "skill": "none"}

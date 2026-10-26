@@ -12,3 +12,10 @@
 /src/agent-setup-prompt.ts  @baney75
 /test/agent-setup-prompt.test.mjs @baney75
 /docs/skill-security.md     @baney75
+/skills-eval/               @baney75
+/skills-eval/accepted-drops.json @baney75
+/cli/scripts/skills-catalog.mjs @baney75
+/cli/src/skill-eval.ts      @baney75
+/cli/src/skill-router.ts    @baney75
+/cli/src/router-worker.ts   @baney75
+/cli/test/                  @baney75

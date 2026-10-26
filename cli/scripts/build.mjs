@@ -10,7 +10,9 @@ mkdirSync(outDir, { recursive: true });
 
 await build({
 	absWorkingDir: root,
-	entryPoints: { index: join(root, "src/index.ts") },
+	// router-worker: the router alone, for `skill eval --router` (CI's judge runs a pull
+	// request's router this way, in a process of its own).
+	entryPoints: { index: join(root, "src/index.ts"), "router-worker": join(root, "src/router-worker.ts") },
 	bundle: true,
 	platform: "node",
 	target: ["node20"],

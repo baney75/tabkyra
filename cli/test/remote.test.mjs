@@ -89,6 +89,30 @@ test("a session lists and calls only the tools its scopes grant", async () => {
 	}
 });
 
+test("skills.read grants skill_match and skill_read, and only that scope does", async () => {
+	const withSkills = await connect(token("skill-reader", "skills.read"));
+	try {
+		const names = (await withSkills.listTools()).tools.map((t) => t.name).sort();
+		assert.deepEqual(names, ["skill_match", "skill_read"]);
+		const match = await withSkills.callTool({ name: "skill_match", arguments: { task: "background check on a roofing contractor" } });
+		assert.notEqual(match.isError, true, JSON.stringify(match));
+		assert.match(match.content[0].text, /^osint /);
+		const read = await withSkills.callTool({ name: "skill_read", arguments: { name: "osint" } });
+		assert.match(read.content[0].text, /^---\nname: osint\n/);
+	} finally {
+		await withSkills.close();
+	}
+	const without = await connect(token("browser-only", "browser.read,library.read"));
+	try {
+		const names = (await without.listTools()).tools.map((t) => t.name);
+		assert.ok(!names.includes("skill_match") && !names.includes("skill_read"), names.join(","));
+		const denied = await without.callTool({ name: "skill_read", arguments: { name: "osint" } }).catch((e) => ({ isError: true, content: [{ text: String(e) }] }));
+		assert.equal(denied.isError, true);
+	} finally {
+		await without.close();
+	}
+});
+
 test("a revoked token is refused at once, and another token can't reuse a session", async () => {
 	const a = token("alpha", "browser.read");
 	const b = token("beta", "library.read");
@@ -165,7 +189,7 @@ test("a scoped session's instructions mention only its tools", async () => {
 	const client = await connect(token("instr", "library.read"));
 	try {
 		const text = client.getInstructions() ?? "";
-		assert.doesNotMatch(text, /Call status first|handle_dialog|tabs_show/);
+		assert.doesNotMatch(text, /Call status before any browser tool|handle_dialog|tabs_show/);
 		assert.match(text, /This session's tools: library_cite, library_search\./);
 		assert.match(text, /untrusted data/);
 	} finally {
@@ -259,4 +283,40 @@ test("tailscale changes nothing when serve status can't be read", () => {
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /Couldn't read tailscale serve status/);
 	assert.throws(() => readFileSync(join(root, "status-fail.log"), "utf8"), "serve was never changed");
+});
+
+test("remote sessions read bundled skills only, never the user's local edits", async () => {
+	const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills");
+	const draft = join(root, "drafts", "dorks");
+	mkdirSync(draft, { recursive: true });
+	const text = readFileSync(join(skillsDir, "dorks", "SKILL.md"), "utf8");
+	writeFileSync(join(draft, "SKILL.md"), text.replace("## When something goes wrong", "## When something goes wrong\n\n| Private local note | Only on this machine |"));
+	const applied = cliRun(["skill", "apply", draft, "--yes"]);
+	assert.equal(applied.code, 0, applied.out);
+	// A local-only skill, which only exists on this machine.
+	const own = join(root, "drafts", "invoice-triage");
+	mkdirSync(own, { recursive: true });
+	writeFileSync(
+		join(own, "SKILL.md"),
+		"---\nname: invoice-triage\ndescription: Sort supplier invoices into paid, due and disputed. Use when the user asks to triage, sort or reconcile supplier invoices.\n---\n# Invoice triage\n\n## When to use\n\n- The user has a pile of supplier invoices to sort.\n\n## Steps\n\n1. **List them.** Read each invoice.\n2. **Sort them.** Paid, due or disputed.\n\n## Done when\n\n- Every invoice has a status.\n",
+	);
+	const ownApplied = cliRun(["skill", "apply", own, "--yes"]);
+	assert.equal(ownApplied.code, 0, ownApplied.out);
+	const task = "triage my supplier invoices";
+	assert.match(cliRun(["skill", "match", task]).out, /^invoice-triage\s/, "the local router sees it, so the remote check below means something");
+	const client = await connect(token("skills-reader", "skills.read"));
+	try {
+		const r = await client.callTool({ name: "skill_read", arguments: { name: "dorks" } });
+		assert.doesNotMatch(r.content[0].text, /Private local note/);
+		assert.equal(r.content[0].text.trim(), text.trim());
+		for (const top of [1, 5]) {
+			const m = await client.callTool({ name: "skill_match", arguments: { task, top } });
+			assert.doesNotMatch(m.content[0].text, /invoice-triage/);
+		}
+		const hidden = await client.callTool({ name: "skill_read", arguments: { name: "invoice-triage" } });
+		assert.equal(hidden.isError, true);
+		assert.doesNotMatch(hidden.content[0].text, /supplier invoices/);
+	} finally {
+		await client.close();
+	}
 });

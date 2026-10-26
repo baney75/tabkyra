@@ -34,11 +34,16 @@ function help(): string {
 		cmd("mcp", "", "MCP server on stdio (what Claude Code, Codex, OpenCode run)"),
 		cmd("pi-extension", "", "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts"),
 		cmd("skill install", "[name...] [--all] [--force]", "Install the bundled skills into Claude Code, Codex and OpenCode"),
-		cmd("skill list", "", "The bundled skills and what each is for"),
+		cmd("skill list", "[--json]", "The skills in use, what each is for, its version and source"),
 		cmd("skill print", "[name] [--raw]", "A skill as text for AGENTS.md; --raw is the exact SKILL.md"),
 		cmd("skill lint", "[path...]", "Check skills for hidden text, injection and missing structure"),
 		cmd("skill apply", "<folder> [--yes]", "Check and show an edited skill; --yes backs up and installs it (/rsi)"),
 		cmd("skill revert", "<name>", "Drop your edit and go back to the bundled skill"),
+		cmd("skill match", '"<task>" [--json] [--top N]', "Which skill fits a task, best first, or none"),
+		cmd("skill eval", "[--json] [--update-baseline]", "Run the router's regression and held-out cases and gates"),
+		cmd("skill versions", "<name> [--json]", "Bundled, local and backed-up versions of a skill"),
+		cmd("skill rollback", "<name> --to <version> [--yes]", "Restore a backed-up version, with apply's checks"),
+		cmd("skill edit", "<name> [--yes] [--draft-only]", "Draft an edit in $EDITOR, show the diff, apply on yes"),
 		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 		`  ${c.dim("(tabkyra setup adds these for you.)")}`,
@@ -241,14 +246,17 @@ const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
 	debug: { flags: [], positional: 0 },
 	mcp: { flags: [], positional: 0 },
 	"pi-extension": { flags: [], positional: 1 },
-	skill: { flags: ["--force", "--all", "--raw", "--yes"], positional: 64 },
+	skill: { flags: ["--force", "--all", "--raw", "--yes", "--json", "--top", "--to", "--cases", "--base", "--router", "--update-baseline", "--draft-only"], positional: 64 },
 };
+
+/** Options that take a value (`--top 3` or `--top=3`); the value isn't a positional argument. */
+const VALUE_FLAGS = new Set(["--top", "--to", "--cases", "--base", "--router"]);
 
 function checkArgs(command: string, args: string[]): void {
 	const accepts = ACCEPTS[command];
 	if (!accepts) return;
-	const flags = args.filter((a) => a.startsWith("-"));
-	const positional = args.filter((a) => !a.startsWith("-"));
+	const flags = args.filter((a) => a.startsWith("-")).map((a) => (VALUE_FLAGS.has(a.split("=")[0]) ? a.split("=")[0] : a));
+	const positional = args.filter((a, i) => !a.startsWith("-") && !VALUE_FLAGS.has(args[i - 1] ?? ""));
 	const unknown = flags.find((f) => !accepts.flags.includes(f));
 	const usage = `Usage: tabkyra ${command}${accepts.flags.map((f) => ` [${f}]`).join("")}${command === "allow" ? " <host>" : command === "pi-extension" ? " [dir]" : ""}`;
 	if (unknown) throw new UsageError(`Unknown option "${unknown}". ${usage}`);
@@ -350,25 +358,50 @@ async function main(): Promise<void> {
 			return;
 		}
 		case "skill": {
-			const [sub, ...rest] = argv.slice(1).filter((a) => !a.startsWith("-"));
+			const args = argv.slice(1);
+			const flagName = (a: string) => (VALUE_FLAGS.has(a.split("=")[0]) ? a.split("=")[0] : a);
+			const [sub, ...rest] = args.filter((a, i) => !a.startsWith("-") && !VALUE_FLAGS.has(args[i - 1] ?? ""));
 			// Flags and argument counts each subcommand accepts; anything else is a usage error.
 			const SKILL_SUB: Record<string, { flags: string[]; max: number }> = {
 				install: { flags: ["--force", "--all"], max: 64 },
-				list: { flags: [], max: 0 },
+				list: { flags: ["--json"], max: 0 },
 				print: { flags: ["--raw"], max: 1 },
 				lint: { flags: [], max: 64 },
 				apply: { flags: ["--yes"], max: 1 },
 				revert: { flags: [], max: 1 },
+				match: { flags: ["--json", "--top"], max: 64 },
+				eval: { flags: ["--json", "--update-baseline", "--cases", "--base", "--router"], max: 0 },
+				versions: { flags: ["--json"], max: 1 },
+				rollback: { flags: ["--to", "--yes"], max: 1 },
+				edit: { flags: ["--yes", "--draft-only"], max: 1 },
 			};
-			const spec = sub ? SKILL_SUB[sub] : undefined;
-			const badFlag = argv.slice(1).find((a) => a.startsWith("-") && !(spec?.flags ?? []).includes(a));
+			const spec = sub && Object.hasOwn(SKILL_SUB, sub) ? SKILL_SUB[sub] : undefined;
+			const badFlag = args.find((a) => a.startsWith("-") && !(spec?.flags ?? []).includes(flagName(a)));
 			if (spec && (badFlag || rest.length > spec.max)) {
 				throw new UsageError(`tabkyra skill ${sub} ${badFlag ? `doesn't take ${badFlag}` : "takes fewer arguments"}. Flags: ${spec.flags.join(" ") || "none"}.`);
 			}
-			if (!sub || !["install", "list", "print", "lint", "apply", "revert"].includes(sub)) {
-				throw new UsageError("Usage: tabkyra skill install [name...] [--all] [--force] | list | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name>");
+			if (!sub || !spec) {
+				throw new UsageError(
+					'Usage: tabkyra skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] [--router <script>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only]',
+				);
 			}
-			process.exitCode = runSkill(sub, rest, { force: flag("--force"), all: flag("--all"), raw: flag("--raw"), yes: flag("--yes") });
+			for (const name of VALUE_FLAGS) {
+				if (spec.flags.includes(name) && flag(name) && option(name) === undefined) throw new UsageError(`${name} needs a value.`);
+			}
+			process.exitCode = runSkill(sub, rest, {
+				force: flag("--force"),
+				all: flag("--all"),
+				raw: flag("--raw"),
+				yes: flag("--yes"),
+				json: flag("--json"),
+				updateBaseline: flag("--update-baseline"),
+				draftOnly: flag("--draft-only"),
+				top: option("--top"),
+				to: option("--to"),
+				cases: option("--cases"),
+				base: option("--base"),
+				router: option("--router"),
+			});
 			return;
 		}
 		case "library": {
