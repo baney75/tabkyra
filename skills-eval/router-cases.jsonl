@@ -488,3 +488,6 @@
 {"task": "How many ounces are in a pound?", "skill": "none"}
 {"task": "Tighten the executive summary and conclusions of my quarterly report", "skill": "writing"}
 {"task": "Restructure our onboarding guide so new hires can follow it step by step", "skill": "writing"}
+{"task": "How can I improve my writing skills?", "skill": "none"}
+{"task": "Recommend a course to build my video editing skills", "skill": "none"}
+{"task": "What chemistry skills do employers want?", "skill": "none"}

@@ -347,6 +347,12 @@ const EXCLUDES = new RegExp(
 /** `tabkyra skill <subcommand>` is the Tabkyra CLI (read as "tabkyra cli"), not a mention of the tabkyra skill. */
 const CLI_SUBCOMMAND = /^\s+(?:install|list|print|lint|apply|revert|edit|eval|match|versions|rollback)\b/;
 
+/** Whether the text right before a plural mention ends with another skill name and "and", "or" or a comma. */
+function listsSkills(index: RouterIndex, before: string): boolean {
+	const m = /([a-z0-9-]+)\s*(?:,|\band\b|\bor\b)\s*$/.exec(before);
+	return m !== null && index.names.has(m[1]);
+}
+
 interface ReadTask {
 	/** A slash command naming a skill, as the task's first token. */
 	command?: string;
@@ -401,6 +407,11 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 			const after = all.slice(offset + whole.length);
 			if (n.name === "tabkyra" && CLI_SUBCOMMAND.test(after)) return "tabkyra cli";
 			const before = all.slice(0, offset);
+			// "my writing skills", "what chemistry skills do employers want": a plural is a
+			// person's abilities, unless it closes a list of skill names ("the osint and dorks skills").
+			// The phrase names a subject, not a skill: it scores for neither that skill nor the skills
+			// whose job is skills.
+			if (/skills$/.test(whole) && !listsSkills(index, before)) return " abilities ";
 			if (EXCLUDES.test(before)) {
 				excluded.add(n.name);
 				return " ";

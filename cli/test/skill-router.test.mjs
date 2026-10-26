@@ -847,3 +847,17 @@ test("the catalog script refuses a skill folder named none", () => {
 	assert.match(r.stderr, /"none" is reserved/);
 	assert.equal(existsSync(join(scratch, "cli", "src", "skills-catalog.ts")), false);
 });
+
+test("'<name> skills' about a person's abilities names no skill; a list of skill names still does", () => {
+	const top = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "3", task]).stdout).map((m) => m.name);
+	for (const task of [
+		"How can I improve my writing skills?",
+		"Recommend a course to build my video editing skills",
+		"What chemistry skills do employers want?",
+		"I want to sharpen my biology skills before the exam",
+	]) {
+		assert.deepEqual(top(task), ["none"], task);
+	}
+	assert.deepEqual(top("Use the osint and dorks skills on this landlord").sort(), ["dorks", "osint"]);
+	assert.equal(top("use the video-editing skill to trim talk.mp4")[0], "video-editing");
+});
