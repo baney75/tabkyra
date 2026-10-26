@@ -258,7 +258,8 @@ only an untouched draft is refreshed in place.
 - Outside a terminal, or with `--draft-only`, it prints the draft path and the `skill apply`
   command, and exits 0 without opening an editor, asking or applying. Agents use
   `--draft-only`: their shell can be a terminal with the user's `$EDITOR` set.
-- `--draft-only` never touches a draft with unapplied changes, current or stale: it leaves
+- `--draft-only` never touches a draft with unapplied changes (one that differs from the
+  version it was taken from), current or stale: it leaves
   the file as it is, says so and exits 1, and the agent stops and asks the user (the rsi
   skill says to). An agent never overwrites, moves or discards the user's draft.
 

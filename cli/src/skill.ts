@@ -634,13 +634,15 @@ export function prepareDraft(name: string, options: { keepExisting?: boolean } =
 	if (existsSync(file)) {
 		const draft = readFileSync(file, "utf8");
 		const base = existsSync(baseFile) ? readFileSync(baseFile, "utf8").trim() : undefined;
+		// Changed by someone: the draft differs from the version it was taken from (or, with no
+		// record of that, from the current source). An untouched draft holds nothing to keep.
+		const changed = base === undefined ? draft !== source : skillVersion(draft) !== base;
 		// keepExisting (--draft-only, for agents): a draft with unapplied changes is the user's
 		// work. Leave it exactly as it is, and let the caller stop and ask.
-		if (options.keepExisting && draft !== source) return { dir, file, resumed: false, held: true };
+		if (options.keepExisting && changed) return { dir, file, resumed: false, held: true };
 		if (draft !== source && base === current) return { dir, file, resumed: true };
-		// Anything the user typed (the draft differs from the version it was taken from, or from
-		// the current source) is moved aside, never replaced.
-		if (draft !== source || (base !== undefined && skillVersion(draft) !== base)) {
+		// Anything the user typed is moved aside, never replaced; an untouched draft is refreshed.
+		if (changed) {
 			mkdirSync(backupsDir, { recursive: true });
 			stale = join(backupsDir, `${stamp()}.md`);
 			renameSync(file, stale);

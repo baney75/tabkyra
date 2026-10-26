@@ -364,3 +364,24 @@ test("an edit applied before the budget stays in use with a warning; a new apply
 	assert.match(run(home, ["skill", "list"]).out, /not used: .*fails lint \(budget\)/);
 	assert.equal(run(home, ["skill", "print", "dorks", "--raw"]).stdout, bundled("dorks"));
 });
+
+test("an untouched draft is refreshed when the skill moves on, with or without --draft-only", () => {
+	const home = newHome();
+	const drafts = join(home, ".config", "tabkyra", "skill-drafts");
+	const draft = join(drafts, "dorks", "SKILL.md");
+	// rsi drafts and then makes no change; later the skill moves to a new version.
+	assert.equal(run(home, ["skill", "edit", "dorks", "--draft-only"]).code, 0);
+	const moved = applyEdit(home, "dorks", addLesson("landed elsewhere."));
+	const again = run(home, ["skill", "edit", "dorks", "--draft-only"]);
+	assert.equal(again.code, 0, again.out);
+	assert.doesNotMatch(again.out, /unapplied changes|older version/);
+	assert.equal(readFileSync(draft, "utf8"), moved, "a fresh draft of the new version");
+	assert.equal(readFileSync(join(drafts, ".bases", "dorks"), "utf8").trim(), version(moved));
+	assert.equal(existsSync(join(drafts, ".backups")), false, "nothing to keep aside");
+	// The same without --draft-only.
+	applyEdit(home, "dorks", addLesson("and another."));
+	const plain = run(home, ["skill", "edit", "dorks"]);
+	assert.equal(plain.code, 0, plain.out);
+	assert.doesNotMatch(plain.out, /older version/);
+	assert.equal(existsSync(join(drafts, ".backups")), false);
+});
