@@ -22,6 +22,10 @@ export const Moment: React.FC = () => {
 	const scale = Math.min(MAX, size(860, 980) / crop.w);
 	const hit = slam(frame, fps, 0, 10);
 	const after = frame >= at(40);
+	// Wide: the card sits centered until the prompt arrives on B36, then makes room for it.
+	const promptW = size(700, 960);
+	const makeRoom = vertical ? 1 : ease(frame, at(36) - 4, 12);
+	const centerShift = vertical ? 0 : (1 - makeRoom) * ((promptW + size(40, 50)) / 2);
 	const ring = 0.5 + 0.5 * Math.sin(((frame - at(32)) / (at(33) - at(32))) * Math.PI * 2);
 	return (
 		<AbsoluteFill>
@@ -29,7 +33,7 @@ export const Moment: React.FC = () => {
 			{!after ? (
 				<AbsoluteFill style={{ translate: shake(frame, 0, 30) }}>
 					<Center gap={size(40, 50)} column={vertical} style={{ padding: size(80, 70) }}>
-						<div style={{ display: "flex", flexDirection: "column", gap: size(56, 56), alignItems: vertical ? "center" : "flex-start" }}>
+						<div style={{ display: "flex", flexDirection: "column", gap: size(56, 56), alignItems: vertical ? "center" : "flex-start", translate: `${centerShift}px 0` }}>
 							<Words words={["It", "asks", "first."]} ats={[0, 0, 0]} size={size(150, 150)} colors={[C.paper, C.paper, C.brass]} />
 							<div style={{ scale: String(2.2 - 1.2 * hit), opacity: Math.min(1, hit * 2) }}>
 								<PanelPart
@@ -42,7 +46,7 @@ export const Moment: React.FC = () => {
 						</div>
 						<div
 							style={{
-								width: size(700, 960),
+								width: promptW,
 								padding: size(40, 44),
 								borderRadius: size(28, 30),
 								border: `3px solid ${C.brass}`,

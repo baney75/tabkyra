@@ -1,45 +1,77 @@
 import { AbsoluteFill, useCurrentFrame } from "remotion";
-import { DATA } from "../data";
+import router from "../../public/capture/router.json";
 import { C, FONT } from "../theme";
 import { useBeat } from "./beat";
 import { Helm } from "./Helm";
 import { Backdrop, ease, Flash, useLayout, Whip, Words } from "./motion";
-import { Center, PanelPart, useSize } from "./parts";
+import { Center, useSize } from "./parts";
+
+const ROUTER = router;
 
 /**
- * SLOT: the skill router ("the right skill, in under a millisecond"), not merged yet (#21).
- * Replace this scene with a capture from main once it lands. Until then it shows a merged
- * feature: the side panel's real "Copy setup prompt for your agent" button and its toast.
+ * B92–B103: the skill router (merged in #21), from real runs recorded by
+ * scripts/demo/capture-router.mjs: four `tabkyra skill match` tasks and the router's own p95
+ * latency from `tabkyra skill eval`.
  */
-export const RouterSlot: React.FC = () => {
+export const Router: React.FC = () => {
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
-	const box = (b: { x: number; y: number; width: number; height: number }) => ({ x: b.x, y: b.y, w: b.width, h: b.height });
-	const dialog = box(DATA.boxes.welcomeDialog);
-	const toast = box(DATA.boxes.toast);
 	const { vertical } = useLayout();
-	const scale = Math.min(2.2, size(620, 900) / dialog.w);
-	const copied = frame >= at(94);
+	const rows = ROUTER.matches.map((m, i) => ({ ...m, at: at(96 + 2 * i) }));
+	const lift = ease(frame, at(96), 10);
 	return (
-		<Whip dur={at(96) - at(92)} from="up" inDur={6}>
+		<Whip dur={at(104) - at(92)} from="up" inDur={6}>
 			<Backdrop />
-			<Center column={vertical} gap={size(90, 60)}>
-				<div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: size(24, 30) }}>
-					<div style={{ height: toast.h * scale, opacity: ease(frame, at(94), 5), translate: `0 ${(1 - ease(frame, at(94), 8)) * -40}px` }}>
-						{copied ? <PanelPart src="capture/panel-copied.png" crop={toast} scale={scale} /> : null}
-					</div>
-					<PanelPart src="capture/panel-welcome.png" crop={dialog} scale={scale} style={{ scale: String(1 + 0.04 * ease(frame, 0, at(96) - at(92))) }} />
-				</div>
-				<div style={{ width: size(760, 960) }}>
+			<AbsoluteFill style={{ padding: size(90, 80), display: "flex", flexDirection: "column", justifyContent: "center", gap: size(40, 46) }}>
+				<div style={{ scale: String(1 - 0.38 * lift), transformOrigin: "50% 0%", marginBottom: -lift * size(110, 90) }}>
 					<Words
-						words={vertical ? ["One prompt", "sets it up."] : ["One", "prompt", "sets", "it", "up."]}
-						ats={vertical ? [at(93), at(93) + 6] : [at(93), at(93) + 2, at(93) + 4, at(93) + 6, at(93) + 8]}
-						size={size(130, 110)}
-						colors={[C.brass, C.paper, C.paper, C.paper, C.paper]}
+						words={vertical ? ["The right skill,", "in under", "a millisecond."] : ["The right skill,", "in under a millisecond."]}
+						ats={[0, at(93), at(93) + 4]}
+						size={size(120, 110)}
+						colors={[C.paper, C.brass, C.brass]}
 					/>
+					<div style={{ marginTop: size(18, 24), textAlign: "center", fontFamily: FONT.mono, fontSize: size(40, 40), color: C.tide, opacity: ease(frame, at(94), 6) }}>
+						{ROUTER.eval.p95Line} · {ROUTER.eval.skills} skills
+					</div>
 				</div>
-			</Center>
+				<div style={{ display: "flex", flexDirection: "column", gap: size(22, 30), alignItems: "center" }}>
+					{rows.map((r) => {
+						if (frame < r.at) return null;
+						const none = r.expected === "none";
+						const [name, score] = none ? ["none", ""] : r.out.split(/\s+/);
+						const description = none ? r.out.replace(/^·\s*none:\s*/, "") : r.out.slice(r.out.indexOf(score) + score.length).trim();
+						const s = ease(frame, r.at, 8);
+						const hit = ease(frame, r.at + 4, 6);
+						return (
+							<div
+								key={r.task}
+								style={{
+									width: size(1700, 960),
+									padding: `${size(16, 20)}px ${size(28, 28)}px`,
+									borderRadius: size(18, 20),
+									background: C.inkDeep,
+									border: `1px solid ${C.inkLine}`,
+									opacity: s,
+									translate: `${(1 - s) * 80}px 0`,
+								}}
+							>
+								<div style={{ fontFamily: FONT.mono, fontSize: size(28, 32), color: C.mist, whiteSpace: vertical ? "normal" : "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+									<span style={{ color: C.brass }}>$ </span>
+									{r.shown}
+								</div>
+								<div style={{ display: "flex", alignItems: "baseline", gap: size(22, 18), marginTop: 6, opacity: hit, scale: String(1.15 - 0.15 * hit), transformOrigin: "0 50%" }}>
+									<span style={{ fontFamily: FONT.mono, fontWeight: 700, fontSize: size(46, 54), color: none ? C.tide : C.brass, whiteSpace: "nowrap", flex: "none" }}>{name}</span>
+									{score ? <span style={{ fontFamily: FONT.mono, fontSize: size(30, 34), color: C.mist, flex: "none" }}>{score}</span> : null}
+									<span style={{ fontFamily: FONT.sans, fontSize: size(26, 24), color: C.slate, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+										{description}
+									</span>
+								</div>
+							</div>
+						);
+					})}
+				</div>
+			</AbsoluteFill>
 		</Whip>
 	);
 };
@@ -47,14 +79,14 @@ export const RouterSlot: React.FC = () => {
 // All five are named in the README's "Connect your agent" section.
 const AGENTS = ["Claude Code", "Codex", "pi", "OMP", "Cursor"];
 
-/** B96–B103: the agents it works with, one per beat. */
+/** B104–B109: the agents it works with, one per half beat. */
 export const WorksWith: React.FC = () => {
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
 	const { vertical } = useLayout();
 	return (
-		<Whip dur={at(104) - at(96)} from="zoom" inDur={1}>
+		<Whip dur={at(110) - at(104)} from="zoom" inDur={1}>
 			<Backdrop />
 			<Center gap={size(40, 50)}>
 				<Words words={["Works", "with"]} ats={[0, 0]} size={size(120, 120)} font={FONT.serif} italic colors={[C.mist, C.mist]} />
@@ -70,25 +102,25 @@ export const WorksWith: React.FC = () => {
 					}}
 				>
 					{AGENTS.map((name, i) => (
-						<Words key={name} words={[name]} ats={[at(97 + i)]} size={size(130, 130)} colors={[i % 2 ? C.paper : C.brass]} />
+						<Words key={name} words={[name]} ats={[at(104.5 + i / 2)]} size={size(130, 130)} colors={[i % 2 ? C.paper : C.brass]} />
 					))}
 				</div>
-				<div style={{ opacity: ease(frame, at(102), 6), fontFamily: FONT.sans, fontSize: size(60, 56), color: C.mist }}>and any MCP agent</div>
+				<div style={{ opacity: ease(frame, at(107.5), 6), fontFamily: FONT.sans, fontSize: size(60, 56), color: C.mist }}>and any MCP agent</div>
 			</Center>
 			<Flash at={0} strength={0.3} />
 		</Whip>
 	);
 };
 
-/** B104 to the end: the helm assembles, the wordmark, the line, the command, the address. */
+/** B110 to the end: the helm assembles, the wordmark, the line, the command, the address. */
 export const EndCard: React.FC = () => {
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
 	const { vertical } = useLayout();
-	const step = (at(106) - at(104)) / 8;
+	const step = (at(111) - at(110)) / 8;
 	const command = "tabkyra setup";
-	const typed = command.slice(0, Math.max(0, Math.floor((frame - at(112)) / 1.4)));
+	const typed = command.slice(0, Math.max(0, Math.floor((frame - at(114)) / 1.4)));
 	return (
 		<AbsoluteFill>
 			<Backdrop />
@@ -96,9 +128,9 @@ export const EndCard: React.FC = () => {
 				<div style={{ display: "flex", flexDirection: vertical ? "column" : "row", alignItems: "center", gap: size(40, 30) }}>
 					<Helm
 						size={size(190, 240)}
-						ring={ease(frame, 0, at(106))}
+						ring={ease(frame, 0, at(111))}
 						pegs={Array.from({ length: 8 }, (_, i) => ease(frame, i * step, 5))}
-						pointer={ease(frame, at(106) - 2, 5)}
+						pointer={ease(frame, at(111) - 2, 5)}
 					/>
 					<div
 						style={{
@@ -107,8 +139,8 @@ export const EndCard: React.FC = () => {
 							fontSize: size(180, 170),
 							letterSpacing: "-0.035em",
 							color: C.paper,
-							opacity: ease(frame, at(106), 6),
-							translate: `${(1 - ease(frame, at(106), 12)) * (vertical ? 0 : -60)}px ${(1 - ease(frame, at(106), 12)) * (vertical ? 40 : 0)}px`,
+							opacity: ease(frame, at(111), 6),
+							translate: `${(1 - ease(frame, at(111), 12)) * (vertical ? 0 : -60)}px ${(1 - ease(frame, at(111), 12)) * (vertical ? 40 : 0)}px`,
 						}}
 					>
 						Tabkyra
@@ -116,7 +148,7 @@ export const EndCard: React.FC = () => {
 				</div>
 				<Words
 					words={vertical ? ["You steer.", "Your agents", "work the tabs."] : ["You steer.", "Your agents work the tabs."]}
-					ats={[at(108), at(109), at(110)]}
+					ats={[at(112), at(112.5), at(113)]}
 					size={size(96, 96)}
 					font={FONT.serif}
 					italic
@@ -129,7 +161,7 @@ export const EndCard: React.FC = () => {
 						borderRadius: size(20, 22),
 						background: C.inkDeep,
 						border: `1px solid ${C.inkLine}`,
-						opacity: ease(frame, at(112), 5),
+						opacity: ease(frame, at(114), 5),
 						display: "flex",
 						flexDirection: "column",
 						alignItems: "center",
@@ -140,7 +172,7 @@ export const EndCard: React.FC = () => {
 						<span style={{ color: C.brass }}>$ </span>
 						{typed}
 					</div>
-					<div style={{ fontFamily: FONT.sans, fontSize: size(30, 30), color: C.mist, opacity: ease(frame, at(114), 6), textAlign: "center" }}>
+					<div style={{ fontFamily: FONT.sans, fontSize: size(30, 30), color: C.mist, opacity: ease(frame, at(115), 6), textAlign: "center" }}>
 						builds the extension, registers your browser, offers to add your agents
 					</div>
 				</div>
@@ -159,7 +191,7 @@ export const EndCard: React.FC = () => {
 					<span style={{ fontFamily: FONT.mono, fontSize: size(40, 40), color: C.mist }}>github.com/baney75/tabkyra</span>
 				</div>
 			</Center>
-			<Flash at={0} strength={0.35} />
+			<Flash at={0} strength={0.16} />
 			<Flash at={at(120)} strength={0.4} />
 		</AbsoluteFill>
 	);

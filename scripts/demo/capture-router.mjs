@@ -1,0 +1,69 @@
+// Records the skill router beat for the hero video: real `tabkyra skill match` runs and the
+// router's own speed measurement from `tabkyra skill eval`. Writes
+// media/video/public/capture/router.json; the hero video reads every line from it.
+//
+//   (cd cli && npm run build) && node scripts/demo/capture-router.mjs
+//
+// Runs in a throwaway HOME, so skills edited on this machine can't change the result.
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const cli = join(repo, "cli", "dist", "index.js");
+const target = join(repo, "media", "video", "public", "capture", "router.json");
+if (!existsSync(cli)) throw new Error(`${cli} is missing. Run: cd cli && npm install && npm run build`);
+
+// Each task and the skill it must route to ("none" for no skill).
+const TASKS = [
+	["Find peer-reviewed studies on spaced repetition and cite them", "academic-research"],
+	["Run a background check on my new landlord", "osint"],
+	["Don't use the osint skill, just search the news", "none"],
+	["/rsi", "rsi"],
+];
+
+const home = mkdtempSync(join(tmpdir(), "tabkyra-router-"));
+try {
+	const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), NO_COLOR: "1" };
+	const run = (args) => {
+		const started = Date.now();
+		const r = spawnSync(process.execPath, [cli, ...args], { env, encoding: "utf8" });
+		return { code: r.status, ms: Date.now() - started, out: `${r.stdout}${r.stderr}`.trimEnd() };
+	};
+	const matches = TASKS.map(([task, expected]) => {
+		const r = run(["skill", "match", task]);
+		// `shown` is the command as it can be pasted into a shell: bare when it is one safe word,
+		// else in double quotes (the tasks hold no $, `, ", \ or !, which double quotes would expand).
+		if (/[$`"\\!]/.test(task)) throw new Error(`"${task}" needs other quoting to be shown safely`);
+		const shown = `tabkyra skill match ${/^[\w@%+=:,./-]+$/.test(task) ? task : `"${task}"`}`;
+		const top = /^·\s*none:/.test(r.out) ? "none" : r.out.split(/\s+/)[0];
+		if (r.code !== 0 || top !== expected)
+			throw new Error(`"${task}" routed to ${top}, expected ${expected}: ${r.out}`);
+		return { task, expected, shown, ...r };
+	});
+	const evalRun = run(["skill", "eval", "--json"]);
+	const report = JSON.parse(evalRun.out);
+	if (!report.ok) throw new Error(`skill eval failed its gates: ${evalRun.out.slice(0, 400)}`);
+	const evalText = run(["skill", "eval"]);
+	const p95Line = evalText.out.split("\n").find((l) => /p95 latency/.test(l));
+	if (!p95Line) throw new Error(`no p95 line in skill eval output: ${evalText.out}`);
+	const data = {
+		recordedAt: new Date().toISOString(),
+		matches,
+		eval: {
+			skills: report.skills,
+			cases: report.cases,
+			top1: report.top1,
+			speed: report.speed,
+			p95Line: p95Line.trim(),
+		},
+	};
+	const staging = `${target}.new`;
+	writeFileSync(staging, `${JSON.stringify(data, null, "\t")}\n`);
+	renameSync(staging, target);
+	console.log(`wrote ${target}`);
+} finally {
+	rmSync(home, { recursive: true, force: true });
+}

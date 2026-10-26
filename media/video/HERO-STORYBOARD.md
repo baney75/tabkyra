@@ -3,8 +3,8 @@
 The short, music-driven cut. The 85-second captioned walkthrough (`Demo`, `media/demo.mp4`)
 stays the full demo; this is the one people share.
 
-**Spec.** `Hero` 1920×1080 and `HeroVertical` 1080×1920, 30 fps, H.264 + AAC, 58.0 s
-(1740 frames), the same edit in both. Poster `HeroPoster` 1280×720. Outputs:
+**Spec.** `Hero` 1920×1080 and `HeroVertical` 1080×1920, 30 fps, H.264 + AAC, 59.0 s
+(1770 frames), the same edit in both. Poster `HeroPoster` 1280×720. Outputs:
 `media/hero.mp4`, `media/hero-vertical.mp4`, `media/hero-poster.jpg`.
 
 **Music.** `public/hero/music.m4a`, an instrumental generated on Parish1 with ACE-Step 1.5
@@ -116,27 +116,33 @@ and scales captures to the width; type sizes follow the short side.
   **"Every bundled skill passes."**
 - **Transition out:** the music breaks again.
 
-## 12. Slot: the skill router (B92–B95, 43.89–45.78 s)
+## 12. The skill router (B92–B103, 43.89–49.59 s)
 
-- **Marked slot.** Reserved for the skill router ("the right skill, in under a millisecond"),
-  which is not merged yet (#21). Until it is captured from main, the slot shows a merged
-  feature: the real side panel welcome dialog and its "Copy setup prompt for your agent"
-  button, with the real toast: **"One prompt sets it up."** The code marks it `RouterSlot`.
+- **What happens:** In the drum break, **"The right skill,"** (B92) and **"in under a
+  millisecond."** (B93) slam; at B94 the router's own measurement prints under them in tide,
+  the real `skill eval` line ("✓ p95 latency ... ms per match ...") and the bundled skill
+  count (13, what main has). When the drums return (B96) the header shrinks up and four real
+  `tabkyra skill match` runs land, one every two beats, each with the skill it picked:
+  a research question → **academic-research** (B96), a landlord background check → **osint**
+  (B98), "Don't use the osint skill, just search the news" → **none** (B100), `/rsi` →
+  **rsi** (B102). Recorded by `scripts/demo/capture-router.mjs` into
+  `public/capture/router.json`.
+- **Transition out:** zoom cut on B104.
 
-## 13. Works with (B96–B103, 45.78–49.59 s)
+## 13. Works with (B104–B109, 49.59–52.43 s)
 
-- **What happens:** On B96 **"Works with"** slams; the agents land one per beat: **Claude Code**
-  (B97), **Codex** (B98), **pi** (B99), **OMP** (B100), **Cursor** (B101); B102: "and any MCP
-  agent". All five are named in the README's setup section.
+- **What happens:** **"Works with"** slams on B104; the agents land on half beats: **Claude
+  Code**, **Codex**, **pi**, **OMP**, **Cursor**; then "and any MCP agent". All five are
+  named in the README's setup section.
 
-## 14. End card (B104–B120 and hold, 49.59–58.0 s)
+## 14. End card (B110 to the end, 52.43–59.0 s)
 
-- **What happens:** The helm assembles again, fast (B104–B106), with the wordmark
-  **Tabkyra** (B106) and the line **"You steer. Your agents work the tabs."** (B108). B112:
-  the one command that sets it up, `tabkyra setup`, types on with "builds the extension,
-  registers the browser, connects your agents". B116: **dbaney.com/tabkyra** and
-  github.com/baney75/tabkyra. B120: final hit, a brass flash; hold to 58.0 s while the
-  music's tail ends at 57.4 s.
+- **What happens:** The helm assembles in one beat (its pegs on 16th notes), the wordmark
+  **Tabkyra** lands (B111), then the line **"You steer. Your agents work the tabs."**
+  (B112–B113). B114: the one command that sets it up, `tabkyra setup`, types on, with
+  "builds the extension, registers your browser, offers to add your agents" (B115). B116:
+  **dbaney.com/tabkyra** and github.com/baney75/tabkyra. B120: final hit and brass flash; the
+  card holds to 59.0 s after the music ends at 57.4 s.
 - **Text (untouchable):** "You steer. Your agents work the tabs." / `tabkyra setup` /
   "dbaney.com/tabkyra".
 

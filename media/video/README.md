@@ -52,7 +52,7 @@ are in `public/fonts/`.
 ## Hero video
 
 `media/hero.mp4` (1920×1080) and `media/hero-vertical.mp4` (1080×1920, the same edit for
-social), both H.264 with AAC audio at 30 fps and 58 s, plus `media/hero-poster.jpg`
+social), both H.264 with AAC audio at 30 fps and 59 s, plus `media/hero-poster.jpg`
 (1280×720). The shot plan is in [HERO-STORYBOARD.md](HERO-STORYBOARD.md); the source is
 `src/hero/`, registered as the `Hero`, `HeroVertical` and `HeroPoster` compositions. Every frame
 that looks like the product is a capture from `public/capture/` or output from
@@ -93,6 +93,8 @@ python3 scripts/analyze_music.py /tmp/hero-music.wav src/hero/music.json   # nee
 Every cut and slam in `src/hero/` is a beat index into that map, so a new track only needs a
 new map (and the scenes re-checked).
 
-**The skill router slot.** Segment 12 (`RouterSlot` in `src/hero/Outro.tsx`, beats 92–95)
-is reserved for the skill router, which isn't merged yet. Until it is, it shows the side
-panel's setup prompt button.
+**The skill router.** Segment 12 (`Router` in `src/hero/Outro.tsx`) shows four real
+`tabkyra skill match` runs and the router's p95 latency from `tabkyra skill eval`, recorded by
+`node scripts/demo/capture-router.mjs` (after `cd cli && npm run build`) into
+`public/capture/router.json`. The script fails if a task routes anywhere other than its
+expected skill, or if the eval's gates fail.

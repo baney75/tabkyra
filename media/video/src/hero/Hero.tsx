@@ -4,7 +4,7 @@ import { BEATS, HERO_FRAMES, Seg } from "./beat";
 import { Blocked, Flagged, Refused } from "./Checks";
 import { Finish } from "./motion";
 import { Build, ColdOpen, Gap, Line } from "./Open";
-import { EndCard, RouterSlot, WorksWith } from "./Outro";
+import { EndCard, Router, WorksWith } from "./Outro";
 
 /**
  * The hero cut. Every segment starts and ends on a beat index from src/hero/music.json, so
@@ -49,13 +49,13 @@ export const Hero: React.FC = () => {
 			<Seg name="Blocked" start={80} end={92}>
 				<Blocked />
 			</Seg>
-			<Seg name="Slot: skill router" start={92} end={96}>
-				<RouterSlot />
+			<Seg name="The skill router" start={92} end={104}>
+				<Router />
 			</Seg>
-			<Seg name="Works with" start={96} end={104}>
+			<Seg name="Works with" start={104} end={110}>
 				<WorksWith />
 			</Seg>
-			<Seg name="End card" start={104} end={BEATS.length}>
+			<Seg name="End card" start={110} end={BEATS.length}>
 				<EndCard />
 			</Seg>
 			<Finish />
