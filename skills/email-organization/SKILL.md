@@ -29,7 +29,7 @@ To draft a reply in the user's voice, use `writing-voice`, or draft it directly.
 | Outlook work or school | `https://outlook.office.com/mail/` | Settings > Mail > Rules |
 
 Gmail search operators: `from:`, `to:`, `subject:`, `label:`, `is:unread`, `has:attachment`,
-`older_than:1y`, `newer_than:7d`, `category:promotions`, `list:`, `larger:10M`.
+`older_than:1y`, `newer_than:7d`, `category:promotions`, `list:`.
 Search URL: `https://mail.google.com/mail/u/0/#search/is%3Aunread+newer_than%3A7d`.
 
 ## Steps
@@ -38,8 +38,8 @@ Search URL: `https://mail.google.com/mail/u/0/#search/is%3Aunread+newer_than%3A7
    shows, call `tabs_show` and ask the user to sign in. Never type their password.
 2. **Find candidates.** `get_page_text {"maxChars":8000}` on the first pages of the inbox
    and of a few searches (unread, last 30 days, promotions). Note senders and topics that
-   repeat. A list view shows only 50 to 100 rows, so never count or estimate from it. Read
-   subjects and senders only, unless the user asks you to read bodies.
+   repeat. Never count or estimate from a list view (50 to 100 rows). Read subjects and
+   senders only, unless the user asks you to read bodies.
 3. **Count each candidate with its own search.** Run the row's exact query, for example
    `#search/from%3Areceipts%40shop.example`, and read the count in the header (`1-50 of 214`).
    If the header says "many", write "more than 50" and say so.
@@ -65,11 +65,12 @@ Search URL: `https://mail.google.com/mail/u/0/#search/is%3Aunread+newer_than%3A7
    conversations" only when Existing mail is yes. One-off row: run the search, tick the
    select-all box, click the link that selects every conversation in the search (not only
    this page), click the action, and accept the confirmation box only when its count matches the row.
-8. **Read back the effect, not the search.** Label row: search `label:Receipts`; with
-   Existing mail yes the count must match the row. Archive or Skip the Inbox row: search
-   `in:inbox` plus the row's query; it must show none. Filter row: the filter list shows it
-   with the row's actions. A filter whose existing mail wasn't changed when the row said
-   yes is not done. On any mismatch, stop and tell the user before the next row.
+8. **Read back the effect on the row's own mail, never a whole-label count** (the label may
+   hold other mail). Label row, Existing mail yes: the row's query plus `-label:Receipts`
+   must show none, and plus `label:Receipts` the row's count. Archive or Skip the Inbox row:
+   with Existing mail yes, `in:inbox` plus the row's query must show none; with no, note
+   that search's count before applying, and it must not change. Filter row: the filter list
+   shows it with the row's actions. On any mismatch, stop and tell the user before the next row.
 9. **Report.** What was applied, counts, the needs-a-reply list, and how to undo each row
    (delete the filter, remove the label, search the archive).
 
@@ -77,8 +78,8 @@ Search URL: `https://mail.google.com/mail/u/0/#search/is%3Aunread+newer_than%3A7
 
 - The user saw the plan table and said yes before anything changed.
 - Every count came from a search's count header, not from counting list rows.
-- Every applied row's effect was read back (`label:` count, `in:inbox` empty, filter listed)
-  and matches the row, or you stopped and reported.
+- Every applied row's effect was read back on the row's own query (`-label:` and
+  `in:inbox` searches, filter listed) and matches the row, or you stopped and reported.
 - No applied row breaks a limit the user stated, such as "don't archive anything".
 - The report lists every change with its undo, plus the messages that need the user.
 
@@ -109,16 +110,19 @@ The user says: "My Gmail is a mess. Sort it out."
 status {}
 navigate {"url":"https://mail.google.com/mail/u/0/#inbox"}
 get_page_text {"maxChars":8000}     -> first 50 rows: 3 shops and 2 newsletters repeat
-navigate {"url":"https://mail.google.com/mail/u/0/#search/from%3A(receipts%40shop.example+OR+billing%40isp.example)"}
+navigate {"url":"https://mail.google.com/mail/u/0/#search/from%3A(receipts%40shop.example+OR+billing%40isp.example+OR+orders%40store.example)"}
 get_page_text {"maxChars":1500}     -> header "1-50 of 214"
+navigate {"url":"https://mail.google.com/mail/u/0/#search/from%3A(news%40paper.example+OR+digest%40blog.example)"}
+get_page_text {"maxChars":1500}     -> header "1-50 of 402"
 navigate {"url":"https://mail.google.com/mail/u/0/#search/category%3Apromotions+older_than%3A30d"}
 get_page_text {"maxChars":1500}     -> header "1-50 of 1,380"
 ```
 
-Plan shown: label `Receipts` and skip the inbox for 3 senders (existing mail yes, 214
-matching now, archives them), the same for 2 newsletters (402), and a one-off archive of
-old promotions (1,380). Plus 4 messages that need a reply. The user says "yes, but don't
-archive anything". Skip the Inbox counts as archiving, so rows 1 and 2 become label-only
-filters and row 3 is dropped. After a yes on the revised table, apply rows 1 and 2 with
-"Also apply filter to matching conversations" ticked, then read back: `label:Receipts`
-shows 214, `label:Newsletters` shows 402, and both filters are listed. Report the undo.
+Plan shown: label `Receipts` and skip the inbox for the 3 shops (existing mail yes, 214
+matching now), the same with `Newsletters` for the 2 newsletters (402), and a one-off
+archive of old promotions (1,380), plus 4 messages that need a reply. The user says "yes,
+but don't archive anything". Skip the Inbox archives, so rows 1 and 2 become label-only
+and row 3 is dropped. After a yes on that table, apply rows 1 and 2 with "Also apply filter
+to matching conversations" ticked, then read back: each row's query plus `-label:Receipts`
+or `-label:Newsletters` shows none, plus the label 214 and 402; both filters are listed.
+Report the undo.
