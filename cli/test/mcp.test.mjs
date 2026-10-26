@@ -3,7 +3,7 @@
 // with the one not-connected message instead of hanging.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -61,7 +61,12 @@ test("instructions state the safety rules", () => {
 });
 
 test("skill_match routes a task to one skill, or none, and skill_read returns that skill", async () => {
-	assert.match(mcp.getInstructions() ?? "", /call skill_match with the user's task first/);
+	const instructions = mcp.getInstructions() ?? "";
+	assert.match(instructions, /First call skill_match with the user's task \(it needs no browser\)/);
+	// One first step: matching a skill needs no browser, so a missing browser can't stop it.
+	assert.deepEqual(instructions.match(/\bfirst\b/gi), ["First"], "only one step is called first");
+	assert.ok(instructions.indexOf("skill_match") < instructions.indexOf("Call status"), "skill_match comes before status");
+	assert.match(instructions, /Call status before any browser tool; if it is not connected, tell the user and stop browser work/);
 	const match = await mcp.callTool({ name: "skill_match", arguments: { task: "find peer-reviewed studies on sleep and memory" } });
 	assert.notEqual(match.isError, true);
 	const lines = match.content[0].text.split("\n");
@@ -197,5 +202,41 @@ test("a scoped session reads bundled skills only, even when created without remo
 	} finally {
 		if (before === undefined) delete process.env.TABKYRA_CONFIG_DIR;
 		else process.env.TABKYRA_CONFIG_DIR = before;
+	}
+});
+
+test("skill_match sees two same-size edits applied in quick succession", async () => {
+	const home = join(root, "fresh-index");
+	mkdirSync(join(home, "drafts", "tide-chart"), { recursive: true });
+	const env = { HOME: home, PATH: dirname(process.execPath), NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock") };
+	// Two descriptions of exactly the same length, with different trigger words.
+	const skill = (word) =>
+		`---\nname: tide-chart\ndescription: Reads ${word} tables for a harbor. Use when the user asks about ${word} tables.\n---\n# Tide chart\n\n## When to use\n\n- The user asks about ${word} tables.\n\n## Steps\n\n1. **Read.** Read the table.\n2. **Answer.** Answer.\n\n## Done when\n\n- Answered.\n`;
+	const apply = (word) => {
+		writeFileSync(join(home, "drafts", "tide-chart", "SKILL.md"), skill(word));
+		const r = spawnSync(process.execPath, [cli, "skill", "apply", join(home, "drafts", "tide-chart"), "--yes"], { env, encoding: "utf8" });
+		assert.equal(r.status, 0, r.stdout + r.stderr);
+	};
+	assert.equal(skill("quokka").length, skill("zeppel").length);
+	apply("quokka");
+	const client = new Client({ name: "fresh-index", version: "0.0.0" });
+	await client.connect(new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env, stderr: "ignore" }));
+	try {
+		const ask = async (task) => (await client.callTool({ name: "skill_match", arguments: { task } })).content[0].text;
+		// Both edits land within the same timestamp tick, as on a 1-second filesystem: pin every
+		// modification time to one value, so only the inode, ctime and content can tell.
+		const local = join(home, ".config", "tabkyra", "skills-local");
+		const paths = [local, join(local, "index.json"), join(local, "tide-chart"), join(local, "tide-chart", "SKILL.md")];
+		const pin = () => {
+			for (const p of paths) utimesSync(p, 1_700_000_000, 1_700_000_000);
+		};
+		pin();
+		assert.match(await ask("read the quokka tables"), /^tide-chart /);
+		apply("zeppel");
+		pin();
+		// "zeppel" exists only in the second edit, so a stale index can't match it.
+		assert.match(await ask("read the zeppel tables"), /^tide-chart \([\d.]+\): Reads zeppel/, "the second edit is routed at once");
+	} finally {
+		await client.close();
 	}
 });

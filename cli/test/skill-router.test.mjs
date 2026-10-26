@@ -99,7 +99,7 @@ test("a malformed case is an error with its line number", () => {
 	assert.match(r.out, /line \d+ needs/);
 });
 
-test("a skill more than 10 points below its baseline fails, and --update-baseline resets it", () => {
+test("a baseline can't claim more than the router measures, even by a little; --update-baseline resets it", () => {
 	const current = evalJson().report;
 	const weak = Object.entries(current.perSkill).find(([name, s]) => name !== "none" && s.accuracy <= 0.85)?.[0];
 	assert.ok(weak, "some skill below 85% to test with");
@@ -113,6 +113,11 @@ test("a skill more than 10 points below its baseline fails, and --update-baselin
 	const updated = run(["skill", "eval", "--update-baseline", "--cases", join(dir, "router-cases.jsonl")]);
 	assert.equal(updated.code, 0, updated.out);
 	assert.equal(JSON.parse(readFileSync(join(dir, "baseline.json"), "utf8")).accuracy[weak], Math.round(current.perSkill[weak].accuracy * 10000) / 10000);
+	// Two points above what it measures is already too much: no tolerance.
+	const nudged = JSON.stringify({ accuracy: { ...JSON.parse(readFileSync(join(repo, "skills-eval", "baseline.json"), "utf8")).accuracy, [weak]: current.perSkill[weak].accuracy + 0.02 } });
+	const small = evalJson(["--cases", join(casesDir("", nudged), "router-cases.jsonl")]);
+	assert.equal(small.code, 1);
+	assert.match(small.report.gates.find((g) => g.gate === "baseline").detail, new RegExp(`claims more than the router measures: ${weak}`));
 });
 
 test("a missing baseline, or one without a valid value for every skill, fails the run", () => {
@@ -285,7 +290,6 @@ test("--base fails a pull request that loosens a threshold or hides them", () =>
 		["export const TOP1_MIN = 0.9;", "export const TOP1_MIN = 0.8;"],
 		["export const FALSE_INVOKE_MAX = 0.05;", "export const FALSE_INVOKE_MAX = 0.2;"],
 		["export const MIN_CASES = 8;", "export const MIN_CASES = 2;"],
-		["export const REGRESSION_POINTS = 10;", "export const REGRESSION_POINTS = 50;"],
 		["export const HELDOUT_TOP1_MIN = 0.8;", "export const HELDOUT_TOP1_MIN = 0.5;"],
 	]) {
 		assert.ok(source.includes(from), from);
@@ -306,11 +310,33 @@ test("--base runs the base code's gates on the pull request's skills, with no to
 	const r = baseRun(headCheckout(), baseCheckout(raised));
 	assert.equal(r.code, 1);
 	assert.equal(r.gates["base-code eval"].ok, false);
-	assert.match(r.gates["base-code eval"].detail, new RegExp(`below the baseline: .*${weak}`));
+	assert.match(r.gates["base-code eval"].detail, new RegExp(`claims more than the router measures: .*${weak}`));
 	// The same drop, accepted by the pull request, passes both gates.
 	const accepted = baseRun(headCheckout({ drops: dropsFile({ skill: weak, value: accuracy[weak], reason: "measured the same way" }) }), baseCheckout(raised));
 	assert.ok(accepted.gates["base-code eval"].ok, accepted.gates["base-code eval"].detail);
 	assert.ok(accepted.gates["base baseline"].ok, accepted.gates["base baseline"].detail);
+});
+
+test("--base accepts a valid drop for none, keeping its floor and the false-invoke gate", () => {
+	const accuracy = repoBaseline();
+	const r = baseRun(
+		headCheckout({ baseline: JSON.stringify({ accuracy: { ...accuracy, none: 0.98 } }), drops: dropsFile({ skill: "none", value: 0.98, reason: "more near-miss cases" }) }),
+		baseCheckout({ "baseline.json": JSON.stringify({ accuracy: { ...accuracy, none: 1 } }) }),
+	);
+	for (const gate of ["accepted drops", "base baseline", "base-code eval"]) assert.ok(r.gates[gate].ok, `${gate}: ${r.gates[gate].detail}`);
+	assert.doesNotMatch(r.gates["base-code eval"].detail, /no valid baseline/);
+});
+
+test("--base runs the base code's gates over all of the pull request's cases", () => {
+	const ok = baseRun(headCheckout(), baseCheckout());
+	assert.ok(ok.gates["base-code full eval"].ok, ok.gates["base-code full eval"].detail);
+	// New cases the router gets wrong: the base code's top-1 gate catches them, whatever the
+	// pull request's own gate logic says.
+	const wrong = Array.from({ length: 40 }, (_, i) => `{"task": "Convert this JSON file number ${i} to YAML", "skill": "dorks"}`).join("\n");
+	const r = baseRun(headCheckout({ cases: `${readFileSync(casesFile, "utf8")}${wrong}\n` }), baseCheckout());
+	assert.equal(r.gates["base-code full eval"].ok, false);
+	assert.match(r.gates["base-code full eval"].detail, /top-1 accuracy/);
+	assert.ok(r.gates["base cases kept"].ok, "only new cases were added");
 });
 
 test("--base doesn't ask base coverage of a skill the pull request adds", () => {
@@ -483,6 +509,10 @@ test("an explicit request survives edit-like words elsewhere; a governing edit v
 	assert.equal(name("Run the osint skill and review what you find on the landlord"), "osint");
 	assert.equal(name("Use the tabkyra skill to fill in my fixed address"), "tabkyra");
 	assert.equal(name("Rewrite the dorks skill to Tabkyra's skill standard"), "kyraskillmaker");
+	// A "no" or "not" that doesn't govern the mention is no exclusion.
+	assert.equal(name("I have no idea who runs this website so use the osint skill"), "osint");
+	assert.equal(name("Why not use the osint skill on this landlord?"), "osint");
+	assert.equal(name("No rush, use the osint skill"), "osint");
 	assert.equal(name("The proton-pass skill gave my small model a bad result, fix it"), "fix");
 	const all = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "5", task]).stdout).map((m) => m.name);
 	for (const [task, banned] of [

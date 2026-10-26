@@ -48,9 +48,11 @@ How a task names a skill ("<name> skill") decides what the name does:
   command is the first token (`/fix news-research`). The name doesn't score for itself, and
   the task counts as evidence for the skills whose job is skills. An edit-like word elsewhere
   ("the latest updates", "review what you find") doesn't count.
-- **Ruled out:** a negation comes before it in the same clause ("don't use the osint skill",
-  "instead of the dorks skill", "skip the tabkyra skill", "without the osint skill"). That
-  skill is never returned for the task.
+- **Ruled out:** a negation governs it, within a few words before it: "don't/do not/never
+  use (or run, apply, follow) the osint skill", "without", "instead of", "rather than",
+  "skip", "avoid", or "not the osint skill". That skill is never returned for the task. A
+  "no" or "not" elsewhere ("no rush, use the osint skill", "why not use the osint skill",
+  "I have no idea who runs this, so use the osint skill") rules nothing out.
 - **The CLI:** `tabkyra skill install` (or another subcommand) is the Tabkyra CLI, read as
   "tabkyra cli", not a request for the tabkyra skill.
 - **Requested:** otherwise ("use the osint skill on this landlord"), +6 for that skill.
@@ -63,7 +65,9 @@ words alone never make a match, however high they add up.
 
 The router indexes the skills in use: the bundled skills and the user's applied local
 copies (`tabkyra skill apply`). The index is built once per process and rebuilt only when
-`~/.config/tabkyra/skills-local` changes.
+`~/.config/tabkyra/skills-local` changes: each file's inode, change time, modification time
+and size, plus a hash of `index.json`, so two same-size edits within one timestamp tick
+still rebuild it.
 
 ### Using it
 
@@ -71,9 +75,10 @@ copies (`tabkyra skill apply`). The index is built once per process and rebuilt 
   and one-line descriptions, or `none`.
 - MCP `skill_match {"task": "..."}` returns the same in a few lines, ending with the
   `skill_read` call to make. `skill_read {"name": "..."}` returns one SKILL.md: the user's
-  applied edit if there is one, otherwise the bundled text. The server instructions tell
-  agents to call `skill_match` first and `skill_read` only for the chosen skill, so only one
-  skill enters the context.
+  applied edit if there is one, otherwise the bundled text. The server instructions give one
+  order: first `skill_match` with the user's task (it needs no browser), then `skill_read`
+  only for the chosen skill, so only one skill enters the context; `status` comes before any
+  browser tool, and a missing browser stops browser work only.
 - Remote sessions (`tabkyra serve`) see both tools only with the `skills.read` token scope.
   They match and read the bundled skills only, never the user's local skills or edits: a
   remote session can be a cloud agent off the user's devices, and personal skills stay on
@@ -111,7 +116,7 @@ checks seven gates. It exits 1 when any fails.
 | false invokes | 5% or fewer of `none` cases route to any skill |
 | cases per skill | every bundled skill has 8 or more cases |
 | p95 latency | under 10 ms per match (the index build time is reported too) |
-| baseline | every bundled skill and `none` has a value from 0 to 1 in `skills-eval/baseline.json`, and none measures more than 10 points below it |
+| baseline | every bundled skill and `none` has a value from 0 to 1 in `skills-eval/baseline.json`, and none claims more than the router measures (no tolerance), so every later comparison is like with like |
 | held-out top-1 | 80% or more of held-out positive cases |
 | held-out none | 10% or fewer of held-out `none` cases route to a skill |
 
@@ -134,9 +139,9 @@ skill's new value in `baseline.json`, and sit below the base branch's value. The
 then becomes the skill's floor with no tolerance, in `skill eval` and in the base-code eval:
 it means "at least this", not "anything".
 
-Measured on 2026-10-25 (13 skills): on the tuned set of 270 cases, top-1 91.5% (204 of 223)
+Measured on 2026-10-25 (13 skills): on the tuned set of 273 cases, top-1 91.6% (207 of 226)
 and false invokes 0% (0 of 47); on the 49 held-out cases, top-1 94.9% (37 of 39) and false
-invokes 10% (1 of 10). The top-1 gate needs 201 of 223, so the margin is three cases. Matching takes about 0.2 ms at p95 and the index build about 20 ms on
+invokes 10% (1 of 10). The top-1 gate needs 204 of 226, so the margin is three cases. Matching takes about 0.2 ms at p95 and the index build about 20 ms on
 the CI runner (about 0.1 ms and under 10 ms on an Apple-silicon Mac).
 
 ## CI gates
@@ -163,12 +168,19 @@ scripts and runs:
      baseline (no tolerance; an accepted drop's value is the floor instead) or fail the base
      gates;
    - adds skills that fail the base code's cases-per-skill or baseline gates on the pull
-     request's own cases and baseline. New skills need no base cases.
+     request's own cases and baseline. New skills need no base cases;
+   - fails the base code's gates and thresholds (top-1, false invokes, cases per skill,
+     latency, held-out floors) over all of its own case files, so gate logic the pull request
+     changes can't loosen anything for its new cases. A pull request that improves the
+     router and adds cases only the new router gets right can fail here; that is the price of
+     judging every case with the base code.
 
    The scorer's own constants in `skill-router.ts` may change in a pull request; that is how
-   routing improves, and the gates measure the result. `.github/CODEOWNERS` also requires a
-   maintainer's review for `skills-eval/` (`accepted-drops.json` included), `skill-eval.ts`,
-   `skill-router.ts` and the catalog script.
+   routing improves, and the gates measure the result. The threshold check reads only the
+   constants' declarations; the gate logic around them, in the pull request's code, is
+   covered by the base-code runs above and, after merge, by review: `.github/CODEOWNERS`
+   requires a maintainer for `skills-eval/` (`accepted-drops.json` included),
+   `skill-eval.ts`, `skill-router.ts` and the catalog script.
 
 ## Versions
 
@@ -211,6 +223,9 @@ only an untouched draft is refreshed in place.
 - Outside a terminal, or with `--draft-only`, it prints the draft path and the `skill apply`
   command, and exits 0 without opening an editor, asking or applying. Agents use
   `--draft-only`: their shell can be a terminal with the user's `$EDITOR` set.
+- `--draft-only` never touches a draft with unapplied changes, current or stale: it leaves
+  the file as it is, says so and exits 1, and the agent stops and asks the user (the rsi
+  skill says to). An agent never overwrites, moves or discards the user's draft.
 
 The protected skills can't be edited this way; they change only through a reviewed pull
 request.

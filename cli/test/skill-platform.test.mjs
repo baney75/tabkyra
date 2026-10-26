@@ -212,6 +212,35 @@ test("a stale draft the user edited is moved aside even when it matches the curr
 	assert.equal(readdirSync(join(drafts, ".backups", "dorks")).length, 1);
 });
 
+test("edit --draft-only never touches a draft with unapplied changes, and rsi uses nothing else", () => {
+	const home = newHome();
+	const drafts = join(home, ".config", "tabkyra", "skill-drafts");
+	const draft = join(drafts, "dorks", "SKILL.md");
+	// Fresh: writes the exact source and exits 0.
+	const fresh = run(home, ["skill", "edit", "dorks", "--draft-only"]);
+	assert.equal(fresh.code, 0, fresh.out);
+	assert.equal(readFileSync(draft, "utf8"), bundled("dorks"));
+	// The user's unfinished edit on the current version: left as it is, exit 1, ask the user.
+	const unfinished = addLesson("half an edit")(bundled("dorks"));
+	writeFileSync(draft, unfinished);
+	const held = run(home, ["skill", "edit", "dorks", "--draft-only"]);
+	assert.equal(held.code, 1, held.out);
+	assert.match(held.out, /holds unapplied changes/);
+	assert.match(held.out, /ask the user/);
+	assert.equal(readFileSync(draft, "utf8"), unfinished);
+	assert.equal(existsSync(join(drafts, ".backups")), false, "not even moved aside");
+	// Still left alone once the skill moves on and the draft is stale.
+	applyEdit(home, "dorks", addLesson("landed meanwhile."));
+	assert.equal(run(home, ["skill", "edit", "dorks", "--draft-only"]).code, 1);
+	assert.equal(readFileSync(draft, "utf8"), unfinished);
+	// rsi drafts only through --draft-only, with no print-and-redirect fallback that could overwrite.
+	const rsi = bundled("rsi");
+	assert.match(rsi, /tabkyra skill edit <name> --draft-only/);
+	assert.match(rsi, /holds unapplied\s+changes, stop and ask the user/);
+	assert.doesNotMatch(rsi, /print \S+ --raw >/);
+	assert.doesNotMatch(rsi, /mkdir -p ~\/\.config\/tabkyra\/skill-drafts/);
+});
+
 test("edit refuses protected skills, unknown skills and names that reach outside", () => {
 	const home = newHome();
 	for (const [name, pattern] of [

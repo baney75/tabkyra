@@ -451,22 +451,28 @@ export function revertSkill(name: string): { removed: boolean; results: InstallR
 
 let router: { key: string; index: RouterIndex } | undefined;
 
-/** Changes whenever an apply, revert or rollback changes the local skills. */
+/**
+ * Changes whenever an apply, revert or rollback changes the local skills. Apply writes through
+ * a temp file and a rename, so the inode changes even when two edits of the same size land
+ * within one timestamp tick; index.json is hashed for the same reason.
+ */
 function localStateKey(): string {
 	const dir = localSkillsDir();
 	if (!existsSync(dir)) return "";
 	const stat = (p: string) => {
 		try {
 			const s = lstatSync(p);
-			return `${s.mtimeMs}:${s.size}`;
+			return `${s.ino}:${s.mtimeMs}:${s.ctimeMs}:${s.size}`;
 		} catch {
 			return "-";
 		}
 	};
-	return readdirSync(dir)
+	const index = indexFile();
+	const indexHash = existsSync(index) && !isLink(index) ? sha256(readFileSync(index, "utf8")) : "-";
+	return `${indexHash};${readdirSync(dir)
 		.sort()
 		.map((n) => `${n}=${stat(join(dir, n))}/${stat(join(dir, n, "SKILL.md"))}`)
-		.join(",");
+		.join(",")}`;
 }
 
 function routerIndex(): RouterIndex {
@@ -596,7 +602,7 @@ function draftsDir(): string {
  * draft taken from an older version (an apply or rollback has happened since) would drop
  * those changes, so it is moved to skill-drafts/.backups/<name>/ and a fresh draft started.
  */
-export function prepareDraft(name: string): { dir: string; file: string; resumed: boolean; stale?: string } {
+export function prepareDraft(name: string, options: { keepExisting?: boolean } = {}): { dir: string; file: string; resumed: boolean; stale?: string; held?: boolean } {
 	assertName(name);
 	if (PROTECTED_SKILLS.has(name)) throw new SkillError(`The ${name} skill governs skill edits, so it changes only through a reviewed pull request.`);
 	const source = readSkill(name);
@@ -614,6 +620,9 @@ export function prepareDraft(name: string): { dir: string; file: string; resumed
 	if (existsSync(file)) {
 		const draft = readFileSync(file, "utf8");
 		const base = existsSync(baseFile) ? readFileSync(baseFile, "utf8").trim() : undefined;
+		// keepExisting (--draft-only, for agents): a draft with unapplied changes is the user's
+		// work. Leave it exactly as it is, and let the caller stop and ask.
+		if (options.keepExisting && draft !== source) return { dir, file, resumed: false, held: true };
 		if (draft !== source && base === current) return { dir, file, resumed: true };
 		// Anything the user typed (the draft differs from the version it was taken from, or from
 		// the current source) is moved aside, never replaced.
@@ -856,7 +865,11 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 	}
 	if (sub === "edit") {
 		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill edit <name> [--yes] [--draft-only]");
-		const { dir, file, resumed, stale } = prepareDraft(args[0]);
+		const { dir, file, resumed, stale, held } = prepareDraft(args[0], { keepExisting: flags.draftOnly });
+		if (held) {
+			console.log(`${sym.fail} ${file} holds unapplied changes to ${args[0]}. It was left as it is. Don't overwrite or delete it: ask the user whether to finish and apply it, or to discard it themselves.`);
+			return 1;
+		}
 		const name = basename(dir);
 		const source = readSkill(name);
 		const editor = process.env.VISUAL || process.env.EDITOR;

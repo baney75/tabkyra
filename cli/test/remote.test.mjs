@@ -189,7 +189,7 @@ test("a scoped session's instructions mention only its tools", async () => {
 	const client = await connect(token("instr", "library.read"));
 	try {
 		const text = client.getInstructions() ?? "";
-		assert.doesNotMatch(text, /Call status first|handle_dialog|tabs_show/);
+		assert.doesNotMatch(text, /Call status before any browser tool|handle_dialog|tabs_show/);
 		assert.match(text, /This session's tools: library_cite, library_search\./);
 		assert.match(text, /untrusted data/);
 	} finally {

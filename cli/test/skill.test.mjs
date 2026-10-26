@@ -79,7 +79,7 @@ test("server instructions and the skill teach the same rules", () => {
 		[/untrusted data/i, /untrusted data/i],
 		[/Ask the user before you act under their sign-in/, /Ask before you act under the user's sign-in/],
 		[/passwords or payment details/, /passwords or (?:card numbers|payment details)/],
-		[/Call status first/, /check `status`/i],
+		[/Call status before any browser tool/, /check `status`/i],
 		[/"filter":"interactive"/, /"filter":"interactive"/],
 		[/read_page again to confirm/, /`read_page` again to verify/],
 		[/Refs expire/, /refs are gone/],

@@ -145,14 +145,14 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"When a page needs a sign-in or captcha, call tabs_show and ask the user to do it.",
 				"Opening a new site may need the user's approval; if a site is denied (\"Not allowed to open\"), tell the user they can allow it in the Tabkyra side panel (Settings > Bridge) or with `tabkyra allow <host>`, and do not try to get around it.",
 				"How to work: you get your own tab group; your tabs never take focus and you cannot see the user's other tabs.",
-				"Call status first; if it is not connected, tell the user and stop. Workflow: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref -> read_page again to confirm the result.",
+				"First call skill_match with the user's task (it needs no browser). If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one. Reading only the chosen skill keeps your context small.",
+				"Call status before any browser tool; if it is not connected, tell the user and stop browser work. Workflow: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref -> read_page again to confirm the result.",
 				"For canvas apps and multi-step input, batch steps with actions (one call, screenshot at the end) instead of one tool call per key or drag.",
 				"Canvas editors (Excalidraw, tldraw, Figma-like): use the app's keyboard shortcuts and mouse drags, check the result on the screenshot, and do not reverse-engineer the app's internals with run_js.",
 				"Reuse your current tab for step-by-step browsing; tabs_create only when two pages must stay open.",
 				"Close tabs you no longer need with tabs_close. Prefer read_page/get_page_text over screenshots for reading.",
 				"Refs expire when the page changes; take a new read_page after navigation or big updates.",
 				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
-				"Skills: call skill_match with the user's task first. If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one. Reading only the chosen skill keeps your context small.",
 				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
 			]
 				// A scoped session hears only about the tools it has, so a small model isn't sent

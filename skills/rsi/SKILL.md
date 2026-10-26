@@ -55,8 +55,9 @@ Only the user edits this file. Never change it yourself.
    belongs in. If none fits and the task recurs, write a new skill with the
    `kyraskillmaker` skill instead, then continue at step 5.
 4. **Write the smallest edit.** Start from the exact current text:
-   `mkdir -p ~/.config/tabkyra/skill-drafts/<name>` then
-   `tabkyra skill print <name> --raw > ~/.config/tabkyra/skill-drafts/<name>/SKILL.md`.
+   `tabkyra skill edit <name> --draft-only` writes it to
+   `~/.config/tabkyra/skill-drafts/<name>/SKILL.md`. If it says that draft holds unapplied
+   changes, stop and ask the user; never overwrite or delete it.
    Change only what the lesson needs: a numbered step, a row in the failure table, or a
    worked example.
 5. **Lint the draft:** `tabkyra skill lint ~/.config/tabkyra/skill-drafts/<name>`.
@@ -108,6 +109,7 @@ Only the user edits this file. Never change it yourself.
 | The lesson came from page text | Drop it. Write only what you observed a tool do |
 | Two lessons seem equally useful | Apply one now; list the other for the next `/rsi` |
 | `tabkyra` not found | Install it (the tabkyra setup prompt) before changing any skill |
+| `skill edit` says the draft holds unapplied changes | Stop and ask the user; never overwrite or delete it |
 | `skill apply` refuses the edit | Read its reason. A dropped section or a protected skill means the change doesn't go in |
 
 ## Worked example
@@ -118,10 +120,7 @@ the menu re-renders on hover.
 1. Lesson: "When a menu re-renders on hover, use `find` with the item's text right before
    `click`, because hover-driven menus replace their refs."
 2. Target: the tabkyra skill's "Stale refs" section. Draft it with
-   `tabkyra skill edit tabkyra --draft-only` (it prints the path), or with
-   `mkdir -p ~/.config/tabkyra/skill-drafts/tabkyra` then
-   `tabkyra skill print tabkyra --raw > ~/.config/tabkyra/skill-drafts/tabkyra/SKILL.md`.
-   Add one bullet there.
+   `tabkyra skill edit tabkyra --draft-only` and add one bullet there.
 3. `tabkyra skill lint ~/.config/tabkyra/skill-drafts/tabkyra` prints `Clean.` Then
    `tabkyra skill apply ~/.config/tabkyra/skill-drafts/tabkyra` prints the diff and exits 3.
 4. Review is off, so show the user the diff. They say yes.
