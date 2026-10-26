@@ -1,10 +1,10 @@
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
-import { args, DATA } from "../data";
+import { args, argsWhere, DATA } from "../data";
 import { C, FONT } from "../theme";
 import { BrowserWindow } from "../ui";
 import { useBeat } from "./beat";
 import { Backdrop, ease, Flash, shake, slam, useLayout, Whip, Words } from "./motion";
-import { Center, PanelPart, Shot, useSize } from "./parts";
+import { Center, Label, PanelPart, Shot, useSize } from "./parts";
 
 const MAX = 2.6; // video px per CSS px before the 2x panel capture softens
 
@@ -44,6 +44,9 @@ export const Moment: React.FC = () => {
 								/>
 							</div>
 						</div>
+						<div style={{ display: "flex", flexDirection: "column", gap: size(14, 16), opacity: ease(frame, at(36), 6) }}>
+						{/* A caption, outside the drawn prompt box: the box is drawn, its text is the recorded elicitation. */}
+						<Label size={size(26, 28)}>in your agent</Label>
 						<div
 							style={{
 								width: promptW,
@@ -59,7 +62,6 @@ export const Moment: React.FC = () => {
 								translate: `0 ${(1 - ease(frame, at(36), 10)) * 60}px`,
 							}}
 						>
-							<div style={{ fontFamily: FONT.sans, fontSize: size(28, 30), color: C.brass, marginBottom: 12 }}>Your agent asks you</div>
 							<div>{DATA.prompt.message}</div>
 							{DATA.prompt.choices.map((choice, i) => {
 								const t = at(37) + i * Math.round((at(39) - at(37)) / 3);
@@ -82,6 +84,7 @@ export const Moment: React.FC = () => {
 									</div>
 								);
 							})}
+						</div>
 						</div>
 					</Center>
 				</AbsoluteFill>
@@ -156,7 +159,8 @@ export const Form: React.FC = () => {
 	const at = useBeat();
 	const size = useSize();
 	const steps = [
-		{ b: 52, src: "capture/catalog-home.jpg", call: 'read_page { filter: "interactive" }' },
+		// Each cut shows the recorded call that produced its screenshot.
+		{ b: 52, src: "capture/catalog-home.jpg", call: args("navigate", 0) },
 		{ b: 53, src: "capture/catalog-results.jpg", call: args("type", 0) },
 		{ b: 54, src: "capture/catalog-hold.jpg", call: `${args("click", 0)}  // Place hold` },
 		{ b: 55, src: "capture/catalog-form.jpg", call: `${args("fill", 0)}\n${args("fill", 1)}` },
@@ -173,7 +177,7 @@ export const Form: React.FC = () => {
 				<AbsoluteFill style={{ translate: shake(frame, at(current.b), 8) }}>
 					<Center gap={size(36, 50)}>
 						<div style={{ scale: String(1.06 - 0.06 * ease(local, 0, 6)), filter: local < 3 ? `blur(${(3 - local) * 4}px)` : undefined }}>
-							<Shot src={current.src} dur={at(current.b + 1) - at(current.b)} width={w} zoom={[1.02, 1.07]} />
+							<Shot src={current.src} dur={at(current.b + 1) - at(current.b)} width={w} zoom={[1.02, 1.07]} start={at(current.b)} />
 						</div>
 						<div
 							style={{
@@ -199,7 +203,8 @@ export const Form: React.FC = () => {
 				<Whip dur={at(61) - at(57)} from="zoom" inDur={6} exit={false} start={at(57)}>
 					<Center gap={size(40, 50)} style={{ padding: size(100, 60) }}>
 						<div style={{ fontFamily: FONT.mono, fontSize: size(40, 36), color: C.paper }}>
-							<span style={{ color: C.brass }}>› </span>get_page_text {"{}"}
+							<span style={{ color: C.brass }}>› </span>
+							{argsWhere("get_page_text", "Hold placed")}
 						</div>
 						<div
 							style={{

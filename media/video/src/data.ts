@@ -57,6 +57,17 @@ export function field(name: string, key: string, nth = 0): string {
 export function args(name: string, nth = 0): string {
 	const hit = calls.filter((c) => c.name === name)[nth];
 	if (!hit) throw new Error(`no ${name} call #${nth} in capture.json`);
+	return format(hit);
+}
+
+function format(hit: Call): string {
 	const parts = Object.entries(hit.args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
-	return `${name} { ${parts.join(", ")} }`;
+	return parts.length ? `${hit.name} { ${parts.join(", ")} }` : `${hit.name} {}`;
+}
+
+/** The real arguments of the first call to `name` whose result contains `text`. */
+export function argsWhere(name: string, text: string): string {
+	const hit = calls.find((c) => c.name === name && c.text.includes(text));
+	if (!hit) throw new Error(`no ${name} call whose result contains "${text}" in capture.json`);
+	return format(hit);
 }

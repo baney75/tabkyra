@@ -13,8 +13,10 @@ export const Shot: React.FC<{
 	style?: React.CSSProperties;
 	width: number;
 	aspect?: number;
-}> = ({ src, dur, zoom = [1.0, 1.08], pan = [0, -2], radius = 22, style, width, aspect = 800 / 1280 }) => {
-	const frame = useCurrentFrame();
+	/** Segment frame the shot starts on, so its drift runs on the shot's own clock. */
+	start?: number;
+}> = ({ src, dur, zoom = [1.0, 1.08], pan = [0, -2], radius = 22, style, width, aspect = 800 / 1280, start = 0 }) => {
+	const frame = useCurrentFrame() - start;
 	const t = interpolate(frame, [0, Math.max(dur, 1)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 	const s = zoom[0] + (zoom[1] - zoom[0]) * t;
 	return (

@@ -16,6 +16,29 @@ const citedBy = (() => {
 	return Number(m[1]);
 })();
 
+/** A line of recorded output picked by its content; a capture without it fails the render. */
+const lineWith = (out: string, test: RegExp, what: string): string => {
+	const found = out.split("\n").find((l) => test.test(l));
+	if (!found) throw new Error(`capture.json: no ${what} line in the recorded output`);
+	return found;
+};
+
+/** The retracted add's title line and the line FLAGGED is stamped over. */
+const retractedTitle = lineWith(retracted.out, /^Added .*\[RETRACTED/, "retracted title");
+const retractedWarning = lineWith(retracted.out, /RETRACTED: don't cite/, "retraction warning");
+
+/** The lint errors, the SKILL.md lines they name, and the slice of the file shown around them. */
+const lintErrors = lint.out.split("\n").filter((l) => /\berror\b/.test(l));
+const lintLines = lintErrors.map((l) => Number(l.match(/SKILL\.md:(\d+)/)?.[1]));
+// The edit gives the errors four beats (B80–B83) before BLOCKED lands on B84.
+if (lintErrors.length !== 4 || lintLines.some((n) => !(n > 0))) {
+	throw new Error(`capture.json: expected 4 lint errors with line numbers, got ${lintErrors.length}`);
+}
+const skillFile = DATA.cli.badSkill.trimEnd().split("\n");
+// Two lines of context above the first flagged line and one below the last.
+const shownFrom = Math.max(1, Math.min(...lintLines) - 2);
+const shownTo = Math.min(skillFile.length, Math.max(...lintLines) + 1);
+
 /** B61–B71: the break types the real command; on B64 the refusal prints and REFUSED slams. */
 export const Refused: React.FC = () => {
 	const frame = useCurrentFrame();
@@ -54,7 +77,6 @@ export const Flagged: React.FC = () => {
 	const at = useBeat();
 	const size = useSize();
 	const { vertical } = useLayout();
-	const [title, , , , last] = retracted.out.split("\n");
 	return (
 		<Whip dur={at(80) - at(72)} from="down" inDur={7}>
 			<Backdrop hue={C.alarm} />
@@ -69,8 +91,8 @@ export const Flagged: React.FC = () => {
 						size={size(32, 30)}
 						lines={[
 							{ text: retracted.shown, at: 0, typed: true },
-							{ text: title.replace(/\s{2,}/g, "  "), at: 8, color: C.alarm },
-							{ text: last.trim(), at: at(76), color: C.alarm },
+							{ text: retractedTitle.replace(/\s{2,}/g, "  "), at: 8, color: C.alarm },
+							{ text: retractedWarning.trim(), at: at(76), color: C.alarm },
 						]}
 					/>
 					<div style={{ height: size(160, 190), display: "flex", alignItems: "center", gap: size(50, 30), flexDirection: vertical ? "column" : "row" }}>
@@ -90,10 +112,10 @@ export const Blocked: React.FC = () => {
 	const at = useBeat();
 	const size = useSize();
 	const file = DATA.cli.badSkill.trimEnd().split("\n");
-	const errors = lint.out.split("\n").filter((l) => /\berror\b/.test(l));
-	const flagged = errors.map((l) => Number(l.match(/SKILL\.md:(\d+)/)?.[1]));
+	const errors = lintErrors;
+	const flagged = lintLines;
 	const clean = frame >= at(88);
-	const shown = file.slice(11, 17); // "## Steps" through the three steps
+	const shown = file.slice(shownFrom - 1, shownTo);
 	return (
 		<Whip dur={at(92) - at(80)} from="right" inDur={7}>
 			<Backdrop hue={clean ? C.tide : C.alarm} />
@@ -114,7 +136,7 @@ export const Blocked: React.FC = () => {
 						>
 							<div style={{ padding: `0 ${size(30, 26)}px 10px`, fontFamily: FONT.sans, fontSize: size(26, 26), color: C.mist }}>page-helper/SKILL.md</div>
 							{shown.map((text, i) => {
-								const n = i + 12;
+								const n = i + shownFrom;
 								const k = flagged.indexOf(n);
 								const on = k >= 0 ? ease(frame, at(80 + k), 5) : 0;
 								return (

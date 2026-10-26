@@ -101,10 +101,10 @@ export const Build: React.FC = () => {
 				const local = frame - from;
 				return (
 					<AbsoluteFill key={p.b} style={{ translate: `${0}px ${-local * 0.6}px` }}>
-						<Whip dur={to - from} from={i % 2 ? "left" : "right"} inDur={7}>
+						<Whip dur={to - from} from={i % 2 ? "left" : "right"} inDur={7} start={from}>
 							<Center gap={size(50, 70)}>
 								<div style={{ scale: String(1.02 + 0.0015 * local), opacity: 0.9 }}>
-									<Shot src={p.src} dur={to - from} width={shotW} zoom={[1.04, 1.14]} pan={[i % 2 ? 2 : -2, -1]} />
+									<Shot src={p.src} dur={to - from} width={shotW} zoom={[1.04, 1.14]} pan={[i % 2 ? 2 : -2, -1]} start={from} />
 								</div>
 							</Center>
 							<Center style={{ justifyContent: vertical ? "flex-end" : "center", paddingBottom: vertical ? size(0, 260) : 0 }}>
@@ -128,9 +128,9 @@ export const Build: React.FC = () => {
 				const to = at(s.b + 1);
 				if (frame < from || frame >= to) return null;
 				return (
-					<Whip key={s.b} dur={to - from} from={["right", "up", "left", "down"][i] as "right"} inDur={4}>
+					<Whip key={s.b} dur={to - from} from={["right", "up", "left", "down"][i] as "right"} inDur={4} start={from}>
 						<Center>
-							<Shot src={s.src} dur={to - from} width={size(1640, 1020)} zoom={[1.15, 1.3]} />
+							<Shot src={s.src} dur={to - from} width={size(1640, 1020)} zoom={[1.15, 1.3]} start={from} />
 						</Center>
 					</Whip>
 				);
