@@ -52,12 +52,18 @@ are in `public/fonts/`.
 ## Hero video
 
 `media/hero.mp4` (1920×1080) and `media/hero-vertical.mp4` (1080×1920, the same edit for
-social), both H.264 with AAC audio at 30 fps and 59 s, plus `media/hero-poster.jpg`
-(1280×720). The shot plan is in [HERO-STORYBOARD.md](HERO-STORYBOARD.md); the source is
-`src/hero/`, registered as the `Hero`, `HeroVertical` and `HeroPoster` compositions. Every frame
-that looks like the product is a capture from `public/capture/` or output from
-`capture.json`. The helm, stamps (REFUSED, FLAGGED, BLOCKED), count-ups and type are motion
-graphics on top.
+social), both H.264 with AAC audio at 30 fps and 57.6 s, ending with the music, plus
+`media/hero-poster.jpg` (1280×720). The shot plan is in [HERO-STORYBOARD.md](HERO-STORYBOARD.md);
+the source is `src/hero/`, registered as the `Hero`, `HeroVertical` and `HeroPoster` compositions.
+
+**What is recorded and what is drawn.** The browser frame is drawn; the page, the group name
+and all tool output are recorded. In full: page screenshots, side panel crops, the elicitation
+prompt's message and choices, the tab group name, tab titles, URLs, every tool call's arguments
+and result, all CLI output and the router's matches and timing come from `public/capture/`.
+Drawn are the browser frame around the page screenshots, the box around the inline prompt, the
+panels that hold calls and terminal output, and the motion graphics: the helm, the stamps
+(REFUSED, FLAGGED, BLOCKED), the count-ups and the type. Lines the video stamps or highlights
+are found in the recorded output by their content, and the render fails if one is missing.
 
 ```bash
 cd media/video && npm install
@@ -65,36 +71,39 @@ npm run render:hero      # out/hero.mp4, out/hero-vertical.mp4, out/hero-poster.
 npm run publish-hero     # copies all three to media/
 ```
 
-**Music.** `public/hero/music.m4a` is an instrumental made for this video on Donovan's own
-machine (Parish1) with [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5)
-(`acestep-v15-turbo` with the 1.7B planner LM, model revision
-`19671f406d603126926c1b7e2adc169acbcade22`), seed 302, 60 s, with this prompt: "High-energy
-electronic trap instrumental, 126 BPM, cinematic brass and synth lead, intro build with riser
-and filtered drums, big drop with heavy 808 bass and hard-hitting drums, triumphant launch
-trailer energy, steady four-on-the-floor sections, clean final hit, no vocals". The model and
-its code are MIT-licensed, and its model card states that generated music can be used
-commercially. No paid or credit-based service was used.
+**Music.** `public/hero/music.m4a` is an instrumental made for this video on the maintainer's
+own machine (Parish1) with [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) at revision
+`19671f406d603126926c1b7e2adc169acbcade22`, seed 302. The model repository is MIT-licensed, which
+places no restriction on outputs, and its model card says "You can strictly use the generated
+music for **commercial purposes**." The track is distributed here under the repository's
+AGPL-3.0, like every other asset. Prompt, components and their licenses, and the quote's source
+are in [public/hero/NOTICE.md](public/hero/NOTICE.md). No paid or credit-based service was used.
 
-Five takes were generated (a 30 s test and four 60 s takes) and compared by analysis rather
-than by ear: tempo, beat regularity, an energy curve per second and where the drop lands.
-Seed 302 was the only take with every part the edit needs: an impact in the first second, a
-quieter build, a full second of silence before a +13 dB drop at 15.3 s, two drum breaks and
-a clean end at 57.4 s, all on a steady 126 BPM grid. Of the others, two were flat with no
-build or drop, and one ran at 99 BPM. Whisper heard no words in it.
+Five takes were generated (a 30 s test and four 60 s takes) and compared by analysis rather than
+by ear: tempo, beat regularity, energy per second and where the drop lands. Seed 302 was the only
+take with every part the edit needs: an impact in the first second, a quieter build, 0.6 s of
+near-silence (13.4–14.0 s) before the drop at 15.30 s, two drum breaks and a clean end, on a
+steady 126 BPM grid. Of the others, two had no build or drop, and one ran at 99 BPM. Whisper
+heard no words in it. The master was trimmed to 57.6 s with a 0.2 s fade-out, peak-limited and
+set to about -14 LUFS with a true peak under -1 dBTP, then encoded as AAC.
 
-The master was trimmed to 57.6 s, peak-limited and set to about -14 LUFS integrated with a
-true peak under -1 dBTP, then encoded as AAC. To rebuild the beat map the edit reads:
+The beat map the edit reads, `src/hero/music.json`, comes from the committed track; rerunning
+this reproduces it:
 
 ```bash
 ffmpeg -i public/hero/music.m4a -ac 1 -ar 22050 /tmp/hero-music.wav
-python3 scripts/analyze_music.py /tmp/hero-music.wav src/hero/music.json   # needs librosa
+python3 scripts/analyze_music.py /tmp/hero-music.wav src/hero/music.json public/hero/music.m4a   # needs librosa
 ```
 
-Every cut and slam in `src/hero/` is a beat index into that map, so a new track only needs a
-new map (and the scenes re-checked).
+It records the beats (126.05 BPM), downbeats, the entries where the full band comes back (15.30,
+30.55 and 45.78 s; the first is the drop, +16.2 dB) and the end. Every cut and slam in
+`src/hero/` is a beat index into it, so a new track only needs a new map (and the scenes
+re-checked).
 
-**The skill router.** Segment 12 (`Router` in `src/hero/Outro.tsx`) shows four real
-`tabkyra skill match` runs and the router's p95 latency from `tabkyra skill eval`, recorded by
-`node scripts/demo/capture-router.mjs` (after `cd cli && npm run build`) into
-`public/capture/router.json`. The script fails if a task routes anywhere other than its
-expected skill, or if the eval's gates fail.
+**The skill router.** Segment 11 (`Router` in `src/hero/Outro.tsx`) shows four real
+`tabkyra skill match` runs and, from one `tabkyra skill eval --json` run, the router's p95 time
+per match, the number of timed matches and the bundled skill count. The headline says "in under
+a millisecond at p95": the figure is the match itself, not a whole `tabkyra` command, which also
+starts Node. `node scripts/demo/capture-router.mjs` (after `cd cli && npm run build`) records it
+into `public/capture/router.json`, and fails if a task routes anywhere other than its expected
+skill, if the eval's gates fail, or if p95 is not under a millisecond.

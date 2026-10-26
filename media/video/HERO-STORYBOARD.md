@@ -1,148 +1,143 @@
 # Tabkyra hero video: storyboard
 
 The short, music-driven cut. The 85-second captioned walkthrough (`Demo`, `media/demo.mp4`)
-stays the full demo; this is the one people share.
+stays the full demo; this is the one people share. This file matches the source in
+`src/hero/`; beat numbers below are the ones the code uses.
 
-**Spec.** `Hero` 1920×1080 and `HeroVertical` 1080×1920, 30 fps, H.264 + AAC, 59.0 s
-(1770 frames), the same edit in both. Poster `HeroPoster` 1280×720. Outputs:
-`media/hero.mp4`, `media/hero-vertical.mp4`, `media/hero-poster.jpg`.
+**Spec.** `Hero` 1920×1080 and `HeroVertical` 1080×1920, 30 fps, H.264 + AAC, 57.6 s
+(1728 frames), the same edit in both, ending with the music. Poster `HeroPoster` 1280×720.
+Outputs: `media/hero.mp4`, `media/hero-vertical.mp4`, `media/hero-poster.jpg`.
 
-**Music.** `public/hero/music.m4a`, an instrumental generated on Parish1 with ACE-Step 1.5
-(take P2, seed 302; four takes compared by analysis, see the README). 126 BPM, 0.476 s a
-beat. The beat map is `src/hero/music.json` from `scripts/analyze_music.py`; every cut and
-slam below is a beat index `B` into it, so nothing hardcodes a time the music already knows.
-Structure, measured: impact at B0 (0.06 s); intro build B0–B31 with a full silence at
-13.4–14.0 s; **drop at B32 (15.30 s)**; drums break B61–B63 and come back at **B64
-(30.55 s)**; break B93–B95 and back at **B96 (45.78 s)**; final hit **B120 (57.21 s)**, hard
-stop at 57.4 s. That is 8 + 8 + 8 + 6 bars.
+**Music.** `public/hero/music.m4a`, an instrumental generated with ACE-Step 1.5 (see
+`public/hero/NOTICE.md` and the README). 126.05 BPM, 0.476 s a beat. The beat map is
+`src/hero/music.json` from `scripts/analyze_music.py`; every cut and slam below is a beat index
+`B` into it. What the map records: 121 beats; downbeats on B0, B4, B8, … (the drop starts a
+bar, so it sets the phase); entries where the full band comes back at **B32 (15.30 s, the
+drop, +16.2 dB)**, **B64 (30.55 s)** and **B96 (45.78 s)**; the final hit B120 (57.21 s). The
+master is trimmed to 57.6 s and fades out over its last 0.2 s. Measured while choosing the take
+(10 Hz energy): the opening impact at 0.06 s, and near-silence from 13.4 to 14.0 s (0.6 s)
+before the drop. Sections: 8 + 8 + 8 + 6 bars.
+
+**What is recorded and what is drawn.** Recorded (in `public/capture/`): every page
+screenshot, every side panel crop, the elicitation prompt's message and choices, the tab group
+name, tab titles and URLs, every tool call's arguments and result, all CLI output, and the
+router's matches and timing. Drawn: the browser frame around the page screenshots (its group
+name, title and URL are the recorded values), the box around the inline prompt (its text is
+the recorded elicitation), the panels that hold calls and terminal output (their text is
+recorded), and the motion graphics: the helm, the stamps (REFUSED, FLAGGED, BLOCKED), the
+count-ups and the type.
 
 **Treatment.** Kinetic type in the brand (Instrument Sans semibold for slams, Instrument Serif
-italic for the line, JetBrains Mono for commands and real output), on ink with one brass
-accent, tide for "allowed" and "clean", the CLI's red for refusals. Bold camera moves into the
-real captures in `public/capture/`: push-ins, pans, parallax and whip transitions with motion
-blur. Stamps (REFUSED, BLOCKED, FLAGGED) and count-ups are motion graphics laid over the real
-output, never in place of it. Every frame that looks like the product is a real capture or
-real recorded output from `capture.json`.
-**Signature motif:** the helm assembling peg by peg. The brand forbids rotating the mark, so
-instead of spinning it, the eight pegs light up in a clockwise sweep around the hub on 8th
-notes, which reads as "spinning up" while the mark stays upright.
-**Through-line:** you steer. Every beat shows one thing the user controls or the tool checks,
-ending on the command that sets it up.
+italic for the line, JetBrains Mono for commands and output), on ink with one brass accent, tide
+for "allowed" and "clean", the CLI's red for refusals. Push-ins, pans, parallax and whip
+transitions with motion blur into the captures. **Signature motif:** the helm assembling peg by
+peg. The brand forbids rotating the mark, so instead of spinning, its eight pegs light up in a
+clockwise sweep around the hub. **Through-line:** you steer. Each beat shows one thing the user
+controls or the tool checks, ending on the command that sets it up.
 
-Both cuts share the timeline. The vertical cut stacks what the wide cut places side by side
-and scales captures to the width; type sizes follow the short side.
+Both cuts share the timeline. The vertical cut stacks what the wide cut places side by side.
 
 ---
 
 ## 1. Cold open (B0–B3, 0.06–1.97 s)
 
-- **What happens:** Black-ink frame, brass flash on the impact at B0. The ring of the helm
-  draws itself (B0–B2) while the eight pegs light clockwise on 8th notes; the pointer pops at
-  B3. Camera: a fast push from 1.4× to 1.0×.
-- **Transition out:** hard cut on B4.
+- The helm's ring draws itself over B0–B2 while the eight pegs light clockwise on 8th notes;
+  the pointer pops at B3. Brass flash on the impact; a push from 1.4× to 1.0×.
+- **Out:** hard cut on B4.
 
 ## 2. The line (B4–B11, 1.97–5.71 s)
 
-- **What happens:** **"You steer."** slams in at B4 (the bar's downbeat, within 2 s), huge,
-  with a short shake and brass flash. The helm shrinks above it. At B8–B11 **"Your agents
-  work the tabs."** lands word by word, one word per beat, in brass serif italic.
-- **Transition out:** whip up on B12.
+- **"You steer."** slams in on B4, a downbeat, with a shake and a brass flash. The helm shrinks
+  above it. B8–B11: **"Your agents work the tabs."** lands one word per beat in brass serif.
+- **Out:** whip on B12.
 
 ## 3. Build (B12–B27, 5.71–13.42 s)
 
-- **What happens:** Teaser montage of real captures, each with Ken Burns drift: the catalog,
-  the Gutenberg page, the side panel. Words slam per two beats: "Your real browser." (B12),
-  "Already signed in." (B16), "Their own tabs." (B20). Cuts speed up to one per beat over
-  B24–B27 (four captures).
-- **Transition out:** the music drops out; everything freezes.
+- Three phrases, one every four beats, each over a capture with drift: **"Your real browser."**
+  (B12, the catalog home page), **"Your agent drives it."** (B16, the Gutenberg page), **"In
+  tabs of its own."** (B20, the hold form). Then one cut per beat, B24–B27: results, Gutenberg,
+  the filled form, the confirmation. Each shot whips in on its own clock.
+- **Out:** the music drops out.
 
 ## 4. The gap (B28–B31, 13.42–14.86 s)
 
-- **What happens:** Contrast of rhythm before the impact. Near-silence in the music; on screen
-  a slow push into the real pending request card ("claude wants to open www.gutenberg.org"),
-  almost still, with a small slate label "a new site".
-- **Transition out:** slam zoom on the drop.
+- A near-still push into the real request card ("claude wants to open www.gutenberg.org") under
+  a slate label, "a new site".
+- **Out:** the drop.
 
 ## 5. The moment: it asks first (B32–B43, 15.30–20.98 s)
 
-- **What happens:** On the drop (B32) the request card fills the frame with a brass ring,
-  brass flash and shake; **"It asks first."** slams. B36: the real inline prompt text
-  ("tabkyra: the browser agent wants to open www.gutenberg.org. Allow?") and its three choices
-  slam in one per beat. B39: "Allow www.gutenberg.org from now on" is picked. B40: whip to the
-  real after-state, www.gutenberg.org under Allowed sites with a tide ring; **"You decide."**
-- **Transition out:** whip left on B44.
+- B32: **"It asks first."** slams over the request card, centered, with a brass ring, flash and
+  shake. B36: the card moves aside and, under the caption "in your agent", the drawn prompt box
+  shows the recorded elicitation ("tabkyra: the browser agent wants to open
+  www.gutenberg.org. Allow?"); its three recorded choices land B37–B38 and the first is picked
+  on B39. B40: whip to the real after-state, Allowed sites with 127.0.0.1 and
+  www.gutenberg.org, under **"You decide."** with a tide flash.
+- **Out:** whip on B44.
 
 ## 6. Its own tab group (B44–B51, 20.98–24.80 s)
 
-- **What happens:** The browser window with the real Gutenberg screenshot flies in with
-  parallax (window, then the tab strip a beat later). Push in on the brass pill "Tabkyra ·
-  claude": **"Its own tab group."** (B44), **"Your tabs stay yours."** (B48).
-- **Transition out:** cut on B52.
+- The drawn browser frame (recorded group name "Tabkyra · claude", recorded title and URL)
+  around the real Gutenberg screenshot flies in. **"Its own tab group."**; B48: push in 1.6×
+  toward the group pill, **"Your tabs stay yours."**
+- **Out:** cut on B52.
 
-## 7. Fills it, reads it back (B52–B60, 24.80–29.62 s)
+## 7. Fills it, reads it back (B52–B60, 24.80–29.15 s)
 
-- **What happens:** One cut per beat through the real catalog run: home, results, hold form,
-  filled form, confirmation. Each cut carries the real tool call that produced it in mono
-  (`type`, `click`, `fill`, `fill`, `click`). B57: `get_page_text` and the real result, "Hold
-  placed for Ada Lovelace...", punches in; **"Filled. Read back."** with a tide check.
-- **Transition out:** the drums break; hold.
+- One cut per beat, each with the recorded call that produced its screenshot: B52 the home page
+  (`navigate`), B53 results (`type`), B54 the hold form (`click`), B55 the filled form (both
+  `fill` calls), B56 the confirmation (`click`). B57: the recorded `get_page_text {}` call and
+  its result, "Hold placed for Ada Lovelace...", punch in; **"Filled."** (B58) **"Read back."**
+  (B59).
+- **Out:** cut on B61.
 
-## 8. Break: the receipt (B61–B63, 29.15–30.07 s)
+## 8. Refused (B61–B71, 29.15–34.36 s)
 
-- **What happens:** A terminal types the real command `tabkyra library add
-  10.1037/0000-0000.000.0.000`. Nothing else moves.
-- **Transition out:** the drums come back at B64.
+- B61, in the drum break: the real command types on, `tabkyra library add
+  10.1037/0000-0000.000.0.000`. B64, when the drums come back: the real refusal prints ("DOI
+  ... is not registered (doi.org returned 404)") and a red **REFUSED** stamp slams over it.
+  B66: **"Made-up DOIs are refused."**
+- **Out:** whip on B72.
 
-## 9. REFUSED (B64–B71, 30.55–34.36 s)
+## 9. Flagged (B72–B79, 34.36–38.16 s)
 
-- **What happens:** On B64 the real refusal prints ("DOI ... is not registered (doi.org
-  returned 404)") and a red **REFUSED** stamp slams over it, with a shake. **"Made-up DOIs are
-  refused."**
-- **Transition out:** whip down on B72.
-
-## 10. Flagged (B72–B79, 34.36–38.16 s)
-
-- **What happens:** The real Wakefield 1998 output. A big number counts up 0 → 3,011 (the real
-  citation count from the capture) over two beats: **"citations."** On B76 a red **FLAGGED**
-  stamp slams over the real "RETRACTED: don't cite this as support." line: **"Still
+- The real Wakefield 1998 command and its title line. The citation count from the recorded
+  output, 3,011, counts up to B74: **"citations."** B76: a red **FLAGGED** stamp slams over the
+  recorded line "RETRACTED: don't cite this as support." (picked by its content); B77: **"Still
   retracted."**
-- **Transition out:** whip right on B80.
+- **Out:** whip on B80.
 
-## 11. BLOCKED (B80–B91, 38.16–44.40 s)
+## 10. Blocked (B80–B91, 38.16–43.89 s)
 
-- **What happens:** The bad SKILL.md (real file). The four real lint errors slam in on
-  B80–B83, each lighting its line red; a big **4** counts up beside them: **"problems."** B84: a
-  red **BLOCKED** stamp. B88: `tabkyra skill lint skills/` → the real **"✓ Clean."** in tide:
-  **"Every bundled skill passes."**
-- **Transition out:** the music breaks again.
+- The bad SKILL.md, shown from two lines above the first flagged line to one below the last.
+  The four recorded lint errors land on B80–B83, each lighting its line red, while a **4**
+  counts up: **"problems."** B84: a red **BLOCKED** stamp. B88: `tabkyra skill lint skills/` and
+  its recorded **"✓ Clean."**; B89: **"Every bundled skill passes."**
+- **Out:** whip on B92.
 
-## 12. The skill router (B92–B103, 43.89–49.59 s)
+## 11. The skill router (B92–B103, 43.89–49.59 s)
 
-- **What happens:** In the drum break, **"The right skill,"** (B92) and **"in under a
-  millisecond."** (B93) slam; at B94 the router's own measurement prints under them in tide,
-  the real `skill eval` line ("✓ p95 latency ... ms per match ...") and the bundled skill
-  count (13, what main has). When the drums return (B96) the header shrinks up and four real
-  `tabkyra skill match` runs land, one every two beats, each with the skill it picked:
+- In the drum break, **"The right skill,"** (B92) and **"in under a millisecond at p95."**
+  (B93). B94: the figures from one `tabkyra skill eval --json` run, in tide: p95 per match,
+  the number of timed matches and the bundled skill count (13). B96, when the drums come back,
+  the header shrinks up and four recorded `tabkyra skill match` runs land, one every two beats:
   a research question → **academic-research** (B96), a landlord background check → **osint**
-  (B98), "Don't use the osint skill, just search the news" → **none** (B100), `/rsi` →
-  **rsi** (B102). Recorded by `scripts/demo/capture-router.mjs` into
-  `public/capture/router.json`.
-- **Transition out:** zoom cut on B104.
+  (B98), "Don't use the osint skill, just search the news" → **none** (B100), `/rsi` → **rsi**
+  (B102). Recorded by `scripts/demo/capture-router.mjs` into `public/capture/router.json`.
+- **Out:** cut on B104.
 
-## 13. Works with (B104–B109, 49.59–52.43 s)
+## 12. Works with (B104–B109, 49.59–52.43 s)
 
-- **What happens:** **"Works with"** slams on B104; the agents land on half beats: **Claude
-  Code**, **Codex**, **pi**, **OMP**, **Cursor**; then "and any MCP agent". All five are
-  named in the README's setup section.
+- **"Works with"** on B104; **Claude Code**, **Codex**, **pi**, **OMP**, **Cursor** on half beats
+  from B104.5; then "and any MCP agent". All five are named in the README's setup section.
 
-## 14. End card (B110 to the end, 52.43–59.0 s)
+## 13. End card (B110 to 57.6 s)
 
-- **What happens:** The helm assembles in one beat (its pegs on 16th notes), the wordmark
-  **Tabkyra** lands (B111), then the line **"You steer. Your agents work the tabs."**
-  (B112–B113). B114: the one command that sets it up, `tabkyra setup`, types on, with
-  "builds the extension, registers your browser, offers to add your agents" (B115). B116:
-  **dbaney.com/tabkyra** and github.com/baney75/tabkyra. B120: final hit and brass flash; the
-  card holds to 59.0 s after the music ends at 57.4 s.
+- The helm assembles in one beat (pegs on 16th notes); the wordmark **Tabkyra** (B111); the
+  line **"You steer. Your agents work the tabs."** (B111.5–B112.5); `tabkyra setup` types on
+  (B113) with "builds the extension, registers your browser, offers to add your agents"
+  (B113.5); **dbaney.com/tabkyra** and github.com/baney75/tabkyra (B114). B120: the final hit
+  and a brass flash. The video ends with the music at 57.6 s.
 - **Text (untouchable):** "You steer. Your agents work the tabs." / `tabkyra setup` /
   "dbaney.com/tabkyra".
 
@@ -151,11 +146,13 @@ and scales captures to the width; type sizes follow the short side.
 ## Risks
 
 - **Beat sync drift.** Frames are 33 ms; each beat rounds to the nearest frame (±17 ms).
-  Checked after render by detecting cuts in the video and onsets in its audio.
-- **Readability at speed.** Real output that must be read (the refusal, the retraction line,
-  the confirmation) holds at least 1.5 s; one-beat cuts carry only one short word or call.
-- **The mark.** No rotation, no outline, no gradient on the mark itself.
-- **Vertical layout.** Side-by-side shots stack; check every beat in the 9:16 cut, not just a
-  few.
-- **Loudness.** The master is about -14 LUFS with a -1 dBTP ceiling. Checked again on the
-  final MP4 with ffmpeg ebur128, because AAC encoding can move the peaks.
+  Checked after render by finding cuts in the video and beats in its audio.
+- **Readability at speed.** Output that must be read (the refusal, the retraction line, the
+  confirmation) holds at least 1.5 s; one-beat cuts carry one short call each.
+- **The mark.** The helm in the video never rotates and gets no outline or gradient. The one
+  rotated helm is the poster's background watermark, which BRAND.md allows: "the bare brass helm
+  turned 11° and cropped off the edge, at 7% opacity on ink".
+- **Vertical layout.** Side-by-side shots stack; every beat is checked in the 9:16 cut.
+- **Loudness.** About -14 LUFS with a -1 dBTP ceiling, re-measured on the final MP4s.
+- **Re-captures.** The stamped lines, lint lines and router figures are read from the capture
+  by content and the render fails if one is missing.
