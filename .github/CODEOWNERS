@@ -18,4 +18,4 @@
 /cli/src/skill-eval.ts      @baney75
 /cli/src/skill-router.ts    @baney75
 /cli/src/router-worker.ts   @baney75
-/cli/test/skill-router.test.mjs @baney75
+/cli/test/                  @baney75

@@ -142,10 +142,11 @@ skill's new value in `baseline.json`, and sit below the base branch's value. The
 then becomes the skill's floor with no tolerance, in `skill eval` and in the base-code eval:
 it means "at least this", not "anything".
 
-Measured on 2026-10-25 (13 skills): on the tuned set of 273 cases, top-1 91.6% (207 of 226)
-and false invokes 0% (0 of 47); on the 49 held-out cases, top-1 94.9% (37 of 39) and false
-invokes 10% (1 of 10). The top-1 gate needs 204 of 226, so the margin is three cases. Matching takes about 0.2 ms at p95 and the index build about 20 ms on
-the CI runner (about 0.1 ms and under 10 ms on an Apple-silicon Mac).
+Measured on 2026-10-25 (13 skills): on the tuned set of 280 cases, top-1 91.7% (209 of 228)
+and false invokes 0% (0 of 52); on the 49 held-out cases, top-1 94.9% (37 of 39) and false
+invokes 10% (1 of 10). The top-1 gate needs 206 of 228, so the margin is three cases.
+Matching takes about 0.2 ms at p95 and the index build about 20 ms on the CI runner (about
+0.1 ms and under 10 ms on an Apple-silicon Mac).
 
 ## CI gates
 
@@ -160,13 +161,29 @@ scripts and runs:
 2. `tabkyra skill eval`, the seven gates above. `--router <script>` runs a router built
    from `cli/src/router-worker.ts` (`dist/router-worker.js`) in a child process instead of
    this one.
-3. `cli/test/skill-router.test.mjs` and `cli/test/skill-platform.test.mjs`.
-4. On a pull request that changes `cli/src/skill-eval.ts` or `cli/src/skill-router.ts`, CI
-   fails unless a maintainer adds the `skill-judge-change` label (only maintainers can add
-   labels). Those files are the judge and what it measures most. CI can't judge a change to
-   its own judge: a weakened gate would pass in its own pull request and then judge every
-   later one, so a person reviews it.
-5. On every pull request, CI builds a judge from both branches and runs
+3. `cli/test/skill-router.test.mjs`, `cli/test/skill-platform.test.mjs` and
+   `cli/test/judge-label.test.mjs`.
+
+Those three run in `skill-regression`, which builds and runs the pull request's own code.
+The judge runs in a separate job, `skill-judge`, that runs no pull request code before the
+judge is built: it checks out the base branch and reads the pull request's `skills/`,
+`skills-eval/` files, `skill-eval.ts` (for the threshold check) and `skill-router.ts` as
+data, with `git show` and `git archive` (its skills must be plain files, not links). So a
+pull request's build script or tests can't tamper with the judge, and the pull request's
+router runs only inside the judge's sandboxed child process.
+
+4. On a pull request that changes `cli/src/skill-eval.ts` or `cli/src/skill-router.ts`, the
+   judge job fails unless a maintainer adds the `skill-judge-change` label (only
+   maintainers can add labels). Those files are the judge and what it measures most. CI
+   can't judge a change to its own judge: a weakened gate would pass in its own pull request
+   and then judge every later one, so a person reviews it. The label approves one version of
+   the judge: a later push that changes either file voids it. The judge job fails on that
+   push even with the label, and `.github/workflows/skill-judge-label.yml`
+   (`pull_request_target`, through the GitHub API only, never checking out or running pull
+   request code) removes the label, so a maintainer must review the new judge and add it
+   again. Both decide with `.github/scripts/judge-label.mjs`, which fails closed when a push
+   can't be compared.
+5. On every pull request, the judge job runs
    `tabkyra skill eval --base <base files> --router <script>`.
 
    | From the pull request (what is judged) | From the base branch (the judge) |
@@ -218,7 +235,7 @@ scripts and runs:
    can merge; a change to gate logic takes effect only after it merges, which is why it needs
    the label and why `.github/CODEOWNERS` requires a maintainer for `skills-eval/`
    (`accepted-drops.json` included), `skill-eval.ts`, `skill-router.ts`,
-   `router-worker.ts` and the catalog script.
+   `router-worker.ts`, `cli/scripts/`, `cli/test/` and `.github/`.
 
 ## Versions
 
