@@ -40,6 +40,12 @@ export function installFakeChrome() {
 		return { listeners, addListener: (fn) => listeners.push(fn), removeListener() {} };
 	};
 	const onChanged = event();
+	// storage.onChanged deliveries held back by holdChanges(), to arrive late on release.
+	let held;
+	const deliver = (changes, name) => {
+		for (const fn of onChanged.listeners) fn(structuredClone(changes), name);
+	};
+	let failQuery = false;
 	const area = (name) => ({
 		async get(keys) {
 			await tick();
@@ -56,7 +62,8 @@ export function installFakeChrome() {
 				changes[k] = { oldValue: store[name][k], newValue: v };
 				store[name][k] = v;
 			}
-			for (const fn of onChanged.listeners) setTimeout(() => fn(structuredClone(changes), name), 0);
+			if (held) held.push([changes, name]);
+			else setTimeout(() => deliver(changes, name), 0);
 		},
 		async remove(keys) {
 			await tick();
@@ -74,6 +81,7 @@ export function installFakeChrome() {
 			},
 			async query(q = {}) {
 				await tick();
+				if (failQuery) throw new Error("Browser is shutting down");
 				return [...tabs.values()]
 					.filter(
 						(t) =>
@@ -209,5 +217,18 @@ export function installFakeChrome() {
 		hasTab: (id) => tabs.has(id),
 		detachCalls,
 		ports,
+		holdChanges: () => {
+			held = [];
+		},
+		heldCount: () => held?.length ?? 0,
+		/** Deliver the first `n` held events (all by default); later ones stay held. */
+		releaseChanges: (n) => {
+			const late = (held ?? []).splice(0, n ?? Number.POSITIVE_INFINITY);
+			if (n === undefined) held = undefined;
+			for (const [changes, name] of late) deliver(changes, name);
+		},
+		setFailQuery: (v) => {
+			failQuery = v;
+		},
 	};
 }

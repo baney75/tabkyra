@@ -152,3 +152,79 @@ test("prune still drops closed tabs and forgets abandoned bridge sessions", asyn
 	assert.equal(t["bridge-codex-b"], undefined, "session left with no tabs is forgotten");
 	assert.deepEqual(result, { dropped: 1, closedTabs: 1 });
 });
+
+test("forgetting an empty session does not drop a tab a client added meanwhile", async () => {
+	let lost = 0;
+	for (let run = 0; run < 20; run++) {
+		const fake = installFakeChrome();
+		const { BrowserSession } = await load("worker");
+		const client = await BrowserSession.open("bridge-claude-abc", "claude", 1);
+		// dropEmptyBridgeSessions on worker start, while the reconnected client opens a tab.
+		const drop = (async () => {
+			const s = await BrowserSession.open("bridge-claude-abc", "claude", 1);
+			if (s.closeIfEmpty) await s.closeIfEmpty();
+			else await s.close();
+		})();
+		const [, created] = await Promise.all([drop, client.createTab("https://a.example/")]);
+		if (!fake.table()["bridge-claude-abc"]?.tabIds.includes(created.id)) lost++;
+	}
+	assert.equal(lost, 0, `${lost}/20 runs forgot the session after the client's tab was recorded`);
+});
+
+test("a late storage event does not roll back a context's cache", async () => {
+	const fake = installFakeChrome();
+	const panel = await load("panel");
+	const worker = await load("worker");
+	const home = fake.addTab({ active: true });
+	const p = await panel.BrowserSession.open("saved-1", "chat", 1);
+	await p.setHomeTab(home);
+	await p.adopt(home, true);
+	await new Promise((r) => setTimeout(r, 10));
+	fake.holdChanges();
+	const popup = fake.addTab({ url: "https://example.com/popup" });
+	const w = await worker.BrowserSession.open("saved-1", "chat", 1);
+	await w.adopt(popup, true);
+	const workerWrites = fake.heldCount();
+	const created = await p.createTab("https://example.com/next");
+	// The worker's older writes reach the panel only now, before the panel's own.
+	fake.releaseChanges(workerWrites);
+	assert.ok(p.tabIds.includes(created.id), `panel cache rolled back to an older table: ${p.tabIds}`);
+	assert.ok(p.tabIds.includes(popup), `panel cache misses the worker's popup: ${p.tabIds}`);
+	fake.releaseChanges();
+	await new Promise((r) => setTimeout(r, 10));
+	// And the worker's cache picks up the panel's tab from the panel's write.
+	assert.ok(w.tabIds.includes(created.id), `worker cache misses the panel's tab: ${w.tabIds}`);
+});
+
+test("prune leaves the table alone when the tab list can't be read", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, pruneSessions } = await load("worker");
+	const home = fake.addTab({ active: true });
+	const p = await BrowserSession.open("saved-1", "chat", 1);
+	await p.setHomeTab(home);
+	await p.adopt(home, true);
+	const b = await BrowserSession.open("bridge-claude-a", "claude", 1);
+	await b.createTab("https://a.example/");
+	const before = fake.table();
+	fake.setFailQuery(true);
+	await pruneSessions(new Set()).catch(() => undefined);
+	fake.setFailQuery(false);
+	assert.deepEqual(Object.keys(fake.table()).sort(), Object.keys(before).sort(), "sessions were dropped");
+	assert.deepEqual(fake.table()["saved-1"].tabIds, before["saved-1"].tabIds);
+	assert.deepEqual(fake.table()["bridge-claude-a"].tabIds, before["bridge-claude-a"].tabIds);
+});
+
+test("a session a client holds stays current after prune forgets its empty record", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, pruneSessions } = await load("worker");
+	const held = await BrowserSession.open("bridge-claude-abc", "claude", 1);
+	const owner = fake.addTab({ url: "https://a.example/" });
+	await pruneSessions(new Set());
+	// The client's next call opens a tab; then the guard adopts a popup through open().
+	await held.adopt(owner, true);
+	const popup = fake.addTab({ url: "https://a.example/popup" });
+	const guard = await BrowserSession.open("bridge-claude-abc", "claude", 1);
+	await guard.adopt(popup, true);
+	assert.ok(held.tabIds.includes(popup), `the client's session misses the popup: ${held.tabIds}`);
+	assert.equal(held.currentTabId, popup);
+});

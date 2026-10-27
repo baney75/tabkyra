@@ -62,6 +62,8 @@ type SessionTable = Record<string, PersistedSession>;
 type RenameTable = Record<string, { to: string; at: number }>;
 
 const RENAMES_KEY = "browser_session_renames";
+/** Bumped by every locked write, so a late storage.onChanged can't roll a cache back. */
+const REV_KEY = "browser_sessions_rev";
 const RENAME_TTL_MS = 60 * 60 * 1000;
 /** One lock for the table across the side panel and the service worker (same origin). */
 const LOCK_NAME = "tabkyra-browser-sessions";
@@ -95,25 +97,36 @@ interface TableTx {
  */
 async function mutateTable<T>(fn: (tx: TableTx) => T | Promise<T>): Promise<T> {
 	return withTableLock(async () => {
-		const data = await chrome.storage.local.get([STORAGE_KEY, RENAMES_KEY]);
+		const data = await chrome.storage.local.get([STORAGE_KEY, RENAMES_KEY, REV_KEY]);
+		const rev = ((data[REV_KEY] as number | undefined) ?? 0) + 1;
 		const tx: TableTx = {
 			table: (data[STORAGE_KEY] as SessionTable | undefined) ?? {},
 			renames: (data[RENAMES_KEY] as RenameTable | undefined) ?? {},
 		};
 		const before = JSON.stringify(tx.renames);
 		const result = await fn(tx);
-		const write: Record<string, unknown> = { [STORAGE_KEY]: tx.table };
+		const write: Record<string, unknown> = { [STORAGE_KEY]: tx.table, [REV_KEY]: rev };
 		if (JSON.stringify(tx.renames) !== before) write[RENAMES_KEY] = tx.renames;
 		await chrome.storage.local.set(write);
-		refreshInstances(tx.table);
+		refreshInstances(tx.table, rev);
 		return result;
 	});
 }
 
-/** Point every live instance in this context at its freshly stored entry. */
-function refreshInstances(table: SessionTable): void {
-	for (const [id, inst] of instances) {
-		const stored = table[id];
+/** Newest table revision this context's caches reflect. */
+let appliedRev = 0;
+
+/**
+ * Point every live instance in this context at its freshly stored entry. A table older than
+ * one already applied is ignored (storage.onChanged can arrive after this context's own commit).
+ */
+function refreshInstances(table: SessionTable, rev: number | undefined): void {
+	if (rev !== undefined) {
+		if (rev <= appliedRev) return;
+		appliedRev = rev;
+	}
+	for (const inst of live) {
+		const stored = table[inst.id];
 		if (stored) inst.adoptState(structuredClone(stored));
 	}
 }
@@ -123,7 +136,7 @@ if (typeof chrome !== "undefined")
 	chrome.storage?.onChanged?.addListener((changes, area) => {
 		if (area !== "local" || !(STORAGE_KEY in changes)) return;
 		const table = changes[STORAGE_KEY].newValue as SessionTable | undefined;
-		if (table) refreshInstances(table);
+		if (table) refreshInstances(table, changes[REV_KEY]?.newValue as number | undefined);
 	});
 
 function ownedElsewhere(table: SessionTable, selfId: string, tabId: number): boolean {
@@ -226,10 +239,15 @@ export async function pruneSessions(
 }> {
 	// Read the table before listing tabs: any id stored by then that the listing lacks is dead.
 	const snapshot = await readTable();
-	const liveTabs = new Map<number, chrome.tabs.Tab>();
-	for (const t of await chrome.tabs.query({}).catch(() => [] as chrome.tabs.Tab[])) {
-		if (t.id !== undefined) liveTabs.set(t.id, t);
+	let allTabs: chrome.tabs.Tab[];
+	try {
+		allTabs = await chrome.tabs.query({});
+	} catch {
+		// Without a tab list every id would look dead; prune nothing this time.
+		return { dropped: 0, closedTabs: 0 };
 	}
+	const liveTabs = new Map<number, chrome.tabs.Tab>();
+	for (const t of allTabs) if (t.id !== undefined) liveTabs.set(t.id, t);
 	const dead = new Set<number>();
 	for (const s of Object.values(snapshot)) {
 		for (const id of s.tabIds) if (!liveTabs.has(id)) dead.add(id);
@@ -271,7 +289,7 @@ export async function pruneSessions(
 			}
 		}
 	});
-	for (const id of droppedIds) instances.delete(id);
+	// Instances stay: a client may hold one, and its next write recreates the entry.
 	for (const groupId of toCollapse) {
 		await chrome.tabGroups.update(groupId, { collapsed: true }).catch(() => undefined);
 	}
@@ -310,6 +328,11 @@ export class NoTabError extends Error {
 
 /** One live instance per session id in this context, so concurrent clients share state. */
 const instances = new Map<string, BrowserSession>();
+/**
+ * Every instance not yet closed, including one a rename left outside `instances` (another
+ * instance already had the new id). All of them are refreshed on each write.
+ */
+const live = new Set<BrowserSession>();
 
 export class BrowserSession {
 	/** Read cache of the stored entry. Writes go through `update`, never by saving this whole. */
@@ -380,7 +403,9 @@ export class BrowserSession {
 
 	/** Re-read this session's stored entry into the cache. */
 	private async refresh(): Promise<void> {
-		const data = await chrome.storage.local.get([STORAGE_KEY, RENAMES_KEY]);
+		const data = await chrome.storage.local.get([STORAGE_KEY, RENAMES_KEY, REV_KEY]);
+		// A commit in this context finished while we read: our copy is older than the cache.
+		if (((data[REV_KEY] as number | undefined) ?? 0) < appliedRev) return;
 		const table = (data[STORAGE_KEY] as SessionTable | undefined) ?? {};
 		const renames = (data[RENAMES_KEY] as RenameTable | undefined) ?? {};
 		let id = this.state.id;
@@ -440,6 +465,7 @@ export class BrowserSession {
 			session = new BrowserSession(state);
 			instances.set(id, session);
 		}
+		live.add(session);
 		await session.reconcile();
 		return session;
 	}
@@ -748,7 +774,27 @@ export class BrowserSession {
 		await mutateTable(({ table }) => {
 			delete table[this.state.id];
 		});
+		this.forget();
+	}
+
+	/**
+	 * Forget the session only if its stored entry owns no tabs, decided under the lock (a
+	 * client or the foreground guard may have just added one). True when it was forgotten.
+	 */
+	async closeIfEmpty(): Promise<boolean> {
+		const closed = await mutateTable(({ table }) => {
+			const stored = table[this.state.id];
+			if (stored && stored.tabIds.length > 0) return false;
+			delete table[this.state.id];
+			return true;
+		});
+		if (closed) this.forget();
+		return closed;
+	}
+
+	private forget(): void {
 		if (instances.get(this.state.id) === this) instances.delete(this.state.id);
+		live.delete(this);
 	}
 }
 

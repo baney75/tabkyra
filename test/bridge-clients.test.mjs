@@ -82,3 +82,27 @@ test("a result too big for the native port fails that request with a clear error
 	assert.equal(reply.result, undefined, "the oversized result was sent anyway");
 	assert.match(reply.error?.message ?? "", /too large|exceeds/i);
 });
+
+test("a host that exits before saying anything is retried with growing backoff", async () => {
+	const { fake } = await startBridge();
+	const portCount = async (n) => {
+		for (let i = 0; i < 400 && fake.ports.length < n; i++) await new Promise((r) => setTimeout(r, 10));
+		assert.equal(fake.ports.length, n, `port ${n} opened`);
+		return Date.now();
+	};
+	const drop = (port) => {
+		for (const fn of port.onDisconnect.listeners) fn();
+	};
+	drop(fake.ports[0]);
+	const t1 = await portCount(2);
+	drop(fake.ports[1]);
+	const t2 = await portCount(3);
+	assert.ok(t2 - t1 >= 1800, `second retry came after ${t2 - t1} ms; the backoff was reset by a silent host`);
+	// A host that answers resets it.
+	fake.ports[2].deliver({ type: "ping" });
+	drop(fake.ports[2]);
+	const t3 = Date.now();
+	const t4 = await portCount(4);
+	assert.ok(t4 - t3 < 1500, `retry after a talking host took ${t4 - t3} ms`);
+	drop(fake.ports[3]);
+});

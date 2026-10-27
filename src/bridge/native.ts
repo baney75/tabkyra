@@ -160,8 +160,7 @@ async function onClientDisconnected(clientId: string): Promise<void> {
 	for (const c of successors) c.session ??= state?.session;
 	if (state?.session && successors.length === 0) {
 		// A session that never opened a tab has nothing to re-adopt; drop it instead of piling up.
-		if (state.session.tabIds.length === 0) await state.session.close();
-		else await state.session.suspend();
+		if (!(await state.session.closeIfEmpty())) await state.session.suspend();
 	}
 	for (const [requestId, resolve] of pendingDecisions) {
 		if (requestId.startsWith(`${clientId}:`)) {
@@ -567,7 +566,12 @@ function connect(): void {
 		return;
 	}
 	port = next;
-	next.onMessage.addListener((message: HostToExt) => onHostMessage(message));
+	next.onMessage.addListener((message: HostToExt) => {
+		// Reset the backoff only once a host actually talks, so a host that exits at once
+		// (crash loop) is retried ever more slowly instead of every second.
+		reconnectDelay = RECONNECT_MIN_MS;
+		onHostMessage(message);
+	});
 	next.onDisconnect.addListener(() => {
 		const reason = chrome.runtime.lastError?.message ?? "closed";
 		// "Specified native messaging host not found" means the CLI installer has not run yet.
@@ -578,7 +582,6 @@ function connect(): void {
 		void stopScreencastsOwnedBy(undefined).catch(() => undefined);
 		scheduleReconnect();
 	});
-	reconnectDelay = RECONNECT_MIN_MS;
 	trace("native port connected");
 	send({
 		type: "hello",
@@ -596,7 +599,8 @@ async function dropEmptyBridgeSessions(): Promise<void> {
 	for (const s of await listSessions()) {
 		if (s.id.startsWith("bridge-") && s.tabIds.length === 0) {
 			const session = await BrowserSession.open(s.id, s.label, s.windowId);
-			await session.close();
+			// A client may have opened a tab in it meanwhile; then it stays.
+			await session.closeIfEmpty();
 		}
 	}
 }

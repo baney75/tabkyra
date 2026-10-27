@@ -211,7 +211,8 @@ async function pruneEmptyUnsavedSessions(): Promise<void> {
 	for (const s of await listSessions()) {
 		if ((s.id.startsWith("temp-") || s.id.startsWith("tab-")) && s.tabIds.length === 0) {
 			const session = await BrowserSession.open(s.id, s.label, s.windowId);
-			await session.close();
+			// The foreground guard may have adopted a tab into it meanwhile; then it stays.
+			await session.closeIfEmpty();
 		}
 	}
 }
@@ -662,10 +663,11 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				// Rename the unsaved browser session (id "tab-<homeTab>") to the saved id, keeping
 				// its home-tab binding and tab group, so the panel stays bound to the same tab.
 				// Queued after the relabel above so the two never interleave.
-				const unsavedId = unsavedSessionId();
+				// The live id, not a recomputed one: a panel without a home tab has a random temp- id.
+				const unsavedId = browserSession?.id;
 				const savedId = currentSessionId;
 				queueBrowserSessionOp(async () => {
-					await BrowserSession.rename(unsavedId, savedId);
+					if (unsavedId) await BrowserSession.rename(unsavedId, savedId);
 					await openBrowserSession(savedId);
 				});
 				updateUrl(savedId);

@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -86,6 +87,63 @@ test("the native host exits on a bad frame from the extension instead of going d
 		const code = await within(5000);
 		assert.notEqual(code, "still running", "host kept running after the bad frame");
 		assert.notEqual(code, 0, "host exits with an error code");
+	} finally {
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("on a bad extension frame the host answers waiting requests with a non-retried error, then exits", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const exited = new Promise((r) => host.once("exit", (c) => r(c)));
+	const toExt = new FrameParser(64 * 1024 * 1024);
+	const forwarded = [];
+	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		const client = connect(sock);
+		const fromHost = new FrameParser(64 * 1024 * 1024);
+		const received = [];
+		let closed = false;
+		client.on("data", (chunk) => received.push(...fromHost.push(chunk).messages));
+		client.on("close", () => {
+			closed = true;
+		});
+		client.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } }));
+		client.write(encodeFrame({ type: "request", id: 1, method: "tabs.create", params: {} }));
+		client.write(encodeFrame({ type: "request", id: 2, method: "click", params: {} }));
+		const wait = async (fn, what) => {
+			for (let i = 0; i < 100; i++) {
+				const v = fn();
+				if (v) return v;
+				await new Promise((r) => setTimeout(r, 20));
+			}
+			throw new Error(`timed out waiting for ${what}`);
+		};
+		const reqs = await wait(() => {
+			const r = forwarded.filter((m) => m.type === "request");
+			return r.length === 2 ? r : undefined;
+		}, "both requests forwarded");
+		const clientId = reqs[0].clientId;
+		// One good reply, then a frame the host can't read: the reply to request 2 is lost.
+		host.stdin.write(Buffer.concat([encodeFrame({ type: "response", clientId, id: 1, result: { tabId: 7 } }), header(61 * 1024 * 1024)]));
+		await wait(() => closed, "the host to close the client");
+		const responses = received.filter((m) => m.type === "response");
+		assert.deepEqual(
+			responses.find((m) => m.id === 1),
+			{ type: "response", id: 1, result: { tabId: 7 } },
+			"the good reply reached the client",
+		);
+		const lost = responses.find((m) => m.id === 2);
+		assert.ok(lost?.error, `request 2 got an RPC error, not just a closed socket: ${JSON.stringify(responses)}`);
+		assert.match(lost.error.message, /may have run/);
+		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
 	} finally {
 		host.kill();
 		rmSync(dir, { recursive: true, force: true });

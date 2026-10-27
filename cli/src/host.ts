@@ -19,13 +19,16 @@ interface Client {
 	id: string;
 	socket: Socket;
 	hello?: ClientToHost & { type: "hello" };
+	/** Request ids forwarded to the extension and not answered yet. */
+	outstanding: Set<number>;
 }
 
 const clients = new Map<string, Client>();
 let extensionReady = false;
 let seq = 0;
 
-function toExtension(message: HostToExt): void {
+/** Write a frame to the extension; false when it was refused as oversized. */
+function toExtension(message: HostToExt): boolean {
 	const frame = encodeFrame(message);
 	if (frame.length > MAX_FRAME_TO_EXTENSION) {
 		// Never let one oversized frame kill the native port.
@@ -37,9 +40,10 @@ function toExtension(message: HostToExt): void {
 				error: { code: "bad_params", message: `Request exceeds ${MAX_FRAME_TO_EXTENSION} bytes` },
 			});
 		}
-		return;
+		return false;
 	}
 	process.stdout.write(frame);
+	return true;
 }
 
 function toClient(clientId: string, message: HostToClient): void {
@@ -60,6 +64,7 @@ function onExtensionMessage(message: ExtToHost): void {
 			}
 			return;
 		case "response":
+			clients.get(message.clientId)?.outstanding.delete(message.id);
 			toClient(message.clientId, { type: "response", id: message.id, result: message.result, error: message.error });
 			return;
 		case "event":
@@ -109,7 +114,30 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 			toClient(client.id, { type: "response", id: message.id, error: { code: "bad_params", message: "Send hello first" } });
 			return;
 		}
-		toExtension({ type: "request", clientId: client.id, id: message.id, method: message.method, params: message.params });
+		if (toExtension({ type: "request", clientId: client.id, id: message.id, method: message.method, params: message.params }))
+			client.outstanding.add(message.id);
+	}
+}
+
+/**
+ * The extension sent a frame we could not read, so one reply is lost and we can't tell whose.
+ * Answer every unanswered request with an RPC error (clients never retry those, so nothing
+ * runs twice), then restart: Chrome closes the port, the extension reconnects and spawns a
+ * fresh host, and later calls dial the new socket.
+ */
+function failOutstanding(reason: string): void {
+	for (const client of clients.values()) {
+		for (const id of client.outstanding) {
+			toClient(client.id, {
+				type: "response",
+				id,
+				error: {
+					code: "internal",
+					message: `The browser's reply was lost (${reason}); the bridge is restarting. The request may have run: check the page before repeating it.`,
+				},
+			});
+		}
+		client.outstanding.clear();
 	}
 }
 
@@ -143,7 +171,7 @@ export function runNativeHost(): void {
 
 	const server = createServer((socket) => {
 		const id = `c${++seq}-${process.pid}`;
-		const client: Client = { id, socket };
+		const client: Client = { id, socket, outstanding: new Set() };
 		clients.set(id, client);
 		const parser = new FrameParser(MAX_FRAME_TO_EXTENSION);
 		socket.on("data", (chunk) => {
@@ -171,19 +199,34 @@ export function runNativeHost(): void {
 		const { messages, error } = parser.push(chunk);
 		for (const m of messages) onExtensionMessage(m as ExtToHost);
 		if (error) {
-			// A dropped frame was a response some client is waiting for, and the extension can't
-			// tell. Exit: Chrome closes the port, the extension reconnects and spawns a fresh host,
-			// and clients retry on the new socket.
 			process.stderr.write(`[tabkyra-host] bad frame from extension, restarting: ${String(error)}\n`);
+			failOutstanding(error.message);
 			shutdown(1);
 		}
 	});
 
+	let stopping = false;
 	const shutdown = (code = 0) => {
-		for (const client of clients.values()) client.socket.destroy();
+		if (stopping) return;
+		stopping = true;
 		server.close();
 		rmSync(path, { force: true });
-		process.exit(code);
+		// end() flushes what is queued (the answers above) before closing; destroy() would drop it.
+		for (const client of clients.values()) client.socket.end();
+		const exit = setTimeout(() => process.exit(code), 500);
+		const open = [...clients.values()].filter((c) => !c.socket.destroyed);
+		if (open.length === 0) {
+			clearTimeout(exit);
+			process.exit(code);
+		}
+		let left = open.length;
+		for (const c of open)
+			c.socket.once("close", () => {
+				if (--left === 0) {
+					clearTimeout(exit);
+					process.exit(code);
+				}
+			});
 	};
 	process.stdin.on("end", () => shutdown());
 	process.on("SIGINT", () => shutdown());
