@@ -30,10 +30,12 @@ try {
 	const run = (args) => {
 		const started = Date.now();
 		const r = spawnSync(process.execPath, [cli, ...args], { env, encoding: "utf8" });
-		return { code: r.status, ms: Date.now() - started, out: `${r.stdout}${r.stderr}`.trimEnd() };
+		// Only stdout is recorded or parsed; stderr (a Node warning, a notice) is kept apart.
+		return { code: r.status, ms: Date.now() - started, out: r.stdout.trimEnd(), err: r.stderr.trim() };
 	};
 	const matches = TASKS.map(([task, expected]) => {
-		const r = run(["skill", "match", task]);
+		const { err, ...r } = run(["skill", "match", task]);
+		if (err) throw new Error(`"${task}": skill match wrote to stderr: ${err.slice(0, 400)}`);
 		// `shown` is the command as it can be pasted into a shell: bare when it is one safe word,
 		// else in double quotes (the tasks hold no $, `, ", \ or !, which double quotes would expand).
 		if (/[$`"\\!]/.test(task)) throw new Error(`"${task}" needs other quoting to be shown safely`);
@@ -45,7 +47,15 @@ try {
 	});
 	// One eval run: the stored numbers and the line the video shows both come from it.
 	const evalRun = run(["skill", "eval", "--json"]);
-	const report = JSON.parse(evalRun.out);
+	if (evalRun.code !== 0) throw new Error(`skill eval --json exited ${evalRun.code}: ${evalRun.err.slice(0, 400)}`);
+	let report;
+	try {
+		report = JSON.parse(evalRun.out);
+	} catch {
+		throw new Error(
+			`skill eval --json printed no JSON on stdout: ${evalRun.out.slice(0, 200)} ${evalRun.err.slice(0, 200)}`,
+		);
+	}
 	if (!report.ok) throw new Error(`skill eval failed its gates: ${evalRun.out.slice(0, 400)}`);
 	const { p50Ms, p95Ms, maxMs, buildMs, matches: timed } = report.speed;
 	if (!(p95Ms < 1)) throw new Error(`p95 is ${p95Ms} ms; the video says under a millisecond at p95`);

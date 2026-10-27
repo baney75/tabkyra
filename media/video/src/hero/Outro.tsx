@@ -1,12 +1,10 @@
 import { AbsoluteFill, useCurrentFrame } from "remotion";
-import router from "../../public/capture/router.json";
 import { C, FONT } from "../theme";
 import { useBeat } from "./beat";
 import { Helm } from "./Helm";
+import { heroClaims } from "./heroClaims";
 import { Backdrop, ease, Flash, useLayout, Whip, Words } from "./motion";
 import { Center, useSize } from "./parts";
-
-const ROUTER = router;
 
 /**
  * B92–B103: the skill router (merged in #21), from real runs recorded by
@@ -14,11 +12,14 @@ const ROUTER = router;
  * latency from `tabkyra skill eval`.
  */
 export const Router: React.FC = () => {
+	// The headline, the figures and each row's skill, score and description are checked and
+	// parsed from router.json (checkRouter in claims.ts).
+	const ROUTER = heroClaims().router;
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
 	const { vertical } = useLayout();
-	const rows = ROUTER.matches.map((m, i) => ({ ...m, at: at(96 + 2 * i) }));
+	const rows = ROUTER.rows.map((m, i) => ({ ...m, at: at(96 + 2 * i) }));
 	const lift = ease(frame, at(96), 10);
 	return (
 		<Whip dur={at(104) - at(92)} from="up" inDur={6}>
@@ -32,15 +33,13 @@ export const Router: React.FC = () => {
 						colors={[C.paper, C.brass, C.brass, C.brass]}
 					/>
 					<div style={{ marginTop: size(18, 24), textAlign: "center", fontFamily: FONT.mono, fontSize: size(40, 40), color: C.tide, opacity: ease(frame, at(94), 6) }}>
-						tabkyra skill eval: p95 {ROUTER.eval.speed.p95Ms} ms per match over {ROUTER.eval.speed.matches.toLocaleString("en-US")} timed matches · {ROUTER.eval.skills} skills
+						tabkyra skill eval: p95 {ROUTER.p95Ms} ms per match over {ROUTER.timed.toLocaleString("en-US")} timed matches · {ROUTER.skills} skills
 					</div>
 				</div>
 				<div style={{ display: "flex", flexDirection: "column", gap: size(22, 30), alignItems: "center" }}>
 					{rows.map((r) => {
 						if (frame < r.at) return null;
-						const none = r.expected === "none";
-						const [name, score] = none ? ["none", ""] : r.out.split(/\s+/);
-						const description = none ? r.out.replace(/^·\s*none:\s*/, "") : r.out.slice(r.out.indexOf(score) + score.length).trim();
+						const { none, name, score, description } = r;
 						const s = ease(frame, r.at, 8);
 						const hit = ease(frame, r.at + 4, 6);
 						return (

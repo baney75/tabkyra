@@ -2,26 +2,20 @@ import { AbsoluteFill, useCurrentFrame } from "remotion";
 import { DATA } from "../data";
 import { C, FONT } from "../theme";
 import { useBeat } from "./beat";
-import { checkCli } from "./claims";
+import { heroClaims } from "./heroClaims";
 import { Backdrop, CountUp, ease, Flash, shake, Stamp, useLayout, Whip, Words } from "./motion";
 import { Center, Term, useSize } from "./parts";
 
 const madeUp = DATA.cli.libraryMadeUp;
 const retracted = DATA.cli.libraryRetracted;
 
-// Every line a stamp or highlight lands on is checked against the recorded run (claims.ts);
-// a recording that doesn't back REFUSED, FLAGGED, BLOCKED or "passes" fails the render.
-const { refusal, retractedTitle, retractedWarning, citedBy, lintErrors, lintLines, cleanLine } = checkCli(DATA.cli);
 const shipped = DATA.cli.lintShipped;
-
-/** The SKILL.md slice shown around the lint errors. The edit gives them B80–B83 before BLOCKED on B84. */
-const skillFile = DATA.cli.badSkill.trimEnd().split("\n");
-// Two lines of context above the first flagged line and one below the last.
-const shownFrom = Math.max(1, Math.min(...lintLines) - 2);
-const shownTo = Math.min(skillFile.length, Math.max(...lintLines) + 1);
+// Every line a stamp or highlight lands on comes from heroClaims() (claims.ts checkCli), which
+// fails the render when the recording doesn't back REFUSED, FLAGGED, BLOCKED or "passes".
 
 /** B61–B71: the break types the real command; on B64 the refusal prints and REFUSED slams. */
 export const Refused: React.FC = () => {
+	const { refusal } = heroClaims().cli;
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
@@ -54,6 +48,7 @@ export const Refused: React.FC = () => {
 
 /** B72–B79: the real retracted paper; its citation count counts up, then FLAGGED. */
 export const Flagged: React.FC = () => {
+	const { citedBy, retractedTitle, retractedWarning } = heroClaims().cli;
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
@@ -92,9 +87,10 @@ export const Blocked: React.FC = () => {
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
-	const file = DATA.cli.badSkill.trimEnd().split("\n");
-	const errors = lintErrors;
-	const flagged = lintLines;
+	const { lintErrors: errors, lintLines: flagged, skillFile: file, skillPath, cleanLine } = heroClaims().cli;
+	// The SKILL.md slice shown: two lines above the first flagged line and one below the last.
+	const shownFrom = Math.max(1, Math.min(...flagged) - 2);
+	const shownTo = Math.min(file.length, Math.max(...flagged) + 1);
 	const clean = frame >= at(88);
 	const shown = file.slice(shownFrom - 1, shownTo);
 	return (
@@ -115,13 +111,15 @@ export const Blocked: React.FC = () => {
 								lineHeight: 1.5,
 							}}
 						>
-							<div style={{ padding: `0 ${size(30, 26)}px 10px`, fontFamily: FONT.sans, fontSize: size(26, 26), color: C.mist }}>page-helper/SKILL.md</div>
+							<div style={{ padding: `0 ${size(30, 26)}px 10px`, fontFamily: FONT.sans, fontSize: size(26, 26), color: C.mist }}>{skillPath}</div>
 							{shown.map((text, i) => {
 								const n = i + shownFrom;
-								const k = flagged.indexOf(n);
-								const on = k >= 0 ? ease(frame, at(80 + k), 5) : 0;
+								// Every error that names this line: it lights on the first and pulses on each later one.
+								const ks = flagged.flatMap((v, k) => (v === n ? [k] : []));
+								const on = ks.length ? ease(frame, at(80 + ks[0]), 5) : 0;
+								const again = ks.slice(1).reduce((p, k) => Math.max(p, frame >= at(80 + k) ? 1 - ease(frame, at(80 + k), 10) : 0), 0);
 								return (
-									<div key={`${n}-${text}`} style={{ display: "flex", background: `rgba(228,107,93,${0.22 * on})`, boxShadow: on ? `inset 8px 0 0 rgba(228,107,93,${on})` : "none" }}>
+									<div key={`${n}-${text}`} style={{ display: "flex", background: `rgba(228,107,93,${0.22 * on + 0.4 * again})`, boxShadow: on ? `inset ${8 + 10 * again}px 0 0 rgba(228,107,93,${on})` : "none" }}>
 										<span style={{ width: size(70, 60), textAlign: "right", paddingRight: 16, color: "#43586A", flex: "none" }}>{n}</span>
 										<span style={{ color: on > 0.5 ? C.paper : C.mist, paddingRight: 20, whiteSpace: "pre-wrap" }}>{text}</span>
 									</div>

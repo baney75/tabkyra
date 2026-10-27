@@ -18,7 +18,7 @@ const expectCode = (r: Run, ok: (code: number | null) => boolean, what: string) 
 };
 
 /** The lines the Refused, Flagged and Blocked scenes stamp or highlight, each checked. */
-export function checkCli(cli: { libraryMadeUp: Run; libraryRetracted: Run; lintBad: Run; lintShipped: Run }) {
+export function checkCli(cli: { libraryMadeUp: Run; libraryRetracted: Run; lintBad: Run; lintShipped: Run; badSkill: string }) {
 	const { libraryMadeUp: madeUp, libraryRetracted: retracted, lintBad: lint, lintShipped: shipped } = cli;
 	// REFUSED: the made-up DOI was refused as unregistered (not a network failure), and the add failed.
 	const refusal = lineWith(madeUp.out, /is not registered \(doi\.org returned 404\)/, "made-up DOI refusal");
@@ -36,11 +36,21 @@ export function checkCli(cli: { libraryMadeUp: Run; libraryRetracted: Run; lintB
 	if (lintErrors.length !== 4 || lintLines.some((n) => !(n > 0))) {
 		throw new Error(`capture.json: expected 4 lint errors with line numbers, got ${lintErrors.length}`);
 	}
+	// The errors must name lines of the skill file the scene shows, so each one lights a real line.
+	const skillFile = cli.badSkill.trimEnd().split("\n");
+	const skillName = cli.badSkill.match(/^name:\s*(\S+)$/m)?.[1];
+	if (!skillName || skillFile.length < 2) throw new Error("capture.json: the bad skill file is empty or has no name");
+	for (const [i, l] of lintErrors.entries()) {
+		if (!l.startsWith(`${skillName}/SKILL.md:`)) throw new Error(`capture.json: lint error ${i + 1} isn't about ${skillName}/SKILL.md`);
+		if (lintLines[i] > skillFile.length) {
+			throw new Error(`capture.json: lint error ${i + 1} names line ${lintLines[i]}, past the ${skillFile.length}-line skill file`);
+		}
+	}
 	// "Every bundled skill passes": "✓ Clean.", no errors, exit 0.
 	const cleanLine = lineWith(shipped.out, /^✓ Clean\.$/, "clean lint");
 	if (/\berror\b/.test(shipped.out)) throw new Error("capture.json: the shipped skills' lint lists errors");
 	expectCode(shipped, (c) => c === 0, "the shipped skills' lint");
-	return { refusal, retractedTitle, retractedWarning, citedBy: Number(cited[1]), lintErrors, lintLines, cleanLine };
+	return { refusal, retractedTitle, retractedWarning, citedBy: Number(cited[1]), lintErrors, lintLines, cleanLine, skillFile, skillPath: `${skillName}/SKILL.md` };
 }
 
 function format(hit: Call): string {
@@ -54,7 +64,7 @@ function format(hit: Call): string {
  * act on the latest snapshot before it, and the click labels are that snapshot's button names.
  * Throws if a step is missing, so a re-capture can't put a call under the wrong shot.
  */
-export function catalogRunFrom(calls: Call[], refs: Record<string, string>, catalogUrl: string) {
+export function catalogRunFrom(calls: Call[], refs: Record<string, string>, catalogUrl: string, cachedConfirmation?: string) {
 	let cursor = -1;
 	const next = (what: string, test: (c: Call) => boolean): number => {
 		const i = calls.findIndex((c, k) => k > cursor && test(c));
@@ -98,6 +108,24 @@ export function catalogRunFrom(calls: Call[], refs: Record<string, string>, cata
 	actedOn(clickConfirm, form, "confirm click");
 	const confirmLabel = nameOf(form, refs.confirm, "button", "confirm click");
 	const readBack = next("get_page_text of the confirmation", (c) => c.name === "get_page_text" && c.text.includes("Hold placed"));
+	// The sentence the read-back shows is the checked get_page_text call's own result, and it must
+	// name what the fills entered; the capture's cached copy, if present, must agree with it.
+	let pageText: string;
+	try {
+		pageText = String((JSON.parse(calls[readBack].text) as { text?: unknown }).text ?? "");
+	} catch {
+		throw new Error("capture.json: the confirmation get_page_text result isn't JSON");
+	}
+	const confirmation = lineWith(pageText, /^Hold placed /, "hold confirmation");
+	for (const fill of [fillCard, fillBranch]) {
+		const value = String(calls[fill].args.value ?? "");
+		if (!value || !confirmation.includes(value)) {
+			throw new Error(`capture.json: the confirmation doesn't name the filled value "${value}"`);
+		}
+	}
+	if (cachedConfirmation !== undefined && cachedConfirmation.split("\n").at(-1) !== confirmation) {
+		throw new Error("capture.json: catalog.confirmation disagrees with the recorded read-back");
+	}
 	if (holdLabel !== "Place hold" || !/^confirm/i.test(confirmLabel)) {
 		throw new Error(`capture.json: the run clicked "${holdLabel}" and "${confirmLabel}", not the hold and confirm buttons`);
 	}
@@ -108,5 +136,52 @@ export function catalogRunFrom(calls: Call[], refs: Record<string, string>, cata
 		fills: `${format(calls[fillCard])}\n${format(calls[fillBranch])}`,
 		clickConfirm: `${format(calls[clickConfirm])}  // ${confirmLabel}`,
 		readBack: format(calls[readBack]),
+		confirmation,
 	};
+}
+
+export type RouterCapture = {
+	matches: { task: string; expected: string; shown: string; code: number | null; out: string }[];
+	eval: { skills: number; speed: { p95Ms: number; matches: number } };
+};
+
+/**
+ * The router scene: "in under a millisecond at p95" needs a recorded p95 under 1 ms, and each
+ * row's skill, score and description are parsed from the recorded output, which must route to
+ * the task's expected skill with exit 0.
+ */
+export function checkRouter(router: RouterCapture) {
+	const { skills, speed } = router.eval;
+	if (!(speed.p95Ms > 0 && speed.p95Ms < 1)) throw new Error(`router.json: p95 is ${speed.p95Ms} ms, not under a millisecond`);
+	if (!Number.isInteger(skills) || skills < 1) throw new Error(`router.json: ${skills} skills`);
+	if (!Number.isInteger(speed.matches) || speed.matches < 1) throw new Error(`router.json: ${speed.matches} timed matches`);
+	if (router.matches.length !== 4) throw new Error(`router.json: expected 4 matches, got ${router.matches.length}`);
+	const rows = router.matches.map((m) => {
+		if (m.code !== 0) throw new Error(`router.json: "${m.task}" exited ${m.code}`);
+		const none = m.out.match(/^·\s*none:\s*(.+)$/);
+		const hit = m.out.match(/^([a-z0-9][a-z0-9-]*)\s+(\d+(?:\.\d+)?)\s+(\S.*)$/);
+		const name = none ? "none" : hit?.[1];
+		if (!name || name !== m.expected) throw new Error(`router.json: "${m.task}" routed to ${name ?? "unparsed output"}, expected ${m.expected}`);
+		return { task: m.task, shown: m.shown, none: !!none, name, score: hit?.[2] ?? "", description: none ? none[1] : (hit?.[3] ?? "") };
+	});
+	return { rows, p95Ms: speed.p95Ms, timed: speed.matches, skills };
+}
+
+/**
+ * The drop scene's checkmark: the choice the recorded run answered, which must be one of the
+ * prompt's choices, an allow, and must show up in the allowed sites afterwards.
+ */
+export function checkPrompt(
+	prompt: { enum: string[]; enumNames: string[] },
+	answer: string | undefined,
+	allowedHosts: string[],
+	host: string,
+) {
+	const picked = answer === undefined ? -1 : prompt.enum.indexOf(answer);
+	if (picked < 0 || prompt.enumNames.length !== prompt.enum.length) {
+		throw new Error(`capture.json: the recorded answer ${answer} isn't one of the prompt's choices`);
+	}
+	if (!answer?.startsWith("allow")) throw new Error(`capture.json: the recorded answer is ${answer}, not an allow`);
+	if (!allowedHosts.includes(host)) throw new Error(`capture.json: ${host} isn't in the allowed sites after the answer`);
+	return { picked, label: prompt.enumNames[picked] };
 }

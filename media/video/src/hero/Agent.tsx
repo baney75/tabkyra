@@ -1,8 +1,9 @@
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
-import { catalogRun, DATA } from "../data";
+import { DATA } from "../data";
 import { C, FONT } from "../theme";
 import { BrowserWindow } from "../ui";
 import { useBeat } from "./beat";
+import { heroClaims } from "./heroClaims";
 import { Backdrop, ease, Flash, shake, slam, useLayout, Whip, Words } from "./motion";
 import { Center, Label, PanelPart, Shot, useSize } from "./parts";
 
@@ -10,6 +11,8 @@ const MAX = 2.6; // video px per CSS px before the 2x panel capture softens
 
 /** B32–B43: the drop. The request card fills the frame; the real prompt and its choices land. */
 export const Moment: React.FC = () => {
+	// The ✓ goes on the choice the recorded run answered (checkPrompt in claims.ts).
+	const { picked: answered } = heroClaims().prompt;
 	const frame = useCurrentFrame();
 	const { fps } = useVideoConfig();
 	const at = useBeat();
@@ -65,7 +68,7 @@ export const Moment: React.FC = () => {
 							<div>{DATA.prompt.message}</div>
 							{DATA.prompt.choices.map((choice, i) => {
 								const t = at(37) + i * Math.round((at(39) - at(37)) / 3);
-								const picked = i === 0 && frame >= at(39);
+								const picked = i === answered && frame >= at(39);
 								return (
 									<div
 										key={choice}
@@ -154,6 +157,7 @@ export const TabGroup: React.FC = () => {
 
 /** B52–B60: one cut per beat through the real catalog run, each with the call that made it. */
 export const Form: React.FC = () => {
+	const catalogRun = heroClaims().catalog;
 	const frame = useCurrentFrame();
 	const { fps } = useVideoConfig();
 	const at = useBeat();
@@ -221,7 +225,7 @@ export const Form: React.FC = () => {
 								scale: String(1.3 - 0.3 * slam(frame, fps, at(57) + 4, 12)),
 							}}
 						>
-							→ "{DATA.confirmation}"
+							→ "{catalogRun.confirmation}"
 						</div>
 						<Words words={["Filled.", "Read", "back."]} ats={[at(58), at(59), at(59)]} size={size(140, 130)} colors={[C.paper, C.tide, C.tide]} />
 					</Center>

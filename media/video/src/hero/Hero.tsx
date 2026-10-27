@@ -2,6 +2,7 @@ import { AbsoluteFill, Audio, staticFile } from "remotion";
 import { Moment, Form, TabGroup } from "./Agent";
 import { BEATS, Seg } from "./beat";
 import { Blocked, Flagged, Refused } from "./Checks";
+import { heroClaims } from "./heroClaims";
 import { Finish } from "./motion";
 import { Build, ColdOpen, Gap, Line } from "./Open";
 import { EndCard, Router, WorksWith } from "./Outro";
@@ -11,6 +12,8 @@ import { EndCard, Router, WorksWith } from "./Outro";
  * cuts land on the music. `Hero` (16:9) and `HeroVertical` (9:16) render this same edit.
  */
 export const Hero: React.FC = () => {
+	// Every frame first checks the whole recording, so any frame of a bad capture fails the render.
+	heroClaims();
 	return (
 		<AbsoluteFill style={{ background: "#0F1B24" }}>
 			{/* The master ends cleanly: a 0.2 s fade-out ending at 57.6 s, the video's last frame. */}

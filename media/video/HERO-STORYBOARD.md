@@ -70,8 +70,8 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
 - B32: **"It asks first."** slams over the request card, centered, with a brass ring, flash and
   shake. B36: the card moves aside and, under the caption "in your agent", the drawn prompt box
   shows the recorded elicitation ("tabkyra: the browser agent wants to open
-  www.gutenberg.org. Allow?"); its three recorded choices land B37–B38 and the first is picked
-  on B39. B40: whip to the real after-state, Allowed sites with 127.0.0.1 and
+  www.gutenberg.org. Allow?"); its three recorded choices land B37–B38 and the one the run answered (recorded as
+  `permissionAnswer`, "Allow www.gutenberg.org from now on") is checked on B39. B40: whip to the real after-state, Allowed sites with 127.0.0.1 and
   www.gutenberg.org, under **"You decide."** with a tide flash.
 - **Out:** whip on B44.
 
@@ -90,8 +90,9 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
   its result, "Hold placed for Ada Lovelace...", punch in; **"Filled."** (B58) **"Read back."**
   (B59). The calls are found by content in the recorded order (`catalogRunFrom` in `src/hero/claims.ts`);
   the `//` labels on the two clicks ("Place hold", "Confirm hold") are the button names in the
-  recorded `read_page` the agent acted on, and the filled fields are checked against it too. The render fails if a step is
-  missing.
+  recorded `read_page` the agent acted on, where the filled refs must be its textbox and
+  combobox. The read-back sentence is the recorded `get_page_text` result itself and must name both
+  filled values. The render fails if a step is missing.
 - **Out:** cut on B61.
 
 ## 8. Refused (B61–B71, 29.15–34.36 s)
@@ -113,7 +114,8 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
 ## 10. Blocked (B80–B91, 38.16–43.89 s)
 
 - The bad SKILL.md, shown from two lines above the first flagged line to one below the last.
-  The four recorded lint errors land on B80–B83, each lighting its line red, while a **4**
+  The four recorded lint errors land on B80–B83, each lighting the line it names red (line 16
+  carries two, so it lights on B82 and pulses again on B83), while a **4**
   counts up: **"problems."** B84: a red **BLOCKED** stamp. B88: `tabkyra skill lint skills/` and
   its recorded **"✓ Clean."**; B89: **"Every bundled skill passes."**
 - **Out:** whip on B92.
@@ -159,5 +161,7 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
 - **Loudness.** About -14 LUFS with a -1 dBTP ceiling, re-measured on the final MP4s.
 - **Re-captures.** Every stamped or highlighted claim is checked against the recording before
   render: the refusal line and a non-zero exit, the retraction lines and exit 3, four lint
-  errors and a non-zero exit, the shipped skills' "✓ Clean." with no errors and exit 0, the
-  catalog calls in order, and the router figures. The render fails if one doesn't hold.
+  errors, each naming a line of the shown file, and a non-zero exit, the shipped skills'
+  "✓ Clean." with no errors and exit 0, the catalog calls in order and the read-back sentence,
+  the prompt's answered choice, and the router's p95 under 1 ms and each row's routed skill. The
+  render of Hero, HeroVertical or HeroPoster fails if one doesn't hold; the Demo still renders.

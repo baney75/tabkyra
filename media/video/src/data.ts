@@ -1,7 +1,6 @@
 // Everything shown as agent output, panel state or terminal output comes from the real run
 // recorded in public/capture/capture.json by scripts/demo/capture-video.mjs.
 import capture from "../public/capture/capture.json";
-import { type Call, catalogRunFrom } from "./hero/claims";
 
 const elements = (snapshot: string): string[] => snapshot.split("\n").filter((l) => /^e\d+ /.test(l));
 
@@ -39,6 +38,7 @@ export const DATA = {
 	cli: capture.cli,
 };
 
+type Call = { name: string; args: Record<string, unknown>; ms: number; text: string };
 const calls = b.calls as Call[];
 
 /** The real result of the nth call to `name` (0-based), compacted to one line. */
@@ -57,13 +57,6 @@ export function field(name: string, key: string, nth = 0): string {
 export function args(name: string, nth = 0): string {
 	const hit = calls.filter((c) => c.name === name)[nth];
 	if (!hit) throw new Error(`no ${name} call #${nth} in capture.json`);
-	return format(hit);
-}
-
-function format(hit: Call): string {
 	const parts = Object.entries(hit.args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
-	return parts.length ? `${hit.name} { ${parts.join(", ")} }` : `${hit.name} {}`;
+	return `${name} { ${parts.join(", ")} }`;
 }
-
-/** The catalog run as the hero shows it, each call found by content and checked (hero/claims.ts). */
-export const catalogRun = catalogRunFrom(calls, b.catalog.refs, b.catalogUrl);

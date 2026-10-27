@@ -3,11 +3,13 @@ import { DATA } from "../data";
 import { C, FONT } from "../theme";
 import { BrowserWindow } from "../ui";
 import { Helm } from "./Helm";
+import { heroClaims } from "./heroClaims";
 import { Backdrop, Finish } from "./motion";
 import { PanelPart } from "./parts";
 
 /** The hero poster: the line, the helm and the moment it asks first, at 1920×1080 scaled down. */
 export const HeroPoster: React.FC<{ scale: number }> = ({ scale }) => {
+	heroClaims();
 	const card = DATA.boxes.requestCard;
 	const crop = { x: card.x - 10, y: card.y - 6, w: card.width + 20, h: card.height + 16 };
 	return (
