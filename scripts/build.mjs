@@ -134,6 +134,41 @@ const stripRemovedSignIns = {
 };
 
 /**
+ * The bundled skill library (skills/<name>/SKILL.md, what `tabkyra skill list` shows) as a
+ * module, so the side panel's "/" menu can list and run them: `virtual:library-skills`.
+ */
+const librarySkills = {
+	name: "library-skills",
+	setup(b) {
+		b.onResolve({ filter: /^virtual:library-skills$/ }, () => ({
+			path: "library-skills",
+			namespace: "library-skills",
+		}));
+		b.onLoad({ filter: /.*/, namespace: "library-skills" }, () => {
+			const dir = join(packageRoot, "skills");
+			const files = [];
+			const skills = readdirSync(dir, { withFileTypes: true })
+				.filter((d) => d.isDirectory() && existsSync(join(dir, d.name, "SKILL.md")))
+				.map((d) => d.name)
+				.sort()
+				.map((name) => {
+					const file = join(dir, name, "SKILL.md");
+					files.push(file);
+					const text = readFileSync(file, "utf8");
+					const description = /^description: (.*)$/m.exec(text)?.[1]?.trim() ?? "";
+					return { name, description, text };
+				});
+			return {
+				contents: `export const LIBRARY_SKILLS = ${JSON.stringify(skills)};`,
+				loader: "js",
+				watchFiles: files,
+				watchDirs: [dir],
+			};
+		});
+	},
+};
+
+/**
  * marked's ES module entry: Tabkyra's own copy (package.json), which mini-lit's MarkdownBlock shares.
  * Its package.json "browser" field points at a UMD build, so the module entry is named directly.
  */
@@ -152,7 +187,7 @@ function markedEntry() {
 }
 
 const buildOptions = {
-	plugins: [stripRemovedSignIns],
+	plugins: [stripRemovedSignIns, librarySkills],
 	absWorkingDir: packageRoot,
 	entryPoints,
 	bundle: true,

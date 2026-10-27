@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- Side panel `/` menu runs skills. It lists the site skills that match the current page first, then the bundled library (`skills/*/SKILL.md`, what `tabkyra skill list` shows, bundled into the extension at build time as `virtual:library-skills`), then site skills for other sites, each with its short description, filtered as you type (name matches before description matches). Arrows move, Enter or Tab inserts `/<name>`, Esc closes. On send the skill's instructions load into the run and the rest of the message is the task. A `/word` that is not a skill stays plain text.
+- Side panel `@` menu references tabs. It lists the open tabs in the panel's window (title, favicon, host), this chat's own tabs first; private (incognito) tabs are never listed, browser pages (chrome:// and the like) show as unavailable, and a tab another agent session owns shows as in use. A chosen tab shows as a chip in the composer and on the sent message. On send, referencing a tab is the user's consent: the tab joins the chat's session through the adopt flow (the first one becomes current), and the model gets a compact line per tab (id, title, URL, what happened). A tab another agent owns stays with it (#27, #36); the model and the user are told. References are resolved once and frozen on the message (`tabkyraRefs`), so a reloaded chat sends the same thing. `test/composer.test.mjs`.
+
+### Changed
+- The side panel transcript reads as a log. The agent's own text stays full size; the work between texts (tool calls, page changes, reasoning) folds into one compact list of rows, each expandable to the full tool card, the reasoning behind it and its usage. Long runs show their last rows with an "N earlier steps" row. Reasoning shorter than 40 characters gets no row; longer reasoning joins the step it led to. Per-step usage moved into the expanded row and a tooltip; the run total stays below the composer. A site's skills show on the first page change to that site, not on every navigation. Artifact cards stay whole. pi-web-ui gains a transcript hook (`setTranscriptRenderer`, through `patches/pi-mono.patch`); the layout is `src/transcript/`. `test/transcript.test.mjs`.
+- The floating "Artifacts" pill over the chat is gone. Artifacts open from a header button with a count badge and from their tool cards.
+
+### Fixed
+- The `google-calendar-events` site skill listed `mail.google.com` as a domain, so it showed on every Gmail page. It now matches Calendar only; an unedited stored copy is replaced at startup, an edited one is kept. Domain matching moved to `src/storage/stores/domain-match.ts` with tests.
+
 ## [1.1.9] - 2026-10-27
 
 ### Added

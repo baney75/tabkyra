@@ -29,7 +29,7 @@ index 101c83f2c..12cd0c2e3 100644
 +	return generated ? Object.values(generated) : [];
 +}
 diff --git a/packages/web-ui/src/ChatPanel.ts b/packages/web-ui/src/ChatPanel.ts
-index 2c76c391d..b2e1df6d5 100644
+index 2c76c391d..73792853a 100644
 --- a/packages/web-ui/src/ChatPanel.ts
 +++ b/packages/web-ui/src/ChatPanel.ts
 @@ -2,7 +2,7 @@ import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
@@ -41,7 +41,29 @@ index 2c76c391d..b2e1df6d5 100644
  import type { AgentInterface } from "./components/AgentInterface.js";
  import { ArtifactsRuntimeProvider } from "./components/sandbox/ArtifactsRuntimeProvider.js";
  import { AttachmentsRuntimeProvider } from "./components/sandbox/AttachmentsRuntimeProvider.js";
-@@ -58,6 +58,7 @@ export class ChatPanel extends LitElement {
+@@ -23,6 +23,21 @@ export class ChatPanel extends LitElement {
+ 	@state() private artifactCount = 0;
+ 	@state() private showArtifactsPanel = false;
+ 	@state() private windowWidth = 0;
++	/** The floating "Artifacts" pill over the chat. An app that shows artifacts elsewhere turns it off. */
++	@state() public showArtifactsPill = true;
++	/** Called when the number of artifacts changes. */
++	public onArtifactsCountChange?: (count: number) => void;
++
++	/** How many artifacts the session has. */
++	get artifactsCount(): number {
++		return this.artifactCount;
++	}
++
++	/** Show the artifacts panel (it only renders when there are artifacts). */
++	openArtifacts(): void {
++		this.showArtifactsPanel = true;
++		this.requestUpdate();
++	}
+ 
+ 	private resizeHandler = () => {
+ 		this.windowWidth = window.innerWidth;
+@@ -58,6 +73,7 @@ export class ChatPanel extends LitElement {
  		config?: {
  			onApiKeyRequired?: (provider: string) => Promise<boolean>;
  			onBeforeSend?: () => void | Promise<void>;
@@ -49,7 +71,7 @@ index 2c76c391d..b2e1df6d5 100644
  			onCostClick?: () => void;
  			onModelSelect?: () => void;
  			sandboxUrlProvider?: () => string;
-@@ -81,6 +82,7 @@ export class ChatPanel extends LitElement {
+@@ -81,6 +97,7 @@ export class ChatPanel extends LitElement {
  		this.agentInterface.onApiKeyRequired = config?.onApiKeyRequired;
  		this.agentInterface.onModelSelect = config?.onModelSelect;
  		this.agentInterface.onBeforeSend = config?.onBeforeSend;
@@ -57,12 +79,37 @@ index 2c76c391d..b2e1df6d5 100644
  		this.agentInterface.onCostClick = config?.onCostClick;
  
  		// Set up artifacts panel
+@@ -123,6 +140,7 @@ export class ChatPanel extends LitElement {
+ 			if (this.hasArtifacts && created) {
+ 				this.showArtifactsPanel = true;
+ 			}
++			this.onArtifactsCountChange?.(count);
+ 			this.requestUpdate();
+ 		};
+ 
+@@ -152,6 +170,7 @@ export class ChatPanel extends LitElement {
+ 
+ 		this.hasArtifacts = this.artifactsPanel.artifacts.size > 0;
+ 		this.artifactCount = this.artifactsPanel.artifacts.size;
++		this.onArtifactsCountChange?.(this.artifactCount);
+ 
+ 		this.requestUpdate();
+ 	}
+@@ -179,7 +198,7 @@ export class ChatPanel extends LitElement {
+ 
+ 					<!-- Floating pill when artifacts exist and panel is collapsed -->
+ 					${
+-						this.hasArtifacts && !this.showArtifactsPanel
++						this.showArtifactsPill && this.hasArtifacts && !this.showArtifactsPanel
+ 							? html`
+ 								<button
+ 									class="absolute z-30 top-4 left-1/2 -translate-x-1/2 pointer-events-auto"
 diff --git a/packages/web-ui/src/components/AgentInterface.ts b/packages/web-ui/src/components/AgentInterface.ts
-index b8f6550ec..14b3a292d 100644
+index b8f6550ec..f95c50374 100644
 --- a/packages/web-ui/src/components/AgentInterface.ts
 +++ b/packages/web-ui/src/components/AgentInterface.ts
 @@ -1,3 +1,4 @@
-+import type { SlashCommandProvider } from "./MessageEditor.js";
++import type { ComposerAccessory, SlashCommandProvider } from "./MessageEditor.js";
  import { streamSimple, type ToolResultMessage, type Usage } from "@mariozechner/pi-ai";
  import { html, LitElement } from "lit";
  import { customElement, property, query } from "lit/decorators.js";
@@ -79,7 +126,7 @@ index b8f6550ec..14b3a292d 100644
  import { createStreamFn } from "../utils/proxy-utils.js";
  import type { UserMessageWithAttachments } from "./Messages.js";
  import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
-@@ -28,12 +30,18 @@ export class AgentInterface extends LitElement {
+@@ -28,12 +30,22 @@ export class AgentInterface extends LitElement {
  	@property({ attribute: false }) onApiKeyRequired?: (provider: string) => Promise<boolean>;
  	// Optional callback called before sending a message
  	@property({ attribute: false }) onBeforeSend?: () => void | Promise<void>;
@@ -95,10 +142,14 @@ index b8f6550ec..14b3a292d 100644
 +	@property({ attribute: false }) historyProvider?: () => string | undefined;
 +	// Suggestions shown when the composer starts with "/"
 +	@property({ attribute: false }) slashCommandProvider?: SlashCommandProvider;
++	// Suggestions shown after "@" (tab references)
++	@property({ attribute: false }) mentionProvider?: SlashCommandProvider;
++	// Rendered above the composer's text box
++	@property({ attribute: false }) composerAccessory?: ComposerAccessory;
  
  	// References
  	@query("message-editor") private _messageEditor!: MessageEditor;
-@@ -46,6 +54,12 @@ export class AgentInterface extends LitElement {
+@@ -46,6 +58,12 @@ export class AgentInterface extends LitElement {
  	private _resizeObserver?: ResizeObserver;
  	private _unsubscribeSession?: () => void;
  
@@ -111,7 +162,7 @@ index b8f6550ec..14b3a292d 100644
  	public setInput(text: string, attachments?: Attachment[]) {
  		const update = () => {
  			if (!this._messageEditor) requestAnimationFrame(update);
-@@ -150,12 +164,37 @@ export class AgentInterface extends LitElement {
+@@ -150,12 +168,37 @@ export class AgentInterface extends LitElement {
  			};
  		}
  
@@ -150,7 +201,7 @@ index b8f6550ec..14b3a292d 100644
  					this.requestUpdate();
  					break;
  				case "message_end":
-@@ -166,14 +205,16 @@ export class AgentInterface extends LitElement {
+@@ -166,14 +209,16 @@ export class AgentInterface extends LitElement {
  					}
  					this.requestUpdate();
  					break;
@@ -168,7 +219,7 @@ index b8f6550ec..14b3a292d 100644
  				case "message_update":
  					if (this._streamingContainer) {
  						const isStreaming = this.session?.state.isStreaming || false;
-@@ -213,52 +254,167 @@ export class AgentInterface extends LitElement {
+@@ -213,52 +258,167 @@ export class AgentInterface extends LitElement {
  	};
  
  	public async sendMessage(input: string, attachments?: Attachment[]) {
@@ -373,7 +424,7 @@ index b8f6550ec..14b3a292d 100644
  	}
  
  	private renderMessages() {
-@@ -361,6 +517,7 @@ export class AgentInterface extends LitElement {
+@@ -361,6 +521,7 @@ export class AgentInterface extends LitElement {
  				<!-- Input Area -->
  				<div class="shrink-0">
  					<div class="max-w-3xl mx-auto px-2">
@@ -381,12 +432,14 @@ index b8f6550ec..14b3a292d 100644
  						<message-editor
  							.isStreaming=${state.isStreaming}
  							.currentModel=${state.model}
-@@ -368,8 +525,10 @@ export class AgentInterface extends LitElement {
+@@ -368,8 +529,12 @@ export class AgentInterface extends LitElement {
  							.showAttachmentButton=${this.enableAttachments}
  							.showModelSelector=${this.enableModelSelector}
  							.showThinkingSelector=${this.enableThinkingSelector}
 +							.historyProvider=${this.historyProvider}
 +							.slashCommandProvider=${this.slashCommandProvider}
++							.mentionProvider=${this.mentionProvider}
++							.accessory=${this.composerAccessory}
  							.onSend=${(input: string, attachments: Attachment[]) => {
 -								this.sendMessage(input, attachments);
 +								void this.startSend(input, attachments, "editor").then(({ run }) => run);
@@ -394,10 +447,10 @@ index b8f6550ec..14b3a292d 100644
  							.onAbort=${() => session.abort()}
  							.onModelSelect=${() => {
 diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
-index f0987c4d1..286192751 100644
+index f0987c4d1..4957932e3 100644
 --- a/packages/web-ui/src/components/MessageEditor.ts
 +++ b/packages/web-ui/src/components/MessageEditor.ts
-@@ -11,6 +11,16 @@ import { i18n } from "../utils/i18n.js";
+@@ -11,6 +11,32 @@ import { i18n } from "../utils/i18n.js";
  import "./AttachmentTile.js";
  import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
  
@@ -407,76 +460,152 @@ index f0987c4d1..286192751 100644
 +	description?: string;
 +	hint?: string;
 +	value: string;
++	/** Shown but not choosable (the hint says why). */
++	disabled?: boolean;
++	/** Image shown before the title (a favicon). */
++	iconUrl?: string;
++	/** Items with a section get a heading where the section changes. */
++	section?: string;
 +}
 +
 +export type SlashCommandProvider = (query: string) => Promise<SlashCommand[]>;
 +
++/** Renders above the text box (reference chips); `setValue` replaces the composer text. */
++export type ComposerAccessory = (value: string, setValue: (value: string) => void) => unknown;
++
++/** Where the open menu came from and which text it replaces. */
++interface MenuTrigger {
++	kind: "slash" | "mention";
++	start: number;
++	end: number;
++}
++
  @customElement("message-editor")
  export class MessageEditor extends LitElement {
  	private _value = "";
-@@ -38,6 +48,8 @@ export class MessageEditor extends LitElement {
+@@ -38,6 +64,11 @@ export class MessageEditor extends LitElement {
  	@property() onAbort?: () => void;
  	@property() onModelSelect?: () => void;
  	@property() onThinkingChange?: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
 +	@property({ attribute: false }) historyProvider?: () => string | undefined;
 +	@property({ attribute: false }) slashCommandProvider?: SlashCommandProvider;
++	/** Suggestions shown after an "@" that starts a word (tab references). */
++	@property({ attribute: false }) mentionProvider?: SlashCommandProvider;
++	@property({ attribute: false }) accessory?: ComposerAccessory;
  	@property() onFilesChange?: (files: Attachment[]) => void;
  	@property() attachments: Attachment[] = [];
  	@property() maxFiles = 10;
-@@ -47,6 +59,9 @@ export class MessageEditor extends LitElement {
+@@ -47,6 +78,12 @@ export class MessageEditor extends LitElement {
  
  	@state() processingFiles = false;
  	@state() isDragging = false;
 +	@state() private slashItems: SlashCommand[] = [];
 +	@state() private slashIndex = 0;
 +	private slashRequest = 0;
++	private menuTrigger?: MenuTrigger;
++	private static menuSeq = 0;
++	private readonly menuId = `composer-menu-${++MessageEditor.menuSeq}`;
  	private fileInputRef = createRef<HTMLInputElement>();
  
  	protected override createRenderRoot(): HTMLElement | DocumentFragment {
-@@ -57,12 +72,62 @@ export class MessageEditor extends LitElement {
+@@ -57,12 +94,116 @@ export class MessageEditor extends LitElement {
  		const textarea = e.target as HTMLTextAreaElement;
  		this.value = textarea.value;
  		this.onInput?.(this.value);
 +		this.updateSlashItems();
  	};
  
++	/** The menu the text before the caret asks for: "/" at the very start, or "@" starting a word. */
++	private findTrigger(): { trigger: MenuTrigger; query: string; provider: SlashCommandProvider } | undefined {
++		const caret = this.textareaRef.value?.selectionStart ?? this.value.length;
++		const before = this.value.slice(0, caret);
++		const after = this.value.slice(caret);
++		const wordEnd = caret + (/^\S*/.exec(after)?.[0].length ?? 0);
++		const slash = /^\/(\S*)$/.exec(before);
++		if (slash && this.slashCommandProvider)
++			return { trigger: { kind: "slash", start: 0, end: wordEnd }, query: slash[1], provider: this.slashCommandProvider };
++		const mention = /(^|\s)@(\S*)$/.exec(before);
++		if (mention && this.mentionProvider) {
++			const start = caret - mention[2].length - 1;
++			return { trigger: { kind: "mention", start, end: wordEnd }, query: mention[2], provider: this.mentionProvider };
++		}
++		return undefined;
++	}
++
 +	private async updateSlashItems() {
-+		const match = /^\/(\S*)$/.exec(this.value);
++		const found = this.findTrigger();
 +		const request = ++this.slashRequest;
-+		if (!match || !this.slashCommandProvider) {
++		if (!found) {
 +			this.slashItems = [];
++			this.menuTrigger = undefined;
 +			return;
 +		}
-+		const items = await this.slashCommandProvider(match[1]).catch(() => []);
++		const items = await found.provider(found.query).catch(() => []);
 +		if (request !== this.slashRequest) return;
++		this.menuTrigger = found.trigger;
 +		this.slashItems = items;
-+		this.slashIndex = 0;
++		const first = items.findIndex((i) => !i.disabled);
++		this.slashIndex = first < 0 ? 0 : first;
++	}
++
++	private closeMenu() {
++		this.slashItems = [];
++		this.menuTrigger = undefined;
++		this.slashRequest++;
 +	}
 +
 +	private applySlashItem(item: SlashCommand) {
-+		this.value = `${item.value} `;
-+		this.slashItems = [];
-+		this.slashRequest++;
++		if (item.disabled) return;
++		const trigger = this.menuTrigger ?? { kind: "slash", start: 0, end: this.value.length };
++		const head = this.value.slice(0, trigger.start);
++		const tail = this.value.slice(trigger.end).replace(/^ /, "");
++		const inserted = `${item.value} `;
++		this.value = `${head}${inserted}${tail}`;
++		this.closeMenu();
 +		this.onInput?.(this.value);
-+		this.textareaRef.value?.focus();
++		const caret = head.length + inserted.length;
++		const textarea = this.textareaRef.value;
++		textarea?.focus();
++		// The textarea takes the new value on the next render; put the caret after the insert then.
++		void this.updateComplete.then(() => textarea?.setSelectionRange(caret, caret));
++	}
++
++	/** Step the highlight, skipping items that can't be chosen. */
++	private moveHighlight(step: 1 | -1) {
++		const n = this.slashItems.length;
++		for (let k = 1; k <= n; k++) {
++			const i = (this.slashIndex + step * k + n * k) % n;
++			if (!this.slashItems[i].disabled) {
++				this.slashIndex = i;
++				return;
++			}
++		}
 +	}
 +
  	private handleKeyDown = (e: KeyboardEvent) => {
 +		if (this.slashItems.length > 0) {
 +			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 +				e.preventDefault();
-+				const n = this.slashItems.length;
-+				this.slashIndex = (this.slashIndex + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
++				this.moveHighlight(e.key === "ArrowDown" ? 1 : -1);
 +				return;
 +			}
-+			if (e.key === "Enter" || e.key === "Tab") {
-+				e.preventDefault();
-+				this.applySlashItem(this.slashItems[this.slashIndex]);
-+				return;
++			if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
++				const item = this.slashItems[this.slashIndex];
++				// Nothing choosable: Enter sends as usual, Tab does nothing special.
++				if (item && !item.disabled) {
++					e.preventDefault();
++					this.applySlashItem(item);
++					return;
++				}
++				if (e.key === "Tab") {
++					e.preventDefault();
++					return;
++				}
 +			}
 +			if (e.key === "Escape") {
 +				e.preventDefault();
-+				this.slashItems = [];
++				e.stopPropagation();
++				this.closeMenu();
 +				return;
 +			}
 +		}
@@ -497,40 +626,100 @@ index f0987c4d1..286192751 100644
  				this.handleSend();
  			}
  		} else if (e.key === "Escape" && this.isStreaming) {
-@@ -274,6 +339,32 @@ export class MessageEditor extends LitElement {
+@@ -225,6 +366,66 @@ export class MessageEditor extends LitElement {
+ 		this.processingFiles = false;
+ 	};
+ 
++	private setComposerValue(value: string) {
++		this.value = value;
++		this.onInput?.(value);
++		this.updateSlashItems();
++		this.textareaRef.value?.focus();
++	}
++
++	private renderMenu() {
++		if (this.slashItems.length === 0) return "";
++		const label = this.menuTrigger?.kind === "mention" ? i18n("Tabs") : i18n("Skills");
++		let lastSection: string | undefined;
++		return html`
++			<div
++				id=${this.menuId}
++				role="listbox"
++				aria-label=${label}
++				class="absolute bottom-full left-0 right-0 mb-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-md z-20 py-1"
++			>
++				${this.slashItems.map((item, i) => {
++					const heading =
++						item.section && item.section !== lastSection
++							? html`<div role="presentation" class="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">${item.section}</div>`
++							: "";
++					lastSection = item.section;
++					const active = i === this.slashIndex;
++					return html`
++						${heading}
++						<div
++							id="${this.menuId}-${i}"
++							role="option"
++							aria-selected=${active ? "true" : "false"}
++							aria-disabled=${item.disabled ? "true" : "false"}
++							class="px-3 py-1.5 text-sm ${item.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${active && !item.disabled ? "bg-accent text-accent-foreground" : ""}"
++							@mousemove=${() => {
++								if (!item.disabled && this.slashIndex !== i) this.slashIndex = i;
++							}}
++							@mousedown=${(e: MouseEvent) => {
++								e.preventDefault();
++								this.applySlashItem(item);
++							}}
++						>
++							<div class="flex items-center gap-2 min-w-0">
++								${
++									item.iconUrl
++										? html`<img src=${item.iconUrl} alt="" class="w-4 h-4 shrink-0" @error=${(e: Event) => {
++												(e.target as HTMLImageElement).style.visibility = "hidden";
++											}} />`
++										: ""
++								}
++								<span class="font-medium truncate">${item.title}</span>
++								${item.hint ? html`<span class="ml-auto shrink-0 text-xs text-muted-foreground">${item.hint}</span>` : ""}
++							</div>
++							${item.description ? html`<div class="text-xs text-muted-foreground truncate ${item.iconUrl ? "pl-6" : ""}">${item.description}</div>` : ""}
++						</div>
++					`;
++				})}
++			</div>
++		`;
++	}
++
+ 	override firstUpdated() {
+ 		const textarea = this.textareaRef.value;
+ 		if (textarea) {
+@@ -274,13 +475,25 @@ export class MessageEditor extends LitElement {
  						: ""
  				}
  
-+				${
-+					this.slashItems.length > 0
-+						? html`
-+							<div class="absolute bottom-full left-0 right-0 mb-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-popover shadow-md z-20">
-+								${this.slashItems.map(
-+									(item, i) => html`
-+										<div
-+											class="px-3 py-2 cursor-pointer text-sm ${i === this.slashIndex ? "bg-accent" : ""}"
-+											@mousedown=${(e: MouseEvent) => {
-+												e.preventDefault();
-+												this.applySlashItem(item);
-+											}}
-+										>
-+											<div class="flex justify-between gap-2">
-+												<span class="font-medium">${item.title}</span>
-+												${item.hint ? html`<span class="text-xs text-muted-foreground">${item.hint}</span>` : ""}
-+											</div>
-+											${item.description ? html`<div class="text-xs text-muted-foreground truncate">${item.description}</div>` : ""}
-+										</div>
-+									`,
-+								)}
-+							</div>
-+						`
-+						: ""
-+				}
++				${this.renderMenu()}
++				${this.accessory ? this.accessory(this.value, (v) => this.setComposerValue(v)) : ""}
 +
  				<textarea
  					class="w-full bg-transparent p-4 text-foreground placeholder-muted-foreground outline-none resize-none overflow-y-auto"
  					placeholder=${i18n("Type a message...")}
-@@ -383,17 +474,17 @@ export class MessageEditor extends LitElement {
+ 					rows="1"
+ 					style="max-height: 200px; field-sizing: content; min-height: 1lh; height: auto;"
+ 					.value=${this.value}
++					role="combobox"
++					aria-autocomplete="list"
++					aria-expanded=${this.slashItems.length > 0 ? "true" : "false"}
++					aria-controls=${this.menuId}
++					aria-activedescendant=${this.slashItems.length > 0 ? `${this.menuId}-${this.slashIndex}` : ""}
+ 					@input=${this.handleTextareaInput}
++					@click=${() => {
++						if (this.slashItems.length > 0) this.updateSlashItems();
++					}}
++					@blur=${() => this.closeMenu()}
+ 					@keydown=${this.handleKeyDown}
+ 					@paste=${this.handlePaste}
+ 					${ref(this.textareaRef)}
+@@ -383,17 +596,17 @@ export class MessageEditor extends LitElement {
  										className: "h-8 w-8",
  									})}
  								`
@@ -558,6 +747,101 @@ index f0987c4d1..286192751 100644
  					</div>
  				</div>
  			</div>
+diff --git a/packages/web-ui/src/components/MessageList.ts b/packages/web-ui/src/components/MessageList.ts
+index 75afda08c..881b06c65 100644
+--- a/packages/web-ui/src/components/MessageList.ts
++++ b/packages/web-ui/src/components/MessageList.ts
+@@ -7,6 +7,7 @@ import { html, LitElement, type TemplateResult } from "lit";
+ import { property } from "lit/decorators.js";
+ import { repeat } from "lit/directives/repeat.js";
+ import { renderMessage } from "./message-renderer-registry.js";
++import { getTranscriptRenderer } from "./transcript-hook.js";
+ 
+ export class MessageList extends LitElement {
+ 	@property({ type: Array }) messages: AgentMessage[] = [];
+@@ -33,6 +34,15 @@ export class MessageList extends LitElement {
+ 			}
+ 		}
+ 
++		const custom = getTranscriptRenderer()?.items(this.messages, {
++			tools: this.tools,
++			pendingToolCalls: this.pendingToolCalls,
++			toolResultsById: resultByCallId,
++			isStreaming: this.isStreaming,
++			onCostClick: this.onCostClick,
++		});
++		if (custom) return custom;
++
+ 		const items: Array<{ key: string; template: TemplateResult }> = [];
+ 		let index = 0;
+ 		for (const msg of this.messages) {
+diff --git a/packages/web-ui/src/components/StreamingMessageContainer.ts b/packages/web-ui/src/components/StreamingMessageContainer.ts
+index 3d2693150..520034e64 100644
+--- a/packages/web-ui/src/components/StreamingMessageContainer.ts
++++ b/packages/web-ui/src/components/StreamingMessageContainer.ts
+@@ -2,6 +2,7 @@ import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
+ import type { ToolResultMessage } from "@mariozechner/pi-ai";
+ import { html, LitElement } from "lit";
+ import { property, state } from "lit/decorators.js";
++import { getTranscriptRenderer } from "./transcript-hook.js";
+ 
+ export class StreamingMessageContainer extends LitElement {
+ 	@property({ type: Array }) tools: AgentTool[] = [];
+@@ -78,6 +79,14 @@ export class StreamingMessageContainer extends LitElement {
+ 			// Skip standalone tool result in streaming; the stable list will render it immediiately
+ 			return html``;
+ 		} else if (msg.role === "assistant") {
++			const live = getTranscriptRenderer()?.live?.(msg, {
++				tools: this.tools,
++				pendingToolCalls: this.pendingToolCalls,
++				toolResultsById: this.toolResultsById ?? new Map(),
++				isStreaming: this.isStreaming,
++				onCostClick: this.onCostClick,
++			});
++			if (live) return live;
+ 			// Assistant message - render inline tool messages during streaming
+ 			return html`
+ 				<div class="flex flex-col gap-3 mb-3">
+diff --git a/packages/web-ui/src/components/transcript-hook.ts b/packages/web-ui/src/components/transcript-hook.ts
+new file mode 100644
+index 000000000..0b51c2070
+--- /dev/null
++++ b/packages/web-ui/src/components/transcript-hook.ts
+@@ -0,0 +1,34 @@
++import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
++import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
++import type { TemplateResult } from "lit";
++
++export interface TranscriptContext {
++	tools: AgentTool[];
++	pendingToolCalls?: Set<string>;
++	toolResultsById: Map<string, ToolResultMessage>;
++	isStreaming: boolean;
++	onCostClick?: () => void;
++}
++
++/**
++ * An app-supplied transcript layout. `items` replaces MessageList's one-item-per-message
++ * rendering; `live` renders the assistant message still streaming. Either may return
++ * undefined to fall back to the built-in rendering.
++ */
++export interface TranscriptRenderer {
++	items(
++		messages: AgentMessage[],
++		ctx: TranscriptContext,
++	): Array<{ key: string; template: TemplateResult }> | undefined;
++	live?(message: AssistantMessage, ctx: TranscriptContext): TemplateResult | undefined;
++}
++
++let current: TranscriptRenderer | undefined;
++
++export function setTranscriptRenderer(renderer: TranscriptRenderer | undefined): void {
++	current = renderer;
++}
++
++export function getTranscriptRenderer(): TranscriptRenderer | undefined {
++	return current;
++}
 diff --git a/packages/web-ui/src/dialogs/ModelSelector.ts b/packages/web-ui/src/dialogs/ModelSelector.ts
 index 192c3c536..451f2f957 100644
 --- a/packages/web-ui/src/dialogs/ModelSelector.ts
@@ -657,19 +941,37 @@ index 71620552e..f0cce34c8 100644
  							</div>
  
 diff --git a/packages/web-ui/src/index.ts b/packages/web-ui/src/index.ts
-index 48284c742..6cfb7b051 100644
+index 48284c742..ff8d0228f 100644
 --- a/packages/web-ui/src/index.ts
 +++ b/packages/web-ui/src/index.ts
-@@ -10,7 +10,7 @@ export { ConsoleBlock } from "./components/ConsoleBlock.js";
+@@ -10,7 +10,12 @@ export { ConsoleBlock } from "./components/ConsoleBlock.js";
  export { CustomProviderCard } from "./components/CustomProviderCard.js";
  export { ExpandableSection } from "./components/ExpandableSection.js";
  export { Input } from "./components/Input.js";
 -export { MessageEditor } from "./components/MessageEditor.js";
-+export { MessageEditor, type SlashCommand, type SlashCommandProvider } from "./components/MessageEditor.js";
++export {
++	type ComposerAccessory,
++	MessageEditor,
++	type SlashCommand,
++	type SlashCommandProvider,
++} from "./components/MessageEditor.js";
  export { MessageList } from "./components/MessageList.js";
  // Message components
  export type { ArtifactMessage, UserMessageWithAttachments } from "./components/Messages.js";
-@@ -57,7 +57,7 @@ export { ApiKeyPromptDialog } from "./dialogs/ApiKeyPromptDialog.js";
+@@ -41,6 +46,12 @@ export {
+ 	type SandboxUrlProvider,
+ } from "./components/SandboxedIframe.js";
+ export { StreamingMessageContainer } from "./components/StreamingMessageContainer.js";
++export {
++	getTranscriptRenderer,
++	setTranscriptRenderer,
++	type TranscriptContext,
++	type TranscriptRenderer,
++} from "./components/transcript-hook.js";
+ // Sandbox Runtime Providers
+ export { ArtifactsRuntimeProvider } from "./components/sandbox/ArtifactsRuntimeProvider.js";
+ export { AttachmentsRuntimeProvider } from "./components/sandbox/AttachmentsRuntimeProvider.js";
+@@ -57,7 +68,7 @@ export { ApiKeyPromptDialog } from "./dialogs/ApiKeyPromptDialog.js";
  export { AttachmentOverlay } from "./dialogs/AttachmentOverlay.js";
  export { CustomProviderDialog } from "./dialogs/CustomProviderDialog.js";
  // Dialogs
@@ -678,7 +980,7 @@ index 48284c742..6cfb7b051 100644
  export { PersistentStorageDialog } from "./dialogs/PersistentStorageDialog.js";
  export { ProvidersModelsTab } from "./dialogs/ProvidersModelsTab.js";
  export { SessionListDialog } from "./dialogs/SessionListDialog.js";
-@@ -93,7 +93,13 @@ export type {
+@@ -93,7 +104,13 @@ export type {
  // Artifacts
  export { ArtifactElement } from "./tools/artifacts/ArtifactElement.js";
  export { ArtifactPill } from "./tools/artifacts/ArtifactPill.js";
@@ -727,14 +1029,16 @@ index 0a5474a7a..05f41d16d 100644
  				(element as HtmlArtifact).runtimeProviders = this.getHtmlArtifactRuntimeProviders();
  				if (this.sandboxUrlProvider) {
 diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
-index 1f50a7d08..1da1213a3 100644
+index 1f50a7d08..01fef28f6 100644
 --- a/packages/web-ui/src/utils/i18n.ts
 +++ b/packages/web-ui/src/utils/i18n.ts
-@@ -61,6 +61,13 @@ declare module "@mariozechner/mini-lit" {
+@@ -61,6 +61,15 @@ declare module "@mariozechner/mini-lit" {
  		"Call was aborted; no result.": string;
  		"No session available": string;
  		"No session set": string;
 +		"Queued": string;
++		Skills: string;
++		Tabs: string;
 +		"Add to queue": string;
 +		"Send now": string;
 +		"Remove from queue": string;
@@ -744,11 +1048,13 @@ index 1f50a7d08..1da1213a3 100644
  		"Preparing tool parameters...": string;
  		"(no output)": string;
  		Input: string;
-@@ -272,6 +279,13 @@ export const translations = {
+@@ -272,6 +281,15 @@ export const translations = {
  		"Call was aborted; no result.": "Call was aborted; no result.",
  		"No session available": "No session available",
  		"No session set": "No session set",
 +		"Queued": "Queued",
++		Skills: "Skills",
++		Tabs: "Tabs",
 +		"Add to queue": "Add to queue",
 +		"Send now": "Send now",
 +		"Remove from queue": "Remove from queue",
@@ -758,11 +1064,13 @@ index 1f50a7d08..1da1213a3 100644
  		"Preparing tool parameters...": "Preparing tool parameters...",
  		"(no output)": "(no output)",
  		Input: "Input",
-@@ -491,6 +505,13 @@ export const translations = {
+@@ -491,6 +509,15 @@ export const translations = {
  		"Call was aborted; no result.": "Aufruf wurde abgebrochen; kein Ergebnis.",
  		"No session available": "Keine Sitzung verfügbar",
  		"No session set": "Keine Sitzung gesetzt",
 +		"Queued": "In Warteschlange",
++		Skills: "Skills",
++		Tabs: "Tabs",
 +		"Add to queue": "Zur Warteschlange hinzufügen",
 +		"Send now": "Jetzt senden",
 +		"Remove from queue": "Aus der Warteschlange entfernen",
@@ -772,257 +1080,3 @@ index 1f50a7d08..1da1213a3 100644
  		"Preparing tool parameters...": "Bereite Tool-Parameter vor...",
  		"(no output)": "(keine Ausgabe)",
  		Input: "Eingabe",
-diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
-new file mode 100644
-index 000000000..daa256961
---- /dev/null
-+++ b/packages/web-ui/src/utils/message-queue.ts
-@@ -0,0 +1,248 @@
-+import type { AgentMessage } from "@mariozechner/pi-agent-core";
-+import type { Attachment } from "./attachment-utils.js";
-+
-+export interface QueuedMessage {
-+	id: number;
-+	input: string;
-+	attachments?: Attachment[];
-+	/** Set once "Send now" handed it to the running agent; cleared if the run ends first. */
-+	steered?: AgentMessage;
-+	/** Set by Send now: its press order. Pressed items lead the list, in press order. */
-+	nowSeq?: number;
-+}
-+
-+/** The parts of Agent the queue uses. */
-+export interface QueueAgent {
-+	state: { isStreaming: boolean; messages: AgentMessage[] };
-+	steer(message: AgentMessage): void;
-+	clearSteeringQueue(): void;
-+	waitForIdle(): Promise<void>;
-+}
-+
-+/**
-+ * How a send went. "started": a prompt is running. "busy": another send or run got there
-+ * first, so the item goes back in its place and waits for the next chance. "refused": it can't
-+ * go (no key, no model), so the item goes back in its place and is held until Send now or ×.
-+ */
-+export type SendResult = "started" | "busy" | "refused";
-+
-+/**
-+ * Messages the user sends while the agent runs, for one agent. The list is the only queue:
-+ * when a run ends the first item goes out through `send` as an ordinary prompt. "Send now"
-+ * during a run hands the item (after a page note, unless the same note already went this run)
-+ * to the agent with steer(), which delivers it after the current tool call; it leaves the list
-+ * once the agent injects it, and if the run ends first it goes out ahead of the rest. Items
-+ * pressed with Send now lead the list in press order. A stopped or failed run holds the items
-+ * that were waiting then (not pressed ones, not later ones) until Send now or ×.
-+ */
-+export class MessageQueue {
-+	items: QueuedMessage[] = [];
-+	/** Items that were waiting when a run was stopped or failed; they wait for Send now or ×. */
-+	private held = new Set<number>();
-+	private running: boolean;
-+	private seq = 0;
-+	private nowSeq = 0;
-+	private draining = false;
-+	/** A drain was asked for while one ran; run again when it finishes. */
-+	private drainAgain = false;
-+	private disposed = false;
-+	/** The page note steered but not yet injected, so the same note isn't steered twice. */
-+	private lastContext?: string;
-+	private pendingContext: AgentMessage[] = [];
-+	/** Send now presses still building their page context; the drain waits for them to decide. */
-+	private sendNowPending = 0;
-+
-+	constructor(
-+		readonly agent: QueueAgent,
-+		private readonly send: (item: QueuedMessage) => Promise<SendResult>,
-+		private readonly changed: () => void,
-+		private readonly beforeSteer?: () => Promise<AgentMessage[]>,
-+	) {
-+		this.running = agent.state.isStreaming;
-+	}
-+
-+	/** Something is held after a Stop or failure (the panel shows a note). */
-+	get paused(): boolean {
-+		return this.items.some((q) => this.held.has(q.id));
-+	}
-+
-+	add(input: string, attachments?: Attachment[]): void {
-+		// New items are never held: a Stop only holds what was waiting when it happened.
-+		this.items = [...this.items, { id: ++this.seq, input, attachments }];
-+		this.changed();
-+	}
-+
-+	/** The user message for an item, shaped as Agent.prompt() builds one. */
-+	static message(item: QueuedMessage): AgentMessage {
-+		if (item.attachments && item.attachments.length > 0) {
-+			return {
-+				role: "user-with-attachments",
-+				content: item.input,
-+				attachments: item.attachments,
-+				timestamp: Date.now(),
-+			} as unknown as AgentMessage;
-+		}
-+		return { role: "user", content: [{ type: "text", text: item.input }], timestamp: Date.now() } as AgentMessage;
-+	}
-+
-+	/** Send an item now: into the running turn, or next when nothing runs. Always resumes. */
-+	async sendNow(id: number): Promise<void> {
-+		const pending = (q: QueuedMessage) => q.id === id && !q.steered;
-+		if (!this.items.some(pending)) return;
-+		this.held.clear();
-+		// Press order, recorded on the item at once: a Stop during the wait below must not hold it.
-+		const nowSeq = ++this.nowSeq;
-+		this.items = this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q));
-+		let context: AgentMessage[] = [];
-+		if (this.running) {
-+			this.sendNowPending++;
-+			try {
-+				context = (await this.beforeSteer?.().catch(() => [])) ?? [];
-+			} finally {
-+				this.sendNowPending--;
-+			}
-+		}
-+		const item = this.items.find(pending);
-+		if (!item) {
-+			// Removed while its context was built; the drain stood down for it, so restart it.
-+			if (!this.running) void this.drain();
-+			return;
-+		}
-+		this.held.delete(id);
-+		if (this.running) {
-+			const message = MessageQueue.message(item);
-+			// The page note goes unless it repeats the one already steered in this run.
-+			const key = context.length > 0 ? JSON.stringify(context.map((m) => (m as { url?: string }).url ?? m)) : undefined;
-+			if (key && key !== this.lastContext) {
-+				for (const extra of context) this.agent.steer(extra);
-+				this.lastContext = key;
-+				this.pendingContext = context;
-+			}
-+			this.agent.steer(message);
-+			this.items = this.items.map((q) => (q.id === id ? { ...q, steered: message, nowSeq } : q));
-+			this.changed();
-+			return;
-+		}
-+		// Nothing runs: it goes next, after items pressed before it.
-+		this.items = this.ordered(this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q)));
-+		this.changed();
-+		void this.drain();
-+	}
-+
-+	/** Pressed items first, in press order; the rest keep their order. */
-+	private ordered(items: QueuedMessage[]): QueuedMessage[] {
-+		const pressed = items.filter((q) => q.nowSeq !== undefined).sort((x, y) => (x.nowSeq ?? 0) - (y.nowSeq ?? 0));
-+		return [...pressed, ...items.filter((q) => q.nowSeq === undefined)];
-+	}
-+
-+	/** The panel missed events (it was disconnected): take the run state from the agent again. */
-+	sync(): void {
-+		// A Send now message the agent injected while nobody listened is already sent.
-+		const seen = new Set(this.agent.state.messages);
-+		this.items = this.items.filter((q) => !q.steered || !seen.has(q.steered));
-+		this.running = this.agent.state.isStreaming;
-+		if (this.running) {
-+			this.changed();
-+			return;
-+		}
-+		// The run ended unheard: apply the end-of-run rules (a Stop still holds what waited).
-+		this.onAgentEnd(this.agent.state.messages);
-+	}
-+
-+	/** Try to send again (a send that held the panel ended without starting a run). */
-+	kick(): void {
-+		void this.drain();
-+	}
-+
-+	remove(id: number): void {
-+		this.items = this.items.filter((q) => q.id !== id || q.steered);
-+		this.held.delete(id);
-+		this.changed();
-+	}
-+
-+	onAgentStart(): void {
-+		this.running = true;
-+		this.lastContext = undefined;
-+		this.pendingContext = [];
-+	}
-+
-+	/** A message the agent injected: a steered item is now in the transcript. */
-+	onMessageStart(message: AgentMessage): void {
-+		// Once the note is in the transcript, the panel's own page check takes over from here.
-+		if (this.pendingContext.includes(message)) {
-+			this.lastContext = undefined;
-+			this.pendingContext = [];
-+		}
-+		if (!this.items.some((q) => q.steered === message)) return;
-+		this.items = this.items.filter((q) => q.steered !== message);
-+		this.changed();
-+	}
-+
-+	/** The run is over; send the next item, or pause if the user stopped it or it failed. */
-+	onAgentEnd(messages: AgentMessage[]): void {
-+		this.running = false;
-+		this.lastContext = undefined;
-+		this.pendingContext = [];
-+		// A steer that arrived after the last turn is never injected. It was asked for first, so
-+		// it goes out first.
-+		this.agent.clearSteeringQueue();
-+		this.items = this.ordered(this.items.map((q) => (q.steered ? { ...q, steered: undefined } : q)));
-+		const last = [...messages].reverse().find((m) => m.role === "assistant") as { stopReason?: string } | undefined;
-+		// A Stop or failure holds what was waiting, except items the user pressed Send now on.
-+		if (last?.stopReason === "aborted" || last?.stopReason === "error") {
-+			for (const q of this.items) if (q.nowSeq === undefined) this.held.add(q.id);
-+		}
-+		this.changed();
-+		void this.drain();
-+	}
-+
-+	/** Forget everything (the panel switched to another session). */
-+	dispose(): void {
-+		this.disposed = true;
-+		this.agent.clearSteeringQueue();
-+		this.items = [];
-+		this.held.clear();
-+	}
-+
-+	/** Once the agent is idle, send the first item not held; the next waits for that run's end. */
-+	private async drain(): Promise<void> {
-+		if (this.draining) {
-+			this.drainAgain = true;
-+			return;
-+		}
-+		this.draining = true;
-+		try {
-+			await this.agent.waitForIdle();
-+			// A Send now still building its context decides what goes next; it drains when done.
-+			if (this.disposed || this.running || this.sendNowPending > 0) return;
-+			const next = this.items.find((q) => !this.held.has(q.id));
-+			if (!next) return;
-+			this.items = this.items.filter((q) => q !== next);
-+			this.changed();
-+			let result: SendResult;
-+			try {
-+				result = await this.send(next);
-+			} catch {
-+				result = "refused";
-+			}
-+			if (result !== "started" && !this.disposed) {
-+				// Back in its place: behind anything pressed while it was out.
-+				this.items = this.ordered([next, ...this.items]);
-+				if (result === "refused") this.held.add(next.id);
-+				this.changed();
-+			}
-+		} finally {
-+			this.draining = false;
-+			// Can't spin: a refused item is held, and a busy one waits on waitForIdle or a run.
-+			if (this.drainAgain) {
-+				this.drainAgain = false;
-+				void this.drain();
-+			}
-+		}
-+	}
-+
-+	/** Whether the queue has something it would send now (nothing held, not mid-send). */
-+	get hasSendable(): boolean {
-+		return this.items.some((q) => !q.steered && !this.held.has(q.id));
-+	}
-+}

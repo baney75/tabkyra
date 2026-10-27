@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
+import { type ComposerRefs, refsForModel } from "../composer/refs.js";
 import type { NavigationMessage } from "./NavigationMessage.js";
 
 // Helper: Check if a message has toolCall blocks
@@ -112,12 +113,24 @@ ${skillsInfo}
 </instructions>`,
 			} as Message);
 		} else if (m.role === "user") {
-			const { attachments, ...rest } = m as any;
-			transformed.push(rest as Message);
+			const { attachments, tabkyraRefs, ...rest } = m as any;
+			transformed.push(withRefs(rest as Message & { role: "user" }, tabkyraRefs as ComposerRefs | undefined));
 		} else {
 			transformed.push(m as Message);
 		}
 	}
 
 	return reorderMessages(transformed);
+}
+
+/** A user message whose composer references were resolved: the model gets the expanded text. */
+function withRefs(m: Message & { role: "user" }, refs: ComposerRefs | undefined): Message {
+	if (!refs) return m;
+	if (typeof m.content === "string") return { ...m, content: refsForModel(m.content, refs) };
+	const text = m.content
+		.filter((c) => c.type === "text")
+		.map((c) => (c as { text: string }).text)
+		.join("\n");
+	const others = m.content.filter((c) => c.type !== "text");
+	return { ...m, content: [{ type: "text", text: refsForModel(text, refs) }, ...others] };
 }
