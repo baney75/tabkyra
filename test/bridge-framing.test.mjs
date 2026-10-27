@@ -177,13 +177,15 @@ test("when the extension goes away, the host answers every waiting request as in
 		for (let i = 0; i < 100 && !forwarded.some((m) => m.type === "request"); i++) await new Promise((r) => setTimeout(r, 20));
 		// The extension reloads: Chrome closes the port, so the host's stdin ends.
 		host.stdin.end();
-		for (let i = 0; i < 100 && !received.some((m) => m.id === 1); i++) await new Promise((r) => setTimeout(r, 20));
+		for (let i = 0; i < 100 && !received.some((m) => m.id === 1); i++) await new Promise((r) => setTimeout(r, 5));
+		// The host now knows it is stopping (it answered the click). A request sent right then is
+		// still answered, as not_sent, however long the client had been idle before.
+		client.write(encodeFrame({ type: "request", id: 2, method: "click", params: {} }));
 		const answer = received.find((m) => m.type === "response" && m.id === 1);
 		assert.ok(answer?.error, `the click got an answer, not just a closed socket: ${JSON.stringify(received)}`);
 		assert.equal(answer.error.code, "interrupted");
 		assert.match(answer.error.message, /may have run: check the page \(read_page\) before repeating it/);
-		// A request that arrives while the host is stopping is answered not_sent, never dropped.
-		client.write(encodeFrame({ type: "request", id: 2, method: "click", params: {} }));
+		// The request that arrived while the host was stopping is answered not_sent, never dropped.
 		for (let i = 0; i < 50 && !received.some((m) => m.id === 2); i++) await new Promise((r) => setTimeout(r, 10));
 		const late = received.find((m) => m.type === "response" && m.id === 2);
 		assert.equal(late?.error?.code, "not_sent", `the late request got no not_sent answer: ${JSON.stringify(received)}`);

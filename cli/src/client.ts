@@ -105,6 +105,12 @@ export class BridgeClient {
 	private reconnecting?: Promise<void>;
 	/** One connect at a time: a call that finds no socket waits on a dial already under way. */
 	private connecting?: Promise<void>;
+	/**
+	 * What each socket's host last said about the extension, kept from the welcome on: a status
+	 * can arrive before the client adopts that socket (in the welcome's own data chunk, or while
+	 * other hosts are dialed), and must not be lost.
+	 */
+	private socketExtension = new WeakMap<Socket, boolean>();
 	clientId?: string;
 	extensionConnected = false;
 	/** Set once the extension has been connected; only a bridge that once worked is worth waiting for. */
@@ -139,7 +145,7 @@ export class BridgeClient {
 		for (const target of sockets) {
 			try {
 				const dialed = await this.dial(target, timeoutMs);
-				if (dialed.extensionConnected) {
+				if (this.socketExtension.get(dialed.socket)) {
 					fallback?.socket.destroy();
 					return this.adopt(dialed);
 				}
@@ -159,8 +165,8 @@ export class BridgeClient {
 		if (this.socket && this.socket !== dialed.socket) this.socket.destroy();
 		this.socket = dialed.socket;
 		this.clientId = dialed.clientId;
-		this.extensionConnected = dialed.extensionConnected;
-		if (dialed.extensionConnected) this.everConnected = true;
+		this.extensionConnected = this.socketExtension.get(dialed.socket) ?? dialed.extensionConnected;
+		if (this.extensionConnected) this.everConnected = true;
 	}
 
 	private async dial(target: string, timeoutMs: number): Promise<Dialed> {
@@ -185,6 +191,7 @@ export class BridgeClient {
 					if (msg.type === "welcome") {
 						welcomed = true;
 						clearTimeout(timer);
+						this.socketExtension.set(socket, msg.extensionConnected);
 						resolve({ socket, clientId: msg.clientId, extensionConnected: msg.extensionConnected });
 					} else this.onMessage(msg, socket);
 				}
@@ -223,7 +230,9 @@ export class BridgeClient {
 		} else if (msg.type === "event") {
 			this.options.onEvent?.(msg.event, msg.data);
 		} else if (msg.type === "extension_status") {
-			// Only the client's own host speaks for the extension.
+			this.socketExtension.set(from, msg.connected);
+			// Only the client's own host speaks for the extension; another socket's status waits
+			// in socketExtension until (and unless) that socket is adopted.
 			if (from !== this.socket) return;
 			this.extensionConnected = msg.connected;
 			if (msg.connected) this.everConnected = true;

@@ -66,6 +66,11 @@ interface ClientState {
 	inFlight?: { method: string; since: number };
 	/** Stops the running request from sending more input (a dialog opened, or the host went away). */
 	abort?: () => void;
+	/**
+	 * Set when the host this client came through went away. The host answered everything it had
+	 * forwarded as interrupted, so nothing still queued for this client may start.
+	 */
+	closed?: boolean;
 	/** When a request last started or ended; the update idle gate reads it. */
 	lastActivityAt: number;
 	lastError?: string;
@@ -282,16 +287,27 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			...(error ? { error: error.toRpc() } : { result }),
 		});
 
+	// Aborted from the moment it is taken off the queue: the host can go away during any await
+	// below, and once it has, the agent was told this may have run and may repeat it.
+	let aborted = false;
+	state.abort = () => {
+		aborted = true;
+	};
+	/** Gone: send nothing, start nothing (nobody can receive the answer, and the agent may retry). */
+	const gone = () => aborted || state.closed === true;
+	if (gone()) return;
 	// At worker start, until the update worker knows whether an install was in flight.
 	await gateReady;
+	if (gone()) return;
 	if (installGate()) {
 		// Refused before it counts as activity: a request started now would run on files being
-		// replaced, and the reload right after the install would cut it off.
+		// replaced, and the reload right after the install would cut it off. It never ran, so the
+		// client may resend it once Tabkyra is back.
 		reply(
 			undefined,
 			new BridgeError(
-				ERR.INTERNAL,
-				"Tabkyra is installing an update and reloads in a few seconds. Repeat the request once the bridge reconnects.",
+				ERR.NOT_SENT,
+				"Tabkyra is installing an update and reloads in a few seconds. The request did not run; repeat it once the bridge reconnects.",
 			),
 		);
 		return;
@@ -303,16 +319,15 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Bridge.");
 		}
+		if (gone()) return;
 
 		const handler = handlers[req.method];
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
 		const t0 = performance.now();
-		let aborted = false;
-		state.abort = () => {
-			aborted = true;
-		};
 		const session = await withTimeout(getSession(state), 15000, "session open");
 		const tSession = Math.round(performance.now() - t0);
+		// The session can take seconds to open; the host may have gone meanwhile.
+		if (gone()) return;
 		const ctx: HandlerContext = {
 			session,
 			clientId: state.clientId,
@@ -670,7 +685,10 @@ function connect(): void {
 		if (port === next) port = undefined;
 		// The host answered these "interrupted: it may have run" and the agent may repeat them
 		// after checking the page: the running handlers must send no more input.
-		for (const state of clients.values()) state.abort?.();
+		for (const state of clients.values()) {
+			state.closed = true;
+			state.abort?.();
+		}
 		for (const state of clients.values()) void state.session?.suspend();
 		clients.clear();
 		cancelQuestionsFor(undefined);

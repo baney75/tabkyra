@@ -338,8 +338,9 @@ safely or fails with a clear retryable error, never a hang". Defaults chosen:
 - **The host answers for the extension.** When the extension goes away with requests out
   (reload, update, worker restart, a bad frame), the native host answers each one with
   `interrupted` before it exits, so no client waits on a reply that can't come. A stopping
-  host keeps its client sockets open for 250 ms, and a request that arrives then gets
-  `not_sent`.
+  host keeps each client's socket open until that client has been quiet for 250 ms (2 s at
+  most), and a request that arrives then gets `not_sent`. A request the extension refuses
+  during an update install gets `not_sent` too: it never ran.
 - **The client resends** a read cut off in flight and anything that never left (no socket, or
   `not_sent`), after the bridge is back, up to three sends in all. A cut-off input request
   fails with `interrupted` at once, without waiting for the bridge, telling the agent it may
@@ -350,5 +351,7 @@ safely or fails with a clear retryable error, never a hang". Defaults chosen:
   share one reconnect and one connect, a socket is used only once it is welcomed and chosen,
   and a client never holds more than one.
 - **Cut off means stopped.** When the native host goes away while the extension lives (a host
-  crash or restart), the extension stops the running request from sending more input, so the
-  agent's "check the page, then repeat" can't race a handler still typing.
+  crash or restart), the extension stops the running request from sending more input, a
+  request still in its preamble (update gate, session open) never reaches its handler, and
+  nothing queued for that client starts, so the agent's "check the page, then repeat" can't
+  race a handler still running.

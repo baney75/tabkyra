@@ -21,6 +21,8 @@ interface Client {
 	hello?: ClientToHost & { type: "hello" };
 	/** Request ids forwarded to the extension and not answered yet. */
 	outstanding: Set<number>;
+	/** When this client last sent anything; a stopping host waits for it to go quiet. */
+	lastDataAt: number;
 }
 
 const clients = new Map<string, Client>();
@@ -159,10 +161,11 @@ export function runNativeHost(): void {
 
 	const server = createServer((socket) => {
 		const id = `c${++seq}-${process.pid}`;
-		const client: Client = { id, socket, outstanding: new Set() };
+		const client: Client = { id, socket, outstanding: new Set(), lastDataAt: Date.now() };
 		clients.set(id, client);
 		const parser = new FrameParser(MAX_FRAME_TO_EXTENSION);
 		socket.on("data", (chunk) => {
+			client.lastDataAt = Date.now();
 			const { messages, error } = parser.push(chunk);
 			for (const m of messages) onClientMessage(client, m as ClientToHost);
 			if (error) {
@@ -196,25 +199,23 @@ export function runNativeHost(): void {
 	});
 
 	let exiting = false;
-	/** How long a stopping host keeps client sockets open, so a request that arrives late gets `not_sent`. */
+	/** A stopping host closes a client only after it has sent nothing for this long (at most MAX_LINGER_MS). */
 	const LINGER_MS = 250;
+	const MAX_LINGER_MS = 2000;
 	const shutdown = (code = 0) => {
 		if (exiting) return;
 		exiting = true;
 		stopping = true;
-		// No new clients; the ones connected keep their sockets a moment longer, and anything they
-		// send meanwhile is answered not_sent (onClientMessage), which they resend to the next host.
+		// No new clients. The connected ones keep their sockets until they go quiet, and anything
+		// they send meanwhile is answered not_sent (onClientMessage), which they resend to the next host.
 		server.close();
 		rmSync(path, { force: true });
-		const finish = () => {
-			// end() flushes what is queued (the answers above) before closing; destroy() would drop it.
-			for (const client of clients.values()) client.socket.end();
-			const exit = setTimeout(() => process.exit(code), 500);
+		const started = Date.now();
+		const ended = new Set<Client>();
+		const exitWhenClosed = () => {
 			const open = [...clients.values()].filter((c) => !c.socket.destroyed);
-			if (open.length === 0) {
-				clearTimeout(exit);
-				process.exit(code);
-			}
+			if (open.length === 0) process.exit(code);
+			const exit = setTimeout(() => process.exit(code), 500);
 			let left = open.length;
 			for (const c of open)
 				c.socket.once("close", () => {
@@ -224,8 +225,21 @@ export function runNativeHost(): void {
 					}
 				});
 		};
-		if (clients.size === 0) finish();
-		else setTimeout(finish, LINGER_MS);
+		const sweep = () => {
+			const now = Date.now();
+			for (const client of clients.values()) {
+				if (ended.has(client)) continue;
+				// end() flushes what is queued (the answers above) before closing; destroy() would drop it.
+				// Quiet for LINGER_MS since the stop at the earliest: an idle client gets the full grace too.
+				if (now - Math.max(client.lastDataAt, started) >= LINGER_MS || now - started >= MAX_LINGER_MS) {
+					ended.add(client);
+					client.socket.end();
+				}
+			}
+			if ([...clients.values()].every((c) => ended.has(c))) exitWhenClosed();
+			else setTimeout(sweep, 25);
+		};
+		sweep();
 	};
 	// The extension went away (reloaded, updated, worker restarted): what it had not answered
 	// never will be.

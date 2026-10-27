@@ -41,6 +41,8 @@ let vanishOnDrop = false;
 let welcomeDelay = 0;
 /** Welcome new clients with the extension not connected yet, and say it is 300 ms later. */
 let extensionLate = false;
+/** Welcome with the extension not connected and its "connected" status in the same write. */
+let statusInWelcomeChunk = false;
 /** hello frames received: one per connection a client opens. */
 let hellos = 0;
 
@@ -61,6 +63,10 @@ before(async () => {
 				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
 				if (msg.type === "hello") {
 					hellos++;
+					if (statusInWelcomeChunk) {
+						socket.write(Buffer.concat([frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: false }), frame({ type: "extension_status", connected: true })]));
+						continue;
+					}
 					const late = extensionLate;
 					setTimeout(() => socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: !late })), welcomeDelay);
 					if (late) setTimeout(() => !socket.destroyed && socket.write(frame({ type: "extension_status", connected: true })), welcomeDelay + 300);
@@ -215,6 +221,19 @@ test("calls made while the client is still connecting share that one connection"
 		welcomeDelay = 0;
 		extensionLate = false;
 		await fresh.close();
+	}
+});
+
+test("an extension status that arrives with the welcome is kept, so a resent read doesn't wait out the budget", async () => {
+	// After a reload the new host welcomes before the extension's hello and says "connected" in
+	// the same data chunk. The read must go through, not fail after the (1 s) budget.
+	plan.text = ["drop"];
+	statusInWelcomeChunk = true;
+	try {
+		const r = await mcp.callTool({ name: "get_page_text", arguments: {} });
+		assert.ok(!r.isError, text(r));
+	} finally {
+		statusInWelcomeChunk = false;
 	}
 });
 
