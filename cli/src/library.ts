@@ -910,7 +910,7 @@ function line(i: LibraryItem): string {
 }
 
 export const LIBRARY_USAGE =
-	"Usage: tabkyra library add <doi|arxiv id> [--quote TEXT] [--location TEXT] [--note TEXT] [--tag TAG] | list [--json] | search <words> | " +
+	"Usage: tabkyra library add <doi|arxiv id> [--quote TEXT] [--location TEXT] [--note TEXT] [--tag TAG] | list [--json] | search <words> [--json] | " +
 	"verify [key...] | cite <key> [--style apa|mla|chicago|ieee|harvard|vancouver] | export --format bibtex|ris|csl [--out FILE] | " +
 	"obsidian <vault> [--folder Sources] | remove <key>";
 
@@ -932,6 +932,8 @@ function parse(args: string[], allowed: string[]): { positional: string[]; opts:
 		const name = eq > 0 ? a.slice(0, eq) : a;
 		if (!allowed.includes(name)) throw new Error(`This command doesn't take ${name}. ${LIBRARY_USAGE}`);
 		if (name === "--json") {
+			// A switch: "--json=false" must be refused, not read as on.
+			if (eq > 0) throw new Error(`--json takes no value. ${LIBRARY_USAGE}`);
 			opts.json = "1";
 			continue;
 		}
@@ -944,10 +946,10 @@ function parse(args: string[], allowed: string[]): { positional: string[]; opts:
 }
 
 /** Options each subcommand reads; any other option is a usage error, not silently ignored. */
-const LIBRARY_OPTIONS: Record<string, string[]> = {
+export const LIBRARY_OPTIONS: Record<string, string[]> = {
 	add: ["--quote", "--location", "--note", "--tag"],
 	list: ["--json"],
-	search: [],
+	search: ["--json"],
 	verify: [],
 	cite: ["--style"],
 	export: ["--format", "--out"],
@@ -1004,7 +1006,8 @@ export async function runLibrary(args: string[]): Promise<number> {
 		}
 		case "search": {
 			const hits = search(positional.join(" "));
-			for (const i of hits) console.log(line(i));
+			if (opts.json) console.log(JSON.stringify(hits, null, 2));
+			else for (const i of hits) console.log(line(i));
 			return hits.length ? 0 : 1;
 		}
 		case "verify": {

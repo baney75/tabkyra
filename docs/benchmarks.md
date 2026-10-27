@@ -63,3 +63,86 @@ SITEGEIST_SESSION=demo claude -p "Open https://news.ycombinator.com and list the
   --allowedTools "mcp__sitegeist__*"
 sitegeist debug     # timings for what just happened
 ```
+
+# Sessions, resilience and tab groups, 2026-10-27
+
+Two scripts measure what an agent goes through when it works in sessions, so every change to
+the MCP server, the bridge or the session model is compared with the same numbers.
+
+- `cli/eval/skill-eval.mjs --suite sessions` runs scripted tasks through `claude -p` with
+  Haiku (a small model, so tool ergonomics show) against a local fixture site in a headless
+  throwaway Chromium. Scores come from the fixture server and the browser's own tabs and
+  groups. Tasks: **multitab** (compare two price lists open at once, close the tabs),
+  **resume** (one harness process types a draft, the extension reloads, a second process in
+  the same project must finish it in the same tab), **parallel** (two agents in one project at
+  once, no cross-talk), **handover** (give the cart tab to the user, out of the agent's group),
+  **reload** (the extension reloads right after the first item lands in the cart).
+- `cli/eval/bridge-metrics.mjs` needs no model: the tools/list and instructions payload
+  (bytes, and with `--claude` the real input-token cost of a turn with the server attached),
+  cold start to the first tool result, calls sent while the extension reloads or the native
+  host is killed (with a click in flight, which must never run twice), three clients at once,
+  and thirteen tab group behaviors (identity, colors, and what closing, dragging out,
+  dragging in, collapsing and ungrouping do, reloads, a tab cap, a closed window).
+
+Both use `cli/eval/fixture-browser.mjs`, which turns on developer mode in the throwaway
+profile: without it this Chromium disables an unpacked extension the moment it reloads, so a
+forced reload would unload Tabkyra for good.
+
+```bash
+npm run build && (cd cli && npm run build)
+node cli/eval/bridge-metrics.mjs --cycles 3 --claude
+node cli/eval/skill-eval.mjs --suite sessions --reps 2
+node cli/eval/skill-eval.mjs --suite skill --reps 2
+```
+
+## Baseline (main at b81629d: v1.1.9 plus ask_user and the panel UI work)
+
+| Measure | Baseline |
+| --- | --- |
+| Tools listed | 31 |
+| tools/list + instructions | 26,460 + 2,709 bytes |
+| Input tokens the server adds to every turn (`claude -p`, Haiku) | 11,471 |
+| Cold start: initialize / first tool result (median of 5) | 119 ms / 131 ms (115 to 150 ms across idle runs) |
+| Calls across forced reloads and host kills (3 cycles, 15 calls) | 15 answered, 0 hangs, slowest 4.8 s |
+| Cycles where a click in flight during a reload ran twice | **3 of 3** |
+| Three clients at once: separate groups / cross-talk / labels naming the project | yes / 0 / 0 of 3 |
+| Tab group behaviors as specified | 5 of 13 |
+
+Session tasks, Haiku, 2 reps, MCP server only, each row in a fresh project folder:
+
+| Task | Success | Mean tool calls | Mean tool errors | Mean seconds |
+| --- | --- | --- | --- | --- |
+| multitab | 2/2 | 7.5 | 0.0 | 8.0 |
+| resume | 0/2 | 12.5 | 0.0 | 13.0 |
+| parallel | 2/2 | 28.0 | 3.0 | 18.5 |
+| handover | 0/2 | 12.5 | 0.0 | 14.0 |
+| reload | 2/2 | 14.5 | 0.5 | 16.5 |
+| all | 6/10 | 15.0 | 0.7 | 14.0 |
+
+Skill suite (shop, contact, forum), Haiku, 2 reps: 6/6 without the skill (11.2 calls, 16.0 s
+mean) and 6/6 with it (11.0 calls, 15.8 s).
+
+multitab is scored from the model's closing `ANSWER: Store <letter> $<price>` line, and
+parallel counts cross-talk only when one agent's tool results show the other's fixture pages.
+## After each change
+
+| Measure | Baseline (b81629d) | CLI polish and evals (#40) |
+| --- | --- | --- |
+| Tools / tools/list + instructions bytes | 31 / 26,460 + 2,709 | 31 / 26,460 + 2,709 (no MCP change) |
+| Input tokens per turn (Haiku) | 11,471 | 11,471 |
+| `tabkyra mcp` start through the launcher, interleaved medians | 140 / 131 ms (both arms identical on main) | 119 ms without the compile cache, 108 ms with it |
+| Duplicate clicks across reloads | 3 of 3 cycles | 3 of 3 |
+| Tab group behaviors | 5 of 13 | 5 of 13 |
+| Session tasks | 6/10 | 6/10 |
+| Skill suite, without / with the skill | 6/6 / 6/6 | 6/6 / 6/6 |
+| `tabkyra --version` | 0.1.0 | 1.1.9 |
+
+An earlier baseline on 9e37df3 (before ask_user) measured 30 tools and 10,473 tokens, with
+the same task and group results.
+
+What failed: a new harness process gets a new session, so **resume** can't find the tab it
+left; there is no way to give a tab to the user, so **handover** leaves it in the agent's
+group; the client replays a request whose reply a reload cut off, so a click runs twice.
+Group titles say "claude 2", "claude 3" and never the project; closing a group leaves its
+session behind; a tab the user drags out or ungroups is pulled back into the group; and
+nothing caps the tabs in a group.

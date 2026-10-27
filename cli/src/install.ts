@@ -84,20 +84,25 @@ function stableNode(): string {
 	return exec;
 }
 
-function writeScript(path: string, args: string): void {
+function writeScript(path: string, args: string, options: { compileCache?: boolean } = {}): void {
 	const node = stableNode();
 	const script = process.argv[1];
 	if (process.platform === "win32") {
 		writeFileSync(path, `@echo off\r\n"${node}" "${script}" ${args} %*\r\n`);
 	} else {
-		writeFileSync(path, `#!/bin/sh\nexec "${node}" "${script}" ${args}"$@"\n`);
+		// Node's compile cache (Node 22.1+; older versions ignore it): a small saving, about 10 ms
+		// of 120 on one machine, near run-to-run noise (`cli/eval/bridge-metrics.mjs --only launcher`).
+		const cache = join(homedir(), ".cache", "tabkyra", "node-compile-cache");
+		// Only the launcher harnesses run; the native host's environment (and what it spawns) is unchanged.
+		const prefix = options.compileCache ? `: "\${NODE_COMPILE_CACHE:=${cache}}"\nexport NODE_COMPILE_CACHE\n` : "";
+		writeFileSync(path, `#!/bin/sh\n${prefix}exec "${node}" "${script}" ${args}"$@"\n`);
 		chmodSync(path, 0o755);
 	}
 }
 
 function writeLauncher(): string {
 	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
-	writeScript(cliLauncherPath(), "");
+	writeScript(cliLauncherPath(), "", { compileCache: true });
 	const path = launcherPath();
 	writeScript(path, "host ");
 	return path;

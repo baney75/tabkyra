@@ -57,9 +57,32 @@ it needs no extra step. Reload the extension once after the first install.
 | `tabkyra tunnel tailscale [--port N] [--public] [--off]` | reach `serve` over HTTPS through your tailnet (`--public` uses Funnel) |
 | `tabkyra tunnel cloudflare [--port N] [--off]` | reach `serve` through a cloudflared quick tunnel |
 | `tabkyra update [--check] [--rollback] [--channel stable\|nightly]` | install the latest signed release ([docs/updates.md](../docs/updates.md)) |
+| `tabkyra completion zsh\|bash\|fish` | shell completions for commands, subcommands and flags |
+| `tabkyra version [--json]` | the CLI's version, which is the extension's (`static/manifest.chrome.json`) |
 
-Output is colored only on a terminal; `NO_COLOR` turns it off. Usage errors exit 2, and
-other failures exit 1 with the next step to take.
+Output is colored only on a terminal; `NO_COLOR` turns it off. Read commands take `--json`
+(`status`, `doctor`, `skill list`, `skill match`, `skill versions`, `library list`,
+`library search`, `token list`, `token scopes`, `update --check`, `version`); `debug`
+always prints JSON.
+
+Exit codes, for every command: **0** success; **1** failed, not connected, or nothing found
+(the message says the next step); **2** usage error (an unknown command, option or
+argument). `update --check` exits 100 when an update exists; `library add` exits 3 for a
+retracted source and 4 when the retraction check couldn't finish.
+
+### Shell completions
+
+```bash
+echo 'eval "$(tabkyra completion zsh)"' >> ~/.zshrc     # zsh
+echo 'eval "$(tabkyra completion bash)"' >> ~/.bashrc   # bash
+tabkyra completion fish > ~/.config/fish/completions/tabkyra.fish
+```
+
+The launcher `tabkyra install` writes (`~/.config/tabkyra/tabkyra`, what harness configs run)
+sets `NODE_COMPILE_CACHE` (Node 22.1+). The saving is small: on one Apple M-series machine
+`tabkyra mcp` started in 108 ms with it and 119 ms without (medians of 15 interleaved starts
+each, `cli/eval/bridge-metrics.mjs --only launcher`), while the same harness on main, where
+both arms are identical, differed by 9 ms. Treat it as at most about 10%.
 
 ## Harness setup
 
