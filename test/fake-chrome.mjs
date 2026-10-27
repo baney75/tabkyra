@@ -3,6 +3,27 @@
 // Import a module with a unique `?ctx=` query to get a separate instance of it, standing in for
 // another extension context (side panel vs service worker). navigator.locks is Node's own, shared
 // by every module instance in the process, as the real one is shared across extension contexts.
+// Node 24 has navigator.locks; older Node (CI runs 22) gets a process-wide FIFO stand-in.
+if (!globalThis.navigator?.locks) {
+	const queues = new Map();
+	const locks = {
+		request(name, callback) {
+			const prev = queues.get(name) ?? Promise.resolve();
+			const run = prev.then(() => callback({ name, mode: "exclusive" }));
+			queues.set(
+				name,
+				run.then(
+					() => undefined,
+					() => undefined,
+				),
+			);
+			return run;
+		},
+	};
+	if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "locks", { value: locks, configurable: true });
+	else Object.defineProperty(globalThis, "navigator", { value: { locks }, configurable: true });
+}
+
 export function installFakeChrome() {
 	const tick = () => new Promise((r) => setTimeout(r, Math.random() * 3));
 	const store = { local: {}, session: {} };
