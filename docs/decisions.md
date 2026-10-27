@@ -394,3 +394,20 @@ chosen:
   guard adopts are not refused (they come from the page, not the agent).
 - **`tabkyra sessions` acts as the user**, like the side panel: any local process that can
   reach the bridge socket can list, rename, end, focus or collapse agent sessions.
+
+## D24. Past chats are readable by local agents, by default (Claude, 2026-10-27)
+
+Owner, 2026-10-27: "Make it so tabkyra threads are accessible locally too for the agents using
+the mcp, and cli, and such." Defaults chosen:
+
+- **On by default**, with a Settings > Privacy switch that turns it off and deletes the files.
+  The files sit in the user's own data folder, readable only by the user, the same reach a local
+  agent already has over the user's other files.
+- **Never private-mode chats.** A chat saved while private mode is on is marked private for
+  good; turning private mode off later doesn't expose it.
+- **Redacted and trimmed.** Keys and tokens are removed; reasoning is left out; tool results are
+  cut to 300 characters; images and attachment contents appear by name only.
+- **Local stdio MCP may read threads; remote sessions need `threads.read`**, a scope no other
+  scope implies.
+- **Data, not instructions**: the tool descriptions, the MCP instructions and every rendered
+  thread say so, since a past chat can hold page text an attacker wrote.

@@ -58,11 +58,11 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	const { tools } = await mcp.listTools();
 	for (const tool of tools) assert.equal(tool.inputSchema.$schema, undefined, `${tool.name} still carries $schema`);
 	// Every agent pays for these on every turn. Main measured 26,460 bytes for 31 tools before the
-	// descriptions were cut (docs/benchmarks.md); with 34 tools it is about 23,600. A change that
-	// grows it past the budget has to earn it.
+	// descriptions were cut (docs/benchmarks.md); 34 tools came to about 23,600, and the three
+	// thread tools add about 2,000. A change that grows it past the budget has to earn it.
 	const bytes = Buffer.byteLength(JSON.stringify(tools));
-	assert.ok(bytes <= 24000, `tools/list is ${bytes} bytes, over the 24,000 budget`);
-	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2900, "instructions over 2,900 bytes");
+	assert.ok(bytes <= 26000, `tools/list is ${bytes} bytes, over the 26,000 budget`);
+	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
 });
 
 test("instructions state the safety rules", () => {

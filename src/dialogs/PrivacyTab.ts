@@ -7,6 +7,7 @@ import { BUG_LOG_KEY, BUG_REPORTS_KEY, type BugEntry, NEW_ISSUE_URL, reportText 
 import { setBugReports } from "../privacy/capture.js";
 import { hostOf, PRIVATE_MODE_KEY, TRUSTED_HOSTS_KEY } from "../privacy/private-mode.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
+import { MIRROR_KEY } from "../threads/mirror.js";
 
 /** Settings > Privacy: private mode, the hosts the user trusts as their own, and opt-in bug reports. */
 @customElement("tabkyra-privacy-tab")
@@ -14,6 +15,7 @@ export class PrivacyTab extends SettingsTab {
 	@state() private privateMode = false;
 	@state() private trustedHosts = "";
 	@state() private bugReports = false;
+	@state() private mirror = true;
 	@state() private log: BugEntry[] = [];
 	/** The report as the user will share it; shown and editable before anything leaves. */
 	@state() private draft: string | undefined;
@@ -29,6 +31,13 @@ export class PrivacyTab extends SettingsTab {
 		this.trustedHosts = ((await settings.get<string[]>(TRUSTED_HOSTS_KEY)) ?? []).join(", ");
 		this.bugReports = (await settings.get<boolean>(BUG_REPORTS_KEY)) === true;
 		this.log = (await settings.get<BugEntry[]>(BUG_LOG_KEY)) ?? [];
+		this.mirror = (await chrome.storage.local.get(MIRROR_KEY))[MIRROR_KEY] !== false;
+	}
+
+	/** The local thread mirror; the worker writes it (on) or removes it (off) when this changes. */
+	private async setMirror(on: boolean) {
+		await chrome.storage.local.set({ [MIRROR_KEY]: on });
+		this.mirror = on;
 	}
 
 	private async setPrivateMode(on: boolean) {
@@ -102,6 +111,25 @@ export class PrivacyTab extends SettingsTab {
 							@change=${(e: Event) => this.saveTrustedHosts((e.target as HTMLInputElement).value)}
 						/>
 					</label>
+				</div>
+
+				<div class="space-y-2">
+					<h3 class="text-sm font-semibold text-foreground">Chats on this computer</h3>
+					<label class="flex items-start gap-2 text-sm text-foreground">
+						<input
+							type="checkbox"
+							class="mt-1"
+							.checked=${this.mirror}
+							@change=${(e: Event) => this.setMirror((e.target as HTMLInputElement).checked)}
+						/>
+						<span>Let my coding agents read my past chats</span>
+					</label>
+					<p class="text-xs text-muted-foreground">
+						Keeps a copy of your side panel chats in ~/.local/share/tabkyra/threads (readable only by your user), so
+						agents like Claude Code and Codex can look up what you asked Tabkyra, through tabkyra mcp or as files.
+						Keys pasted into a chat are removed from the copy, and chats from private mode are never copied. Turning
+						this off deletes the copy. Agents connected through tabkyra serve need a token with the threads.read scope.
+					</p>
 				</div>
 
 				<div class="space-y-2">

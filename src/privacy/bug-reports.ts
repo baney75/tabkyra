@@ -22,9 +22,31 @@ export interface BugEntry {
  * (paths and hosts can name people, records or accounts); Tabkyra's own extension scripts
  * keep only the file name, which is what a maintainer needs from a stack trace.
  */
-export function redact(text: string): string {
+/**
+ * Strip secrets only: API keys and tokens by their known prefixes, bearer headers, JWTs and
+ * private key blocks. Unlike `redact`, it keeps addresses and names: a chat transcript an
+ * agent reads back still needs its URLs, but never a key someone pasted into it.
+ */
+export function redactSecrets(text: string): string {
 	return (
 		text
+			.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[private-key]")
+			.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{16,}/g, "$1 [secret]")
+			.replace(
+				/\b(sk|pk|rk|ghp|gho|ghu|ghs|github_pat|glpat|xox[abprs]|AKIA|ASIA|AIza|ya29|eyJ|npm_|hf_|sk-ant|sk-proj|sk-or)[\w-]{10,}/g,
+				"[secret]",
+			)
+			// Long mixed-case or mixed letter-and-digit tokens (keys without a known prefix); plain
+			// hex such as git commit ids stays, since a transcript about code needs it.
+			.replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, (m) =>
+				/^[0-9a-f]+$/i.test(m) || !/[0-9]/.test(m) || !/[A-Za-z]/.test(m) ? m : "[secret]",
+			)
+	);
+}
+
+export function redact(text: string): string {
+	return (
+		redactSecrets(text)
 			.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)(?:[?#][^\s"'<>)]*)?/gi, "ext:/$1")
 			// A URL may contain ")" (wiki paths); only trailing punctuation belongs to the sentence.
 			.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>]+/gi, (m) => `[url]${/[).,;:!?]+$/.exec(m)?.[0] ?? ""}`)

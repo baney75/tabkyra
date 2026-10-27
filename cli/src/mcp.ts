@@ -8,6 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
+import { registerThreadTools, THREADS_INSTRUCTION } from "./threads.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
 import { addSource, cite, search, summary } from "./library.ts";
@@ -134,7 +135,7 @@ function harnessName(): string {
 }
 
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
-const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user"];
+const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search"];
 
 function mentionedTools(sentence: string): string[] {
 	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
@@ -184,6 +185,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"For canvas apps (Excalidraw, tldraw, Figma-like) and multi-step input, batch steps with actions and check the closing screenshot; use the app's shortcuts and drags, not run_js on its internals.",
 				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
 				ASK_USER_INSTRUCTION,
+				THREADS_INSTRUCTION,
 				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
 				"If a call fails with interrupted, the browser connection dropped while it ran: check the page with read_page before you repeat it.",
 			]
@@ -753,6 +755,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 
 	// ask_user (cli/src/ask.ts): questions for the user, answered in the side panel.
 	registerAskUser(server, client);
+	// threads_list, thread_read, thread_search (cli/src/threads.ts): past side panel chats.
+	registerThreadTools(server, client);
 
 	stripSchemaDialect(server);
 

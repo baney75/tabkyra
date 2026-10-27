@@ -526,6 +526,27 @@ export class DataExporter {
 }
 ```
 
+## Threads for local agents
+
+The side panel's chats live in the `sessions` and `sessions-metadata` stores. Tabkyra reads
+them from two more places (`src/threads/`):
+
+- **The service worker** opens the same database read-only (`src/threads/store.ts`; it never
+  creates it) and answers `threads.list`, `threads.read` and `threads.search` for the bridge,
+  so `tabkyra mcp` and `tabkyra threads` work while no panel is open.
+- **A mirror on disk.** `TabkyraSessionsStore` announces every save, rename and delete; the
+  worker waits 2 s for quiet, renders the thread (`src/threads/render.ts`) and sends it to the
+  native host, which writes `~/.local/share/tabkyra/threads/<id>.md`, `<id>.json` and
+  `index.json` (`cli/src/threads-mirror.ts`: folder 0700, files 0600, temp file then rename,
+  ids of letters, digits, `-` and `_` only). A new host gets every thread again and drops files
+  of deleted ones. `threads.mirror: false` in `chrome.storage.local` (Settings > Privacy) turns
+  it off and clears the folder.
+- **Private mode.** A thread saved while private mode is on gets `tabkyraPrivate: true` on both
+  records, for good. It is never served or mirrored, and an existing copy is deleted.
+- **Redaction.** Keys, tokens, bearer headers and private key blocks are replaced
+  (`redactSecrets` in `src/privacy/bug-reports.ts`, which the bug reports use too); images and
+  attachment contents are left out.
+
 ## Related Files
 
 ### Core Storage (web-ui)

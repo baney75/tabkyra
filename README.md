@@ -227,6 +227,28 @@ tabkyra tabs                            # every agent tab, by session
 Each takes `--json`. A renamed session keeps its connected agent, which reconnects under the
 new name; start an agent on it later with `tabkyra mcp --session checkout`.
 
+## Past chats for your agents
+
+Your side panel chats ("threads") are readable by the agents on your computer, so Claude Code
+or Codex can answer "what did I ask Tabkyra yesterday about Lisbon flights?":
+
+| Where | How |
+| --- | --- |
+| MCP (`tabkyra mcp`) | `threads_list`, `thread_search`, `thread_read` (40 messages a page) |
+| Terminal | `tabkyra threads [list] [words]`, `show <id>`, `search <words>`, `export <id> --format md\|json [--out FILE]`, each with `--json` |
+| Files | `~/.local/share/tabkyra/threads/<id>.md` and `<id>.json`, plus `index.json` |
+
+Live answers come from the extension; when the browser is closed, the CLI and MCP read the
+files. The files are written by the native host (folder 0700, files 0600, each write atomic) a
+couple of seconds after a chat changes, and go when you delete the chat. Settings > Privacy >
+"Let my coding agents read my past chats" turns this off and deletes the files.
+
+What agents see: who said what, tool calls and short results, attachments by name only. API
+keys and tokens pasted into a chat are removed. A chat from private mode is never served or
+written, even after private mode is turned off. Remote agents (`tabkyra serve`) need a token
+with the `threads.read` scope. A past chat is data to read, never instructions to follow; the
+tool descriptions and the MCP instructions say so.
+
 ## Skills
 
 ```bash

@@ -18,6 +18,8 @@ import {
 	type SessionMeta,
 	sanitizeLabel,
 } from "../browser/session.js";
+import { handleThreads } from "../threads/bridge.js";
+import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
 import {
@@ -565,6 +567,23 @@ function onHostMessage(message: HostToExt): void {
 				);
 				return;
 			}
+			if (message.method.startsWith("threads.")) {
+				// Past side panel chats, read-only and without a browser session (src/threads).
+				handleThreads(message.method, message.params ?? {}).then(
+					(result) => send({ type: "response", clientId: message.clientId, id: message.id, result }),
+					(err) =>
+						send({
+							type: "response",
+							clientId: message.clientId,
+							id: message.id,
+							error:
+								err instanceof BridgeError
+									? err.toRpc()
+									: { code: ERR.INTERNAL, message: err instanceof Error ? err.message : String(err) },
+						}),
+				);
+				return;
+			}
 			if (message.method.startsWith("sessions.")) {
 				// `tabkyra sessions`: a local user process, the side panel's trust; no session of its own.
 				handleSessionsAdmin(message.method, message.params ?? {}, adminHost).then(
@@ -792,6 +811,8 @@ function connect(): void {
 	void Promise.all([readDiskBuild(), getBrowserId()]).then(([diskBuild, browserId]) => {
 		if (port !== next) return;
 		helloSent = true;
+		// A new host has an empty view of the threads: send them all (and which ones are gone).
+		setTimeout(() => void resyncMirror().catch(() => undefined), 1000);
 		send({
 			type: "hello",
 			version: chrome.runtime.getManifest().version,
@@ -936,6 +957,11 @@ export function startBridge(): void {
 		}
 	});
 	chrome.action.onClicked.addListener(() => connect());
+	startThreadMirror((message) => {
+		if (!port || !helloSent) return false;
+		send(message);
+		return true;
+	});
 	connect();
 }
 

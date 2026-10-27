@@ -134,7 +134,22 @@ export interface ExtPong {
 	type: "pong";
 }
 
-export type ExtToHost = ExtHello | ExtResponse | ExtEvent | ExtPong | ExtUpdateAction;
+/**
+ * A change to the local thread mirror (src/threads/mirror.ts). The host checks every field
+ * (cli/src/threads-mirror.ts) and writes only inside its threads folder.
+ */
+export interface ExtThreadsMirror {
+	type: "threads_mirror";
+	op: "put" | "delete" | "sync" | "clear";
+	id?: string;
+	md?: string;
+	json?: string;
+	meta?: { id: string; title: string; createdAt: string; lastModified: string; messageCount: number; model: string };
+	/** op "sync": every thread that should have files; the rest are removed. */
+	ids?: string[];
+}
+
+export type ExtToHost = ExtHello | ExtResponse | ExtEvent | ExtPong | ExtUpdateAction | ExtThreadsMirror;
 
 export interface HostClientConnected {
 	type: "client_connected";
@@ -296,6 +311,9 @@ export const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
 	"tabs.context",
 	"session.info",
 	"sessions.list",
+	"threads.list",
+	"threads.read",
+	"threads.search",
 	"tabs.select",
 	"snapshot",
 	"text",
@@ -359,6 +377,9 @@ export const BRIDGE_METHODS = [
 	"permission.respond",
 	"permission.allow",
 	"permission.setMode",
+	"threads.list",
+	"threads.read",
+	"threads.search",
 	"bridge.reload",
 	"bridge.activate",
 	"bridge.debug",
