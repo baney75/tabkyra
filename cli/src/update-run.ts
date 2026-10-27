@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from "node:path";
 import type { LastUpdate, UpdatePhase } from "../../src/bridge/protocol.ts";
 import { describeBuild } from "../../src/update/build.ts";
-import { activateCheckout, detectMode, readBuildInfo, rollbackCheckout, updateCheckout } from "./checkout.ts";
+import { activateCheckout, detectMode, readBuildInfo, recoverCheckoutQuietly, rollbackCheckout, updateCheckout } from "./checkout.ts";
 import { noteUneditedSkills } from "./skill.ts";
 import { type HostRunAction, type ProgressEvent, type ProgressRecord, progressFile } from "./update-progress.ts";
 import {
@@ -286,8 +286,14 @@ export async function runHostAction(action: HostRunAction): Promise<number> {
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		if (action === "activate" || action === "rollback") {
-			// It may have stopped after files changed. Whatever is installed now is what the browser
-			// should run: reload into it (under the gate) rather than let runs start on mixed files.
+			// It may have stopped after files changed. Finish or undo the swap first (the journal in a
+			// checkout, recover() for a release), then reload into what is installed, under the gate.
+			try {
+				if (mode === "checkout") recoverCheckoutQuietly(root);
+				else if (mode === "release") withLock(recover);
+			} catch {
+				/* the next updater or host start repairs it; the mismatch banner shows meanwhile */
+			}
 			const extensionBuild = readBuildInfo(join(mode === "release" ? appDir() : root, "dist-chrome"))?.id;
 			emit({ phase: "failed", message: `${message} Reloading Tabkyra to run what is installed.`, reload: true, extensionBuild });
 		} else emit({ phase: "failed", message });

@@ -650,3 +650,17 @@ test("a dead install's result keeps its reload when a later host replays it", as
 	rmSync(join(home, ".config", "tabkyra", "update-progress.json"), { force: true });
 });
 
+test("an activation that fails mid-swap is recovered before it asks for a reload", async () => {
+	const c = makeCheckout();
+	pushCommit(c, "Something new");
+	assert.equal((await runHost(c.cli)).last.staged, true);
+	const staged = buildId(join(c.checkout, ".tabkyra-update", "next", "dist-chrome"));
+	const a = await runHostWith({ TABKYRA_TEST_SWAP_FAIL: "after-extension" }, c.cli, "--activate");
+	assert.equal(a.last.phase, "failed");
+	assert.equal(a.last.reload, true);
+	// Recovered before the reload: the extension and the CLI are one build, and the journal is done.
+	assert.equal(extBuild(c).id, staged.id);
+	assert.equal(cliBuild(c).commit, staged.commit, "the CLI matches the extension");
+	assert.ok(!existsSync(join(c.checkout, ".tabkyra-update", "journal.json")));
+	assert.equal(a.last.extensionBuild, staged.id);
+});

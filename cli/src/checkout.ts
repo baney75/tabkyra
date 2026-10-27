@@ -299,13 +299,14 @@ export async function setupSiblings(root: string, emit: Emit): Promise<void> {
  * changes can't update itself next time. Lock files are put back as committed; any other
  * change stops the update with what changed.
  */
-async function keepTreeClean(root: string, emit: Emit): Promise<void> {
+async function keepTreeClean(root: string, emit: Emit, options: { locksOnly?: boolean } = {}): Promise<void> {
 	const status = await git(root, ["status", "--porcelain", "--untracked-files=no"]);
 	const changed = status.stdout.split("\n").filter((l) => l.trim()).map((l) => l.slice(3));
 	if (changed.length === 0) return;
 	const locks = changed.filter((f) => /(^|\/)package-lock\.json$/.test(f));
 	const other = changed.filter((f) => !locks.includes(f));
-	if (other.length) throw new UpdateError(`scripts/setup-siblings.sh changed tracked files (${other.slice(0, 3).join(", ")}). The old build is still in place; commit or restore them.`);
+	if (other.length && !options.locksOnly) throw new UpdateError(`scripts/setup-siblings.sh changed tracked files (${other.slice(0, 3).join(", ")}). The old build is still in place; commit or restore them.`);
+	if (locks.length === 0) return;
 	await gitOut(root, ["checkout", "--", ...locks]);
 	emit("installing", `Restored ${locks.join(", ")} as committed (npm install had rewritten it)`);
 }
@@ -410,6 +411,8 @@ function readJournal(root: string): Journal | undefined {
 	}
 }
 
+let swapFailInjected = false;
+
 /** The swap step of an activation or rollback; every move checks first, so it can run again. */
 function swapStep(root: string, op: Journal["op"]): void {
 	const source = op === "activate" ? nextDir(root) : previousBuildDir(root);
@@ -418,6 +421,11 @@ function swapStep(root: string, op: Journal["op"]): void {
 	if (existsSync(join(source, "dist-chrome"))) {
 		if (existsSync(ext) && !existsSync(parked)) renameSync(ext, parked);
 		if (!existsSync(ext)) renameSync(join(source, "dist-chrome"), ext);
+	}
+	// Tests stop a swap here once, between the extension and the CLI (cli/test/checkout-update.test.mjs).
+	if (process.env.TABKYRA_TEST_SWAP_FAIL === "after-extension" && !swapFailInjected) {
+		swapFailInjected = true;
+		throw new UpdateError("Stopped mid-swap (TABKYRA_TEST_SWAP_FAIL).");
 	}
 	overlay(join(source, "cli-dist"), join(root, "cli", "dist"));
 }
@@ -556,7 +564,12 @@ export async function updateCheckout(root: string, emit: Emit, options: { pull: 
 			return { changed: false, message: `Up to date (${describeBuild(info.built)})` };
 		}
 		const head = await gitOut(root, ["rev-parse", "HEAD"]);
-		await setupSiblings(root, emit);
+		try {
+			await setupSiblings(root, emit);
+		} finally {
+			// Lock files npm install rewrote go back even when setup failed, or the next update is refused.
+			await keepTreeClean(root, emit, { locksOnly: true });
+		}
 		await keepTreeClean(root, emit);
 		await buildNext(root, emit);
 		// What's new lists everything since the live build, when that build's commit is an ancestor.
