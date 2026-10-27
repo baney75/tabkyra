@@ -275,3 +275,16 @@ export function stepRows(steps: readonly Step[], showAll: boolean): StepRow[] {
 	});
 	return rows;
 }
+
+/**
+ * Is a tool call still on its way (arguments streaming, or about to run)? Only in the current
+ * run: the live message, or the run's last assistant message before its tools start. A call
+ * from an earlier turn with no result was cut off, whatever runs now.
+ */
+export function callInFlight(
+	step: Extract<Step, { kind: "tool" }>,
+	opts: { live: boolean; running: boolean; pending: boolean; lastAssistant?: TMessage },
+): boolean {
+	if (step.result || opts.pending || step.message.stopReason === "aborted") return false;
+	return opts.live || (opts.running && step.message === opts.lastAssistant);
+}

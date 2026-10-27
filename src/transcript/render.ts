@@ -17,6 +17,7 @@ import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import {
 	type Block,
+	callInFlight,
 	FULL_CARD_TOOLS,
 	groupTranscript,
 	type Step,
@@ -76,12 +77,10 @@ export class StepList extends LitElement {
 	@property({ attribute: false }) tools: AgentTool[] = [];
 	@property({ attribute: false }) pending?: Set<string>;
 	@property({ type: Boolean }) running = false;
-	/**
-	 * The list belongs to the message still streaming. A call with no result that isn't running
-	 * yet is still arriving (or about to run) while the agent runs: its card shows as streaming,
-	 * never as cut off.
-	 */
+	/** The list belongs to the message still streaming (see callInFlight). */
 	@property({ type: Boolean }) streaming = false;
+	/** The transcript's last assistant message: its calls may still be about to run. */
+	@property({ attribute: false }) lastAssistant?: TMessage;
 	@state() private open = new Set<string>();
 	@state() private showAll = false;
 
@@ -143,7 +142,12 @@ export class StepList extends LitElement {
 			.result=${step.result as ToolResultMessage | undefined}
 			.pending=${this.pending?.has(step.call.id) ?? false}
 			.aborted=${aborted}
-			.isStreaming=${(this.streaming || this.running) && !step.result && !(this.pending?.has(step.call.id) ?? false)}
+			.isStreaming=${callInFlight(step, {
+				live: this.streaming,
+				running: this.running,
+				pending: this.pending?.has(step.call.id) ?? false,
+				lastAssistant: this.lastAssistant,
+			})}
 		></tool-message>`;
 	}
 
@@ -254,7 +258,12 @@ function textBlock(text: string, usage?: string): TemplateResult {
 	</div>`;
 }
 
-function renderBlock(block: Block, ctx: TranscriptContext, live = false): TemplateResult | undefined {
+function renderBlock(
+	block: Block,
+	ctx: TranscriptContext,
+	live = false,
+	lastAssistant?: TMessage,
+): TemplateResult | undefined {
 	switch (block.kind) {
 		case "message": {
 			const m = block.message as AgentMessage;
@@ -273,6 +282,7 @@ function renderBlock(block: Block, ctx: TranscriptContext, live = false): Templa
 				.pending=${ctx.pendingToolCalls}
 				.running=${ctx.isStreaming}
 				.streaming=${live}
+				.lastAssistant=${lastAssistant}
 			></tk-steps>`;
 		case "status":
 			return block.status === "error"
@@ -294,8 +304,9 @@ export const tabkyraTranscript: TranscriptRenderer = {
 		});
 		stableLastSite = lastSite;
 		const items: Array<{ key: string; template: TemplateResult }> = [];
+		const lastAssistant = [...(messages as unknown as TMessage[])].reverse().find((m) => m.role === "assistant");
 		for (const b of blocks) {
-			const template = renderBlock(b, ctx);
+			const template = renderBlock(b, ctx, false, lastAssistant);
 			if (template) items.push({ key: b.key, template });
 		}
 		return items;
