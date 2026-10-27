@@ -16,9 +16,15 @@ cd "$parent/pi-mono"
 # so `git diff` shows them and an applied patch compares equal to its own text. Other untracked
 # files are left alone.
 added_files() { git apply --summary 2>/dev/null | awk '$1 == "create" { print $4 }'; }
+marked=()
 for f in $( { added_files < "$here/patches/pi-mono.patch"; for rev in $(git -C "$here" log --format=%H -- patches/pi-mono.patch); do git -C "$here" show "$rev:patches/pi-mono.patch" 2>/dev/null | added_files; done; } | sort -u); do
-	if [ -f "$f" ] && ! git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then git add --intent-to-add -- "$f"; fi
+	if [ -f "$f" ] && ! git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+		git add --intent-to-add -- "$f"
+		marked+=("$f")
+	fi
 done
+# On a refusal, leave the index as we found it.
+unmark() { if [ "${#marked[@]}" -gt 0 ]; then git reset -q -- "${marked[@]}"; fi; }
 if ! git diff --quiet; then
 	if git apply --reverse --check "$here/patches/pi-mono.patch" 2>/dev/null; then
 		echo "pi-mono patch already applied"
@@ -43,6 +49,7 @@ if ! git diff --quiet; then
 		done
 		if [ -z "$upgraded" ]; then
 			echo "pi-mono has local changes that are not patches/pi-mono.patch; resolve them first" >&2
+			unmark
 			exit 1
 		fi
 	fi

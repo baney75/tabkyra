@@ -12,7 +12,7 @@ function setup({ result = () => "started", context } = {}) {
 	let idle = Promise.resolve();
 	let finish = () => {};
 	const agent = {
-		state: { isStreaming: false },
+		state: { isStreaming: false, messages: [] },
 		steered: [],
 		steer(m) { this.steered.push(m); },
 		clearSteeringQueue() { this.steered = []; },
@@ -205,8 +205,8 @@ test("Send now whose page context resolves after a Stop still resumes and sends"
 	release();
 	await pressed;
 	await settle();
-	assert.equal(queue.paused, false);
 	assert.deepEqual(sent, ["mine"], "the Send now item goes first");
+	assert.equal(queue.paused, true, "the Stop holds the item that wasn't pressed");
 });
 
 test("Send now whose page context resolves after a normal end goes before older items", async () => {
@@ -232,8 +232,8 @@ test("the page context goes with the first Send now in a run only", async () => 
 	queue.add("b");
 	await queue.sendNow(queue.items[0].id);
 	await queue.sendNow(queue.items[1].id);
-	assert.equal(agent.steered.filter((m) => m === note).length, 1);
-	assert.equal(calls, 1);
+	assert.equal(agent.steered.filter((m) => m === note).length, 1, "the same note isn't steered twice");
+	assert.equal(calls, 2, "each Send now looks the page up, to catch a page change");
 	stop();
 	start();
 	queue.add("c");
@@ -320,4 +320,102 @@ test("sync after missed events recovers a queue that thought a run was still goi
 	await settle();
 	assert.deepEqual(agent.steered, []);
 	assert.deepEqual(sent, ["waiting"]);
+});
+
+test("a Send now message injected while the panel wasn't listening isn't sent again", async () => {
+	const { agent, sent, queue, start, finish } = setup();
+	start();
+	queue.add("x");
+	await queue.sendNow(queue.items[0].id);
+	agent.state.messages.push(agent.steered[0]); // injected, but message_start was missed
+	agent.state.isStreaming = false;
+	agent.state.messages.push({ role: "assistant", stopReason: "stop" });
+	finish();
+	queue.sync();
+	await settle();
+	assert.deepEqual(sent, [], "not sent twice");
+	assert.equal(queue.items.length, 0);
+});
+
+test("a Stop holds only what was waiting; later items still go out", async () => {
+	const { sent, queue, start, stop } = setup();
+	start();
+	queue.add("x");
+	stop("aborted");
+	assert.equal(queue.paused, true);
+	start(); // the user sends something fresh
+	queue.add("z");
+	stop();
+	await settle();
+	assert.deepEqual(sent, ["z"]);
+	assert.deepEqual(queue.items.map((q) => q.input), ["x"], "x stays held");
+	assert.equal(queue.paused, true);
+});
+
+test("a Stop missed while the panel wasn't listening still holds the queue", async () => {
+	const { agent, sent, queue, start, finish } = setup();
+	start();
+	queue.add("x");
+	agent.state.isStreaming = false;
+	agent.state.messages.push({ role: "assistant", stopReason: "aborted" });
+	finish();
+	queue.sync();
+	await settle();
+	assert.deepEqual(sent, []);
+	assert.equal(queue.paused, true);
+});
+
+test("Send now then Stop: the pressed item still goes, whatever the page lookup's timing", async () => {
+	for (const slowContext of [false, true]) {
+		let release = () => {};
+		const context = slowContext ? () => new Promise((r) => (release = () => r([]))) : async () => [];
+		const { sent, queue, start, stop } = setup({ context });
+		start();
+		queue.add("other");
+		queue.add("pressed");
+		const pressed = queue.sendNow(queue.items[1].id);
+		stop("aborted");
+		release();
+		await pressed;
+		await settle();
+		assert.deepEqual(sent, ["pressed"], `slow context: ${slowContext}`);
+		assert.equal(queue.paused, true, "the unpressed item is held");
+	}
+});
+
+test("an item that comes back from a send stays behind items pressed meanwhile", async () => {
+	let finishSend;
+	let answer = "busy";
+	const { sent, queue, start, stop } = setup({ result: () => answer });
+	// a send that takes a while (key dialog), then reports busy
+	start();
+	queue.add("x");
+	queue.add("y");
+	const realSend = queue["send"];
+	queue["send"] = (item) => new Promise((r) => (finishSend = () => r(realSend(item))));
+	stop();
+	await settle(); // drain took x and is waiting on its send
+	await queue.sendNow(queue.items.find((q) => q.input === "y").id); // y pressed while x is out
+	finishSend();
+	await settle();
+	assert.deepEqual(queue.items.map((q) => q.input), ["y", "x"]);
+	answer = "started";
+	queue["send"] = realSend;
+	queue.kick();
+	await settle();
+	assert.deepEqual(sent, ["y"]);
+});
+
+test("the page note goes again when the page changed between two Send nows", async () => {
+	let url = "https://a.example/";
+	const { agent, queue, start } = setup({ context: async () => [{ role: "navigation", url }] });
+	start();
+	queue.add("one");
+	queue.add("two");
+	queue.add("three");
+	await queue.sendNow(queue.items[0].id);
+	await queue.sendNow(queue.items[1].id); // same page: no second note
+	url = "https://b.example/";
+	await queue.sendNow(queue.items[2].id); // page changed: note again
+	assert.deepEqual(agent.steered.filter((m) => m.role === "navigation").map((m) => m.url), ["https://a.example/", "https://b.example/"]);
 });

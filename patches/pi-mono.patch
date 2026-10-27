@@ -58,7 +58,7 @@ index 2c76c391d..b2e1df6d5 100644
  
  		// Set up artifacts panel
 diff --git a/packages/web-ui/src/components/AgentInterface.ts b/packages/web-ui/src/components/AgentInterface.ts
-index b8f6550ec..bb16a6434 100644
+index b8f6550ec..0edec8fdc 100644
 --- a/packages/web-ui/src/components/AgentInterface.ts
 +++ b/packages/web-ui/src/components/AgentInterface.ts
 @@ -1,3 +1,4 @@
@@ -124,7 +124,7 @@ index b8f6550ec..bb16a6434 100644
 +			session.setSteeringMode("all"); // a Send now message and its page context arrive together
 +			this._queue = new MessageQueue(
 +				session,
-+				(item) => this.startSend(item.input, item.attachments, true).then((r) => r.result),
++				(item) => this.startSend(item.input, item.attachments, "queue").then((r) => r.result),
 +				() => this.requestUpdate(),
 +				() => this.steerContext?.() ?? Promise.resolve([]),
 +			);
@@ -163,12 +163,12 @@ index b8f6550ec..bb16a6434 100644
  				case "message_update":
  					if (this._streamingContainer) {
  						const isStreaming = this.session?.state.isStreaming || false;
-@@ -213,52 +249,161 @@ export class AgentInterface extends LitElement {
+@@ -213,52 +249,165 @@ export class AgentInterface extends LitElement {
  	};
  
  	public async sendMessage(input: string, attachments?: Attachment[]) {
 -		if ((!input.trim() && attachments?.length === 0) || this.session?.state.isStreaming) return;
-+		const { run } = await this.startSend(input, attachments, false);
++		const { run } = await this.startSend(input, attachments, "api");
 +		await run;
 +	}
 +
@@ -180,8 +180,9 @@ index b8f6550ec..bb16a6434 100644
 +	private async startSend(
 +		input: string,
 +		attachments: Attachment[] | undefined,
-+		fromQueue: boolean,
++		origin: "editor" | "api" | "queue",
 +	): Promise<{ result: SendResult; run?: Promise<void> }> {
++		const fromQueue = origin === "queue";
 +		if (!input.trim() && (attachments?.length ?? 0) === 0) return { result: "refused" };
  		const session = this.session;
  		if (!session) throw new Error("No session set on AgentInterface");
@@ -196,7 +197,7 @@ index b8f6550ec..bb16a6434 100644
 +		// window below can't send it again. It goes back only if the send is refused.
 +		// (A programmatic send can come before the first render, when there is no editor yet.)
 +		const editor = this._messageEditor as MessageEditor | undefined;
-+		const fromEditor = !fromQueue && !!editor && editor.value === input;
++		const fromEditor = origin === "editor" && !!editor;
 +		const draftAttachments = fromEditor ? editor?.attachments : undefined;
 +		if (fromEditor && editor) {
 +			editor.value = "";
@@ -210,11 +211,14 @@ index b8f6550ec..bb16a6434 100644
 +		};
 +		const queueIt = (): { result: SendResult } => {
 +			if (fromQueue) return { result: "busy" };
-+			if (queue && queue === this._queue && queue.agent === session) queue.add(input, attachments);
-+			else giveBack();
++			if (queue && queue === this._queue && queue.agent === session) {
++				queue.add(input, attachments);
++				if (!session.state.isStreaming && !this._starting) queue.kick();
++			} else giveBack();
 +			return { result: "busy" };
 +		};
-+		if (session.state.isStreaming || this._starting) return queueIt();
++		// While a run, another send, or queued items about to go out are ahead, a new send waits its turn.
++		if (session.state.isStreaming || this._starting || (!fromQueue && queue?.hasSendable)) return queueIt();
 +		if (!session.state.model) {
 +			giveBack();
 +			if (fromQueue) return { result: "refused" };
@@ -362,7 +366,7 @@ index b8f6550ec..bb16a6434 100644
  	}
  
  	private renderMessages() {
-@@ -361,6 +506,7 @@ export class AgentInterface extends LitElement {
+@@ -361,6 +510,7 @@ export class AgentInterface extends LitElement {
  				<!-- Input Area -->
  				<div class="shrink-0">
  					<div class="max-w-3xl mx-auto px-2">
@@ -370,15 +374,18 @@ index b8f6550ec..bb16a6434 100644
  						<message-editor
  							.isStreaming=${state.isStreaming}
  							.currentModel=${state.model}
-@@ -368,6 +514,8 @@ export class AgentInterface extends LitElement {
+@@ -368,8 +518,10 @@ export class AgentInterface extends LitElement {
  							.showAttachmentButton=${this.enableAttachments}
  							.showModelSelector=${this.enableModelSelector}
  							.showThinkingSelector=${this.enableThinkingSelector}
 +							.historyProvider=${this.historyProvider}
 +							.slashCommandProvider=${this.slashCommandProvider}
  							.onSend=${(input: string, attachments: Attachment[]) => {
- 								this.sendMessage(input, attachments);
+-								this.sendMessage(input, attachments);
++								void this.startSend(input, attachments, "editor").then(({ run }) => run);
  							}}
+ 							.onAbort=${() => session.abort()}
+ 							.onModelSelect=${() => {
 diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
 index f0987c4d1..286192751 100644
 --- a/packages/web-ui/src/components/MessageEditor.ts
@@ -712,10 +719,10 @@ index 1f50a7d08..1da1213a3 100644
  		Input: "Eingabe",
 diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
 new file mode 100644
-index 000000000..6fd2f93a7
+index 000000000..0174992ff
 --- /dev/null
 +++ b/packages/web-ui/src/utils/message-queue.ts
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,227 @@
 +import type { AgentMessage } from "@mariozechner/pi-agent-core";
 +import type { Attachment } from "./attachment-utils.js";
 +
@@ -731,7 +738,7 @@ index 000000000..6fd2f93a7
 +
 +/** The parts of Agent the queue uses. */
 +export interface QueueAgent {
-+	state: { isStreaming: boolean };
++	state: { isStreaming: boolean; messages: AgentMessage[] };
 +	steer(message: AgentMessage): void;
 +	clearSteeringQueue(): void;
 +	waitForIdle(): Promise<void>;
@@ -746,22 +753,23 @@ index 000000000..6fd2f93a7
 +
 +/**
 + * Messages the user sends while the agent runs, for one agent. The list is the only queue:
-+ * when a run ends normally the first item goes out through `send` as an ordinary prompt.
-+ * "Send now" during a run hands the item (after any `beforeSteer` context) to the agent with
-+ * steer(), which delivers it after the current tool call; it leaves the list once the agent
-+ * injects it, and if the run ends first it goes out ahead of the rest. Send now with nothing
-+ * running sends the item next. A stopped or failed run pauses the queue until the user presses
-+ * Send now; removing items never resumes it.
++ * when a run ends the first item goes out through `send` as an ordinary prompt. "Send now"
++ * during a run hands the item (after a page note, unless the same note already went this run)
++ * to the agent with steer(), which delivers it after the current tool call; it leaves the list
++ * once the agent injects it, and if the run ends first it goes out ahead of the rest. Items
++ * pressed with Send now lead the list in press order. A stopped or failed run holds the items
++ * that were waiting then (not pressed ones, not later ones) until Send now or ×.
 + */
 +export class MessageQueue {
 +	items: QueuedMessage[] = [];
-+	paused = false;
++	/** Items that were waiting when a run was stopped or failed; they wait for Send now or ×. */
++	private held = new Set<number>();
 +	private running: boolean;
 +	private seq = 0;
 +	private nowSeq = 0;
 +	private draining = false;
-+	/** Page context goes ahead of the first Send now in a run only; later ones would repeat it. */
-+	private contextSent = false;
++	/** The page context last steered in this run, so the same note isn't steered twice. */
++	private lastContext?: string;
 +	/** Send now presses still building their page context; the drain waits for them to decide. */
 +	private sendNowPending = 0;
 +
@@ -774,9 +782,13 @@ index 000000000..6fd2f93a7
 +		this.running = agent.state.isStreaming;
 +	}
 +
++	/** Something is held after a Stop or failure (the panel shows a note). */
++	get paused(): boolean {
++		return this.items.some((q) => this.held.has(q.id));
++	}
++
 +	add(input: string, attachments?: Attachment[]): void {
-+		// A pause only guards items that were waiting when the run stopped.
-+		if (this.items.length === 0) this.paused = false;
++		// New items are never held: a Stop only holds what was waiting when it happened.
 +		this.items = [...this.items, { id: ++this.seq, input, attachments }];
 +		this.changed();
 +	}
@@ -798,18 +810,18 @@ index 000000000..6fd2f93a7
 +	async sendNow(id: number): Promise<void> {
 +		const pending = (q: QueuedMessage) => q.id === id && !q.steered;
 +		if (!this.items.some(pending)) return;
-+		this.paused = false;
-+		const nowSeq = ++this.nowSeq; // press order, taken before any wait
++		this.held.clear();
++		// Press order, recorded on the item at once: a Stop during the wait below must not hold it.
++		const nowSeq = ++this.nowSeq;
++		this.items = this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q));
 +		let context: AgentMessage[] = [];
-+		if (this.running && !this.contextSent) {
++		if (this.running) {
 +			this.sendNowPending++;
 +			try {
 +				context = (await this.beforeSteer?.().catch(() => [])) ?? [];
 +			} finally {
 +				this.sendNowPending--;
 +			}
-+			// The run may have ended (even by Stop) while the context was built; Send now still resumes.
-+			this.paused = false;
 +		}
 +		const item = this.items.find(pending);
 +		if (!item) {
@@ -817,10 +829,15 @@ index 000000000..6fd2f93a7
 +			if (!this.running) void this.drain();
 +			return;
 +		}
++		this.held.delete(id);
 +		if (this.running) {
 +			const message = MessageQueue.message(item);
-+			if (!this.contextSent) for (const extra of context) this.agent.steer(extra);
-+			this.contextSent = true;
++			// The page note goes unless it repeats the one already steered in this run.
++			const key = context.length > 0 ? JSON.stringify(context.map((m) => (m as { url?: string }).url ?? m)) : undefined;
++			if (key && key !== this.lastContext) {
++				for (const extra of context) this.agent.steer(extra);
++				this.lastContext = key;
++			}
 +			this.agent.steer(message);
 +			this.items = this.items.map((q) => (q.id === id ? { ...q, steered: message, nowSeq } : q));
 +			this.changed();
@@ -840,12 +857,16 @@ index 000000000..6fd2f93a7
 +
 +	/** The panel missed events (it was disconnected): take the run state from the agent again. */
 +	sync(): void {
++		// A Send now message the agent injected while nobody listened is already sent.
++		const seen = new Set(this.agent.state.messages);
++		this.items = this.items.filter((q) => !q.steered || !seen.has(q.steered));
 +		this.running = this.agent.state.isStreaming;
-+		if (this.running) return;
-+		this.agent.clearSteeringQueue();
-+		this.items = this.ordered(this.items.map((q) => ({ ...q, steered: undefined })));
-+		this.changed();
-+		void this.drain();
++		if (this.running) {
++			this.changed();
++			return;
++		}
++		// The run ended unheard: apply the end-of-run rules (a Stop still holds what waited).
++		this.onAgentEnd(this.agent.state.messages);
 +	}
 +
 +	/** Try to send again (a send that held the panel ended without starting a run). */
@@ -855,13 +876,13 @@ index 000000000..6fd2f93a7
 +
 +	remove(id: number): void {
 +		this.items = this.items.filter((q) => q.id !== id || q.steered);
-+		if (this.items.length === 0) this.paused = false;
++		this.held.delete(id);
 +		this.changed();
 +	}
 +
 +	onAgentStart(): void {
 +		this.running = true;
-+		this.contextSent = false;
++		this.lastContext = undefined;
 +	}
 +
 +	/** A message the agent injected: a steered item is now in the transcript. */
@@ -874,14 +895,16 @@ index 000000000..6fd2f93a7
 +	/** The run is over; send the next item, or pause if the user stopped it or it failed. */
 +	onAgentEnd(messages: AgentMessage[]): void {
 +		this.running = false;
-+		this.contextSent = false;
++		this.lastContext = undefined;
 +		// A steer that arrived after the last turn is never injected. It was asked for first, so
 +		// it goes out first.
 +		this.agent.clearSteeringQueue();
 +		this.items = this.ordered(this.items.map((q) => (q.steered ? { ...q, steered: undefined } : q)));
 +		const last = [...messages].reverse().find((m) => m.role === "assistant") as { stopReason?: string } | undefined;
-+		// Pause only when something is waiting; a stop with an empty queue leaves nothing to hold.
-+		if ((last?.stopReason === "aborted" || last?.stopReason === "error") && this.items.length > 0) this.paused = true;
++		// A Stop or failure holds what was waiting, except items the user pressed Send now on.
++		if (last?.stopReason === "aborted" || last?.stopReason === "error") {
++			for (const q of this.items) if (q.nowSeq === undefined) this.held.add(q.id);
++		}
 +		this.changed();
 +		void this.drain();
 +	}
@@ -890,19 +913,20 @@ index 000000000..6fd2f93a7
 +	dispose(): void {
 +		this.agent.clearSteeringQueue();
 +		this.items = [];
-+		this.paused = false;
++		this.held.clear();
 +	}
 +
-+	/** Once the agent is idle, send the first item; the next waits for that run's end. */
++	/** Once the agent is idle, send the first item not held; the next waits for that run's end. */
 +	private async drain(): Promise<void> {
 +		if (this.draining) return;
 +		this.draining = true;
 +		try {
 +			await this.agent.waitForIdle();
 +			// A Send now still building its context decides what goes next; it drains when done.
-+			if (this.paused || this.running || this.sendNowPending > 0 || this.items.length === 0) return;
-+			const [next, ...rest] = this.items;
-+			this.items = rest;
++			if (this.running || this.sendNowPending > 0) return;
++			const next = this.items.find((q) => !this.held.has(q.id));
++			if (!next) return;
++			this.items = this.items.filter((q) => q !== next);
 +			this.changed();
 +			let result: SendResult;
 +			try {
@@ -911,12 +935,18 @@ index 000000000..6fd2f93a7
 +				result = "refused";
 +			}
 +			if (result !== "started") {
-+				this.items = [next, ...this.items];
-+				if (result === "refused") this.paused = true;
++				// Back in its place: behind anything pressed while it was out.
++				this.items = this.ordered([next, ...this.items]);
++				if (result === "refused") this.held.add(next.id);
 +				this.changed();
 +			}
 +		} finally {
 +			this.draining = false;
 +		}
++	}
++
++	/** Whether the queue has something it would send now (nothing held, not mid-send). */
++	get hasSendable(): boolean {
++		return this.items.some((q) => !q.steered && !this.held.has(q.id));
 +	}
 +}
