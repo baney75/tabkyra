@@ -132,6 +132,14 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.match(fish, /__fish_seen_subcommand_from skill; and __fish_seen_subcommand_from list' -f/);
 	assert.doesNotMatch(fish, /__fish_seen_subcommand_from skill; and __fish_seen_subcommand_from lint' -f/);
 	assert.match(fish, /-l cases -r -F/);
+	// bash: no file names where nothing takes a path; a value flag completes its values, not flags.
+	const withCompopt = (words) =>
+		execFileSync("bash", ["-c", `compopt() { echo "compopt $*"; }; source "${file}"; COMP_WORDS=(${words} ""); COMP_CWORD=$((\${#COMP_WORDS[@]} - 1)); _tabkyra; echo "R:\${COMPREPLY[*]}"`], { encoding: "utf8" }).trim();
+	assert.match(withCompopt("tabkyra mcp"), /compopt \+o default/);
+	assert.match(withCompopt("tabkyra token revoke"), /compopt \+o default/);
+	assert.doesNotMatch(withCompopt("tabkyra skill apply"), /compopt/);
+	assert.match(withCompopt("tabkyra update --channel"), /R:stable nightly$/);
+	assert.match(withCompopt("tabkyra tunnel tailscale --port"), /R:$/);
 	if (spawnSync("zsh", ["--version"]).status === 0) assert.equal(spawnSync("zsh", ["-n"], { input: zsh.out }).status, 0, "zsh script has a syntax error");
 	else t.diagnostic("zsh is not installed here: the zsh script's syntax was not checked");
 	// Loaded from a zshrc that never ran compinit, it must not fail with "command not found: compdef".
@@ -187,11 +195,16 @@ test("the launcher harnesses run turns on Node's compile cache without overridin
 	assert.doesNotMatch(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), /NODE_COMPILE_CACHE/);
 });
 
-test("completions offer exactly the options each subcommand's parser accepts", async () => {
+test("help rows and the parsers agree on every flag, including setup's and update's own parsers", async () => {
 	const { build } = await import("esbuild");
 	const out = join(home, "tables.mjs");
 	await build({
-		stdin: { contents: 'export { COMMANDS, argsProblem, helpRows } from "./src/commands.ts"; export { LIBRARY_OPTIONS } from "./src/library.ts";', resolveDir: join(here, ".."), loader: "ts" },
+		stdin: {
+			contents:
+				'export { COMMANDS, argsProblem, helpRows } from "./src/commands.ts"; export { LIBRARY_OPTIONS } from "./src/library.ts"; export { parseSetupArgs, parseUpdateArgs } from "./src/parse-args.ts";',
+			resolveDir: join(here, ".."),
+			loader: "ts",
+		},
 		bundle: true,
 		platform: "node",
 		format: "esm",
@@ -199,7 +212,17 @@ test("completions offer exactly the options each subcommand's parser accepts", a
 		loader: { ".md": "text", ".pub": "text" },
 		logLevel: "silent",
 	});
-	const { COMMANDS, LIBRARY_OPTIONS, argsProblem, helpRows } = await import(out);
+	const { COMMANDS, LIBRARY_OPTIONS, argsProblem, helpRows, parseSetupArgs, parseUpdateArgs } = await import(out);
+	// setup and update parse their own options: every flag their help row shows is one they take.
+	const sample = { "--timeout": "5", "--channel": "stable", "--auto-check": "on" };
+	for (const [name, parse, extra] of [["setup", parseSetupArgs, []], ["update", parseUpdateArgs, ["--check"]]]) {
+		for (const flag of COMMANDS.find((c) => c.name === name).flags) {
+			const args = [...extra.filter((e) => e !== flag), flag, ...(sample[flag] ? [sample[flag]] : [])];
+			const r = parse(name === "update" && flag === "--rollback" ? ["--rollback"] : args);
+			assert.equal(typeof r, "object", `${name} ${flag}: ${r}`);
+		}
+		assert.match(parse(["--bogus"]), /Unknown option/);
+	}
 	// Every flag a help row shows is one the parser accepts for that row's subcommand.
 	for (const spec of COMMANDS.filter((c) => !c.hidden && !c.selfParsed)) {
 		for (const [usage] of helpRows(spec)) {
@@ -225,7 +248,7 @@ test("token list and token list --json agree on when a token was last used", () 
 	writeFileSync(join(dir, "tokens.json"), JSON.stringify({ tokens: [record] }));
 	const [json] = JSON.parse(run("token", "list", "--json").out);
 	assert.equal(json.lastUsed, "2026-10-20T00:00:00.000Z");
-	assert.equal(json.sha256, undefined, "the token hash is printed");
+	assert.equal(json.sha256, undefined, "token list --json must not print the token hash");
 	assert.match(run("token", "list").out, /phone .* last used 2026-10-20T00:00:00\.000Z/);
 	rmSync(join(dir, "tokens.json"));
 });

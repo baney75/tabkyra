@@ -289,7 +289,8 @@ export const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
 export function isIdempotent(method: string, params: Record<string, unknown> = {}): boolean {
 	if (IDEMPOTENT_METHODS.has(method)) return true;
 	// Loading the same URL again is a repeat of a GET; "back" and "forward" twice are not.
-	if (method === "navigate") return typeof params.url === "string" && params.url !== "back" && params.url !== "forward";
+	if (method === "navigate")
+		return typeof params.url === "string" && params.url !== "back" && params.url !== "forward";
 	return false;
 }
 
