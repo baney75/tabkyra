@@ -121,9 +121,24 @@ builds it in. The secret half exists in two places only:
 
 - Proton Pass, Personal vault, secure note "Tabkyra release signing key (minisign
   16C760BCAEA0129D)";
-- the repository secret `MINISIGN_SECRET_KEY` on baney75/tabkyra, which `release.yml` reads.
+- the `MINISIGN_SECRET_KEY` secret of the `release` environment on baney75/tabkyra.
+  `release.yml`'s publish job and `release-key-check.yml` use it.
 
-To cut a release, run `./release.sh patch` on a clean, up-to-date main. Then, on a machine
+Every job that reads the key waits for an approval: the environment has baney75 as its
+required reviewer (self-review allowed), so a run starts signing only after he approves it, in
+the Actions run page or with
+`gh api -X POST repos/baney75/tabkyra/actions/runs/<run id>/pending_deployments -f state=approved -F 'environment_ids[]=<id>' -f comment=ok`.
+That holds whoever changed main, so a collaborator who merges a workflow that prints the key
+still can't run it without that approval. Only `main` and `v*` tags can deploy to the
+environment at all, so a workflow on any other branch (even one dispatched by hand) can't
+read the key. Two repository rulesets keep those refs trusted: "Release tags" lets only admins create, move or delete `v*` tags, so nobody else can
+tag their own commit into signing; "main" blocks deleting and force-pushing main and requires
+a pull request, and only the admin role bypasses it. There is no repository-level or
+organization-level `MINISIGN_SECRET_KEY`: a job falls back to one of those when its
+environment lacks the secret, which would hide a broken environment secret and reach every
+ref. `gh secret list --repo baney75/tabkyra` must not list it.
+
+To cut a release, run `./release.sh patch` on a clean, up-to-date main, then approve the publish job's `release` deployment. Then, on a machine
 with the CLI, `tabkyra update --check` exits 100 and `tabkyra update` installs it.
 
 Before the first tag after any change to the secret or the public key, prove they are a pair
@@ -144,10 +159,34 @@ Until the CLI and the workflow accept a list of trusted keys (issue #33),
 replacing the key means every user reinstalls Tabkyra from a trusted channel. Keep the
 current secret in both places; don't replace either unless you mean to make users reinstall.
 
-**If the key leaks:** delete the repository secret so you stop signing with it, and publish
-nothing more. That doesn't revoke it. Every installed CLI keeps trusting the leaked key, and
+**If the key leaks:** delete every copy of the secret so you stop signing with it, and publish
+nothing more:
+`gh secret delete MINISIGN_SECRET_KEY --repo baney75/tabkyra --env release`, plus a
+repository-level copy if one ever appears (`gh secret delete MINISIGN_SECRET_KEY --repo
+baney75/tabkyra`). Confirm with `gh secret list --repo baney75/tabkyra` and
+`gh secret list --repo baney75/tabkyra --env release` that neither lists it. That doesn't revoke it. Every installed CLI keeps trusting the leaked key, and
 whoever holds it can sign a release those CLIs accept. Tell users to reinstall from a trusted
 channel with a CLI that carries a new key. There is no revocation or expiry yet.
+
+**Making a replacement key after a leak.** This is not a rotation: every installed CLI keeps
+trusting only the old key, so every user reinstalls. (Rotation without reinstalling needs #33,
+and its own procedure: add the new key beside the old one in a release signed by the old key.)
+
+1. On your Mac, in a new folder outside any repo, make a pair without a password (CI signs
+   unattended): `minisign -G -W -p tabkyra-release.pub -s tabkyra-release.key`. `minisign` is
+   a Homebrew formula (`brew install minisign`). Note the key ID it prints; it is also in the
+   `.pub` file's comment line.
+2. In one PR, replace `keys/tabkyra-release.pub` with the new file and update the key ID and
+   the Pass note name in this section. Merge it.
+3. Replace the Proton Pass note's contents with `tabkyra-release.key` and `tabkyra-release.pub`,
+   and rename it to "Tabkyra release signing key (minisign <new key ID>)". Then set the secret
+   from the file on stdin, never as an argument:
+   `gh secret set MINISIGN_SECRET_KEY --repo baney75/tabkyra --env release < tabkyra-release.key`.
+4. Run `gh workflow run release-key-check.yml --repo baney75/tabkyra` and wait for it to pass.
+   Push no `v*` tag between step 2 and this passing check: a release in that window would be
+   signed with the wrong key for the committed public key.
+5. Delete `tabkyra-release.key`. On an SSD with FileVault, deleting is all you can do; the Pass
+   note and the environment secret are the intended copies.
 
 ## Tests
 
