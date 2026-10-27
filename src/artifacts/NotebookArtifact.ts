@@ -79,7 +79,7 @@ export class NotebookArtifact extends PreviewArtifact {
 		if (nb.cells.length < nb.totalCells) {
 			const note = doc.createElement("div");
 			note.className = "text-xs text-muted-foreground";
-			note.textContent = i18n("showing the first {count}").replace("{count}", String(nb.cells.length));
+			note.textContent = i18n("showing the first {count}").replace("{count}", () => String(nb.cells.length));
 			root.appendChild(note);
 		}
 		for (const cell of nb.cells) {

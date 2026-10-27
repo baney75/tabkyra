@@ -710,8 +710,10 @@ test("custom-shape commands come out of one deck-wide budget", async () => {
 	const capped = await withLimits({ maxDeckCommands: 700 }, () => readPptx(bytes));
 	assert.equal(commands(capped.slides[0]), 700, "the shape gets what the budget has left");
 	assert.equal(capped.slides.length, 1, "no slide starts once the budget is spent");
-	const full = await withLimits({ maxDeckCommands: 1000 }, () => readPptx(bytes));
+	const full = await withLimits({ maxDeckCommands: 2000 }, () => readPptx(bytes));
 	assert.equal(commands(full.slides[1]), 800, "the master's shape is read once and drawn again on the next slide");
+	const short = await withLimits({ maxDeckCommands: 1000 }, () => readPptx(bytes));
+	assert.equal(commands(short.slides[1]), 0, "a reuse the budget can't cover draws nothing rather than overshooting");
 });
 
 test("master shapes are read once per file, and each slide shows its own slide number", async () => {
@@ -854,4 +856,82 @@ test("notebook text outputs have their own budget", () => {
 	const shown = nb.cells.flatMap((c) => c.outputs).reduce((n, o) => n + o.text.length, 0);
 	assert.ok(shown <= 6_000_000, `${shown} characters`);
 	assert.equal(nb.truncated, true);
+});
+
+// ---------------------------------------------------------------------------
+// Series 2, round 3 findings (fixed after the review series; not re-reviewed)
+// ---------------------------------------------------------------------------
+
+/** cookieDeck with the first slide listed `times` more times in sldIdLst. */
+async function repeatSlide(zip, times) {
+	const pres = await zip.file("ppt/presentation.xml").async("string");
+	const rels = await zip.file("ppt/_rels/presentation.xml.rels").async("string");
+	const ids = Array.from({ length: times }, (_, i) => `<p:sldId id="${400 + i}" r:id="rR${i}"/>`).join("");
+	const rel = Array.from({ length: times }, (_, i) => `<Relationship Id="rR${i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>`).join("");
+	zip.file("ppt/presentation.xml", pres.replace("</p:sldIdLst>", `${ids}</p:sldIdLst>`));
+	zip.file("ppt/_rels/presentation.xml.rels", rels.replace("</Relationships>", `${rel}</Relationships>`));
+	return zip;
+}
+
+test("hostile: tables of empty rows on a slide listed many times spend the deck budget", async () => {
+	const zip = await JSZip.loadAsync(await cookieDeck());
+	const frame = `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="T"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblGrid><a:gridCol w="10"/></a:tblGrid>${"<a:tr/>".repeat(5000)}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+	const slide = await zip.file("ppt/slides/slide1.xml").async("string");
+	zip.file("ppt/slides/slide1.xml", slide.replace("</p:spTree>", `${frame.repeat(20)}</p:spTree>`));
+	await repeatSlide(zip, 250);
+	const deck = await readPptx(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }));
+	const rows = deck.slides.flatMap((s) => s.elements).reduce((n, e) => n + (e.kind === "table" ? e.rows.length : 0), 0);
+	assert.ok(rows <= 60_000, `${rows} table rows drawn`);
+	assert.ok(deck.slides.length < 252, `${deck.slides.length} slides`);
+});
+
+test("a slide listed many times is read once", async () => {
+	const zip = await JSZip.loadAsync(await cookieDeck());
+	const slide = await zip.file("ppt/slides/slide1.xml").async("string");
+	zip.file("ppt/slides/slide1.xml", slide.replace("<a:t>Flour</a:t></a:r>", `<a:t>Flour</a:t></a:r>${"<a:x/>".repeat(800_000)}`));
+	await repeatSlide(zip, 299);
+	const started = Date.now();
+	const deck = await readPptx(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }));
+	assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
+	assert.equal(deck.slides.at(-1).number, deck.slides.length, "each listing keeps its own number");
+});
+
+test("a reused master never draws past what is left of the budget", async () => {
+	const shapes = Array.from({ length: 30 }, (_, i) => `<p:sp><p:nvSpPr><p:cNvPr id="${200 + i}" name="d"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5" cy="5"/></a:xfrm><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr></p:sp>`).join("");
+	const deck = await withLimits({ maxDeckElements: 50 }, async () => readPptx(await deckWithMaster(shapes)));
+	const drawn = deck.slides.reduce((n, s) => n + s.elements.length, 0);
+	assert.ok(drawn <= 50, `${drawn} elements drawn under a budget of 50`);
+});
+
+test("relationship ids are found under any prefix", async () => {
+	const zip = await JSZip.loadAsync(await cookieDeck());
+	const pres = await zip.file("ppt/presentation.xml").async("string");
+	zip.file("ppt/presentation.xml", pres.replace('xmlns:r="', 'xmlns:rel="').replaceAll(" r:id=", " rel:id="));
+	const deck = await readPptx(await zip.generateAsync({ type: "uint8array" }));
+	assert.equal(deck.slides.length, 2);
+});
+
+test("odp tables read grouped rows and columns, header rows first", async () => {
+	const zip = new JSZip();
+	const table = `<table:table><table:table-columns><table:table-column table:style-name="c"/><table:table-column table:style-name="c"/></table:table-columns><table:table-rows><table:table-row><table:table-cell><text:p>body</text:p></table:table-cell></table:table-row></table:table-rows><table:table-header-rows><table:table-row><table:table-cell><text:p>head</text:p></table:table-cell></table:table-row></table:table-header-rows></table:table>`;
+	zip.file("content.xml", `<office:document-content ${ODF_NS}><office:automatic-styles><style:style style:name="c" style:family="table-column"><style:table-column-properties style:column-width="2cm"/></style:style></office:automatic-styles><office:body><office:presentation><draw:page><draw:frame svg:x="0cm" svg:y="0cm" svg:width="4cm" svg:height="2cm">${table}</draw:frame></draw:page></office:presentation></office:body></office:document-content>`);
+	const deck = await readOdp(await zip.generateAsync({ type: "uint8array" }));
+	const t = deck.slides[0].elements[0];
+	assert.deepEqual(t.columns, [720000, 720000]);
+	assert.deepEqual(t.rows.map((r) => r.cells[0].text.paragraphs[0].runs[0].text), ["head", "body"]);
+});
+
+test("CSV reports the file's own row and column counts", () => {
+	const text = `${"a,".repeat(799)}a\n${"x,y\n".repeat(20)}`;
+	const table = parseDelimited(text, ",", 10, 500);
+	assert.equal(table.totalRows, 21);
+	assert.equal(table.totalColumns, 800);
+});
+
+test("viewer messages put file names in as written, $ patterns included", async () => {
+	const src = (f) => readFileSync(new URL(`../src/artifacts/${f}`, import.meta.url), "utf8");
+	for (const f of ["MediaArtifact.ts", "TkFileArtifact.ts", "DelimitedArtifact.ts", "preview/deck-view.ts", "NotebookArtifact.ts"]) {
+		// A string replacement expands $& and $'; a function replacement doesn't.
+		assert.doesNotMatch(src(f), /\.replace\(\s*"\{[a-z]+\}",(?!\s*\(\) =>)/, f);
+	}
 });

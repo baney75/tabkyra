@@ -19,10 +19,12 @@ export function mountDeck(container: HTMLElement, deck: Deck): () => void {
 	const header = doc.createElement("div");
 	header.className = "px-3 pt-3 text-xs text-muted-foreground";
 	const count =
-		deck.totalSlides === 1 ? i18n("1 slide") : i18n("{count} slides").replace("{count}", String(deck.totalSlides));
+		deck.totalSlides === 1
+			? i18n("1 slide")
+			: i18n("{count} slides").replace("{count}", () => String(deck.totalSlides));
 	header.textContent =
 		deck.slides.length < deck.totalSlides
-			? `${count} · ${i18n("showing the first {count}").replace("{count}", String(deck.slides.length))}`
+			? `${count} · ${i18n("showing the first {count}").replace("{count}", () => String(deck.slides.length))}`
 			: count;
 	scroller.appendChild(header);
 

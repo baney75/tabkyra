@@ -6,6 +6,9 @@ export interface DelimitedTable {
 	truncated: boolean;
 	/** Some rows had more fields than the column limit. */
 	wide: boolean;
+	/** Rows and widest row in the whole file, past the limits too. */
+	totalRows: number;
+	totalColumns: number;
 	delimiter: string;
 }
 
@@ -59,12 +62,17 @@ export function parseDelimited(
 	const n = text.length;
 	let truncated = false;
 	let wide = false;
+	let fieldsInRow = 0;
+	let widest = 0;
 	const pushField = () => {
+		fieldsInRow++;
 		if (row.length < maxColumns) row.push(field);
 		else wide = true;
 	};
 	const endRow = () => {
 		pushField();
+		widest = Math.max(widest, fieldsInRow);
+		fieldsInRow = 0;
 		field = "";
 		rows.push(row);
 		row = [];
@@ -103,7 +111,15 @@ export function parseDelimited(
 			i++;
 			if (rows.length >= maxRows) {
 				truncated = i < n;
-				return { rows, truncated, wide, delimiter };
+				const rest = countRest(text, i, delimiter);
+				return {
+					rows,
+					truncated,
+					wide,
+					delimiter,
+					totalRows: rows.length + rest.rows,
+					totalColumns: Math.max(widest, rest.widest),
+				};
 			}
 			continue;
 		}
@@ -111,7 +127,47 @@ export function parseDelimited(
 		i++;
 	}
 	if (field.length > 0 || row.length > 0) endRow();
-	return { rows, truncated, wide, delimiter };
+	return { rows, truncated, wide, delimiter, totalRows: rows.length, totalColumns: widest };
+}
+
+/** Rows and widest row from `start` on, by the parser's quoting rules, without keeping any text. */
+function countRest(text: string, start: number, delimiter: string): { rows: number; widest: number } {
+	let rows = 0;
+	let widest = 0;
+	let fields = 1;
+	let quoted = false;
+	let atFieldStart = true;
+	let pending = false;
+	for (let i = start; i < text.length; i++) {
+		const ch = text[i];
+		pending = true;
+		if (quoted) {
+			if (ch === '"') {
+				if (text[i + 1] === '"') i++;
+				else quoted = false;
+			}
+			continue;
+		}
+		if (ch === '"' && atFieldStart) {
+			quoted = true;
+			atFieldStart = false;
+		} else if (ch === delimiter) {
+			fields++;
+			atFieldStart = true;
+		} else if (ch === "\r" || ch === "\n") {
+			if (ch === "\r" && text[i + 1] === "\n") i++;
+			rows++;
+			widest = Math.max(widest, fields);
+			fields = 1;
+			atFieldStart = true;
+			pending = false;
+		} else atFieldStart = false;
+	}
+	if (pending) {
+		rows++;
+		widest = Math.max(widest, fields);
+	}
+	return { rows, widest };
 }
 
 /** Heuristic for content stored as text rather than base64: a delimited file has a delimiter or newline in its first line. */

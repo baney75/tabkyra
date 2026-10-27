@@ -217,6 +217,31 @@ function sizeFrom(value: string | undefined, base: number): number {
 	return lengthToPt(value) ?? base;
 }
 
+const COLUMN_GROUPS = new Set(["table:table-columns", "table:table-header-columns", "table:table-column-group"]);
+const ROW_GROUPS = new Set(["table:table-rows", "table:table-row-group"]);
+
+/** A table's columns, including those inside column groups, in order. */
+function tableColumns(table: XmlElement): XmlElement[] {
+	const out: XmlElement[] = [];
+	for (const c of children(table)) {
+		if (c.name === "table:table-column") out.push(c);
+		else if (COLUMN_GROUPS.has(c.name)) out.push(...children(c, "table:table-column"));
+	}
+	return out;
+}
+
+/** A table's rows, header rows first, then the body rows and grouped rows in order. */
+function tableRows(table: XmlElement): XmlElement[] {
+	const header: XmlElement[] = [];
+	const body: XmlElement[] = [];
+	for (const c of children(table)) {
+		if (c.name === "table:table-row") body.push(c);
+		else if (c.name === "table:table-header-rows") header.push(...children(c, "table:table-row"));
+		else if (ROW_GROUPS.has(c.name)) body.push(...children(c, "table:table-row"));
+	}
+	return [...header, ...body];
+}
+
 /** A row or column span from the file, kept between 1 and `max`. */
 function clampSpan(v: string | undefined, max: number): number {
 	return Math.max(1, Math.min(Number(v ?? "1") || 1, max));
@@ -572,10 +597,7 @@ class OdtReader {
 	private table(el: XmlElement, depth: number): OdtTable {
 		const styles = this.ctx.styles;
 		const columns: (number | undefined)[] = [];
-		const colEls = [
-			...children(el, "table:table-column"),
-			...children(child(el, "table:table-columns"), "table:table-column"),
-		];
+		const colEls = tableColumns(el);
 		for (const c of colEls) {
 			const width = lengthToPt(
 				styles.resolve("table-column", attr(c, "table:style-name"), "table-column-properties")[
@@ -591,16 +613,16 @@ class OdtReader {
 			this.truncated = true;
 			columns.length = 0;
 		}
-		const rowEls: XmlElement[] = [];
-		for (const c of children(el)) {
-			if (c.name === "table:table-row") rowEls.push(c);
-			else if (c.name === "table:table-header-rows" || c.name === "table:table-rows")
-				rowEls.push(...children(c, "table:table-row"));
-		}
+		const rowEls = tableRows(el);
 		const rows: OdtTable["rows"] = [];
 		let cellsLeft = PREVIEW_LIMITS.maxTableCells;
 		const shownRows = rowEls.slice(0, PREVIEW_LIMITS.maxTableRows);
 		for (const [rowIndex, r] of shownRows.entries()) {
+			// Every row draws a <tr>, empty or not, so rows cost blocks too.
+			if (++this.count > MAX_BLOCKS) {
+				this.truncated = true;
+				break;
+			}
 			const cells: OdtTable["rows"][number]["cells"] = [];
 			let column = 0;
 			for (const c of children(r)) {
@@ -934,7 +956,7 @@ class OdpReader {
 	private table(el: XmlElement, box: Box): TableElement {
 		const styles = this.styles;
 		let colCount = 0;
-		const cols = children(el, "table:table-column")
+		const cols = tableColumns(el)
 			.flatMap((c) => {
 				const w =
 					lengthToEmu(
@@ -950,13 +972,12 @@ class OdpReader {
 		// Each column draws a <col>, so columns cost deck elements like cells do.
 		this.elementsLeft -= cols.length;
 		const rows: TableElement["rows"] = [];
-		const rowEls = [
-			...children(el, "table:table-row"),
-			...children(child(el, "table:table-header-rows"), "table:table-row"),
-		];
+		const rowEls = tableRows(el);
 		let cellsLeft = PREVIEW_LIMITS.maxTableCells;
 		for (const r of rowEls.slice(0, 500)) {
 			if (cellsLeft <= 0 || this.elementsLeft <= 0) break;
+			// Every row draws a <tr>, empty or not.
+			this.elementsLeft--;
 			const height =
 				lengthToEmu(
 					styles.resolve("table-row", attr(r, "table:style-name"), "table-row-properties")["style:row-height"],

@@ -48,15 +48,39 @@ export abstract class PreviewArtifact extends ArtifactElement {
 		return this;
 	}
 
+	/** How long a detached viewer keeps its preview before releasing it. */
+	static releaseDelayMs = 10_000;
+	private releaseTimer?: ReturnType<typeof setTimeout>;
+	private released = false;
+
 	override connectedCallback(): void {
 		super.connectedCallback();
 		this.style.display = "block";
 		this.style.height = "100%";
+		clearTimeout(this.releaseTimer);
+		// Attached again after a release: draw the preview again.
+		if (this.released) {
+			this.released = false;
+			void this.refresh();
+		}
 	}
 
 	override disconnectedCallback(): void {
 		super.disconnectedCallback();
-		// Panel tabs detach and reattach their elements; keep the rendered preview.
+		// The panel detaches and reattaches viewers when it re-renders, so the preview is kept for
+		// a while. A viewer that stays detached (its artifact deleted, the session switched)
+		// releases its blob URLs, observers and decoded copy.
+		clearTimeout(this.releaseTimer);
+		this.releaseTimer = setTimeout(() => {
+			if (this.isConnected) return;
+			this.renderToken++;
+			this.cleanup?.();
+			this.cleanup = undefined;
+			this.containerRef.value?.replaceChildren();
+			this.decodeCache = undefined;
+			this.textCache = undefined;
+			this.released = true;
+		}, PreviewArtifact.releaseDelayMs);
 	}
 
 	private async refresh(): Promise<void> {

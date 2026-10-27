@@ -86,14 +86,17 @@ export class DelimitedArtifact extends PreviewArtifact {
 		tableView.className = "h-full overflow-auto";
 		const info = doc.createElement("div");
 		info.className = "px-3 py-1 text-xs text-muted-foreground";
+		// Counts are the file's own; the parser counts rows and fields past what it keeps.
 		const parts = [
-			i18n("{rows} rows").replace("{rows}", String(Math.max(0, shown.length - 1))),
-			i18n("{cols} columns").replace("{cols}", String(width)),
+			i18n("{rows} rows").replace("{rows}", () => String(Math.max(0, table.totalRows - 1))),
+			i18n("{cols} columns").replace("{cols}", () => String(table.totalColumns)),
 		];
 		if (truncated)
-			parts.push(i18n("showing the first {count}").replace("{count}", String(Math.max(0, rowCount - 1))));
+			parts.push(i18n("showing the first {count}").replace("{count}", () => String(Math.max(0, rowCount - 1))));
 		if (table.wide)
-			parts.push(i18n("columns after {count} not shown").replace("{count}", String(PREVIEW_LIMITS.maxTableColumns)));
+			parts.push(
+				i18n("columns after {count} not shown").replace("{count}", () => String(PREVIEW_LIMITS.maxTableColumns)),
+			);
 		info.textContent = parts.join(" · ");
 		tableView.appendChild(info);
 		const el = doc.createElement("table");

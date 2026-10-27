@@ -58,8 +58,8 @@ export class TkFileArtifact extends ArtifactElement {
 		if (hint) {
 			return html`
 				<p class="text-sm">
-					${i18n("This {type} can't be previewed here.").replace("{type}", hint.name)}
-					${i18n("Save it as {format} to preview it, or download it to open it on your computer.").replace("{format}", hint.saveAs)}
+					${i18n("This {type} can't be previewed here.").replace("{type}", () => hint.name)}
+					${i18n("Save it as {format} to preview it, or download it to open it on your computer.").replace("{format}", () => hint.saveAs)}
 				</p>
 			`;
 		}

@@ -43,7 +43,7 @@ export class MediaArtifact extends PreviewArtifact {
 		media.addEventListener("error", () => {
 			name.textContent = i18n("This browser can't play {filename}. Download it to play it elsewhere.").replace(
 				"{filename}",
-				this.filename,
+				() => this.filename,
 			);
 		});
 		wrap.append(media, name);

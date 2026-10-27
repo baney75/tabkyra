@@ -345,9 +345,11 @@ class PptxReader {
 		const width = numAttr(size, "cx") ?? 9144000;
 		const height = numAttr(size, "cy") ?? 6858000;
 
+		// The prefix the file binds to the relationships namespace; "r" by convention, not by rule.
+		const relPrefix = relationshipsPrefix(pres.root);
 		const slidePaths: string[] = [];
 		for (const id of children(child(pres.root, "sldIdLst"), "sldId")) {
-			const rid = attr(id, "r:id") ?? attr(id, "id");
+			const rid = attr(id, `${relPrefix}:id`);
 			const rel = rid ? pres.rels.get(rid) : undefined;
 			if (rel && !rel.external) slidePaths.push(rel.target);
 		}
@@ -360,7 +362,8 @@ class PptxReader {
 			// One budget for the whole deck: master and layout shapes count on every slide they draw on.
 			const b = this.budget;
 			if (b.elements <= 0 || b.runs <= 0 || b.chars <= 0 || b.commands <= 0) break;
-			slides.push(await this.slide(slidePaths[i], i + 1));
+			const slide = await this.cachedSlide(slidePaths[i], i + 1);
+			if (slide) slides.push(slide);
 		}
 		return { width, height, slides, totalSlides: slidePaths.length, images: this.images };
 	}
@@ -439,8 +442,47 @@ class PptxReader {
 			scope.elements.push(...elements);
 			return;
 		}
-		for (const k of ["elements", "runs", "chars", "commands"] as const) this.budget[k] -= cached.cost[k];
-		scope.elements.push(...cached.elements);
+		if (this.replay(cached.cost)) scope.elements.push(...cached.elements);
+	}
+
+	/**
+	 * Spend a cached reading's cost again. When the budget can't cover it, nothing is drawn and
+	 * the budget is spent, so no reuse draws past the limit.
+	 */
+	private replay(cost: Budget): boolean {
+		const keys = ["elements", "runs", "chars", "commands"] as const;
+		if (keys.some((k) => cost[k] > this.budget[k])) {
+			for (const k of keys) this.budget[k] = Math.min(this.budget[k], 0);
+			return false;
+		}
+		for (const k of keys) this.budget[k] -= cost[k];
+		return true;
+	}
+
+	private slideCache = new Map<string, { slide: Slide; cost: Budget }>();
+
+	/**
+	 * A slide part, read once however many times the deck lists it. Each listing keeps its own
+	 * number (slide-number fields are filled in when drawn) and spends the budget again.
+	 */
+	private async cachedSlide(path: string, number: number): Promise<Slide | undefined> {
+		const cached = this.slideCache.get(path);
+		if (cached) {
+			const drawn = this.replay(cached.cost) ? cached.slide.elements : [];
+			return { ...cached.slide, number, elements: drawn };
+		}
+		const before = { ...this.budget };
+		const slide = await this.slide(path, number);
+		this.slideCache.set(path, {
+			slide,
+			cost: {
+				elements: before.elements - this.budget.elements,
+				runs: before.runs - this.budget.runs,
+				chars: before.chars - this.budget.chars,
+				commands: before.commands - this.budget.commands,
+			},
+		});
+		return slide;
 	}
 
 	private backgroundCache = new Map<string, Fill | undefined>();
@@ -561,6 +603,15 @@ interface Scope {
 	master?: MasterTemplate;
 	layout?: Template;
 	elements: SlideElement[];
+}
+
+const RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+function relationshipsPrefix(root: XmlElement): string {
+	for (const [key, value] of Object.entries(root.attrs)) {
+		if (key.startsWith("xmlns:") && value === RELATIONSHIPS_NS) return key.slice("xmlns:".length);
+	}
+	return "r";
 }
 
 function alternateContent(el: XmlElement): XmlElement[] {
@@ -1009,6 +1060,8 @@ function readTable(tbl: XmlElement, box: Box, ctx: ColorContext, scope: Scope): 
 					borders: { l: border("lnL"), r: border("lnR"), t: border("lnT"), b: border("lnB") },
 				};
 			});
+			// Every row draws a <tr>, empty or not, so every row costs an element.
+			budget.elements--;
 			rows.push({ height: numAttr(tr, "h") ?? 0, cells: fitRow(cells, PREVIEW_LIMITS.maxTableColumns) });
 		});
 	return { kind: "table", box, columns, rows };
