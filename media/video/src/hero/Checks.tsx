@@ -1,21 +1,16 @@
 import { AbsoluteFill, useCurrentFrame } from "remotion";
-import { DATA } from "../data";
 import { C, FONT } from "../theme";
 import { useBeat } from "./beat";
 import { heroClaims } from "./heroClaims";
 import { Backdrop, CountUp, ease, Flash, shake, Stamp, useLayout, Whip, Words } from "./motion";
 import { Center, Term, useSize } from "./parts";
 
-const madeUp = DATA.cli.libraryMadeUp;
-const retracted = DATA.cli.libraryRetracted;
-
-const shipped = DATA.cli.lintShipped;
 // Every line a stamp or highlight lands on comes from heroClaims() (claims.ts checkCli), which
 // fails the render when the recording doesn't back REFUSED, FLAGGED, BLOCKED or "passes".
 
 /** B61–B71: the break types the real command; on B64 the refusal prints and REFUSED slams. */
 export const Refused: React.FC = () => {
-	const { refusal } = heroClaims().cli;
+	const { refusal, shown } = heroClaims().cli;
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
@@ -29,7 +24,7 @@ export const Refused: React.FC = () => {
 						width={size(1640, 1000)}
 						size={size(40, 34)}
 						lines={[
-							{ text: madeUp.shown, at: 0, typed: true },
+							{ text: shown.madeUp, at: 0, typed: true },
 							{ text: refusal, at: at(64), color: C.alarm },
 						]}
 					/>
@@ -48,7 +43,7 @@ export const Refused: React.FC = () => {
 
 /** B72–B79: the real retracted paper; its citation count counts up, then FLAGGED. */
 export const Flagged: React.FC = () => {
-	const { citedBy, retractedTitle, retractedWarning } = heroClaims().cli;
+	const { citedBy, retractedTitle, retractedWarning, shown } = heroClaims().cli;
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
@@ -66,7 +61,7 @@ export const Flagged: React.FC = () => {
 						width={size(1640, 1000)}
 						size={size(32, 30)}
 						lines={[
-							{ text: retracted.shown, at: 0, typed: true },
+							{ text: shown.retracted, at: 0, typed: true },
 							{ text: retractedTitle.replace(/\s{2,}/g, "  "), at: 8, color: C.alarm },
 							{ text: retractedWarning.trim(), at: at(76), color: C.alarm },
 						]}
@@ -87,7 +82,7 @@ export const Blocked: React.FC = () => {
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
-	const { lintErrors: errors, lintLines: flagged, skillFile: file, skillPath, cleanLine } = heroClaims().cli;
+	const { lintErrors: errors, lintLines: flagged, skillFile: file, skillPath, cleanLine, shown: commands } = heroClaims().cli;
 	// The SKILL.md slice shown: two lines above the first flagged line and one below the last.
 	const shownFrom = Math.max(1, Math.min(...flagged) - 2);
 	const shownTo = Math.min(file.length, Math.max(...flagged) + 1);
@@ -152,7 +147,7 @@ export const Blocked: React.FC = () => {
 								width={size(1300, 1000)}
 								size={size(46, 40)}
 								lines={[
-									{ text: shipped.shown, at: at(88), typed: true },
+									{ text: commands.shipped, at: at(88), typed: true },
 									{ text: cleanLine, at: at(89), color: C.tide },
 								]}
 							/>

@@ -65,11 +65,12 @@ panels that hold calls and terminal output, and the motion graphics: the helm, t
 (REFUSED, FLAGGED, BLOCKED), the count-ups and the type.
 
 Every claim a stamp, highlight or label makes is checked against the recording before render:
+each typed command against the recorded args (the shipped lint must have run on `skills/`),
 the made-up DOI's refusal line and non-zero exit, the retraction lines and exit 3, the four lint
 errors (each naming a line of the shown skill file) and non-zero exit, the shipped skills'
 "✓ Clean." with no errors and exit 0, the catalog calls, found by content in recorded order, each
 acting on the latest recorded `read_page`, with the `//` labels on the two clicks taken from that
-snapshot's button names, the read-back sentence (the recorded `get_page_text` result, naming both
+snapshot's button names, the search text against the recorded results, the read-back sentence (the recorded `get_page_text` result, naming both
 filled values), the prompt choice the run answered, and the router's p95 (under 1 ms) and each
 row's routed skill, parsed from the recorded output. The checks live in `src/hero/claims.ts`, and
 the scenes show what it returns. `src/hero/heroClaims.ts` runs them when Hero, HeroVertical or

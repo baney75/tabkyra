@@ -30,6 +30,13 @@ test("the real capture passes and REFUSED sits on the 404 refusal line", () => {
 	assert.match(run.readBack, /^get_page_text/);
 	assert.equal(run.confirmation, "Hold placed for Ada Lovelace: Moby-Dick. Pick it up at Main Street after Thursday.");
 	assert.equal(cli.skillPath, "page-helper/SKILL.md");
+	assert.equal(cli.citedBy, 3011);
+	assert.deepEqual(cli.shown, {
+		madeUp: "tabkyra library add 10.1037/0000-0000.000.0.000",
+		retracted: "tabkyra library add '10.1016/S0140-6736(97)11096-0'",
+		lint: "tabkyra skill lint page-helper",
+		shipped: "tabkyra skill lint skills/",
+	});
 	const router = checkRouter(realRouter);
 	assert.deepEqual(
 		router.rows.map((r) => [r.name, r.score]),
@@ -169,4 +176,40 @@ test("a recorded deny, a missing answer or an unallowed site fails the render", 
 	const unallowed = copy();
 	unallowed.browser.statusAfter.allowedHosts = ["127.0.0.1"];
 	assert.throws(() => prompt(unallowed), /isn't in the allowed sites/);
+});
+
+test("a shipped-skills lint run on one skill can't back 'Every bundled skill passes'", () => {
+	const c = copy();
+	c.cli.lintShipped.args = ["skill", "lint", "skills/academic-research"];
+	c.cli.lintShipped.shown = "tabkyra skill lint skills/academic-research";
+	assert.throws(() => checkCli(c.cli), /ran on skills\/academic-research, not skills\//);
+});
+
+test("a shown command that isn't the command recorded fails the render", () => {
+	const c = copy();
+	c.cli.libraryMadeUp.shown = "tabkyra library add 10.1037/1111-1111.000.0.000";
+	assert.throws(() => checkCli(c.cli), /made-up DOI add is shown as/);
+	const d = copy();
+	d.cli.libraryMadeUp.args = ["library", "add", "10.1037/1111-1111.000.0.000"];
+	d.cli.libraryMadeUp.shown = "tabkyra library add 10.1037/1111-1111.000.0.000";
+	assert.throws(() => checkCli(d.cli), /isn't about 10\.1037\/1111/);
+	const e = copy();
+	e.cli.lintBad.args = ["skill", "lint", "other-skill"];
+	e.cli.lintBad.shown = "tabkyra skill lint other-skill";
+	assert.throws(() => checkCli(e.cli), /ran on other-skill, not the page-helper skill/);
+});
+
+test("a citation count with a thousands separator reads in full", () => {
+	const c = copy();
+	c.cli.libraryRetracted.out = c.cli.libraryRetracted.out.replace("cited by 3011", "cited by 3,011");
+	assert.equal(checkCli(c.cli).citedBy, 3011);
+	const d = copy();
+	d.cli.libraryRetracted.out = d.cli.libraryRetracted.out.replace("cited by 3011", "cited by many");
+	assert.throws(() => checkCli(d.cli), /citation count/);
+});
+
+test("a search for another book than the recorded results fails the render", () => {
+	const c = copy();
+	c.browser.calls.find((x) => x.name === "type").args.text = "Hamlet";
+	assert.throws(() => catalog(c), /results aren't for "Hamlet"/);
 });

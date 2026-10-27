@@ -2,7 +2,7 @@
 // A recording that doesn't back a claim throws, which fails the render instead of showing it.
 // No imports, so test/claims.test.mjs runs these exact checks on doctored copies of the capture.
 
-export type Run = { code: number | null; out: string };
+export type Run = { code: number | null; out: string; args?: string[]; shown?: string };
 export type Call = { name: string; args: Record<string, unknown>; ms: number; text: string };
 
 /** A line of recorded output picked by its content; a capture without it fails the render. */
@@ -17,19 +17,40 @@ const expectCode = (r: Run, ok: (code: number | null) => boolean, what: string) 
 	if (!ok(r.code)) throw new Error(`capture.json: ${what} exited ${r.code}`);
 };
 
+/**
+ * The command a scene types: the recorded args, shown as typed (single quotes allowed), and
+ * starting with `verb`. Returns the shown text and the last argument.
+ */
+const command = (r: Run, verb: string[], what: string) => {
+	const args = r.args ?? [];
+	if (verb.some((v, i) => args[i] !== v) || args.length !== verb.length + 1) {
+		throw new Error(`capture.json: ${what} ran "${args.join(" ")}", not "${verb.join(" ")} <arg>"`);
+	}
+	if (!r.shown || r.shown.replace(/'/g, "") !== `tabkyra ${args.join(" ")}`) {
+		throw new Error(`capture.json: ${what} is shown as "${r.shown}", not the command it ran`);
+	}
+	return { shown: r.shown, arg: args[verb.length] };
+};
+
 /** The lines the Refused, Flagged and Blocked scenes stamp or highlight, each checked. */
 export function checkCli(cli: { libraryMadeUp: Run; libraryRetracted: Run; lintBad: Run; lintShipped: Run; badSkill: string }) {
 	const { libraryMadeUp: madeUp, libraryRetracted: retracted, lintBad: lint, lintShipped: shipped } = cli;
 	// REFUSED: the made-up DOI was refused as unregistered (not a network failure), and the add failed.
+	const madeUpCmd = command(madeUp, ["library", "add"], "the made-up DOI add");
 	const refusal = lineWith(madeUp.out, /is not registered \(doi\.org returned 404\)/, "made-up DOI refusal");
+	if (!refusal.includes(madeUpCmd.arg)) throw new Error(`capture.json: the refusal isn't about ${madeUpCmd.arg}, the DOI the command added`);
 	expectCode(madeUp, (c) => c !== null && c !== 0, "the made-up DOI add (a refusal must fail)");
 	// FLAGGED: the title line and the warning the stamp lands on; the CLI exits 3 on a retraction.
+	const retractedCmd = command(retracted, ["library", "add"], "the retracted add");
 	const retractedTitle = lineWith(retracted.out, /^Added .*\[RETRACTED/, "retracted title");
 	const retractedWarning = lineWith(retracted.out, /RETRACTED: don't cite/, "retraction warning");
 	expectCode(retracted, (c) => c === 3, "the retracted add (the CLI exits 3 on a retraction)");
-	const cited = retracted.out.match(/cited by (\d+)/);
-	if (!cited) throw new Error("capture.json: the retracted add has no citation count");
+	// The count on its own line's end, with any thousands separators ("cited by 3,011").
+	const citedLine = lineWith(retracted.out, /cited by [\d,]+$/, "citation count");
+	const citedBy = Number(citedLine.match(/cited by ([\d,]+)$/)?.[1].replace(/,/g, ""));
+	if (!Number.isInteger(citedBy) || citedBy < 1) throw new Error(`capture.json: the citation count reads "${citedLine.trim()}"`);
 	// BLOCKED: four lint errors with line numbers, and the lint failed.
+	const lintCmd = command(lint, ["skill", "lint"], "the bad skill's lint");
 	const lintErrors = lint.out.split("\n").filter((l) => /\berror\b/.test(l));
 	const lintLines = lintErrors.map((l) => Number(l.match(/SKILL\.md:(\d+)/)?.[1]));
 	expectCode(lint, (c) => c !== null && c !== 0, "the bad skill's lint (BLOCKED means it failed)");
@@ -40,17 +61,26 @@ export function checkCli(cli: { libraryMadeUp: Run; libraryRetracted: Run; lintB
 	const skillFile = cli.badSkill.trimEnd().split("\n");
 	const skillName = cli.badSkill.match(/^name:\s*(\S+)$/m)?.[1];
 	if (!skillName || skillFile.length < 2) throw new Error("capture.json: the bad skill file is empty or has no name");
+	if (lintCmd.arg !== skillName) throw new Error(`capture.json: the lint ran on ${lintCmd.arg}, not the ${skillName} skill shown`);
 	for (const [i, l] of lintErrors.entries()) {
 		if (!l.startsWith(`${skillName}/SKILL.md:`)) throw new Error(`capture.json: lint error ${i + 1} isn't about ${skillName}/SKILL.md`);
 		if (lintLines[i] > skillFile.length) {
 			throw new Error(`capture.json: lint error ${i + 1} names line ${lintLines[i]}, past the ${skillFile.length}-line skill file`);
 		}
 	}
-	// "Every bundled skill passes": "✓ Clean.", no errors, exit 0.
+	// "Every bundled skill passes": the lint ran on the bundled skills folder, "✓ Clean.", no errors, exit 0.
+	const shippedCmd = command(shipped, ["skill", "lint"], "the shipped skills' lint");
+	if (!/^skills\/?$/.test(shippedCmd.arg)) throw new Error(`capture.json: the shipped lint ran on ${shippedCmd.arg}, not skills/`);
 	const cleanLine = lineWith(shipped.out, /^✓ Clean\.$/, "clean lint");
 	if (/\berror\b/.test(shipped.out)) throw new Error("capture.json: the shipped skills' lint lists errors");
 	expectCode(shipped, (c) => c === 0, "the shipped skills' lint");
-	return { refusal, retractedTitle, retractedWarning, citedBy: Number(cited[1]), lintErrors, lintLines, cleanLine, skillFile, skillPath: `${skillName}/SKILL.md` };
+	return {
+		shown: { madeUp: madeUpCmd.shown, retracted: retractedCmd.shown, lint: lintCmd.shown, shipped: shippedCmd.shown },
+		refusal,
+		retractedTitle,
+		retractedWarning,
+		citedBy,
+		lintErrors, lintLines, cleanLine, skillFile, skillPath: `${skillName}/SKILL.md` };
 }
 
 function format(hit: Call): string {
@@ -84,6 +114,14 @@ export function catalogRunFrom(calls: Call[], refs: Record<string, string>, cata
 		while (last >= 0 && calls[last].name !== "read_page") last--;
 		if (last !== snapshot) throw new Error(`capture.json: the ${what} acted on a different snapshot`);
 	};
+	/** The page text a get_page_text call returned (its result is JSON with a `text` field). */
+	const pageTextOf = (i: number, what: string): string => {
+		try {
+			return String((JSON.parse(calls[i].text) as { text?: unknown }).text ?? "");
+		} catch {
+			throw new Error(`capture.json: the ${what} get_page_text result isn't JSON`);
+		}
+	};
 	const page = (text: string) => (c: Call) => c.name === "read_page" && c.text.includes(text);
 
 	const navigate = next("navigate to the catalog", (c) => c.name === "navigate" && c.args.url === catalogUrl);
@@ -91,7 +129,13 @@ export function catalogRunFrom(calls: Call[], refs: Record<string, string>, cata
 	const type = next("type of the search", (c) => c.name === "type" && c.args.ref === refs.search && c.args.submit === true);
 	actedOn(type, searchPage, "search");
 	nameOf(searchPage, refs.search, "textbox", "search");
+	// The search the shot shows must be the one whose results were recorded, and the book held.
+	const query = String(calls[type].args.text ?? "");
+	if (!query) throw new Error("capture.json: the search typed no text");
 	next("get_page_text of the results", (c) => c.name === "get_page_text" && c.text.includes("Results for"));
+	if (!pageTextOf(cursor, "results").includes(`Results for "${query}"`)) {
+		throw new Error(`capture.json: the recorded results aren't for "${query}", the search typed`);
+	}
 	const results = next("read_page of the results", page("Place hold"));
 	const clickHold = next("click on the hold button", (c) => c.name === "click" && c.args.ref === refs.holdButton);
 	actedOn(clickHold, results, "hold button click");
@@ -110,13 +154,8 @@ export function catalogRunFrom(calls: Call[], refs: Record<string, string>, cata
 	const readBack = next("get_page_text of the confirmation", (c) => c.name === "get_page_text" && c.text.includes("Hold placed"));
 	// The sentence the read-back shows is the checked get_page_text call's own result, and it must
 	// name what the fills entered; the capture's cached copy, if present, must agree with it.
-	let pageText: string;
-	try {
-		pageText = String((JSON.parse(calls[readBack].text) as { text?: unknown }).text ?? "");
-	} catch {
-		throw new Error("capture.json: the confirmation get_page_text result isn't JSON");
-	}
-	const confirmation = lineWith(pageText, /^Hold placed /, "hold confirmation");
+	const confirmation = lineWith(pageTextOf(readBack, "confirmation"), /^Hold placed /, "hold confirmation");
+	if (!confirmation.includes(query)) throw new Error(`capture.json: the hold isn't for "${query}", the book searched`);
 	for (const fill of [fillCard, fillBranch]) {
 		const value = String(calls[fill].args.value ?? "");
 		if (!value || !confirmation.includes(value)) {

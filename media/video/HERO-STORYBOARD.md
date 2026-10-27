@@ -160,7 +160,8 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
 - **Vertical layout.** Side-by-side shots stack; every beat is checked in the 9:16 cut.
 - **Loudness.** About -14 LUFS with a -1 dBTP ceiling, re-measured on the final MP4s.
 - **Re-captures.** Every stamped or highlighted claim is checked against the recording before
-  render: the refusal line and a non-zero exit, the retraction lines and exit 3, four lint
+  render: each typed command against its recorded args (the shipped lint on `skills/`), the search
+  text against the recorded results, the refusal line and a non-zero exit, the retraction lines and exit 3, four lint
   errors, each naming a line of the shown file, and a non-zero exit, the shipped skills'
   "✓ Clean." with no errors and exit 0, the catalog calls in order and the read-back sentence,
   the prompt's answered choice, and the router's p95 under 1 ms and each row's routed skill. The
