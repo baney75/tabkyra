@@ -124,16 +124,21 @@ builds it in. The secret half exists in two places only:
 - the `MINISIGN_SECRET_KEY` secret of the `release` environment on baney75/tabkyra.
   `release.yml`'s publish job and `release-key-check.yml` use it.
 
-Only `main` and `v*` tags can deploy to that environment, so a workflow on any other branch
-(even one dispatched by hand) can't read the key. Two repository rulesets keep those refs
-trusted: "Release tags" lets only admins create, move or delete `v*` tags, so nobody else can
+Every job that reads the key waits for an approval: the environment has baney75 as its
+required reviewer (self-review allowed), so a run starts signing only after he approves it, in
+the Actions run page or with
+`gh api -X POST repos/baney75/tabkyra/actions/runs/<run id>/pending_deployments -f state=approved -F 'environment_ids[]=<id>' -f comment=ok`.
+That holds whoever changed main, so a collaborator who merges a workflow that prints the key
+still can't run it without that approval. Only `main` and `v*` tags can deploy to the
+environment at all, so a workflow on any other branch (even one dispatched by hand) can't
+read the key. Two repository rulesets keep those refs trusted: "Release tags" lets only admins create, move or delete `v*` tags, so nobody else can
 tag their own commit into signing; "main" blocks deleting and force-pushing main and requires
 a pull request, and only the admin role bypasses it. There is no repository-level or
 organization-level `MINISIGN_SECRET_KEY`: a job falls back to one of those when its
 environment lacks the secret, which would hide a broken environment secret and reach every
 ref. `gh secret list --repo baney75/tabkyra` must not list it.
 
-To cut a release, run `./release.sh patch` on a clean, up-to-date main. Then, on a machine
+To cut a release, run `./release.sh patch` on a clean, up-to-date main, then approve the publish job's `release` deployment. Then, on a machine
 with the CLI, `tabkyra update --check` exits 100 and `tabkyra update` installs it.
 
 Before the first tag after any change to the secret or the public key, prove they are a pair
