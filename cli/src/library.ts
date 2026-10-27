@@ -932,6 +932,8 @@ function parse(args: string[], allowed: string[]): { positional: string[]; opts:
 		const name = eq > 0 ? a.slice(0, eq) : a;
 		if (!allowed.includes(name)) throw new Error(`This command doesn't take ${name}. ${LIBRARY_USAGE}`);
 		if (name === "--json") {
+			// A switch: "--json=false" must be refused, not read as on.
+			if (eq > 0) throw new Error(`--json takes no value. ${LIBRARY_USAGE}`);
 			opts.json = "1";
 			continue;
 		}

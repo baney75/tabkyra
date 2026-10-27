@@ -35,7 +35,8 @@ const REPS = Number(arg("--reps", "3"));
 const MODEL = arg("--model", "haiku");
 const OUT = arg("--out", join(tmpdir(), "tabkyra-skill-eval.json"));
 const RUN_TIMEOUT_MS = 6 * 60 * 1000;
-const ARMS = arg("--arms", SUITE === "skill" ? "baseline,skill" : "baseline").split(",");
+// The skill tasks exist to compare both arms, so any suite that includes them runs both.
+const ARMS = arg("--arms", SUITE === "skill" || SUITE === "all" ? "baseline,skill" : "baseline").split(",");
 const ONLY = arg("--only", "") ? new Set(arg("--only", "").split(",")) : undefined;
 
 // ---- fixture site ----------------------------------------------------------

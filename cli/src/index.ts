@@ -17,13 +17,17 @@ import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./upda
 import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
 import { type HostRunAction, runHostAction } from "./update-run.ts";
 import { BUILD } from "../../src/update/build.ts";
-import { argsProblem, COMMANDS, completionScript, EXIT_CODES, VALUE_FLAGS, VISIBLE_COMMANDS } from "./commands.ts";
+import { argsProblem, COMMANDS, completionScript, EXIT_CODES, helpRows, VALUE_FLAGS, VISIBLE_COMMANDS } from "./commands.ts";
 import { VERSION } from "./version.ts";
 
 /** One help row. Padding counts visible characters, so color codes don't shift the column. */
-const cmd = (name: string, args: string, what: string) => {
-	const usage = `tabkyra ${name}${args ? ` ${args}` : ""}`;
-	return `  ${c.bold(`tabkyra ${name}`)}${args ? ` ${args}` : ""}${" ".repeat(Math.max(2, 54 - usage.length))}${what}`;
+const cmd = (usage: string, what: string) => {
+	const [name, ...rest] = usage.split(" ");
+	const full = `tabkyra ${usage}`;
+	const head = `  ${c.bold(`tabkyra ${name}`)}${rest.length ? ` ${rest.join(" ")}` : ""}`;
+	// A long usage puts its description on the next line, in the same column.
+	if (full.length > 56) return `${head}\n${" ".repeat(60)}${what}`;
+	return `${head}${" ".repeat(58 - full.length)}${what}`;
 };
 
 /** Grouped from the one command table (commands.ts), so help can't drift from the CLI. */
@@ -33,10 +37,7 @@ function help(): string {
 	const rows: string[] = [];
 	for (const group of groups) {
 		rows.push(section(group));
-		for (const spec of VISIBLE_COMMANDS.filter((x) => x.group === group)) {
-			rows.push(cmd(spec.name, spec.args, spec.what));
-			for (const more of spec.more ?? []) rows.push(cmd(spec.name, more.args, more.what));
-		}
+		for (const spec of VISIBLE_COMMANDS.filter((x) => x.group === group)) for (const [usage, what] of helpRows(spec)) rows.push(cmd(usage, what));
 		if (group === "Agents") {
 			rows.push(
 				`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,

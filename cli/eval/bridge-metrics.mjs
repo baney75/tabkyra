@@ -170,14 +170,23 @@ if (ONLY.has("launcher")) {
 		await client.close();
 		return ms;
 	};
-	const median = async (extra) => {
-		await start(extra); // warm the cache and the disk
-		const xs = [];
-		for (let i = 0; i < 7; i++) xs.push(await start(extra));
-		return Math.round(xs.sort((x, y) => x - y)[3]);
+	// Interleaved, so neither arm gets a warmer machine: 15 starts each, alternating which goes first.
+	const off = { NODE_DISABLE_COMPILE_CACHE: "1" };
+	await start(off);
+	await start({}); // warm the disk and write the cache
+	const runs = { off: [], on: [] };
+	for (let i = 0; i < 15; i++) {
+		const order = i % 2 ? ["on", "off"] : ["off", "on"];
+		for (const arm of order) runs[arm].push(await start(arm === "off" ? off : {}));
+	}
+	const stats = (xs) => {
+		const s = [...xs].sort((x, y) => x - y);
+		const q = (p) => Math.round(s[Math.floor((s.length - 1) * p)]);
+		return { median: q(0.5), p25: q(0.25), p75: q(0.75) };
 	};
-	results.launcher = { noCacheMs: await median({ NODE_DISABLE_COMPILE_CACHE: "1" }), cacheMs: await median({}) };
-	console.log(`launcher: tabkyra mcp initialize ${results.launcher.noCacheMs} ms without the compile cache, ${results.launcher.cacheMs} ms with it (median of 7)`);
+	results.launcher = { noCache: stats(runs.off), cache: stats(runs.on) };
+	const f = (x) => `${x.median} ms (IQR ${x.p25}-${x.p75})`;
+	console.log(`launcher: tabkyra mcp initialize ${f(results.launcher.noCache)} without the compile cache, ${f(results.launcher.cache)} with it (15 interleaved starts each)`);
 }
 
 // ---- the browser ---------------------------------------------------------------

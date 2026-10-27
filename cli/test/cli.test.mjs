@@ -91,14 +91,14 @@ test("options are checked per subcommand, and a value option needs its value", (
 	}
 	assert.match(run("serve", "--port").err, /--port needs a value/);
 	// A switch with a value is refused, not ignored: --off=1 used to run the tunnel instead.
-	for (const args of [["tunnel", "tailscale", "--off=1"], ["status", "--json=1"], ["install", "--force=yes"], ["version", "--json=true"]]) {
+	for (const args of [["tunnel", "tailscale", "--off=1"], ["status", "--json=1"], ["install", "--force=yes"], ["version", "--json=true"], ["library", "list", "--json=1"], ["library", "search", "x", "--json=false"]]) {
 		const r = run(...args);
 		assert.equal(r.code, 2, `tabkyra ${args.join(" ")} exited ${r.code}`);
 		assert.match(r.err, /takes no value/);
 	}
 	assert.match(run("pi-extension", "a", "b").err, /Usage: tabkyra pi-extension \[dir\]/);
-	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port\]$/m);
-	assert.match(run("token", "create", "x", "--bogus").err, /Usage: tabkyra token create <name> \[--scope\]$/m);
+	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port N\]$/m);
+	assert.match(run("token", "create", "x", "--bogus").err, /Usage: tabkyra token create <name> \[--scope a,b\]$/m);
 	assert.match(run("token", "revoke", "--bogus").err, /Usage: tabkyra token revoke <id\|name>$/m);
 	// The value of a value option isn't counted as an extra argument.
 	assert.equal(run("token", "list", "--json").code, 0);
@@ -111,8 +111,8 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.match(zsh.out, /'completion:/);
 	const bash = run("completion", "bash").out;
 	const fish = run("completion", "fish").out;
-	assert.match(fish, /complete -c tabkyra -n __fish_use_subcommand -a status/);
-	assert.match(fish, /__fish_seen_subcommand_from skill' -a lint/);
+	assert.match(fish, /complete -c tabkyra -n __fish_use_subcommand -f -a status/);
+	assert.match(fish, /__fish_seen_subcommand_from skill; and not __fish_seen_subcommand_from [a-z ]+' -f -a lint/);
 	const file = join(home, "tk.bash");
 	execFileSync("sh", ["-c", 'cat > "$1"', "sh", file], { input: bash });
 	const complete = (words) =>
@@ -120,6 +120,18 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.equal(complete("tabkyra sta"), "status");
 	assert.equal(complete("tabkyra skill li").split(" ").sort().join(" "), "lint list");
 	assert.equal(complete("tabkyra doctor --j"), "--json");
+	// Only the chosen subcommand's flags: create takes no --json, cloudflare no --public.
+	assert.equal(complete("tabkyra token create x --j"), "");
+	assert.equal(complete("tabkyra token list --j"), "--json");
+	assert.equal(complete("tabkyra tunnel cloudflare --p"), "--port");
+	// Path arguments fall back to file names: nothing from the script, and -o default set.
+	assert.equal(complete("tabkyra skill apply sk"), "");
+	assert.equal(complete("tabkyra skill eval --cases ev"), "");
+	assert.match(execFileSync("bash", ["-c", `source "${file}"; complete -p tabkyra`], { encoding: "utf8" }), /-o bashdefault -o default -F _tabkyra tabkyra/);
+	// fish: files only where paths go.
+	assert.match(fish, /__fish_seen_subcommand_from skill; and __fish_seen_subcommand_from list' -f/);
+	assert.doesNotMatch(fish, /__fish_seen_subcommand_from skill; and __fish_seen_subcommand_from lint' -f/);
+	assert.match(fish, /-l cases -r -F/);
 	if (spawnSync("zsh", ["--version"]).status === 0) assert.equal(spawnSync("zsh", ["-n"], { input: zsh.out }).status, 0, "zsh script has a syntax error");
 	else t.diagnostic("zsh is not installed here: the zsh script's syntax was not checked");
 	// Loaded from a zshrc that never ran compinit, it must not fail with "command not found: compdef".
@@ -179,7 +191,7 @@ test("completions offer exactly the options each subcommand's parser accepts", a
 	const { build } = await import("esbuild");
 	const out = join(home, "tables.mjs");
 	await build({
-		stdin: { contents: 'export { COMMANDS } from "./src/commands.ts"; export { LIBRARY_OPTIONS } from "./src/library.ts";', resolveDir: join(here, ".."), loader: "ts" },
+		stdin: { contents: 'export { COMMANDS, argsProblem, helpRows } from "./src/commands.ts"; export { LIBRARY_OPTIONS } from "./src/library.ts";', resolveDir: join(here, ".."), loader: "ts" },
 		bundle: true,
 		platform: "node",
 		format: "esm",
@@ -187,7 +199,18 @@ test("completions offer exactly the options each subcommand's parser accepts", a
 		loader: { ".md": "text", ".pub": "text" },
 		logLevel: "silent",
 	});
-	const { COMMANDS, LIBRARY_OPTIONS } = await import(out);
+	const { COMMANDS, LIBRARY_OPTIONS, argsProblem, helpRows } = await import(out);
+	// Every flag a help row shows is one the parser accepts for that row's subcommand.
+	for (const spec of COMMANDS.filter((c) => !c.hidden && !c.selfParsed)) {
+		for (const [usage] of helpRows(spec)) {
+			const words = usage.split(" ");
+			const sub = spec.subcommands ? [words[1]] : [];
+			for (const [, flag, hint] of usage.matchAll(/\[(--[a-z-]+)( [^\]]+)?\]/g)) {
+				const problem = argsProblem(spec.name, [...sub, flag, ...(hint ? ["v"] : [])]);
+				assert.ok(!problem || !/Unknown option|takes no value|needs a value/.test(problem), `help row "tabkyra ${usage}" shows ${flag}, which the parser refuses: ${problem}`);
+			}
+		}
+	}
 	const library = COMMANDS.find((c) => c.name === "library");
 	assert.deepEqual(
 		Object.fromEntries(library.subcommands.map((s) => [s.name, [...(s.flags ?? [])].sort()])),

@@ -13,7 +13,7 @@
 ### Changed
 - The side panel transcript reads as a log. The agent's own text stays full size; the work between texts (tool calls, page changes, reasoning) folds into one compact list of rows, each expandable to the full tool card, the reasoning behind it and its usage. Long runs show their last rows with an "N earlier steps" row. Reasoning shorter than 40 characters gets no row; longer reasoning joins the step it led to. Per-step usage moved into the expanded row and a tooltip; the run total stays below the composer. A site's skills show on the first page change to that site, not on every navigation. Artifact cards stay whole. pi-web-ui gains a transcript hook (`setTranscriptRenderer`, through `patches/pi-mono.patch`); the layout is `src/transcript/`. `test/transcript.test.mjs`.
 - The floating "Artifacts" pill over the chat is gone. Artifacts open from a header button with a count badge and from their tool cards.
-- The launcher harnesses run (`~/.config/tabkyra/tabkyra`) sets `NODE_COMPILE_CACHE`: `tabkyra mcp` starts in about 106 ms instead of 119 ms (`bridge-metrics.mjs --only launcher`, one run, median of 7 each).
+- The launcher harnesses run (`~/.config/tabkyra/tabkyra`) sets `NODE_COMPILE_CACHE`: `tabkyra mcp` started in 112 ms instead of 129 ms on one machine (medians of 15 interleaved starts each, `bridge-metrics.mjs --only launcher`).
 
 ### Fixed
 - Messages sent with files or images reached the model with nothing: the side panel's message transformer dropped `user-with-attachments` messages. They now go as the text plus each image and each document's extracted text.
