@@ -79,3 +79,42 @@ test("a tab the user switches to that no task owns still gets no panel", async (
 	assert.ok(!setOptions.some((o) => o.tabId === other && o.enabled !== false), "the foreign tab is not given the task's panel");
 	assert.ok(!setOptions.some((o) => o.tabId === home && o.enabled === false), "the home tab keeps its panel");
 });
+
+test("a tab whose task is gone loses its panel once the open has settled", async () => {
+	const { fake, setOptions } = setup();
+	const home = fake.addTab({ active: true });
+	await import(`../src/background.ts?ctx=worker-gone-${Math.random()}`);
+	await settle(50);
+	for (const fn of chrome.action.onClicked.listeners) fn({ id: home, windowId: 1 });
+	const port = { name: "sidepanel:1", onDisconnect: event(), onMessage: event(), postMessage() {}, disconnect() {} };
+	for (const fn of chrome.runtime.onConnect.listeners) fn(port);
+	const { BrowserSession } = await import(`../src/browser/session.ts?ctx=panel-gone-${Math.random()}`);
+	const session = await BrowserSession.open(`tab-${home}`, "chat", 1);
+	await session.setHomeTab(home);
+	await session.adopt(home, true);
+	await settle();
+	// The task goes away while its tab stays open and active: the panel must not linger.
+	await session.close();
+	await settle(300);
+	assert.ok(setOptions.some((o) => o.tabId === home && o.enabled === false), "the panel is disabled once no task owns the tab");
+});
+
+test("a fresh task's own tab isn't pointed at another task left marked busy", async () => {
+	const { fake, setOptions } = setup();
+	const otherHome = fake.addTab({ active: false });
+	const tab = fake.addTab({ active: true });
+	// A previous task's panel closed mid-run and left its busy marker behind.
+	await chrome.storage.session.set({ sidepanel_busy_1: otherHome });
+	await import(`../src/background.ts?ctx=worker-busy-${Math.random()}`);
+	await settle(50);
+	for (const fn of chrome.action.onClicked.listeners) fn({ id: tab, windowId: 1 });
+	const port = { name: "sidepanel:1", onDisconnect: event(), onMessage: event(), postMessage() {}, disconnect() {} };
+	for (const fn of chrome.runtime.onConnect.listeners) fn(port);
+	const { BrowserSession } = await import(`../src/browser/session.ts?ctx=panel-busy-${Math.random()}`);
+	const session = await BrowserSession.open(`tab-${tab}`, "chat", 1);
+	await session.setHomeTab(tab);
+	await session.adopt(tab, true);
+	await settle();
+	assert.ok(!setOptions.some((o) => o.tabId === tab && o.path === `sidepanel.html?tabId=${otherHome}`), "not re-pointed at the other task");
+	assert.ok(!setOptions.some((o) => o.tabId === tab && o.enabled === false), "and not closed");
+});
