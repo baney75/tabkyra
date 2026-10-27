@@ -11,7 +11,11 @@ mini_lit_rev="dee21bf1175de0cb16a946ba8fb62c1e590fbd3c"
 [ -d "$parent/mini-lit" ] || git clone https://github.com/badlogic/mini-lit.git "$parent/mini-lit"
 [ -d "$parent/pi-mono" ] || git clone https://github.com/badlogic/pi-mono.git "$parent/pi-mono"
 
+# A pinned revision an older clone doesn't have yet (the pin moved in a pull) is fetched first.
+ensure_rev() { git cat-file -e "$1^{commit}" 2>/dev/null || git fetch -q origin "$1" || git fetch -q origin; }
+
 cd "$parent/pi-mono"
+ensure_rev "$pi_mono_rev"
 # The patch can add files. Mark the ones it adds (in this or any earlier revision) intent-to-add,
 # so `git diff` shows them and an applied patch compares equal to its own text. Other untracked
 # files are left alone.
@@ -28,7 +32,17 @@ unmark() { if [ "${#marked[@]}" -gt 0 ]; then git reset -q -- "${marked[@]}"; fi
 # Compare with HEAD, so a staged hand edit counts as a local change too.
 if ! git diff HEAD --quiet; then
 	if git apply --reverse --check "$here/patches/pi-mono.patch" 2>/dev/null; then
-		echo "pi-mono patch already applied"
+		if [ "$(git rev-parse HEAD)" = "$(git rev-parse "$pi_mono_rev^{commit}")" ]; then
+			echo "pi-mono patch already applied"
+		else
+			# The same patch on an old pin: take it off, move to the pin, put it back.
+			echo "pi-mono is not at the pinned $pi_mono_rev; moving it there"
+			git apply --reverse "$here/patches/pi-mono.patch"
+			cur_added=( $(added_files < "$here/patches/pi-mono.patch") )
+			if [ "${#cur_added[@]}" -gt 0 ]; then git reset -q -- "${cur_added[@]}"; fi
+			git checkout -q "$pi_mono_rev"
+			git apply "$here/patches/pi-mono.patch"
+		fi
 	else
 		# An older revision of the patch is applied: swap it for the current one, but only
 		# when the local changes are exactly that older patch, so no hand edits are lost.
@@ -61,6 +75,7 @@ else
 fi
 
 # Pin mini-lit too: the release build runs its install scripts, so it must be a known revision.
+(cd "$parent/mini-lit" && ensure_rev "$mini_lit_rev")
 if [ "$(git -C "$parent/mini-lit" rev-parse HEAD)" != "$mini_lit_rev" ]; then
 	if git -C "$parent/mini-lit" diff --quiet; then
 		git -C "$parent/mini-lit" checkout -q "$mini_lit_rev"

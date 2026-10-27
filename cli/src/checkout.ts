@@ -14,7 +14,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import type { InstallMode } from "../../src/bridge/protocol.ts";
 import { asBuildInfo, type BuildInfo, describeBuild } from "../../src/update/build.ts";
@@ -31,14 +31,6 @@ const GIT_TIMEOUT_MS = 2 * 60 * 1000;
 export const stateDir = (root: string) => join(root, ".tabkyra-update");
 const nextDir = (root: string) => join(stateDir(root), "next");
 const previousBuildDir = (root: string) => join(stateDir(root), "previous");
-
-/** The two builds a checkout serves, and where each goes in next/ and previous/. */
-function builds(root: string): Array<{ live: string; name: string }> {
-	return [
-		{ live: join(root, "dist-chrome"), name: "dist-chrome" },
-		{ live: join(root, "cli", "dist"), name: "cli-dist" },
-	];
-}
 
 export function readBuildInfo(dir: string): BuildInfo | undefined {
 	try {
@@ -297,6 +289,22 @@ export async function setupSiblings(root: string, emit: Emit): Promise<void> {
 	if (r.code !== 0) throw new UpdateError(`scripts/setup-siblings.sh failed. The old build is still in place.\n${lastLines(r.tail)}`);
 }
 
+/**
+ * setup-siblings.sh runs npm install, which can rewrite a lock file; a checkout with local
+ * changes can't update itself next time. Lock files are put back as committed; any other
+ * change stops the update with what changed.
+ */
+async function keepTreeClean(root: string, emit: Emit): Promise<void> {
+	const status = await git(root, ["status", "--porcelain", "--untracked-files=no"]);
+	const changed = status.stdout.split("\n").filter((l) => l.trim()).map((l) => l.slice(3));
+	if (changed.length === 0) return;
+	const locks = changed.filter((f) => /(^|\/)package-lock\.json$/.test(f));
+	const other = changed.filter((f) => !locks.includes(f));
+	if (other.length) throw new UpdateError(`scripts/setup-siblings.sh changed tracked files (${other.slice(0, 3).join(", ")}). The old build is still in place; commit or restore them.`);
+	await gitOut(root, ["checkout", "--", ...locks]);
+	emit("installing", `Restored ${locks.join(", ")} as committed (npm install had rewritten it)`);
+}
+
 /** What a staged build in next/ will install; written last, so its presence means next/ is whole. */
 export interface Staged {
 	head: string;
@@ -341,80 +349,122 @@ export async function buildNext(root: string, emit: Emit): Promise<void> {
 }
 
 /**
- * Move every entry of `from` into `live`, each by one rename over the old entry, then drop what
- * `from` didn't have. Used for cli/dist: the launcher runs cli/dist/index.js, and a rename over
- * an existing file is atomic, so there is never a moment without an index.js to run.
+ * Copy every file of `from` over `live`, each through a temp file and one rename (atomic), then
+ * drop what `from` didn't have. `from` stays intact, so a crash can run it again. Used for
+ * cli/dist: the launcher runs cli/dist/index.js, which is never missing at any point.
  */
-function replaceContents(from: string, live: string): void {
+function overlay(from: string, live: string): void {
+	if (!existsSync(join(from, "index.js"))) throw new UpdateError(`${from} has no index.js; not installing it.`);
 	mkdirSync(live, { recursive: true });
 	const names = new Set(readdirSync(from));
 	for (const name of names) {
+		const src = join(from, name);
 		const dest = join(live, name);
-		if (existsSync(dest) && lstatSync(dest).isDirectory()) rmSync(dest, { recursive: true, force: true });
-		renameSync(join(from, name), dest);
+		if (lstatSync(src).isDirectory()) {
+			rmSync(dest, { recursive: true, force: true });
+			cpSync(src, dest, { recursive: true });
+			continue;
+		}
+		const tmp = join(live, `.${name}.${process.pid}.tmp`);
+		copyFileSync(src, tmp);
+		renameSync(tmp, dest);
 	}
 	for (const name of readdirSync(live)) if (!names.has(name)) rmSync(join(live, name), { recursive: true, force: true });
 }
 
 /**
- * Put next/ live and keep what it replaces in previous/. The extension folder moves by two
- * renames (a failed second one is undone; a crash between them is repaired by recoverBuilds,
- * which the native host also runs when it starts). The CLI is replaced file by file in place.
- * Runs under the lock.
+ * Activation and rollback write a journal first and keep every source whole until they commit,
+ * so recoverBuilds can finish (or undo) either one from any point a crash stops it at:
+ *
+ *   activate  prepare: copy cli/dist to prev-new/cli-dist          (undo: drop prev-new)
+ *             swap:    dist-chrome -> prev-new/, next/dist-chrome -> dist-chrome, overlay next/cli-dist
+ *             commit:  prev-new -> previous, drop next
+ *   rollback  prepare: copy cli/dist to prev-new/cli-dist          (undo: drop prev-new)
+ *             swap:    dist-chrome -> prev-new/, previous/dist-chrome -> dist-chrome, overlay previous/cli-dist
+ *             commit:  prev-new -> previous
  */
-export function swapInBuilds(root: string): void {
-	const next = nextDir(root);
-	const previous = previousBuildDir(root);
-	rmSync(previous, { recursive: true, force: true });
-	mkdirSync(previous, { recursive: true });
-	const ext = join(root, "dist-chrome");
-	const keptExt = join(previous, "dist-chrome");
-	if (existsSync(ext)) renameSync(ext, keptExt);
+interface Journal {
+	op: "activate" | "rollback";
+	step: "prepare" | "swap";
+}
+
+const journalFile = (root: string) => join(stateDir(root), "journal.json");
+const prevNewDir = (root: string) => join(stateDir(root), "prev-new");
+
+function writeJournal(root: string, journal: Journal): void {
+	const tmp = `${journalFile(root)}.tmp`;
+	writeFileSync(tmp, JSON.stringify(journal));
+	renameSync(tmp, journalFile(root));
+}
+
+function readJournal(root: string): Journal | undefined {
 	try {
-		renameSync(join(next, "dist-chrome"), ext);
-	} catch (err) {
-		if (existsSync(keptExt) && !existsSync(ext)) renameSync(keptExt, ext);
-		throw err;
+		return JSON.parse(readFileSync(journalFile(root), "utf8")) as Journal;
+	} catch {
+		return undefined;
 	}
-	const cli = join(root, "cli", "dist");
-	if (existsSync(cli)) cpSync(cli, join(previous, "cli-dist"), { recursive: true });
-	replaceContents(join(next, "cli-dist"), cli);
-	rmSync(next, { recursive: true, force: true });
+}
+
+/** The swap step of an activation or rollback; every move checks first, so it can run again. */
+function swapStep(root: string, op: Journal["op"]): void {
+	const source = op === "activate" ? nextDir(root) : previousBuildDir(root);
+	const ext = join(root, "dist-chrome");
+	const parked = join(prevNewDir(root), "dist-chrome");
+	if (existsSync(join(source, "dist-chrome"))) {
+		if (existsSync(ext) && !existsSync(parked)) renameSync(ext, parked);
+		if (!existsSync(ext)) renameSync(join(source, "dist-chrome"), ext);
+	}
+	overlay(join(source, "cli-dist"), join(root, "cli", "dist"));
+}
+
+function commitStep(root: string, op: Journal["op"]): void {
+	rmSync(previousBuildDir(root), { recursive: true, force: true });
+	renameSync(prevNewDir(root), previousBuildDir(root));
+	if (op === "activate") rmSync(nextDir(root), { recursive: true, force: true });
+	rmSync(journalFile(root), { force: true });
+}
+
+function runJournaled(root: string, op: Journal["op"]): void {
+	const source = op === "activate" ? nextDir(root) : previousBuildDir(root);
+	for (const need of [join(source, "dist-chrome", "manifest.json"), join(source, "cli-dist", "index.js")]) {
+		if (!existsSync(need)) throw new UpdateError(`${need} is missing; nothing was changed.`);
+	}
+	writeJournal(root, { op, step: "prepare" });
+	rmSync(prevNewDir(root), { recursive: true, force: true });
+	mkdirSync(prevNewDir(root), { recursive: true });
+	cpSync(join(root, "cli", "dist"), join(prevNewDir(root), "cli-dist"), { recursive: true });
+	writeJournal(root, { op, step: "swap" });
+	swapStep(root, op);
+	commitStep(root, op);
+}
+
+/** Put the staged build live and keep what it replaces in previous/. Runs under the lock. */
+export function swapInBuilds(root: string): void {
+	runJournaled(root, "activate");
 }
 
 /**
- * Repair what a crash left: a missing extension folder comes back from swap/ or previous/, a
- * rollback's held half goes back to previous/, and a next/ without staged.json (a build that
- * never finished) is removed. A finished staged build is kept for activation. Runs under the lock.
+ * Finish or undo what a crash interrupted (see Journal), and drop a next/ without staged.json
+ * (a build that never finished). Runs under the lock; the native host also runs it at start.
  */
 export function recoverBuilds(root: string): string | undefined {
 	const notes: string[] = [];
-	const hold = join(stateDir(root), "swap");
-	const ext = join(root, "dist-chrome");
-	if (!existsSync(ext)) {
-		for (const source of [join(hold, "dist-chrome"), join(previousBuildDir(root), "dist-chrome")]) {
-			if (existsSync(source)) {
-				renameSync(source, ext);
-				notes.push("Restored dist-chrome after an interrupted swap.");
-				break;
-			}
-		}
-	}
-	for (const name of ["dist-chrome", "cli-dist"]) {
-		const held = join(hold, name);
-		const kept = join(previousBuildDir(root), name);
-		if (existsSync(held) && !existsSync(kept)) {
-			mkdirSync(previousBuildDir(root), { recursive: true });
-			renameSync(held, kept);
-		}
-	}
-	rmSync(hold, { recursive: true, force: true });
+	const journal = readJournal(root);
+	if (journal?.step === "prepare") {
+		rmSync(prevNewDir(root), { recursive: true, force: true });
+		rmSync(journalFile(root), { force: true });
+		notes.push(`An interrupted ${journal.op} was undone before it changed anything.`);
+	} else if (journal?.step === "swap") {
+		swapStep(root, journal.op);
+		commitStep(root, journal.op);
+		notes.push(`An interrupted ${journal.op === "activate" ? "install" : "rollback"} was finished.`);
+	} else rmSync(prevNewDir(root), { recursive: true, force: true });
 	if (existsSync(nextDir(root)) && !existsSync(stagedFile(root))) rmSync(nextDir(root), { recursive: true, force: true });
 	return notes.length ? notes.join(" ") : undefined;
 }
 
 export function canRollBack(root: string): boolean {
-	return builds(root).every((b) => existsSync(join(previousBuildDir(root), b.name)));
+	return existsSync(join(previousBuildDir(root), "dist-chrome", "manifest.json")) && existsSync(join(previousBuildDir(root), "cli-dist", "index.js"));
 }
 
 export function previousBuild(root: string): BuildInfo | undefined {
@@ -426,23 +476,7 @@ export function swapBuilds(root: string): { from?: BuildInfo; to?: BuildInfo } {
 	if (!canRollBack(root)) throw new UpdateError(`No previous build to roll back to (${previousBuildDir(root)} is missing or incomplete).`);
 	const from = readBuildInfo(join(root, "dist-chrome"));
 	const to = previousBuild(root);
-	const hold = join(stateDir(root), "swap");
-	rmSync(hold, { recursive: true, force: true });
-	mkdirSync(hold, { recursive: true });
-	// The extension: three renames, each crash point repaired by recoverBuilds.
-	const ext = join(root, "dist-chrome");
-	const keptExt = join(previousBuildDir(root), "dist-chrome");
-	renameSync(ext, join(hold, "dist-chrome"));
-	renameSync(keptExt, ext);
-	renameSync(join(hold, "dist-chrome"), keptExt);
-	// The CLI: a copy of the live one, the kept files renamed over it, the copy kept.
-	const cli = join(root, "cli", "dist");
-	const keptCli = join(previousBuildDir(root), "cli-dist");
-	cpSync(cli, join(hold, "cli-dist"), { recursive: true });
-	replaceContents(keptCli, cli);
-	rmSync(keptCli, { recursive: true, force: true });
-	renameSync(join(hold, "cli-dist"), keptCli);
-	rmSync(hold, { recursive: true, force: true });
+	runJournaled(root, "rollback");
 	return { from, to };
 }
 
@@ -502,6 +536,7 @@ export async function updateCheckout(root: string, emit: Emit, options: { pull: 
 		}
 		const head = await gitOut(root, ["rev-parse", "HEAD"]);
 		await setupSiblings(root, emit);
+		await keepTreeClean(root, emit);
 		await buildNext(root, emit);
 		// What's new lists everything since the live build, when that build's commit is an ancestor.
 		const builtCommit = info.built?.commit;

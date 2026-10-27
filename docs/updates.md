@@ -30,13 +30,20 @@ What "update" does depends on how Tabkyra runs (the install mode):
   now** in the panel asks for the second step (it still waits for idle).
 - **The reload.** The extension reloads itself with `chrome.runtime.reload()`, never while an
   agent run is going in any side panel or bridge session; until then the panel says what it
-  waits for. "Idle" means: no side panel with a connected port has a run going, no bridge
-  request is in flight, and no harness made a browser call in the last 30 seconds (a harness
-  between two calls looks idle after that). The worker writes its reload record, then checks
-  once more and reloads with nothing awaited in between, so a run that starts during the
-  writes stops the reload; one that starts during that last storage read is the remaining
-  window. Sessions are kept in IndexedDB and `chrome.storage.local`, so chats and agent tab
-  groups come back after the reload; reopen the side panel to continue.
+  waits for. "Idle" means: no side panel run is going (a running panel beats every 15
+  seconds, so a flag a crashed panel left stops counting after 45), no bridge request is in
+  flight, and no harness made a browser call in the last 30 seconds (a harness between two
+  calls looks idle after that). An automatic update also waits 3 quiet minutes before each
+  step.
+- **The install gate.** Before the worker checks idle for an install, a rollback or the
+  reload, it takes a gate (`tabkyra.updateInstalling` in `chrome.storage.session`). While it
+  holds the gate, a side panel send is refused with "Tabkyra is installing an update and
+  reloads in a moment" (the text goes back into the editor) and a bridge request gets an
+  error saying to repeat it after the bridge reconnects. So nothing new starts between the
+  idle check, the swap and the reload. The remaining window is a send that passed its check
+  just before the gate and hasn't marked its panel busy yet. Sessions are kept in IndexedDB
+  and `chrome.storage.local`, so chats and agent tab groups come back after the reload;
+  reopen the side panel to continue.
 - **The updater outlives the host.** It runs in its own process group and writes each step
   to `~/.config/tabkyra/update-progress.json`. If the browser closes the native host
   mid-update, the update finishes, and the next host reports it (or reports that it stopped,
@@ -82,8 +89,14 @@ The builds go to `.tabkyra-update/next/` (ignored by git) with `TABKYRA_NO_BUMP=
 build never edits the manifest. Only when both the extension and the CLI built is the build
 staged (`next/staged.json`); activation refuses it if HEAD moved since. The extension folder
 is swapped by renames; the CLI is replaced file by file in place (a rename over each file),
-so `cli/dist/index.js`, which the native host's launcher runs, is never missing. The builds
-they replace go to `.tabkyra-update/previous/` for Roll back. A failed build leaves the old
+so `cli/dist/index.js`, which the native host's launcher runs, is never missing. Install
+and Roll back write a journal (`.tabkyra-update/journal.json`) and keep every source whole
+until they commit, so a crash at any point is finished or undone by the next updater or the
+next native host start. The builds they replace go to `.tabkyra-update/previous/` for Roll
+back. If `npm install` in `setup-siblings.sh` rewrote a `package-lock.json`, the updater puts
+it back as committed (any other changed tracked file stops the update), so the next update
+isn't refused for local changes. `setup-siblings.sh` fetches a pinned sibling revision the
+clone doesn't have yet, and moves pi-mono to a new pin when a pull changed it. A failed build leaves the old
 build live and says why; the pulled commits stay, and the next Update now builds them, with
 What's new counting from the live build. One updater runs at a time
 (`.tabkyra-update/update.lock`).

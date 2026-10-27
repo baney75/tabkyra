@@ -24,6 +24,7 @@ import type { LastUpdate, UpdatePhase } from "../../src/bridge/protocol.ts";
 import { describeBuild } from "../../src/update/build.ts";
 import { activateCheckout, detectMode, readBuildInfo, rollbackCheckout, updateCheckout } from "./checkout.ts";
 import { noteUneditedSkills } from "./skill.ts";
+import { type HostRunAction, type ProgressEvent, type ProgressRecord, progressFile } from "./update-progress.ts";
 import {
 	appDir,
 	checkForUpdate,
@@ -31,6 +32,7 @@ import {
 	downloadVerified,
 	installedVersion,
 	installRoot,
+	isNewer,
 	latestRelease,
 	previousDir,
 	readSettings,
@@ -47,34 +49,7 @@ import {
 	writeStatus,
 } from "./update.ts";
 
-export type HostRunAction = "update" | "activate" | "rollback" | "reinstall";
-
-export interface ProgressEvent {
-	phase: UpdatePhase;
-	message: string;
-	/** Done, and a build is staged: the extension activates it once no agent runs. */
-	staged?: boolean;
-	/** Done, and the extension should reload now to run what is installed. */
-	reload?: boolean;
-	extensionBuild?: string;
-}
-
-/** The last step of the running (or last) updater, for a host that starts while it runs. */
-export interface ProgressRecord extends ProgressEvent {
-	pid: number;
-	action: HostRunAction;
-	at: number;
-}
-
-export const progressFile = () => join(configDir(), "update-progress.json");
-
-export function readProgressRecord(): ProgressRecord | undefined {
-	try {
-		return JSON.parse(readFileSync(progressFile(), "utf8")) as ProgressRecord;
-	} catch {
-		return undefined;
-	}
-}
+export type { HostRunAction, ProgressEvent, ProgressRecord } from "./update-progress.ts";
 
 let currentAction: HostRunAction = "update";
 
@@ -177,9 +152,15 @@ function releaseActivate(): void {
 	withLock(() => {
 		recover();
 		if (!existsSync(pendingFile())) return;
-		pending = JSON.parse(readFileSync(pendingFile(), "utf8")) as ReleasePending;
+		const staged = JSON.parse(readFileSync(pendingFile(), "utf8")) as ReleasePending;
 		rmSync(pendingFile(), { force: true });
-		if (installedVersion(stagedDir()) !== pending.to) throw new UpdateError(`The staged release is not ${pending.to}; run Update now again.`);
+		if (installedVersion(stagedDir()) !== staged.to) throw new UpdateError(`The staged release is not ${staged.to}; run Update now again.`);
+		// Never install something older than what runs (say, staged before a rollback or a terminal update).
+		if (!isNewer(staged.to, installedVersion(appDir()))) {
+			rmSync(stagedDir(), { recursive: true, force: true });
+			return;
+		}
+		pending = staged;
 		swapIn(stagedDir());
 	});
 	if (!pending) {

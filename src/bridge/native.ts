@@ -277,10 +277,23 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			...(error ? { error: error.toRpc() } : { result }),
 		});
 
+	if (installGate()) {
+		// Refused before it counts as activity: a request started now would run on files being
+		// replaced, and the reload right after the install would cut it off.
+		reply(
+			undefined,
+			new BridgeError(
+				ERR.INTERNAL,
+				"Tabkyra is installing an update and reloads in a few seconds. Repeat the request once the bridge reconnects.",
+			),
+		);
+		return;
+	}
 	try {
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Bridge.");
 		}
+
 		const handler = handlers[req.method];
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
 		state.inFlight = { method: req.method, since: Date.now() };
@@ -635,6 +648,13 @@ const updateHandlers: {
 export function onUpdateMessages(handlers: typeof updateHandlers): void {
 	updateHandlers.status = handlers.status;
 	updateHandlers.progress = handlers.progress;
+}
+
+let installGate: () => boolean = () => false;
+
+/** The update worker holds this while it swaps an update in and reloads (src/update/gate.ts). */
+export function setInstallGate(held: () => boolean): void {
+	installGate = held;
 }
 
 /** Ask the native host for an update action; false when no host is connected. */

@@ -226,8 +226,6 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 	port.onDisconnect.addListener(() => {
 		panelLog(`panel disconnected window=${windowId}`);
 		openSidepanels.delete(windowId);
-		// A panel that went away mid-run can't clear its own busy flag; the update idle gate reads it.
-		chrome.storage.session.remove(`${PANEL_BUSY_PREFIX}${windowId}`).catch(() => undefined);
 		chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
 			const open = new Set<number>((data[SIDEPANEL_OPEN_KEY] as number[]) || []);
 			open.delete(windowId);

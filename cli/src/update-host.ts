@@ -28,11 +28,12 @@ import {
 	recoverCheckoutQuietly,
 	toolEnv,
 } from "./checkout.ts";
-import { type HostRunAction, type ProgressEvent, readProgressRecord } from "./update-run.ts";
+import { type HostRunAction, type ProgressEvent, readProgressRecord, writeProgressRecord } from "./update-progress.ts";
 import {
 	CHECK_INTERVAL_MS,
 	checkForUpdate,
 	installedVersion,
+	isNewer,
 	previousDir,
 	readLastUpdate,
 	readSettings,
@@ -94,7 +95,10 @@ function startUp(send: Send): void {
 	const record = readProgressRecord();
 	if (!record || record.phase === "done" || record.phase === "failed") return;
 	if (!pidAlive(record.pid)) {
-		progress(send, record.action, "failed", "The updater stopped before it finished. Nothing half-installed is left live; run it again.");
+		const message = "The updater stopped before it finished. An interrupted swap is repaired; run it again.";
+		// Once: the record says failed from now on.
+		writeProgressRecord({ ...record, phase: "failed", message, at: Date.now() });
+		progress(send, record.action, "failed", message);
 		return;
 	}
 	const state: { action: HostRunAction; last?: HostUpdateProgress } = { action: record.action };
@@ -110,15 +114,22 @@ function startUp(send: Send): void {
 		if (over || !pidAlive(record.pid)) {
 			clearInterval(poll);
 			if (running === state) running = undefined;
-			if (!over) progress(send, record.action, "failed", "The updater stopped before it finished; run it again.");
+			if (!over) {
+				const message = "The updater stopped before it finished; run it again.";
+				if (r) writeProgressRecord({ ...r, phase: "failed", message, at: Date.now() });
+				progress(send, record.action, "failed", message);
+			}
 			void sendStatus(send);
 		}
 	}, 1000);
 	poll.unref();
 }
 
+let helloSeen = false;
+
 /** The extension said hello: note what it runs and whether it loads from our folder. */
 export function noteHello(hello: ExtHello, send: Send): void {
+	helloSeen = true;
 	startUp(send);
 	const { root } = detectMode();
 	const disk = readBuildInfo(join(root, "dist-chrome"));
@@ -205,7 +216,9 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 		check = checks ? await releaseCheck(force, root) : { checkedAt: readStatus()?.checkedAt ?? 0, channel: settings.channel, current, available: false };
 		if (!checks) check.available = false;
 		if (mode === "release") {
-			staged = existsSync(join(stagedDir(), ".pending.json")) ? installedVersion(stagedDir()) : undefined;
+			const stagedVersion = existsSync(join(stagedDir(), ".pending.json")) ? installedVersion(stagedDir()) : undefined;
+			// Only something newer than what is installed is waiting to install.
+			staged = stagedVersion && isNewer(stagedVersion, installedVersion(root)) ? stagedVersion : undefined;
 			canRollback = existsSync(previousDir());
 			rollbackTo = canRollback ? installedVersion(previousDir()) : undefined;
 		} else {
@@ -342,15 +355,22 @@ export function handleUpdateAction(raw: unknown, send: Send): void {
 		progress(send, "update", "failed", "Refused: an update request carries only an action name the host knows.");
 		return;
 	}
+	startUp(send);
 	if (action === "policy-off" || action === "policy-notify" || action === "policy-auto") {
 		setPolicy(action === "policy-off" ? "off" : action === "policy-notify" ? "notify" : "auto");
 		void sendStatus(send);
 		return;
 	}
 	if (running) {
-		// Say what is going on instead of starting a second updater.
-		if (running.last) send({ ...running.last, at: Date.now() });
+		// Say what is going on instead of starting a second updater; another action gets its own answer.
+		if (action !== running.action) progress(send, action, "failed", `An update is already running (${running.action}); try again when it finishes.`);
+		else if (running.last) send({ ...running.last, at: Date.now() });
 		else progress(send, running.action, "checking", "An update is already running.");
+		return;
+	}
+	if (!helloSeen && action !== "check") {
+		// Without the hello the host can't tell which folder the browser loads; don't guess.
+		progress(send, action, "failed", "The extension hasn't said hello to the native host yet; try again in a moment.");
 		return;
 	}
 	if (action === "check") {

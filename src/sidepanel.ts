@@ -71,6 +71,7 @@ import "./utils/i18n-extension.js";
 import "./utils/live-reload.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tutorials } from "./tutorials.js";
+import { BUSY_BEAT_PREFIX, updateInstalling } from "./update/gate.js";
 
 // Register custom message renderers
 registerNavigationRenderer();
@@ -147,9 +148,25 @@ function publishBusyState(): void {
 	chrome.storage.session
 		.set({ [`sidepanel_busy_${currentWindowId}`]: busy ? (homeTabId ?? true) : false })
 		.catch(() => undefined);
+	// A heartbeat while the run goes, so the update idle gate can tell a run from a flag a
+	// crashed panel left behind (src/update/worker.ts).
+	if (busy && !busyBeat) {
+		beatBusy();
+		busyBeat = setInterval(beatBusy, BUSY_BEAT_MS);
+	} else if (!busy && busyBeat) {
+		clearInterval(busyBeat);
+		busyBeat = undefined;
+	}
+}
+const BUSY_BEAT_MS = 15000;
+let busyBeat: ReturnType<typeof setInterval> | undefined;
+function beatBusy(): void {
+	chrome.storage.session.set({ [`${BUSY_BEAT_PREFIX}${currentWindowId}`]: Date.now() }).catch(() => undefined);
 }
 window.addEventListener("pagehide", () => {
-	chrome.storage.session.remove(`sidepanel_busy_${currentWindowId}`).catch(() => undefined);
+	chrome.storage.session
+		.remove([`sidepanel_busy_${currentWindowId}`, `${BUSY_BEAT_PREFIX}${currentWindowId}`])
+		.catch(() => undefined);
 });
 
 // The tabs this chat session owns (its own tab group; never the user's tabs)
@@ -744,6 +761,10 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			);
 		},
 		onBeforeSend: async () => {
+			// Tabkyra is swapping in an update and reloads in a moment; a run started now would be cut off.
+			if (await updateInstalling()) {
+				throw new Error("Tabkyra is installing an update and reloads in a moment. Send it again after the reload.");
+			}
 			const note = await pageChangeNote();
 			if (note && agent) agent.appendMessage(note);
 		},

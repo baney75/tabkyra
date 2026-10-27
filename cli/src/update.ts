@@ -627,6 +627,8 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 	const zip = await downloadVerified(release, log);
 	withLock(() => {
 		recover();
+		// A release the side panel staged earlier is older than or equal to this one; drop it.
+		rmSync(stagedDir(), { recursive: true, force: true });
 		const staged = stage(zip, release.version);
 		swapIn(staged);
 	});
@@ -668,6 +670,8 @@ export function swapBack(log: (line: string) => void): { from?: string; to?: str
 		from = installedVersion(app);
 		to = installedVersion(prev);
 		const hold = join(installRoot(), `.swap-${randomBytes(6).toString("hex")}`);
+		// A staged newer release would undo the rollback when activated; drop it.
+		rmSync(stagedDir(), { recursive: true, force: true });
 		// Three renames; recover() repairs any point a crash can stop at (see above).
 		renameSync(app, hold);
 		renameSync(prev, app);

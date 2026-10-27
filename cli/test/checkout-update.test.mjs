@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -484,18 +484,72 @@ test("the host refuses to update a folder the browser doesn't load from", async 
 	assert.equal(git(c.checkout, "rev-parse", "HEAD"), head);
 });
 
-test("the host repairs a swap a crash interrupted when it starts", async (t) => {
-	const c = makeCheckout();
-	const disk = extBuild(c);
-	// A crash between the two renames of an activation: dist-chrome moved aside, nothing in its place.
-	const kept = join(c.checkout, ".tabkyra-update", "previous");
-	mkdirSync(kept, { recursive: true });
-	spawnSync("mv", [join(c.checkout, "dist-chrome"), join(kept, "dist-chrome")]);
+/** Crash states of a journaled swap, built by hand: each step as the updater leaves it. */
+function crashMidSwap(c, op) {
+	const state = join(c.checkout, ".tabkyra-update");
+	const prevNew = join(state, "prev-new");
+	mkdirSync(prevNew, { recursive: true });
+	writeFileSync(join(state, "journal.json"), JSON.stringify({ op, step: "prepare" }));
+	cpSync(join(c.checkout, "cli", "dist"), join(prevNew, "cli-dist"), { recursive: true });
+	writeFileSync(join(state, "journal.json"), JSON.stringify({ op, step: "swap" }));
+	// Stopped right after the first rename: no dist-chrome at all.
+	renameSync(join(c.checkout, "dist-chrome"), join(prevNew, "dist-chrome"));
+}
+
+async function helloFrom(c) {
+	const disk = JSON.parse(readFileSync(join(c.checkout, ".tabkyra-update", "prev-new", "dist-chrome", "build-info.json"), "utf8"));
 	const h = startHost(c.cli);
-	t.after(() => h.host.kill());
 	h.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
 	await h.waitFor((m) => m.type === "update_status", "update_status");
-	assert.equal(extBuild(c).id, disk.id, "dist-chrome is back");
+	h.host.kill();
+}
+
+test("the host finishes an install a crash interrupted when it starts", async () => {
+	const c = makeCheckout();
+	const old = extBuild(c);
+	pushCommit(c, "Something new");
+	assert.equal((await runHost(c.cli)).last.staged, true);
+	const staged = buildId(join(c.checkout, ".tabkyra-update", "next", "dist-chrome"));
+	crashMidSwap(c, "activate");
+	assert.ok(!existsSync(join(c.checkout, "dist-chrome")));
+	assert.ok(existsSync(c.cli), "the CLI the launcher runs is still there");
+	await helloFrom(c);
+	assert.equal(extBuild(c).id, staged.id, "the install was finished");
+	assert.equal(cliBuild(c).commit, staged.commit, "with the matching CLI");
+	assert.equal(buildId(join(c.checkout, ".tabkyra-update", "previous", "dist-chrome")).id, old.id, "the old build is kept for rollback");
+	assert.ok(!existsSync(join(c.checkout, ".tabkyra-update", "journal.json")));
+});
+
+test("the host finishes a rollback a crash interrupted when it starts", async () => {
+	const c = makeCheckout();
+	const old = extBuild(c);
+	pushCommit(c, "Something new");
+	await runHost(c.cli);
+	await runHost(c.cli, "--activate");
+	const fresh = extBuild(c);
+	crashMidSwap(c, "rollback");
+	await helloFrom(c);
+	assert.equal(extBuild(c).id, old.id, "rolled back");
+	assert.equal(cliBuild(c).commit, old.commit, "with the matching CLI");
+	assert.equal(buildId(join(c.checkout, ".tabkyra-update", "previous", "dist-chrome")).id, fresh.id);
+	// And it rolls forward again from there.
+	assert.equal((await runHost(c.cli, "--rollback")).last.phase, "done");
+	assert.equal(extBuild(c).id, fresh.id);
+	assert.equal(cliBuild(c).commit, fresh.commit);
+});
+
+test("an install stopped before it changed anything is undone, and the staged build stays", async () => {
+	const c = makeCheckout();
+	const old = extBuild(c);
+	pushCommit(c, "Something new");
+	await runHost(c.cli);
+	const state = join(c.checkout, ".tabkyra-update");
+	writeFileSync(join(state, "journal.json"), JSON.stringify({ op: "activate", step: "prepare" }));
+	mkdirSync(join(state, "prev-new", "cli-dist"), { recursive: true });
+	const a = await runHost(c.cli, "--activate");
+	assert.equal(a.last.reload, true, a.last.message);
+	assert.equal(extBuild(c).commit, git(c.checkout, "rev-parse", "HEAD"));
+	assert.equal(buildId(join(state, "previous", "dist-chrome")).id, old.id);
 });
 
 test("a host that starts after an updater died says so instead of showing it as running", async (t) => {
