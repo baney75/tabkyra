@@ -318,3 +318,31 @@ test("a waiting question doesn't hold up its client's other calls, and a cancel 
 	assert.equal((await b.reply("c1", askB)).result.reason, "disconnected");
 	await b.until(() => b.pendingList().length === 0, "cleared");
 });
+
+test("a cancel that beats its question in ends it unseen, and one client can't flood the panel", async () => {
+	const b = await startBridge();
+	b.connect("c1", "claude", "s1");
+	b.connect("c2", "codex", "s2");
+	// The cancel skips the checks ask_user waits on, so it can arrive first.
+	const early = await b.reply("c1", b.send("c1", "ask_user.cancel", { askId: "late" }));
+	assert.equal(early.result.cancelled, 0);
+	// The same askId from another client is a different call.
+	const theirs = b.send("c2", "ask_user", { questions: [q()], askId: "late" });
+	const r = await b.reply("c1", b.send("c1", "ask_user", { questions: [q()], askId: "late" }));
+	assert.equal(r.result.reason, "aborted");
+	await b.until(() => b.pendingList().length === 1, "only c2's question shows");
+	assert.equal(b.pendingList()[0].clientId, "c2");
+	assert.equal(b.replies("c2", theirs).length, 0);
+
+	// At most MAX_OPEN_PER_CLIENT open questions per client.
+	b.send("c1", "ask_user", { questions: [q()] });
+	b.send("c1", "ask_user", { questions: [q()] });
+	await b.until(() => b.pendingList().length === 3, "two from c1");
+	const third = await b.reply("c1", b.send("c1", "ask_user", { questions: [q()] }));
+	assert.equal(third.error?.code, "bad_params");
+	assert.match(third.error.message, /already have 2 questions waiting/);
+	assert.equal(b.pendingList().length, 3);
+	b.port.deliver({ type: "client_disconnected", clientId: "c1" });
+	b.port.deliver({ type: "client_disconnected", clientId: "c2" });
+	await b.until(() => b.pendingList().length === 0, "cleared");
+});

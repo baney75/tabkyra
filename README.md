@@ -172,7 +172,7 @@ agent on another machine, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 | `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits and debugging |
 | `handle_dialog` | Answer an alert, confirm or prompt box. While one is open, other calls fail at once with its text |
 | `tabs_show` | Bring a tab in front of you, when you need to sign in or see it |
-| `ask_user` | Ask you 1 to 4 multiple-choice questions in the side panel and wait for your answer (you can always type your own). The toolbar icon shows a badge while one waits; it gives up after 5 minutes |
+| `ask_user` | Ask you 1 to 4 multiple-choice questions in the side panel and wait for your answer (you can always type your own). The toolbar icon shows a badge while one waits; it gives up after 5 minutes, or sooner if your harness's tool timeout is shorter (Claude Code: `MCP_TOOL_TIMEOUT`, in ms; Codex: `tool_timeout_sec` on the server). Giving up takes the question off the panel |
 | `library_add`, `library_search`, `library_cite` | Save verified sources and cite them (see [Library](#library)) |
 
 Every tool's description documents its parameters and includes an example. `actions`

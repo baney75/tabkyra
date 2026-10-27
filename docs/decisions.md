@@ -294,4 +294,8 @@ questions too" (2026-10-27). Defaults chosen:
   `chrome.storage.session` is closed to content scripts, so a page can't either.
 - **Remote sessions need their own scope**, `user.ask`, never implied by the others: a remote
   agent that can ask questions can put text in front of the user.
+- **Two open questions per agent at most.** One call already carries up to four, and a cap keeps
+  one agent from filling the panel. An agent that gives up on its call (its tool timeout, or the
+  user stopping it) withdraws the question with `ask_user.cancel`, which names that call and
+  only ever reaches the calling agent's own questions.
 

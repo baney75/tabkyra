@@ -68,7 +68,7 @@ export function registerAskUser(server: McpServer, client: BridgeClient): void {
 			title: "Ask the user",
 			description:
 				`${ASK_USER_DESCRIPTION} The question shows in the Tabkyra side panel (the toolbar icon gets a badge when the panel is closed) and waits up to ` +
-				`${ASK_BRIDGE_TIMEOUT_MS / 60000} minutes. ` +
+				`${ASK_BRIDGE_TIMEOUT_MS / 60000} minutes, or until your client's own tool-call timeout if that is shorter. ` +
 				'Example: {"questions":[{"header":"Format","question":"Which format should the report use?","options":[{"label":"PDF (Recommended)","description":"One file that prints cleanly"},{"label":"Markdown","description":"Plain text you can edit"}]}]}',
 			inputSchema: askUserInputSchema,
 		},
@@ -83,6 +83,7 @@ export function registerAskUser(server: McpServer, client: BridgeClient): void {
 			// Waiting minutes is normal here. Clients that reset their timeout on progress keep waiting.
 			const token = extra._meta?.progressToken;
 			let ticks = 0;
+			const startedAt = Date.now();
 			const progress =
 				token === undefined
 					? undefined
@@ -90,7 +91,11 @@ export function registerAskUser(server: McpServer, client: BridgeClient): void {
 							extra
 								.sendNotification({
 									method: "notifications/progress",
-									params: { progressToken: token, progress: ++ticks, message: "Waiting for the user's answer in the Tabkyra side panel" },
+									params: {
+										progressToken: token,
+										progress: ++ticks,
+										message: `Waiting for the user's answer in the Tabkyra side panel (${Math.max(0, Math.ceil((ASK_BRIDGE_TIMEOUT_MS - (Date.now() - startedAt)) / 60000))} min left)`,
+									},
 								})
 								.catch(() => undefined);
 						}, PROGRESS_EVERY_MS);

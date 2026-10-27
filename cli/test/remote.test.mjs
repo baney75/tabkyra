@@ -200,8 +200,10 @@ test("user.ask grants ask_user, and only that scope does", async () => {
 		const names = (await others.listTools()).tools.map((t) => t.name);
 		assert.ok(!names.includes("ask_user"), names.join(","));
 		assert.doesNotMatch(others.getInstructions() ?? "", /ask_user/);
-		const denied = await others.callTool({ name: "ask_user", arguments: { questions: [] } }).catch((e) => ({ isError: true, content: [{ text: String(e) }] }));
+		const valid = { questions: [{ header: "Format", question: "Which format?", options: [{ label: "PDF", description: "" }, { label: "Markdown", description: "" }] }] };
+		const denied = await others.callTool({ name: "ask_user", arguments: valid }).catch((e) => ({ isError: true, content: [{ text: String(e) }] }));
 		assert.equal(denied.isError, true);
+		assert.match(denied.content[0].text, /not found|unknown tool/i, "refused as a tool the session doesn't have, not on its arguments");
 	} finally {
 		await others.close();
 	}
