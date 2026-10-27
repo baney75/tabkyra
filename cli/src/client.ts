@@ -92,12 +92,17 @@ export function isConnectionError(err: unknown): boolean {
 /** A welcomed socket, before the client takes it. */
 interface Dialed {
 	socket: Socket;
+	path: string;
 	clientId: string;
-	extensionConnected: boolean;
 }
+
+/** Waits between resends of a request a live host refused as not_sent (it never ran). */
+const NOT_SENT_BACKOFF_MS = [250, 500, 1000, 2000];
 
 export class BridgeClient {
 	private socket?: Socket;
+	/** The socket file the client's socket was dialed at. */
+	private socketPath?: string;
 	private seq = 0;
 	/** Requests waiting for a reply, each with the socket it went out on. */
 	private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; socket: Socket }>();
@@ -106,11 +111,16 @@ export class BridgeClient {
 	/** One connect at a time: a call that finds no socket waits on a dial already under way. */
 	private connecting?: Promise<void>;
 	/**
-	 * What each socket's host last said about the extension, kept from the welcome on: a status
-	 * can arrive before the client adopts that socket (in the welcome's own data chunk, or while
-	 * other hosts are dialed), and must not be lost.
+	 * What each socket's host last said about its extension and browser, from the welcome on: a
+	 * status can arrive before the client adopts the socket, and must not be lost.
 	 */
 	private socketExtension = new WeakMap<Socket, boolean>();
+	private socketBrowser = new WeakMap<Socket, string>();
+	/**
+	 * The browser this client works in, once known. Resends and reconnects stay with it: with
+	 * two browsers running Tabkyra, a request is never resent to the other one.
+	 */
+	private browserId?: string;
 	clientId?: string;
 	extensionConnected = false;
 	/** Set once the extension has been connected; only a bridge that once worked is worth waiting for. */
@@ -118,8 +128,16 @@ export class BridgeClient {
 
 	constructor(private readonly options: ClientOptions) {}
 
+	/** A socket the client can write to now. A half-closed one (the host ended it) doesn't count. */
 	get connected(): boolean {
-		return this.socket !== undefined && !this.socket.destroyed;
+		return this.socket !== undefined && !this.socket.destroyed && this.socket.writable;
+	}
+
+	/** Whether a socket's host reached an extension in this client's browser. */
+	private ready(socket: Socket): boolean {
+		if (!this.socketExtension.get(socket)) return false;
+		const browser = this.socketBrowser.get(socket);
+		return !this.browserId || !browser || browser === this.browserId;
 	}
 
 	/**
@@ -136,8 +154,9 @@ export class BridgeClient {
 
 	private async connectNow(path: string | undefined, timeoutMs: number): Promise<void> {
 		if (path) return this.adopt(await this.dial(path, timeoutMs));
-		// Several hosts can be alive (two browsers, a stale one): use the newest whose
-		// extension is connected, the same socket `tabkyra doctor` and `setup` report on.
+		// Several hosts can be alive (two browsers, a stale one): use the newest whose extension
+		// is connected (in this client's browser, once it has one), the same socket `tabkyra
+		// doctor` and `setup` report on.
 		const sockets = listSockets();
 		if (sockets.length === 0) throw new Error(NOT_CONNECTED);
 		let fallback: Dialed | undefined;
@@ -145,28 +164,45 @@ export class BridgeClient {
 		for (const target of sockets) {
 			try {
 				const dialed = await this.dial(target, timeoutMs);
-				if (this.socketExtension.get(dialed.socket)) {
-					fallback?.socket.destroy();
+				if (this.ready(dialed.socket)) {
+					if (fallback && fallback.socket !== this.socket) fallback.socket.destroy();
 					return this.adopt(dialed);
 				}
-				// A host whose extension hasn't said hello yet: keep the first such, drop the rest.
-				if (fallback) dialed.socket.destroy();
+				const browser = this.socketBrowser.get(dialed.socket);
+				// Another browser's host is never a fallback; one whose extension hasn't said hello
+				// yet may be ours.
+				if (fallback || (this.browserId && browser && browser !== this.browserId)) dialed.socket.destroy();
 				else fallback = dialed;
 			} catch (err) {
 				lastError = err;
 			}
 		}
 		if (fallback) return this.adopt(fallback);
-		throw lastError instanceof Error ? lastError : new Error(String(lastError));
+		throw lastError instanceof Error ? lastError : new Error(String(lastError ?? NOT_CONNECTED));
 	}
 
-	/** Make a welcomed socket the client's one socket, closing the one before it. */
+	/** Make a welcomed socket the client's one socket, retiring the one before it. */
 	private adopt(dialed: Dialed): void {
-		if (this.socket && this.socket !== dialed.socket) this.socket.destroy();
+		if (this.socket && this.socket !== dialed.socket) this.retire(this.socket);
 		this.socket = dialed.socket;
+		this.socketPath = dialed.path;
 		this.clientId = dialed.clientId;
-		this.extensionConnected = this.socketExtension.get(dialed.socket) ?? dialed.extensionConnected;
-		if (this.extensionConnected) this.everConnected = true;
+		this.extensionConnected = this.ready(dialed.socket);
+		if (this.extensionConnected) {
+			this.everConnected = true;
+			this.browserId ??= this.socketBrowser.get(dialed.socket);
+		}
+	}
+
+	/**
+	 * Stop using a socket without cutting off what is still waiting on it: replies (or the host's
+	 * own close) settle those; the socket is destroyed once nothing waits, or after 5 s.
+	 */
+	private retire(socket: Socket): void {
+		if (this.socket === socket) this.socket = undefined;
+		const waiting = [...this.pending.values()].some((p) => p.socket === socket);
+		if (!waiting) socket.destroy();
+		else setTimeout(() => socket.destroy(), 5000).unref();
 	}
 
 	private async dial(target: string, timeoutMs: number): Promise<Dialed> {
@@ -192,7 +228,8 @@ export class BridgeClient {
 						welcomed = true;
 						clearTimeout(timer);
 						this.socketExtension.set(socket, msg.extensionConnected);
-						resolve({ socket, clientId: msg.clientId, extensionConnected: msg.extensionConnected });
+						if (msg.browserId) this.socketBrowser.set(socket, msg.browserId);
+						resolve({ socket, path: target, clientId: msg.clientId });
 					} else this.onMessage(msg, socket);
 				}
 				// The good frames are delivered first; a bad one still ends this connection.
@@ -231,21 +268,26 @@ export class BridgeClient {
 			this.options.onEvent?.(msg.event, msg.data);
 		} else if (msg.type === "extension_status") {
 			this.socketExtension.set(from, msg.connected);
+			if (msg.browserId) this.socketBrowser.set(from, msg.browserId);
 			// Only the client's own host speaks for the extension; another socket's status waits
 			// in socketExtension until (and unless) that socket is adopted.
 			if (from !== this.socket) return;
-			this.extensionConnected = msg.connected;
-			if (msg.connected) this.everConnected = true;
+			this.extensionConnected = this.ready(from);
+			if (this.extensionConnected) {
+				this.everConnected = true;
+				this.browserId ??= this.socketBrowser.get(from);
+			}
 			this.options.onExtensionStatus?.(msg.connected);
 		}
 	}
 
 	/**
 	 * Call, surviving a dropped bridge (extension reload, service worker restart, host respawn).
-	 * The session key is stable, so a resent request lands on the same tabs. A request that never
-	 * left (no socket yet, or the host refused it as `not_sent`) is sent once the bridge is back.
-	 * A request cut off in flight may have run: a read (isIdempotent) is resent, anything else
-	 * fails with `interrupted` and is never replayed. Other RPC errors are never retried.
+	 * The session key is stable, so a resent request lands on the same tabs, in the same browser.
+	 * A request that never ran is sent again: one that never left (no writable socket) once the
+	 * bridge is back, one a live host refused as `not_sent` after a short backoff. A request cut
+	 * off in flight may have run: a read (isIdempotent) is resent, anything else fails with
+	 * `interrupted` at once and is never replayed. Other RPC errors are never retried.
 	 */
 	async call<T = unknown>(
 		method: string,
@@ -253,42 +295,56 @@ export class BridgeClient {
 		timeoutMs?: number,
 		options: { retry?: boolean } = {},
 	): Promise<T> {
-		// One budget for the call's waits, however many times the bridge drops under it. It starts
-		// at the first drop: the time the request itself ran (a long wait) isn't charged to it.
+		// One budget for the call's waits, however many times the bridge drops or refuses. It starts
+		// at the first trouble: the time the request itself ran (a long wait) isn't charged to it.
 		let deadline: number | undefined;
-		for (let attempt = 1; ; attempt++) {
+		let drops = 0;
+		let refusals = 0;
+		for (;;) {
 			const sent: { socket?: Socket } = {};
 			try {
 				return await this.callOnce<T>(method, params, timeoutMs, sent);
 			} catch (err) {
-				const notSent = err instanceof NotSentError || (err instanceof BridgeRpcError && err.rpc.code === ERR.NOT_SENT);
+				const refused = err instanceof BridgeRpcError && err.rpc.code === ERR.NOT_SENT;
+				const unsent = err instanceof NotSentError;
 				const interrupted = err instanceof BridgeRpcError && err.rpc.code === ERR.INTERRUPTED;
-				if (err instanceof BridgeRpcError && !notSent && !interrupted) throw err;
-				if (!notSent && !interrupted && !isConnectionError(err)) throw err;
-				const resend = notSent || isIdempotent(method, params);
+				if (err instanceof BridgeRpcError && !refused && !interrupted) throw err;
+				if (!refused && !unsent && !interrupted && !isConnectionError(err)) throw err;
+				const resend = refused || unsent || isIdempotent(method, params);
 				// Input cut off in flight is never replayed: say so now, without waiting for the bridge
 				// (the next call reconnects on its own).
 				if (!resend) throw new BridgeRpcError({ code: ERR.INTERRUPTED, message: interruptedMessage(method) });
-				// Status checks report a drop as it is instead of waiting for a reconnect.
-				if (options.retry === false) throw new Error(NOT_CONNECTED);
+				// Status checks report trouble as it is instead of waiting.
+				if (options.retry === false) throw refused ? err : new Error(NOT_CONNECTED);
+				deadline ??= Date.now() + RECONNECT_BUDGET_MS;
+				if (refused) {
+					// The host is up and said the request didn't run (an update is installing, or the
+					// host is stopping): wait a little and send it again, on whatever socket is live then.
+					const wait = NOT_SENT_BACKOFF_MS[Math.min(refusals++, NOT_SENT_BACKOFF_MS.length - 1)];
+					if (Date.now() + wait > deadline) throw err;
+					await new Promise((r) => setTimeout(r, wait));
+					continue;
+				}
 				// Nothing was ever reachable: say so now instead of polling.
 				if (!this.everConnected) throw new Error(NOT_CONNECTED);
-				// A bridge that keeps dropping is reported, not chased.
-				if (attempt >= MAX_ATTEMPTS)
-					throw new BridgeRpcError({
-						code: ERR.INTERRUPTED,
-						message: `The browser connection dropped ${attempt} times in a row during ${TOOL_NAMES[method] ?? method.replace(".", "_")}. Run \`tabkyra doctor\` or ask the user to check the browser, then try again.`,
-					});
-				// Drop the socket this request used, unless another call already replaced it.
-				if (!sent.socket || this.socket === sent.socket) this.close();
-				deadline ??= Date.now() + RECONNECT_BUDGET_MS;
+				if (!unsent) {
+					// Cut off in flight (a read): a bridge that keeps dropping is reported, not chased.
+					drops++;
+					if (drops >= MAX_ATTEMPTS)
+						throw new BridgeRpcError({
+							code: ERR.INTERRUPTED,
+							message: `The browser connection dropped ${drops} times in a row during ${TOOL_NAMES[method] ?? method.replace(".", "_")}. Run \`tabkyra doctor\` or ask the user to check the browser, then try again.`,
+						});
+					// Stop using the socket this request went out on (unless another call already moved on).
+					if (sent.socket && this.socket === sent.socket) this.retire(sent.socket);
+				}
 				const back = await this.reconnect(deadline - Date.now()).then(
 					() => this.extensionConnected,
 					() => false,
 				);
 				if (!back) {
 					// The drop outlasted the budget: report it, and don't wait again on the next call.
-					this.close();
+					if (this.socket) this.retire(this.socket);
 					this.everConnected = false;
 					throw new Error(NOT_CONNECTED);
 				}
@@ -297,12 +353,11 @@ export class BridgeClient {
 	}
 
 	/**
-	 * Wait for a live host whose extension is connected (the browser respawns the host after a
-	 * reload) and dial it. Concurrent callers share one attempt.
+	 * Wait for a live host whose extension (in this client's browser) is connected and dial it.
+	 * Concurrent callers share one attempt; each waits only as long as its own budget.
 	 */
 	private reconnect(budgetMs: number): Promise<void> {
 		if (this.connected && this.extensionConnected) return Promise.resolve();
-		// The shared attempt runs on its own full budget; each caller waits only as long as its own.
 		this.reconnecting ??= this.reconnectOnce(RECONNECT_BUDGET_MS).finally(() => {
 			this.reconnecting = undefined;
 		});
@@ -319,7 +374,12 @@ export class BridgeClient {
 		while (Date.now() < deadline) {
 			try {
 				if (!this.connected) await this.connect();
-				if (this.extensionConnected) return;
+				else if (!this.extensionConnected && listSockets().some((p) => p !== this.socketPath)) {
+					// Still on a host whose extension never said hello (a stale one) while another host
+					// is up: look again, rather than wait on the stale one for the whole budget.
+					await this.connectNow(undefined, 5000);
+				}
+				if (this.connected && this.extensionConnected) return;
 			} catch (err) {
 				lastError = err;
 			}
@@ -339,7 +399,8 @@ export class BridgeClient {
 			}
 		}
 		const socket = this.socket;
-		if (!socket || socket.destroyed) throw new NotSentError(new Error("Not connected"));
+		// A half-closed socket (the host ended it) can't take a request: it was never sent.
+		if (!socket || socket.destroyed || !socket.writable) throw new NotSentError(new Error("Not connected"));
 		sent.socket = socket;
 		const id = ++this.seq;
 		const timeout = timeoutMs ?? this.options.requestTimeoutMs ?? 120000;

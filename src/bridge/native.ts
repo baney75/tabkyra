@@ -699,7 +699,7 @@ function connect(): void {
 	// The hello says which build runs and which build the extension folder holds now, so the host
 	// can tell whether the browser loads Tabkyra from the folder it updates (docs/updates.md).
 	helloSent = false;
-	void readDiskBuild().then((diskBuild) => {
+	void Promise.all([readDiskBuild(), getBrowserId()]).then(([diskBuild, browserId]) => {
 		if (port !== next) return;
 		helloSent = true;
 		send({
@@ -709,8 +709,24 @@ function connect(): void {
 			methods: [...BRIDGE_METHODS],
 			build: BUILD,
 			diskBuild,
+			browserId,
 		});
 	});
+}
+
+const BROWSER_ID_KEY = "tabkyra.browserId";
+
+/** This profile's lasting random id (see ExtHello.browserId). */
+async function getBrowserId(): Promise<string | undefined> {
+	try {
+		const stored = (await chrome.storage.local.get(BROWSER_ID_KEY))[BROWSER_ID_KEY];
+		if (typeof stored === "string" && stored) return stored;
+		const id = crypto.randomUUID();
+		await chrome.storage.local.set({ [BROWSER_ID_KEY]: id });
+		return id;
+	} catch {
+		return undefined;
+	}
 }
 
 /** The extension folder's build-info.json as it is on disk now (an unpacked extension reads from disk). */

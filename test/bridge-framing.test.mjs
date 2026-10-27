@@ -196,3 +196,56 @@ test("when the extension goes away, the host answers every waiting request as in
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("a host stopped by a signal drops the extension's side at once, answers its clients, and survives a closed pipe", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const exited = new Promise((r) => host.once("exit", (c) => r(c)));
+	const toExt = new FrameParser(64 * 1024 * 1024);
+	const forwarded = [];
+	let extensionSideEnded = 0;
+	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
+	host.stdout.on("end", () => {
+		extensionSideEnded = Date.now();
+	});
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		const open = () => {
+			const c = connect({ path: sock, allowHalfOpen: true });
+			const parser = new FrameParser(64 * 1024 * 1024);
+			const got = [];
+			c.on("data", (chunk) => got.push(...parser.push(chunk).messages));
+			c.on("error", () => undefined);
+			c.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } }));
+			return { c, got };
+		};
+		const one = open();
+		const two = open();
+		one.c.write(encodeFrame({ type: "request", id: 1, method: "click", params: {} }));
+		for (let i = 0; i < 100 && !forwarded.some((m) => m.type === "request"); i++) await new Promise((r) => setTimeout(r, 20));
+		const signalled = Date.now();
+		host.kill("SIGTERM");
+		for (let i = 0; i < 100 && !one.got.some((m) => m.id === 1); i++) await new Promise((r) => setTimeout(r, 5));
+		assert.equal(one.got.find((m) => m.id === 1)?.error?.code, "interrupted");
+		// The extension's side closes right away, before the host lingers for its clients.
+		for (let i = 0; i < 100 && !extensionSideEnded; i++) await new Promise((r) => setTimeout(r, 5));
+		assert.ok(extensionSideEnded && extensionSideEnded - signalled < 200, "the extension's side stayed open while the host lingered");
+		// The pipe is gone; a client leaving (which used to write to it) must not crash the host.
+		host.stdout.destroy();
+		two.c.destroy();
+		await new Promise((r) => setTimeout(r, 30));
+		one.c.write(encodeFrame({ type: "request", id: 2, method: "press", params: {} }));
+		for (let i = 0; i < 100 && !one.got.some((m) => m.id === 2); i++) await new Promise((r) => setTimeout(r, 5));
+		assert.equal(one.got.find((m) => m.id === 2)?.error?.code, "not_sent");
+		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 2).length, 0);
+		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
+	} finally {
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

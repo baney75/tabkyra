@@ -49,6 +49,8 @@ export interface HostWelcome {
 	clientId: string;
 	hostVersion: string;
 	extensionConnected: boolean;
+	/** The browser profile behind this host, once its extension has said hello. */
+	browserId?: string;
 }
 
 export interface HostResponse {
@@ -67,6 +69,7 @@ export interface HostEvent {
 export interface HostExtensionStatus {
 	type: "extension_status";
 	connected: boolean;
+	browserId?: string;
 }
 
 export type HostToClient = HostWelcome | HostResponse | HostEvent | HostExtensionStatus;
@@ -82,6 +85,11 @@ export interface ExtHello {
 	build?: BuildInfo;
 	/** The extension folder's build-info.json as the browser serves it now (where it loads from). */
 	diskBuild?: BuildInfo;
+	/**
+	 * A random id this browser profile keeps for good (chrome.storage.local), so a client can
+	 * tell one browser from another and resend a request only to the browser it started on.
+	 */
+	browserId?: string;
 }
 
 /**

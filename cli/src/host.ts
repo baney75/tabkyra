@@ -27,12 +27,17 @@ interface Client {
 
 const clients = new Map<string, Client>();
 let extensionReady = false;
+/** The browser profile behind this host (from the extension's hello). */
+let browserId: string | undefined;
 let seq = 0;
 /** Set once the host has decided to exit; no request is forwarded after that. */
 let stopping = false;
 
 /** Write a frame to the extension; false when it was refused as oversized. */
 function toExtension(message: HostToExt): boolean {
+	// A stopping host says nothing more to the extension: its side may already be gone (a write
+	// then fails with EPIPE), and the extension must hear the port close, not more traffic.
+	if (stopping) return false;
 	const frame = encodeFrame(message);
 	if (frame.length > MAX_FRAME_TO_EXTENSION) {
 		// Never let one oversized frame kill the native port.
@@ -60,9 +65,10 @@ function onExtensionMessage(message: ExtToHost): void {
 	switch (message.type) {
 		case "hello":
 			extensionReady = true;
+			browserId = typeof message.browserId === "string" ? message.browserId.slice(0, 64) : undefined;
 			noteHello(message, toExtension);
 			void sendStatus(toExtension);
-			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true });
+			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true, ...(browserId ? { browserId } : {}) });
 			// The extension restarted; re-announce every live client so it recreates sessions.
 			for (const client of clients.values()) {
 				if (client.hello) toExtension({ type: "client_connected", clientId: client.id, client: client.hello.client });
@@ -88,7 +94,7 @@ function onExtensionMessage(message: ExtToHost): void {
 function onClientMessage(client: Client, message: ClientToHost): void {
 	if (message.type === "hello") {
 		client.hello = message;
-		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: extensionReady });
+		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: extensionReady, ...(browserId ? { browserId } : {}) });
 		toExtension({ type: "client_connected", clientId: client.id, client: message.client });
 		return;
 	}
@@ -144,7 +150,23 @@ function sweepStaleSockets(dir: string): void {
 	}
 }
 
+/**
+ * Close the extension's side at once when the host stops on its own (a bad frame, a signal):
+ * the extension sees its port disconnect and stops the requests this host just answered
+ * "interrupted", instead of running them while the host lingers for its clients.
+ */
+function dropExtension(): void {
+	try {
+		process.stdout.end();
+		process.stdin.destroy();
+	} catch {
+		/* already closed */
+	}
+}
+
 export function runNativeHost(): void {
+	// A closed pipe to the browser must not crash the host while it answers its clients.
+	process.stdout.on("error", () => undefined);
 	const dir = socketDir();
 	if (process.platform !== "win32") {
 		if (!existsSync(dir)) mkdirSync(dir, { mode: 0o700 });
@@ -194,6 +216,7 @@ export function runNativeHost(): void {
 			process.stderr.write(`[tabkyra-host] bad frame from extension, restarting: ${String(error)}\n`);
 			stopping = true;
 			failOutstanding(`the browser's reply was lost (${error.message}); the bridge is restarting`);
+			dropExtension();
 			shutdown(1);
 		}
 	});
@@ -251,6 +274,7 @@ export function runNativeHost(): void {
 	const killed = () => {
 		stopping = true;
 		failOutstanding("the browser bridge was stopped while this ran");
+		dropExtension();
 		shutdown();
 	};
 	process.on("SIGINT", killed);

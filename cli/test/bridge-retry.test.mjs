@@ -74,6 +74,12 @@ before(async () => {
 				}
 				seen[msg.method] = (seen[msg.method] ?? 0) + 1;
 				const step = plan[msg.method]?.shift();
+				if (step === "endafter") {
+					// Answers, then half-closes the connection (a host on its way out).
+					socket.write(frame({ type: "response", id: msg.id, result: { ok: msg.method } }));
+					socket.end();
+					return;
+				}
 				if (step === "slowdrop") {
 					// Runs a while, then the bridge drops under it.
 					setTimeout(() => socket.destroy(), 1500);
@@ -234,6 +240,48 @@ test("an extension status that arrives with the welcome is kept, so a resent rea
 		assert.ok(!r.isError, text(r));
 	} finally {
 		statusInWelcomeChunk = false;
+	}
+});
+
+test("a live host's not_sent refusals are waited out and resent, not counted as drops", async () => {
+	// An update installing: the extension refuses twice, then takes the request (this client's
+	// budget is 1 s: 250 + 500 ms of backoff fit; a third refusal would be reported as not_sent).
+	plan.fill = ["not_sent", "not_sent"];
+	seen.fill = 0;
+	const started = Date.now();
+	const r = await mcp.callTool({ name: "fill", arguments: { ref: "e1", value: "x" } });
+	assert.ok(!r.isError, text(r));
+	assert.equal(seen.fill, 3);
+	assert.ok(Date.now() - started >= 250 + 500 - 50, `resent after ${Date.now() - started} ms; no backoff`);
+});
+
+test("two requests refused together are both resent; neither is called cut off", async () => {
+	plan.text = ["not_sent"];
+	plan.click = ["not_sent"];
+	const [read, click] = await Promise.all([mcp.callTool({ name: "get_page_text", arguments: {} }), mcp.callTool({ name: "click", arguments: { ref: "e2" } })]);
+	assert.ok(!read.isError, text(read));
+	assert.ok(!click.isError, `a click that never ran was reported: ${text(click)}`);
+});
+
+test("a socket the host has half-closed takes no request: it is treated as never sent", async () => {
+	const { build } = await import("esbuild");
+	const out = join(root, "client.mjs");
+	await build({ entryPoints: [join(dirname(fileURLToPath(import.meta.url)), "..", "src", "client.ts")], bundle: true, platform: "node", format: "esm", outfile: out, logLevel: "silent" });
+	const { BridgeClient } = await import(out);
+	const before = process.env.TABKYRA_SOCKET_DIR;
+	// No host at all: a request that is never sent fails as "not connected".
+	process.env.TABKYRA_SOCKET_DIR = join(root, "no-host");
+	mkdirSync(process.env.TABKYRA_SOCKET_DIR, { recursive: true, mode: 0o700 });
+	const client = new BridgeClient({ name: "halfclose" });
+	// The host ended this socket: Node keeps it open but no longer writable until it closes.
+	const writes = [];
+	client.socket = { destroyed: false, writable: false, write: (b) => writes.push(b), destroy() {}, once() {}, on() {} };
+	try {
+		await assert.rejects(() => client.call("press", { key: "Tab" }), /isn't connected/);
+		assert.equal(writes.length, 0, "a request was written to a half-closed socket (it would then be reported 'may have run')");
+	} finally {
+		if (before === undefined) delete process.env.TABKYRA_SOCKET_DIR;
+		else process.env.TABKYRA_SOCKET_DIR = before;
 	}
 });
 

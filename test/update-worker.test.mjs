@@ -31,6 +31,8 @@ async function start() {
 		globalThis.setTimeout = realSetTimeout;
 	}
 	const port = fake.ports[0];
+	// The extension says hello once it has read its build and its browser id (storage reads).
+	for (let i = 0; i < 200 && !port.sent.some((m) => m.type === "hello"); i++) await new Promise((r) => realSetTimeout(r, 5));
 	const ask = (message, url) =>
 		new Promise((resolve) => {
 			for (const fn of chrome.runtime.onMessage.listeners) fn(message, { id: "fake", url }, resolve);
