@@ -1,4 +1,4 @@
-# Proves the MINISIGN_SECRET_KEY repository secret and keys/tabkyra-release.pub are a working
+# Proves the release environment's MINISIGN_SECRET_KEY secret and keys/tabkyra-release.pub are a working
 # pair, with the real minisign, without cutting a release: it signs a scratch file and verifies
 # it against the committed public key. Run it after changing either, before the next tag:
 #   gh workflow run release-key-check.yml --repo baney75/tabkyra
@@ -13,6 +13,8 @@ permissions: {}
 jobs:
   check:
     runs-on: ubuntu-24.04
+    # The signing key is an environment secret that only main and v* tags can reach.
+    environment: release
     permissions:
       contents: read
     steps:
@@ -27,7 +29,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$MINISIGN_SECRET_KEY" ]; then
-            echo "::error::The MINISIGN_SECRET_KEY repository secret is not set (docs/updates.md)"; exit 1
+            echo "::error::The release environment's MINISIGN_SECRET_KEY secret is not set (docs/updates.md)"; exit 1
           fi
           umask 077
           key="$RUNNER_TEMP/minisign.key"
