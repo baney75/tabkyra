@@ -315,6 +315,33 @@ const DEFAULT_MODELS: Record<string, string> = {
 	zai: "glm-4.6",
 };
 
+/** A navigation note when the session's tab shows a different page than the agent last saw. */
+async function pageChangeNote(): Promise<NavigationMessage | undefined> {
+	if (!agent) return undefined;
+
+	// The session's current tab (nothing if the session has no tab yet)
+	const tab = await browserSession?.currentTab();
+	if (!tab?.url || isRestrictedUrl(tab.url)) return undefined;
+
+	// Find most recent navigation (either nav message or nav tool result)
+	let lastUrl: string | undefined;
+	for (let i = agent.state.messages.length - 1; i >= 0; i--) {
+		const msg = agent.state.messages[i];
+		if (msg.role === "navigation") {
+			lastUrl = (msg as NavigationMessage).url;
+			break;
+		}
+		if (msg.role === "toolResult" && (msg as any).toolName === "navigate") {
+			lastUrl = (msg as any).details?.finalUrl;
+			break;
+		}
+	}
+
+	// Only add if URL changed
+	if (lastUrl && lastUrl === tab.url) return undefined;
+	return await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
+}
+
 async function selectDefaultModelForAvailableProvider() {
 	const providers = await getProvidersWithKeys();
 	if (providers.length === 0 || !agent) return;
@@ -715,31 +742,13 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			);
 		},
 		onBeforeSend: async () => {
-			if (!agent) return;
-
-			// The session's current tab (nothing if the session has no tab yet)
-			const tab = await browserSession?.currentTab();
-			if (!tab?.url || isRestrictedUrl(tab.url)) return;
-
-			// Find most recent navigation (either nav message or nav tool result)
-			let lastUrl: string | undefined;
-			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
-				const msg = agent.state.messages[i];
-				if (msg.role === "navigation") {
-					lastUrl = (msg as NavigationMessage).url;
-					break;
-				}
-				if (msg.role === "toolResult" && (msg as any).toolName === "navigate") {
-					lastUrl = (msg as any).details?.finalUrl;
-					break;
-				}
-			}
-
-			// Only add if URL changed
-			if (!lastUrl || lastUrl !== tab.url) {
-				const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
-				agent.appendMessage(navMessage);
-			}
+			const note = await pageChangeNote();
+			if (note && agent) agent.appendMessage(note);
+		},
+		// "Send now" mid-run: the same note, delivered with the message.
+		steerContext: async () => {
+			const note = await pageChangeNote();
+			return note ? [note] : [];
 		},
 		onCostClick: () => {
 			if (!agent) return;
