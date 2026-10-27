@@ -288,24 +288,33 @@ test("a bridge question times out with a no-answer result", async () => {
 	await b.until(() => b.pendingList().length === 0, "cleared after timeout");
 });
 
-test("a waiting question doesn't hold up its client's other calls, and a client cancels only its own", async () => {
+test("a waiting question doesn't hold up its client's other calls, and a cancel ends only that call", async () => {
 	const b = await startBridge();
 	b.connect("c1", "claude", "s1");
 	b.connect("c2", "codex", "s2");
-	const ask = b.send("c1", "ask_user", { questions: [q()] });
-	await b.until(() => b.pendingList().length === 1, "pending");
+	const askA = b.send("c1", "ask_user", { questions: [q()], askId: "a" });
+	const askB = b.send("c1", "ask_user", { questions: [q({ question: "Second?" })], askId: "b" });
+	await b.until(() => b.pendingList().length === 2, "pending");
 	const ctx = await b.reply("c1", b.send("c1", "tabs.context"));
-	assert.equal(ctx.error, undefined, "a browser call goes on while the question waits");
-	assert.equal(b.replies("c1", ask).length, 0);
+	assert.equal(ctx.error, undefined, "a browser call goes on while the questions wait");
 
-	const other = await b.reply("c2", b.send("c2", "ask_user.cancel"));
-	assert.equal(other.result.cancelled, 0, "c2 has no question of its own to cancel");
+	// Another client naming c1's askId cancels nothing: the client id comes from the host.
+	const other = await b.reply("c2", b.send("c2", "ask_user.cancel", { askId: "a" }));
+	assert.equal(other.result.cancelled, 0);
+	const none = await b.reply("c1", b.send("c1", "ask_user.cancel", {}));
+	assert.equal(none.result.cancelled, 0, "a cancel names its call");
 	await b.settle();
-	assert.equal(b.replies("c1", ask).length, 0, "c1's question is untouched");
+	assert.equal(b.replies("c1", askA).length + b.replies("c1", askB).length, 0, "both still open");
 
-	const own = await b.reply("c1", b.send("c1", "ask_user.cancel"));
+	const own = await b.reply("c1", b.send("c1", "ask_user.cancel", { askId: "a" }));
 	assert.equal(own.result.cancelled, 1);
-	const r = await b.reply("c1", ask);
-	assert.equal(r.result.reason, "aborted");
-	await b.until(() => b.pendingList().length === 0, "cleared after cancel");
+	assert.equal((await b.reply("c1", askA)).result.reason, "aborted");
+	await b.settle();
+	assert.equal(b.replies("c1", askB).length, 0, "the other call keeps waiting");
+	await b.until(() => b.pendingList().length === 1, "one left");
+
+	// Turning the bridge off ends what is left.
+	await chrome.storage.local.set({ bridge_enabled: false });
+	assert.equal((await b.reply("c1", askB)).result.reason, "disconnected");
+	await b.until(() => b.pendingList().length === 0, "cleared");
 });

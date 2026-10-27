@@ -7,7 +7,7 @@
  * backoff and on a 30 s alarm, which also keeps the worker alive.
  */
 
-import { cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
+import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
 import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, NoTabError, pruneSessions } from "../browser/session.js";
@@ -358,22 +358,29 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<void> {
 	const respond = (r: { result?: unknown; error?: { code: string; message: string } }) =>
 		send({ type: "response", clientId: req.clientId, id: req.id, ...r });
-	await gateReady;
-	if (installGate())
-		return respond({
-			error: {
-				code: ERR.INTERNAL,
-				message:
-					"Tabkyra is installing an update and reloads in a few seconds. Ask again once the bridge reconnects.",
-			},
-		});
-	if (!(await isBridgeEnabled()))
-		return respond({
-			error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Bridge." },
-		});
-	if (req.method === "ask_user.cancel")
-		return respond({ result: { cancelled: cancelQuestionsFor(state.clientId, "aborted") } });
-	respond(await handleBridgeAsk(state, req.params ?? {}));
+	try {
+		// Withdrawing a question is always safe: no gate, no enabled check.
+		if (req.method === "ask_user.cancel")
+			return respond({ result: { cancelled: cancelQuestion(state.clientId, req.params?.askId) } });
+		await gateReady;
+		if (installGate())
+			return respond({
+				error: {
+					code: ERR.INTERNAL,
+					message:
+						"Tabkyra is installing an update and reloads in a few seconds. Ask again once the bridge reconnects.",
+				},
+			});
+		if (!(await isBridgeEnabled()))
+			return respond({
+				error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Bridge." },
+			});
+		// The client may have hung up during the awaits; its question would have nobody to answer to.
+		if (clients.get(state.clientId) !== state) return;
+		respond(await handleBridgeAsk(state, req.params ?? {}));
+	} catch (err) {
+		respond({ error: { code: ERR.INTERNAL, message: err instanceof Error ? err.message : String(err) } });
+	}
 }
 
 /**

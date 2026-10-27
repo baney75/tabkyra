@@ -339,6 +339,8 @@ test("ask_user goes over the bridge once and returns the panel's answer as text"
 		const cancelDeadline = Date.now() + 5000;
 		while (!requests.some((r) => r.method === "ask_user.cancel") && Date.now() < cancelDeadline) await new Promise((r) => setTimeout(r, 50));
 		assert.ok(requests.some((r) => r.method === "ask_user.cancel"), "an abandoned call withdraws its question");
+		const cancel = requests.find((r) => r.method === "ask_user.cancel");
+		assert.ok(slow.params.askId && cancel.params.askId === slow.params.askId, "the cancel names that call");
 
 		const result = await client.callTool({
 			name: "ask_user",

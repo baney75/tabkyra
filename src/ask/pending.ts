@@ -13,6 +13,12 @@ interface Waiting {
 }
 
 const waiting = new Map<string, Waiting>();
+/** Calls this panel document asked; one of them without a result is finishing, not cut off. */
+const askedHere = new Set<string>();
+
+export function wasAskedHere(toolCallId: string): boolean {
+	return askedHere.has(toolCallId);
+}
 const listeners = new Set<() => void>();
 
 function changed(): void {
@@ -31,6 +37,7 @@ export function isWaiting(toolCallId: string): boolean {
 
 /** Wait for the card to answer or skip, or for `signal` (Stop, Escape) to abort: no answer. */
 export function waitForAnswer(toolCallId: string, questions: AskQuestion[], signal?: AbortSignal): Promise<AskOutcome> {
+	askedHere.add(toolCallId);
 	if (signal?.aborted) return Promise.resolve(noAnswer(questions, "aborted"));
 	return new Promise<AskOutcome>((resolve) => {
 		const onAbort = () => finish(noAnswer(questions, "aborted"));

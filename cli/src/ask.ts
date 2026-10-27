@@ -4,6 +4,7 @@
  * answer comes back only to the session that asked. Remote sessions need the `user.ask` scope.
  */
 
+import { randomUUID } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ASK_BRIDGE_TIMEOUT_MS, ASK_LIMITS, ASK_USER_DESCRIPTION, type AskOutcome, noAnswer, outcomeText, validateAskParams } from "../../src/ask/core.ts";
@@ -94,15 +95,17 @@ export function registerAskUser(server: McpServer, client: BridgeClient): void {
 								.catch(() => undefined);
 						}, PROGRESS_EVERY_MS);
 			// The agent gave up on the call: take the question off the user's screen.
-			const onAbort = () => void client.call("ask_user.cancel", {}, 5000, { retry: false }).catch(() => undefined);
+			const askId = randomUUID();
+			const onAbort = () => void client.call("ask_user.cancel", { askId }, 5000, { retry: false }).catch(() => undefined);
 			extra.signal.addEventListener("abort", onAbort, { once: true });
 			try {
 				if (!client.connected) await client.connect();
 				// A host with no extension behind it has no panel to show the question in.
 				if (!client.extensionConnected) return { content: [{ type: "text", text: NOT_CONNECTED }], isError: true };
+				if (extra.signal.aborted) return { content: [{ type: "text", text: outcomeText(noAnswer(questions, "aborted")) }] };
 				sent = true;
 				// No retry: a retry after a dropped bridge would ask the user a second time.
-				const reply = await client.call("ask_user", { questions }, ASK_BRIDGE_TIMEOUT_MS + 30_000, { retry: false });
+				const reply = await client.call("ask_user", { questions, askId }, ASK_BRIDGE_TIMEOUT_MS + 30_000, { retry: false });
 				return askResultText(questions, reply);
 			} catch (err) {
 				return askResultText(questions, sent ? "asked" : undefined, err);

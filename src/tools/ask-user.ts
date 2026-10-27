@@ -19,7 +19,7 @@ import {
 	outcomeText,
 	validateAskParams,
 } from "../ask/core.js";
-import { answerWaiting, isWaiting, onPendingChange, skipWaiting, waitForAnswer } from "../ask/pending.js";
+import { answerWaiting, isWaiting, onPendingChange, skipWaiting, waitForAnswer, wasAskedHere } from "../ask/pending.js";
 
 const askUserSchema = Type.Object({
 	questions: Type.Array(
@@ -111,7 +111,8 @@ export class AskToolCard extends LitElement {
 				.onSkip=${() => skipWaiting(id)}
 			></tabkyra-ask-card>`;
 		}
-		if (this.streaming || !questions) {
+		// Answered here and the result is on its way, or still streaming: not a cut-off question.
+		if (this.streaming || !questions || (id !== undefined && wasAskedHere(id))) {
 			return html`<tabkyra-ask-card .questions=${[]} .mode=${"preparing"}></tabkyra-ask-card>`;
 		}
 		// No result and nobody waiting: the panel was closed or reloaded while the question was open.

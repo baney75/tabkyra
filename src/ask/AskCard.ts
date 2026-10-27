@@ -177,9 +177,6 @@ export class AskCard extends LitElement {
 				data-other-input=${i}
 				.value=${d.otherText}
 				?disabled=${this.busy}
-				@focus=${() => {
-					if (!d.otherOn) this.toggleOther(i, true);
-				}}
 				@input=${(e: Event) => {
 					const value = (e.target as HTMLInputElement).value;
 					this.update1(i, (n) => {

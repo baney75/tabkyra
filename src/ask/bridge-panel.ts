@@ -36,6 +36,11 @@ export async function watchBridgeQuestions(onChange: () => void): Promise<() => 
 }
 
 async function reply(p: PendingQuestion, value: PanelReply): Promise<void> {
+	// The worker drops an answer to a question that already ended; say so instead of "sent".
+	const data = await chrome.storage.session.get(PENDING_QUESTIONS_KEY);
+	const list = (data[PENDING_QUESTIONS_KEY] as PendingQuestion[] | undefined) ?? [];
+	if (!list.some((q) => q.requestId === p.requestId) || p.expiresAt <= Date.now())
+		throw new Error("This question has already ended.");
 	await chrome.storage.session.set({ [`${ANSWER_KEY_PREFIX}${p.requestId}`]: value });
 }
 

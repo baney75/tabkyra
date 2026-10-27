@@ -42,6 +42,8 @@ export type PanelReply = { selections: unknown } | { skip: true };
 
 interface Waiting {
 	clientId: string;
+	/** The caller's own id for this call (ask_user.cancel names it); may be absent. */
+	askId?: string;
 	questions: AskQuestion[];
 	settle: (outcome: AskOutcome) => void;
 }
@@ -90,6 +92,7 @@ export async function handleBridgeAsk(
 	} catch (err) {
 		return { error: { code: ERR.BAD_PARAMS, message: err instanceof Error ? err.message : String(err) } };
 	}
+	const askId = typeof params.askId === "string" && params.askId.length <= 64 ? params.askId : undefined;
 	const requestId = `${client.clientId}:${crypto.randomUUID()}`;
 	const createdAt = Date.now();
 	const outcome = await new Promise<AskOutcome>((resolve) => {
@@ -100,7 +103,7 @@ export async function handleBridgeAsk(
 			clearTimeout(timer);
 			resolve(o);
 		};
-		waiting.set(requestId, { clientId: client.clientId, questions, settle });
+		waiting.set(requestId, { clientId: client.clientId, askId, questions, settle });
 		editPending((list) => [
 			...list,
 			{
@@ -154,10 +157,27 @@ export function cancelQuestionsFor(clientId: string | undefined, reason: NoAnswe
 	return n;
 }
 
+/**
+ * ask_user.cancel: the client gave up on one call. Only a question of that client (its id comes
+ * from the host, never the params) with that askId ends. Returns how many ended (0 or 1).
+ */
+export function cancelQuestion(clientId: string, askId: unknown): number {
+	if (typeof askId !== "string" || !askId) return 0;
+	for (const w of [...waiting.values()]) {
+		if (w.clientId === clientId && w.askId === askId) {
+			w.settle(noAnswer(w.questions, "aborted"));
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /** Wire answers in. Questions a previous worker left behind have nobody waiting; drop them. */
 export function startAskBridge(): void {
 	editPending(() => []).catch(() => undefined);
 	chrome.storage.onChanged.addListener((changes, area) => {
+		// Turning the bridge off in Settings ends every open question.
+		if (area === "local" && changes.bridge_enabled?.newValue === false) cancelQuestionsFor(undefined);
 		if (area !== "session") return;
 		for (const key of Object.keys(changes)) {
 			if (!key.startsWith(ANSWER_KEY_PREFIX)) continue;
