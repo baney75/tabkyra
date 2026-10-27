@@ -107,14 +107,12 @@ test("on a bad extension frame the host answers waiting requests with a non-retr
 	try {
 		const sock = join(dir, "s", `${host.pid}.sock`);
 		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
-		const client = connect(sock);
+		const client = connect({ path: sock, allowHalfOpen: true });
+		const late = client;
 		const fromHost = new FrameParser(64 * 1024 * 1024);
 		const received = [];
-		let closed = false;
 		client.on("data", (chunk) => received.push(...fromHost.push(chunk).messages));
-		client.on("close", () => {
-			closed = true;
-		});
+		client.on("error", () => undefined);
 		client.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } }));
 		client.write(encodeFrame({ type: "request", id: 1, method: "tabs.create", params: {} }));
 		client.write(encodeFrame({ type: "request", id: 2, method: "click", params: {} }));
@@ -133,7 +131,7 @@ test("on a bad extension frame the host answers waiting requests with a non-retr
 		const clientId = reqs[0].clientId;
 		// One good reply, then a frame the host can't read: the reply to request 2 is lost.
 		host.stdin.write(Buffer.concat([encodeFrame({ type: "response", clientId, id: 1, result: { tabId: 7 } }), header(61 * 1024 * 1024)]));
-		await wait(() => closed, "the host to close the client");
+		await wait(() => received.some((m) => m.id === 2), "the lost request's answer");
 		const responses = received.filter((m) => m.type === "response");
 		assert.deepEqual(
 			responses.find((m) => m.id === 1),
@@ -143,6 +141,10 @@ test("on a bad extension frame the host answers waiting requests with a non-retr
 		const lost = responses.find((m) => m.id === 2);
 		assert.ok(lost?.error, `request 2 got an RPC error, not just a closed socket: ${JSON.stringify(responses)}`);
 		assert.match(lost.error.message, /may have run/);
+		// A request that reaches the host after that is never forwarded (it could only be lost).
+		late.write(encodeFrame({ type: "request", id: 3, method: "click", params: {} }));
+		await new Promise((r) => setTimeout(r, 300));
+		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 3).length, 0, "request 3 was forwarded");
 		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
 	} finally {
 		host.kill();

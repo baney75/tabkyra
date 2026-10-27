@@ -598,9 +598,8 @@ function connect(): void {
 async function dropEmptyBridgeSessions(): Promise<void> {
 	for (const s of await listSessions()) {
 		if (s.id.startsWith("bridge-") && s.tabIds.length === 0) {
-			const session = await BrowserSession.open(s.id, s.label, s.windowId);
 			// A client may have opened a tab in it meanwhile; then it stays.
-			await session.closeIfEmpty();
+			await BrowserSession.dropIfEmpty(s.id);
 		}
 	}
 }

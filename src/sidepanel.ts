@@ -210,9 +210,8 @@ async function adoptActiveTab(notify: boolean): Promise<void> {
 async function pruneEmptyUnsavedSessions(): Promise<void> {
 	for (const s of await listSessions()) {
 		if ((s.id.startsWith("temp-") || s.id.startsWith("tab-")) && s.tabIds.length === 0) {
-			const session = await BrowserSession.open(s.id, s.label, s.windowId);
 			// The foreground guard may have adopted a tab into it meanwhile; then it stays.
-			await session.closeIfEmpty();
+			await BrowserSession.dropIfEmpty(s.id);
 		}
 	}
 }

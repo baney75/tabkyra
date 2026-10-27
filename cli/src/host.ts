@@ -26,6 +26,8 @@ interface Client {
 const clients = new Map<string, Client>();
 let extensionReady = false;
 let seq = 0;
+/** Set once the host has decided to exit; no request is forwarded after that. */
+let stopping = false;
 
 /** Write a frame to the extension; false when it was refused as oversized. */
 function toExtension(message: HostToExt): boolean {
@@ -48,7 +50,7 @@ function toExtension(message: HostToExt): boolean {
 
 function toClient(clientId: string, message: HostToClient): void {
 	const client = clients.get(clientId);
-	if (!client || client.socket.destroyed) return;
+	if (!client || client.socket.destroyed || !client.socket.writable) return;
 	client.socket.write(encodeFrame(message));
 }
 
@@ -114,6 +116,11 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 			toClient(client.id, { type: "response", id: message.id, error: { code: "bad_params", message: "Send hello first" } });
 			return;
 		}
+		if (stopping) {
+			// Never forward now: the reply could not come back, and the client would retry it.
+			toClient(client.id, { type: "response", id: message.id, error: restartError("the bridge is restarting", false) });
+			return;
+		}
 		if (toExtension({ type: "request", clientId: client.id, id: message.id, method: message.method, params: message.params }))
 			client.outstanding.add(message.id);
 	}
@@ -131,14 +138,19 @@ function failOutstanding(reason: string): void {
 			toClient(client.id, {
 				type: "response",
 				id,
-				error: {
-					code: "internal",
-					message: `The browser's reply was lost (${reason}); the bridge is restarting. The request may have run: check the page before repeating it.`,
-				},
+				error: restartError(`the browser's reply was lost (${reason}); the bridge is restarting`, true),
 			});
 		}
 		client.outstanding.clear();
 	}
+}
+
+/** An RPC error, which clients never retry, so a request is not sent twice. */
+function restartError(what: string, mayHaveRun: boolean): { code: string; message: string } {
+	const next = mayHaveRun
+		? "The request may have run: check the page before repeating it."
+		: "The request was not sent; repeat it in a few seconds.";
+	return { code: "internal", message: `${what[0].toUpperCase()}${what.slice(1)}. ${next}` };
 }
 
 function sweepStaleSockets(dir: string): void {
@@ -196,18 +208,21 @@ export function runNativeHost(): void {
 	// stdin: frames from the extension
 	const parser = new FrameParser(MAX_FRAME_FROM_EXTENSION);
 	process.stdin.on("data", (chunk: Buffer) => {
+		if (stopping) return;
 		const { messages, error } = parser.push(chunk);
 		for (const m of messages) onExtensionMessage(m as ExtToHost);
 		if (error) {
 			process.stderr.write(`[tabkyra-host] bad frame from extension, restarting: ${String(error)}\n`);
+			stopping = true;
 			failOutstanding(error.message);
 			shutdown(1);
 		}
 	});
 
-	let stopping = false;
+	let exiting = false;
 	const shutdown = (code = 0) => {
-		if (stopping) return;
+		if (exiting) return;
+		exiting = true;
 		stopping = true;
 		server.close();
 		rmSync(path, { force: true });

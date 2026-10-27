@@ -46,6 +46,7 @@ export function installFakeChrome() {
 		for (const fn of onChanged.listeners) fn(structuredClone(changes), name);
 	};
 	let failQuery = false;
+	let ungroupDelay = 0;
 	const area = (name) => ({
 		async get(keys) {
 			await tick();
@@ -111,6 +112,7 @@ export function installFakeChrome() {
 			},
 			async ungroup(id) {
 				await tick();
+				if (ungroupDelay) await new Promise((r) => setTimeout(r, ungroupDelay));
 				if (tabs.has(id)) tabs.get(id).groupId = -1;
 			},
 			async update(id, p) {
@@ -221,6 +223,11 @@ export function installFakeChrome() {
 			held = [];
 		},
 		heldCount: () => held?.length ?? 0,
+		/** Wipe chrome.storage.local, as clearing extension data does. */
+		clearLocal: () => {
+			store.local = {};
+		},
+		groupOf: (id) => tabs.get(id)?.groupId,
 		/** Deliver the first `n` held events (all by default); later ones stay held. */
 		releaseChanges: (n) => {
 			const late = (held ?? []).splice(0, n ?? Number.POSITIVE_INFINITY);
@@ -229,6 +236,10 @@ export function installFakeChrome() {
 		},
 		setFailQuery: (v) => {
 			failQuery = v;
+		},
+		/** Make chrome.tabs.ungroup slow (Chrome refuses tab edits during a drag, for one). */
+		setUngroupDelay: (ms) => {
+			ungroupDelay = ms;
 		},
 	};
 }

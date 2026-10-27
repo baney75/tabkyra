@@ -88,8 +88,9 @@ test("a popup the worker adopts for a panel session survives the panel's next ta
 	assert.ok(afterPrune.includes(popup), `popup lost by the worker's prune: ${afterPrune}`);
 });
 
-test("panel and worker adding tabs to one session at once keep both", async () => {
+test("panel and worker adding tabs to one session at once keep both, in one group", async () => {
 	let lost = 0;
+	let split = 0;
 	for (let run = 0; run < 20; run++) {
 		const fake = installFakeChrome();
 		const panel = await load("panel");
@@ -98,10 +99,13 @@ test("panel and worker adding tabs to one session at once keep both", async () =
 		const w = await worker.BrowserSession.open("saved-1", "chat", 1);
 		const popup = fake.addTab({ url: "https://example.com/popup" });
 		const [created] = await Promise.all([p.createTab("https://example.com/next"), w.adopt(popup, true)]);
-		const ids = fake.table()["saved-1"].tabIds;
-		if (!ids.includes(popup) || !ids.includes(created.id)) lost++;
+		const stored = fake.table()["saved-1"];
+		if (!stored.tabIds.includes(popup) || !stored.tabIds.includes(created.id)) lost++;
+		// Both tabs end up in the one group the session records, not one group each.
+		if (fake.groupOf(popup) !== stored.groupId || fake.groupOf(created.id) !== stored.groupId) split++;
 	}
 	assert.equal(lost, 0, `${lost}/20 runs lost one of the two tabs`);
+	assert.equal(split, 0, `${split}/20 runs left the tabs in two groups`);
 });
 
 test("two bridge sessions creating tabs at once both keep their tabs", async () => {
@@ -227,4 +231,98 @@ test("a session a client holds stays current after prune forgets its empty recor
 	await guard.adopt(popup, true);
 	assert.ok(held.tabIds.includes(popup), `the client's session misses the popup: ${held.tabIds}`);
 	assert.equal(held.currentTabId, popup);
+});
+
+test("the foreground guard adopting a popup during the first-save rename lands in the saved chat", async () => {
+	let bad = 0;
+	for (let run = 0; run < 20; run++) {
+		const fake = installFakeChrome();
+		const panel = await load("panel");
+		// The guard runs in the worker; its session.ts import is the worker's module instance.
+		const guard = await import(`../src/browser/foreground-guard.ts?ctx=${Math.random()}`);
+		guard.startForegroundGuard();
+		const home = fake.addTab({ active: true });
+		const p = await panel.BrowserSession.open(`tab-${home}`, "chat", 1);
+		await p.setHomeTab(home);
+		await p.adopt(home, true);
+		const popup = fake.addTab({ url: "https://example.com/popup" });
+		for (const fn of chrome.webNavigation.onCreatedNavigationTarget.listeners) fn({ tabId: popup, sourceTabId: home });
+		await new Promise((r) => setTimeout(r, Math.random() * 15));
+		await panel.BrowserSession.rename(`tab-${home}`, "saved-1");
+		for (let i = 0; i < 200 && !fake.table()["saved-1"]?.tabIds.includes(popup); i++)
+			await new Promise((r) => setTimeout(r, 5));
+		await new Promise((r) => setTimeout(r, 30));
+		const t = fake.table();
+		if (Object.keys(t).join() !== "saved-1" || !t["saved-1"].tabIds.includes(popup)) bad++;
+	}
+	assert.equal(bad, 0, `${bad}/20 runs recreated the old record or lost the popup`);
+});
+
+test("a new chat reusing a renamed id never follows the old rename into the saved chat", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("panel");
+	const home = fake.addTab({ active: true });
+	const a = await BrowserSession.open(`tab-${home}`, "chat", 1);
+	await a.setHomeTab(home);
+	await a.adopt(home, true);
+	await BrowserSession.rename(`tab-${home}`, "saved-1");
+	// New chat on the same tab: a fresh session under the same unsaved id, empty at first.
+	const other = await load("panel2");
+	const b = await other.BrowserSession.open(`tab-${home}`, "chat", 1);
+	// Another panel's startup cleanup forgets it before its first tab.
+	const cleaner = (await load("panel3")).BrowserSession;
+	if (cleaner.dropIfEmpty) await cleaner.dropIfEmpty(`tab-${home}`);
+	else await (await cleaner.open(`tab-${home}`, "chat", 1)).closeIfEmpty();
+	const tab = fake.addTab({ url: "https://b.example/" });
+	await b.adopt(tab, true);
+	const t = fake.table();
+	assert.equal(b.id, `tab-${home}`, "chat B was rebound to the saved chat's id");
+	assert.ok(!t["saved-1"].tabIds.includes(tab), "chat B's tab went into chat A's session");
+	assert.ok(t[`tab-${home}`]?.tabIds.includes(tab));
+});
+
+test("a tab the user takes back stays theirs while another context reconciles", async () => {
+	let bad = 0;
+	for (let run = 0; run < 20; run++) {
+		const fake = installFakeChrome();
+		const panel = await load("panel");
+		const worker = await load("worker");
+		const home = fake.addTab({ active: true });
+		const p = await panel.BrowserSession.open("saved-1", "chat", 1);
+		await p.setHomeTab(home);
+		await p.adopt(home, true);
+		await p.createTab("https://example.com/agent");
+		fake.setUngroupDelay(40);
+		const reconcile = new Promise((r) => setTimeout(r, 5 + Math.random() * 15)).then(() =>
+			worker.BrowserSession.open("saved-1", "chat", 1),
+		);
+		await Promise.all([p.release(home), reconcile]);
+		// Any later reconcile must not take it back either.
+		await (await worker.BrowserSession.open("saved-1", "chat", 1)).tabs();
+		if (fake.table()["saved-1"].tabIds.includes(home) || fake.groupOf(home) !== -1) bad++;
+	}
+	assert.equal(bad, 0, `${bad}/20 runs: the released tab went back to the agent`);
+});
+
+test("dropping an empty record leaves the instance a client holds registered", async () => {
+	installFakeChrome();
+	const { BrowserSession } = await load("worker");
+	const held = await BrowserSession.open("bridge-claude-abc", "claude", 1);
+	if (BrowserSession.dropIfEmpty) await BrowserSession.dropIfEmpty("bridge-claude-abc");
+	else await (await BrowserSession.open("bridge-claude-abc", "claude", 1)).closeIfEmpty();
+	assert.equal(await BrowserSession.open("bridge-claude-abc", "claude", 1), held);
+});
+
+test("caches keep following writes after extension storage is cleared", async () => {
+	const fake = installFakeChrome();
+	const panel = await load("panel");
+	const worker = await load("worker");
+	const p = await panel.BrowserSession.open("saved-1", "chat", 1);
+	for (let i = 0; i < 5; i++) await p.adopt(fake.addTab({}), true);
+	fake.clearLocal();
+	const w = await worker.BrowserSession.open("saved-1", "chat", 1);
+	const tab = fake.addTab({});
+	await w.adopt(tab, true);
+	await new Promise((r) => setTimeout(r, 20));
+	assert.ok(p.tabIds.includes(tab), `panel cache stopped following after the wipe: ${p.tabIds}`);
 });

@@ -55,6 +55,11 @@ interface PersistedSession {
 	homeTabId?: number;
 	/** Last time a tool touched the session (ms since epoch); drives cleanup of abandoned sessions. */
 	lastUsedAt?: number;
+	/**
+	 * Tabs handed back to the user (tab id -> ms since epoch). Reconcile's group scan must not
+	 * re-adopt one that is still in the group while release ungroups it.
+	 */
+	released?: Record<number, number>;
 }
 
 type SessionTable = Record<string, PersistedSession>;
@@ -65,6 +70,7 @@ const RENAMES_KEY = "browser_session_renames";
 /** Bumped by every locked write, so a late storage.onChanged can't roll a cache back. */
 const REV_KEY = "browser_sessions_rev";
 const RENAME_TTL_MS = 60 * 60 * 1000;
+const RELEASED_TTL_MS = 10 * 60 * 1000;
 /** One lock for the table across the side panel and the service worker (same origin). */
 const LOCK_NAME = "tabkyra-browser-sessions";
 
@@ -98,7 +104,8 @@ interface TableTx {
 async function mutateTable<T>(fn: (tx: TableTx) => T | Promise<T>): Promise<T> {
 	return withTableLock(async () => {
 		const data = await chrome.storage.local.get([STORAGE_KEY, RENAMES_KEY, REV_KEY]);
-		const rev = ((data[REV_KEY] as number | undefined) ?? 0) + 1;
+		// Time-based so it still grows after storage is cleared (a context keeps its last value).
+		const rev = Math.max(((data[REV_KEY] as number | undefined) ?? 0) + 1, Date.now() * 1000);
 		const tx: TableTx = {
 			table: (data[STORAGE_KEY] as SessionTable | undefined) ?? {},
 			renames: (data[RENAMES_KEY] as RenameTable | undefined) ?? {},
@@ -111,6 +118,11 @@ async function mutateTable<T>(fn: (tx: TableTx) => T | Promise<T>): Promise<T> {
 		refreshInstances(tx.table, rev);
 		return result;
 	});
+}
+
+/** Read the table under the lock (no write): a decision that must not race a writer. */
+function readTableLocked<T>(fn: (table: SessionTable) => T): Promise<T> {
+	return withTableLock(async () => fn(await readTable()));
 }
 
 /** Newest table revision this context's caches reflect. */
@@ -441,9 +453,12 @@ export class BrowserSession {
 		const existing = instances.get(id);
 		const fallbackWindow =
 			windowId === undefined && !existing && !(await readTable())[id] ? await lastFocusedWindowId() : undefined;
-		const state = await mutateTable(({ table }) => {
+		const state = await mutateTable(({ table, renames }) => {
 			let s = table[id];
 			if (!s) {
+				// A new session under an id that was renamed away (New chat on the same tab):
+				// nothing may follow the old rename into the saved chat any more.
+				delete renames[id];
 				s = {
 					id,
 					label: uniqueLabel(table, existing?.label ?? label),
@@ -468,6 +483,54 @@ export class BrowserSession {
 		live.add(session);
 		await session.reconcile();
 		return session;
+	}
+
+	/**
+	 * Open the session that owns `tabId` right now, decided under the lock, so an id read
+	 * earlier can't recreate a session that was renamed or forgotten meanwhile.
+	 */
+	static async openOwnerOf(tabId: number): Promise<BrowserSession | undefined> {
+		const state = await readTableLocked((table) => Object.values(table).find((s) => s.tabIds.includes(tabId)));
+		if (!state) return undefined;
+		let session = instances.get(state.id);
+		if (session) session.state = state;
+		else {
+			session = new BrowserSession(state);
+			instances.set(state.id, session);
+		}
+		live.add(session);
+		await session.reconcile();
+		return session;
+	}
+
+	/**
+	 * Forget a session only if its stored entry owns no tabs, decided under the lock. Leaves
+	 * any instance alone: a client may hold it, and its next write recreates the entry.
+	 */
+	static async dropIfEmpty(id: string): Promise<boolean> {
+		return mutateTable(({ table }) => {
+			const stored = table[id];
+			if (!stored || stored.tabIds.length > 0) return false;
+			delete table[id];
+			return true;
+		});
+	}
+
+	/** Chrome replaced a tab (prerender/instant pages commit into a new tab): follow it everywhere. */
+	static async replaceTab(oldId: number, newId: number): Promise<void> {
+		const owned = await mutateTable(({ table }) => {
+			let hit = false;
+			for (const s of Object.values(table)) {
+				if (s.tabIds.includes(oldId)) {
+					s.tabIds = s.tabIds.map((id) => (id === oldId ? newId : id));
+					hit = true;
+				}
+				if (s.currentTabId === oldId) s.currentTabId = newId;
+				if (s.homeTabId === oldId) s.homeTabId = newId;
+			}
+			return hit;
+		});
+		if (owned) await (await BrowserSession.openOwnerOf(newId))?.adopt(newId, false);
 	}
 
 	/**
@@ -517,7 +580,8 @@ export class BrowserSession {
 		}
 		await this.update((s, stored) => {
 			s.tabIds = s.tabIds.filter((id) => !dead.has(id));
-			for (const id of found) if (!s.tabIds.includes(id) && !ownedElsewhere(stored, s.id, id)) s.tabIds.push(id);
+			for (const id of found)
+				if (!s.tabIds.includes(id) && !s.released?.[id] && !ownedElsewhere(stored, s.id, id)) s.tabIds.push(id);
 			fixCurrent(s);
 			if (homeDead && s.homeTabId === seen.homeTabId) s.homeTabId = undefined;
 			if (lostGroup !== undefined && s.groupId === lostGroup) s.groupId = undefined;
@@ -570,6 +634,7 @@ export class BrowserSession {
 			const win = await chrome.windows.get(tab.windowId).catch(() => undefined);
 			if (win && win.type !== "normal") return; // popups and app windows have no tab strip
 			const group = await this.liveGroup();
+			const seenGroupId = this.state.groupId;
 			if (group && tab.groupId === group.id) return;
 			if (group) {
 				try {
@@ -588,10 +653,31 @@ export class BrowserSession {
 				chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: tab.windowId } }),
 			);
 			const windowId = tab.windowId;
+			// Another writer may have made the session's group meanwhile; then join that one and
+			// let ours empty out (Chrome removes an empty group).
+			let theirs: number | undefined;
 			await this.update((s) => {
+				if (s.groupId !== undefined && s.groupId !== seenGroupId && s.groupId !== groupId) {
+					theirs = s.groupId;
+					return false;
+				}
 				s.groupId = groupId;
 				s.windowId = windowId;
 			});
+			if (theirs !== undefined) {
+				const target = theirs;
+				try {
+					await withGroupRetry(() => chrome.tabs.group({ tabIds: [tabId], groupId: target }));
+					return;
+				} catch {
+					await this.update((s) => {
+						if (s.groupId === target) {
+							s.groupId = groupId;
+							s.windowId = windowId;
+						}
+					});
+				}
+			}
 			await chrome.tabGroups.update(groupId, { title: this.groupTitle(), color: this.state.color });
 		} catch (err) {
 			// A closing window or a tab being dragged must not fail the tool; the tab stays owned.
@@ -640,21 +726,9 @@ export class BrowserSession {
 			}
 			if (!s.tabIds.includes(tabId)) s.tabIds.push(tabId);
 			if (makeCurrent) s.currentTabId = tabId;
+			if (s.released) delete s.released[tabId];
 		});
 		await this.groupTab(tabId);
-	}
-
-	/** Swap a tab id Chrome replaced (prerender/instant pages commit into a new tab). */
-	async replaceTabId(oldId: number, newId: number): Promise<void> {
-		let replaced = false;
-		await this.update((s) => {
-			if (!s.tabIds.includes(oldId)) return false;
-			s.tabIds = s.tabIds.map((id) => (id === oldId ? newId : id));
-			if (s.currentTabId === oldId) s.currentTabId = newId;
-			if (s.homeTabId === oldId) s.homeTabId = newId;
-			replaced = true;
-		});
-		if (replaced) await this.groupTab(newId);
 	}
 
 	/** Release a tab without closing it. */
@@ -662,6 +736,12 @@ export class BrowserSession {
 		await this.update((s) => {
 			s.tabIds = s.tabIds.filter((id) => id !== tabId);
 			fixCurrent(s);
+			const now = Date.now();
+			const released: Record<number, number> = {};
+			for (const [id, at] of Object.entries(s.released ?? {}))
+				if (now - at < RELEASED_TTL_MS) released[Number(id)] = at;
+			released[tabId] = now;
+			s.released = released;
 		});
 		await detachTab(tabId, true);
 		try {
@@ -753,6 +833,7 @@ export class BrowserSession {
 
 	/** The one focus-changing operation: bring an owned tab to the front for the user. */
 	async show(tabId?: number): Promise<void> {
+		await this.refresh();
 		const id = tabId ?? this.state.currentTabId;
 		if (id === undefined) return;
 		if (!this.state.tabIds.includes(id)) throw new Error(`Tab ${id} is not owned by this session`);
