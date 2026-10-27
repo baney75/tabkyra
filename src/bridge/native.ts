@@ -30,6 +30,7 @@ import {
 	type HostClientConnected,
 	type HostForwardedRequest,
 	type HostToExt,
+	MAX_FRAME_FROM_EXTENSION,
 	NATIVE_HOST_NAME,
 	PROTOCOL_VERSION,
 	UPDATE_STATUS_KEY,
@@ -88,8 +89,34 @@ let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 const clients = new Map<string, ClientState>();
 const pendingDecisions = new Map<string, (decision: PermissionDecision) => void>();
 
+/** Headroom under the host's frame cap for differences in how Chrome serializes the JSON. */
+const FRAME_HEADROOM = 1024 * 1024;
+
+/** UTF-8 size of a message as JSON, or 0 when it is obviously small enough. */
+function frameBytes(message: ExtToHost): number {
+	const json = JSON.stringify(message);
+	// A UTF-16 code unit is at most 3 UTF-8 bytes; skip the encode for everything but huge frames.
+	if (json.length * 3 < MAX_FRAME_FROM_EXTENSION - FRAME_HEADROOM) return 0;
+	return new TextEncoder().encode(json).length;
+}
+
 function send(message: ExtToHost): void {
 	try {
+		const bytes = frameBytes(message);
+		if (bytes > MAX_FRAME_FROM_EXTENSION - FRAME_HEADROOM) {
+			// The host drops a frame over its cap and restarts; fail just this request instead.
+			console.warn(`[Bridge] ${message.type} of ${bytes} bytes is over the bridge limit; not sent`);
+			if (message.type !== "response") return;
+			message = {
+				type: "response",
+				clientId: message.clientId,
+				id: message.id,
+				error: {
+					code: ERR.INTERNAL,
+					message: `Result too large for the bridge (${Math.round(bytes / 1048576)} MB, limit ${Math.round((MAX_FRAME_FROM_EXTENSION - FRAME_HEADROOM) / 1048576)} MB). Ask for less: a smaller page section, a lower-resolution screenshot or fewer items.`,
+				},
+			};
+		}
 		port?.postMessage(message);
 	} catch (err) {
 		console.warn("[Bridge] post failed:", err);
@@ -126,10 +153,14 @@ async function onClientDisconnected(clientId: string): Promise<void> {
 	const state = clients.get(clientId);
 	clients.delete(clientId);
 	await stopScreencastsOwnedBy(clientId).catch(() => undefined);
-	if (state?.session) {
+	// A restarted harness (same session key) can connect before its old socket closes; the
+	// session is still in use then, so leave it alone.
+	const successors = state ? [...clients.values()].filter((c) => c.sessionKey === state.sessionKey) : [];
+	// Hand the session on, so the last of them to leave suspends or drops it.
+	for (const c of successors) c.session ??= state?.session;
+	if (state?.session && successors.length === 0) {
 		// A session that never opened a tab has nothing to re-adopt; drop it instead of piling up.
-		if (state.session.tabIds.length === 0) await state.session.close();
-		else await state.session.suspend();
+		if (!(await state.session.closeIfEmpty())) await state.session.suspend();
 	}
 	for (const [requestId, resolve] of pendingDecisions) {
 		if (requestId.startsWith(`${clientId}:`)) {
@@ -535,7 +566,12 @@ function connect(): void {
 		return;
 	}
 	port = next;
-	next.onMessage.addListener((message: HostToExt) => onHostMessage(message));
+	next.onMessage.addListener((message: HostToExt) => {
+		// Reset the backoff only once a host actually talks, so a host that exits at once
+		// (crash loop) is retried ever more slowly instead of every second.
+		reconnectDelay = RECONNECT_MIN_MS;
+		onHostMessage(message);
+	});
 	next.onDisconnect.addListener(() => {
 		const reason = chrome.runtime.lastError?.message ?? "closed";
 		// "Specified native messaging host not found" means the CLI installer has not run yet.
@@ -546,7 +582,6 @@ function connect(): void {
 		void stopScreencastsOwnedBy(undefined).catch(() => undefined);
 		scheduleReconnect();
 	});
-	reconnectDelay = RECONNECT_MIN_MS;
 	trace("native port connected");
 	send({
 		type: "hello",
@@ -563,8 +598,8 @@ function connect(): void {
 async function dropEmptyBridgeSessions(): Promise<void> {
 	for (const s of await listSessions()) {
 		if (s.id.startsWith("bridge-") && s.tabIds.length === 0) {
-			const session = await BrowserSession.open(s.id, s.label, s.windowId);
-			await session.close();
+			// A client may have opened a tab in it meanwhile; then it stays.
+			await BrowserSession.dropIfEmpty(s.id);
 		}
 	}
 }
