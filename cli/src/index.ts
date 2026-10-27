@@ -211,6 +211,7 @@ const UPDATE_USAGE = "Usage: tabkyra update [--check] [--json] [--rollback] [--y
 /** The fixed command lines the native host runs for the side panel (cli/src/update-host.ts). */
 const HOST_UPDATE_ACTIONS: Record<string, HostRunAction> = {
 	"--host": "update",
+	"--host --activate": "activate",
 	"--host --rollback": "rollback",
 	"--host --reinstall": "reinstall",
 };

@@ -46,6 +46,8 @@ export function installRoot(): string {
 }
 export const appDir = () => join(installRoot(), "app");
 export const previousDir = () => join(installRoot(), "previous");
+/** A verified release unpacked and waiting for the side panel to activate it (update-run.ts). */
+export const stagedDir = () => join(installRoot(), "staged");
 const statusFile = () => join(configDir(), "update-status.json");
 const settingsFile = () => join(configDir(), "update.json");
 const lastUpdateFile = () => join(configDir(), "last-update.json");

@@ -133,8 +133,12 @@ function pushCommit(c, subject, files = {}) {
 }
 
 function runHost(cli, ...args) {
+	return runHostWith({}, cli, ...args);
+}
+
+function runHostWith(extraEnv, cli, ...args) {
 	return new Promise((resolve) => {
-		const child = spawn(process.execPath, [cli, "update", "--host", ...args], { env: env(), stdio: ["ignore", "pipe", "pipe"] });
+		const child = spawn(process.execPath, [cli, "update", "--host", ...args], { env: env(extraEnv), stdio: ["ignore", "pipe", "pipe"] });
 		let out = "";
 		let err = "";
 		child.stdout.on("data", (d) => {
@@ -158,19 +162,26 @@ const extBuild = (c) => buildId(join(c.checkout, "dist-chrome"));
 const cliBuild = (c) => buildId(join(c.checkout, "cli", "dist"));
 const lastUpdate = () => JSON.parse(readFileSync(join(home, ".config", "tabkyra", "last-update.json"), "utf8"));
 
-test("checkout mode: a fast-forward pulls, sets up, builds both, swaps, and keeps the old build", async () => {
+test("checkout mode: a fast-forward pulls, sets up and builds aside; activation swaps it in and keeps the old build", async () => {
 	const c = makeCheckout();
 	const before = extBuild(c);
 	const head = pushCommit(c, "Add the update button");
 	const r = await runHost(c.cli);
 	assert.equal(r.code, 0, JSON.stringify(r.events) + r.stderr);
 	const phases = r.events.map((e) => e.phase);
-	for (const p of ["checking", "pulling", "installing", "building", "skills", "done"]) assert.ok(phases.includes(p), `${p} in ${phases}`);
-	assert.equal(r.last.reload, true);
+	for (const p of ["checking", "pulling", "installing", "building", "done"]) assert.ok(phases.includes(p), `${p} in ${phases}`);
+	assert.equal(r.last.staged, true, "the build waits to be activated");
+	assert.equal(r.last.reload, undefined);
 	assert.equal(git(c.checkout, "rev-parse", "HEAD"), head);
+	assert.equal(extBuild(c).id, before.id, "nothing live changes until activation");
+
+	const a = await runHost(c.cli, "--activate");
+	assert.equal(a.code, 0, JSON.stringify(a.events));
+	assert.ok(a.events.some((e) => e.phase === "skills"));
+	assert.equal(a.last.reload, true);
 	assert.equal(extBuild(c).commit, head);
 	assert.equal(cliBuild(c).commit, head);
-	assert.equal(r.last.extensionBuild, extBuild(c).id);
+	assert.equal(a.last.extensionBuild, extBuild(c).id);
 	assert.ok(existsSync(join(c.checkout, ".setup-ran")), "setup-siblings.sh ran");
 	assert.equal(buildId(join(c.checkout, ".tabkyra-update", "previous", "dist-chrome")).id, before.id, "the old build is kept");
 	assert.equal(git(c.checkout, "status", "--porcelain"), "", "the build left no local changes (no version bump)");
@@ -188,6 +199,22 @@ test("checkout mode: a fast-forward pulls, sets up, builds both, swaps, and keep
 	assert.equal(again.last.phase, "done");
 	assert.match(again.last.message, /Up to date/);
 	assert.equal(again.last.reload, undefined, "nothing to reload");
+	const nothing = await runHost(c.cli, "--activate");
+	assert.match(nothing.last.message, /Nothing was waiting/);
+	assert.equal(nothing.last.reload, undefined);
+});
+
+test("activation refuses a build when the checkout moved after it", async () => {
+	const c = makeCheckout();
+	const before = extBuild(c);
+	pushCommit(c, "One");
+	assert.equal((await runHost(c.cli)).last.staged, true);
+	git(c.checkout, "commit", "-q", "--allow-empty", "-m", "Moved meanwhile");
+	const a = await runHost(c.cli, "--activate");
+	assert.equal(a.last.phase, "failed");
+	assert.match(a.last.message, /moved/);
+	assert.equal(extBuild(c).id, before.id);
+	assert.ok(!existsSync(join(c.checkout, ".tabkyra-update", "next")), "the stale build is dropped");
 });
 
 test("checkout mode refuses local changes, another branch and a diverged main, changing nothing", async () => {
@@ -245,8 +272,14 @@ test("a failed build leaves the old build live; the next update builds the pulle
 	git(c.pusher, "push", "-q", "origin", "main");
 	const ok = await runHost(c.cli);
 	assert.equal(ok.last.phase, "done", JSON.stringify(ok.events));
+	await runHost(c.cli, "--activate");
 	assert.equal(extBuild(c).commit, git(c.checkout, "rev-parse", "HEAD"));
 	assert.notEqual(fixed, undefined);
+	// What's new counts from the live build, so the commits of the failed run are included.
+	assert.deepEqual(
+		lastUpdate().commits.map((x) => x.subject),
+		["Remove the failure marker", "Fix the build", "Break the build"],
+	);
 });
 
 test("rollback swaps the previous build back, and again", async () => {
@@ -259,6 +292,7 @@ test("rollback swaps the previous build back, and again", async () => {
 	const oldCli = cliBuild(c);
 	pushCommit(c, "New feature");
 	await runHost(c.cli);
+	await runHost(c.cli, "--activate");
 	const fresh = extBuild(c);
 	assert.notEqual(fresh.id, old.id);
 
@@ -396,13 +430,24 @@ test("the host runs an update only for a bare {type, action} and streams its ste
 		60000,
 	);
 	assert.equal(done.phase, "done", done.message);
-	assert.equal(done.reload, true);
+	assert.equal(done.staged, true);
 	const steps = h.messages.slice(sentAt).filter((m) => m.type === "update_progress" && m.action === "update").map((m) => m.phase);
 	assert.ok(steps.includes("pulling") && steps.includes("building"), steps.join(","));
 	assert.equal(git(c.checkout, "rev-parse", "HEAD"), head);
+	const staged = await h.waitFor((m) => h.messages.indexOf(m) > h.messages.indexOf(done) && m.type === "update_status" && m.staged, "status with the staged build");
+	assert.match(staged.staged, /1\.2\.0/);
+
+	const activateAt = h.messages.length;
+	h.send({ type: "update_action", action: "activate" });
+	const installed = await h.waitFor(
+		(m) => h.messages.indexOf(m) >= activateAt && m.type === "update_progress" && m.action === "activate" && (m.phase === "done" || m.phase === "failed"),
+		"activation",
+		60000,
+	);
+	assert.equal(installed.reload, true, installed.message);
 
 	// The extension still runs the old build: the host reports it and offers the reload.
-	const doneAt = h.messages.indexOf(done);
+	const doneAt = h.messages.indexOf(installed);
 	const after = await h.waitFor((m) => h.messages.indexOf(m) > doneAt && m.type === "update_status", "status after the update");
 	assert.equal(after.mismatch?.fix, "reload");
 	assert.equal(after.lastUpdate.commits[0].subject, "Something new");
@@ -418,7 +463,7 @@ test("the host reports a half-installed update as a mismatch with the install fi
 	h.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: { ...disk, id: "other" } });
 	const status = await h.waitFor((m) => m.type === "update_status", "update_status");
 	assert.equal(status.mismatch?.fix, "reinstall");
-	assert.match(status.mismatch.reason, /stopped partway/);
+	assert.match(status.mismatch.reason, /built from different commits/);
 });
 
 test("the host refuses to update a folder the browser doesn't load from", async (t) => {
@@ -437,4 +482,46 @@ test("the host refuses to update a folder the browser doesn't load from", async 
 	assert.equal(refused.phase, "failed");
 	assert.match(refused.message, /another folder/);
 	assert.equal(git(c.checkout, "rev-parse", "HEAD"), head);
+});
+
+test("the host repairs a swap a crash interrupted when it starts", async (t) => {
+	const c = makeCheckout();
+	const disk = extBuild(c);
+	// A crash between the two renames of an activation: dist-chrome moved aside, nothing in its place.
+	const kept = join(c.checkout, ".tabkyra-update", "previous");
+	mkdirSync(kept, { recursive: true });
+	spawnSync("mv", [join(c.checkout, "dist-chrome"), join(kept, "dist-chrome")]);
+	const h = startHost(c.cli);
+	t.after(() => h.host.kill());
+	h.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
+	await h.waitFor((m) => m.type === "update_status", "update_status");
+	assert.equal(extBuild(c).id, disk.id, "dist-chrome is back");
+});
+
+test("a host that starts after an updater died says so instead of showing it as running", async (t) => {
+	const c = makeCheckout();
+	const disk = extBuild(c);
+	mkdirSync(join(home, ".config", "tabkyra"), { recursive: true });
+	writeFileSync(join(home, ".config", "tabkyra", "update-progress.json"), JSON.stringify({ pid: 999999, action: "update", phase: "building", message: "Building the CLI", at: Date.now() }));
+	const h = startHost(c.cli);
+	t.after(() => h.host.kill());
+	h.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
+	const failed = await h.waitFor((m) => m.type === "update_progress" && m.phase === "failed", "the stopped updater reported");
+	assert.match(failed.message, /stopped before it finished/);
+	rmSync(join(home, ".config", "tabkyra", "update-progress.json"), { force: true });
+});
+
+test("a skills record that can't be written doesn't stop the install", async () => {
+	const c = makeCheckout();
+	pushCommit(c, "Something");
+	// Tabkyra refuses to write through a linked config folder; the update must still install.
+	const real = join(tmp, "real-config");
+	mkdirSync(real, { recursive: true });
+	const linked = join(tmp, "linked-config");
+	spawnSync("ln", ["-s", real, linked]);
+	assert.equal((await runHostWith({ TABKYRA_CONFIG_DIR: linked }, c.cli)).last.staged, true);
+	const a = await runHostWith({ TABKYRA_CONFIG_DIR: linked }, c.cli, "--activate");
+	assert.equal(a.last.phase, "done", a.last.message);
+	assert.equal(a.last.reload, true);
+	assert.equal(extBuild(c).commit, git(c.checkout, "rev-parse", "HEAD"));
 });

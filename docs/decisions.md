@@ -222,9 +222,15 @@ Settings > Updates and an automatic choice defaulting to "Tell me". Defaults cho
   branch the user may have work on is not the updater's call.
 - **Untracked files don't block a checkout update**; tracked changes, another branch and a
   diverged main do. `git pull --ff-only` itself refuses an untracked file it would overwrite.
-- **"Idle"** means no side panel run and no bridge request in flight; a harness also counts
-  as running for 30 seconds after a request (its next call usually follows). Automatic updates
-  wait for 3 quiet minutes. An update may start while an agent runs; only the reload waits.
+- **Build first, swap when idle.** Downloading, verifying, pulling and building run while
+  agents work; the swap of live files (activation, rollback) and the reload wait for idle and
+  follow each other at once, so the browser doesn't run old and new files side by side.
+- **"Idle"** means no side panel run (counted only while that panel's port is connected) and
+  no bridge request in flight; a harness also counts as running for 30 seconds after a
+  browser call. Automatic updates wait for 3 quiet minutes.
+- **A checkout trusts its origin** as a manual `git pull` and build would; there is no
+  signature to check. Automatic updates are still offered in a checkout; docs/updates.md says
+  what that means.
 - **Automatic updates never undo a rollback**: not the release rolled back from, and in a
   checkout only new commits. A failed automatic attempt isn't retried for the same version.
 - **Skill refresh only rewrites what Tabkyra wrote.** A hash record of installed files decides;

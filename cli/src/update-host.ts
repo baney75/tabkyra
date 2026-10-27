@@ -16,8 +16,19 @@ import { fileURLToPath } from "node:url";
 import type { ExtHello, HostToExt, HostUpdateProgress, HostUpdateStatus, UpdatePhase } from "../../src/bridge/protocol.ts";
 import { asBuildInfo, BUILD, type BuildInfo, describeBuild } from "../../src/update/build.ts";
 import { diagnoseVersions, type ExtensionLocation, locateExtension, parseUpdateRequest, type UpdateAction } from "../../src/update/logic.ts";
-import { blockedReason, canRollBack, detectMode, inspectCheckout, needsBuild, previousBuild, readBuildInfo, toolEnv } from "./checkout.ts";
-import type { HostRunAction } from "./update-run.ts";
+import {
+	blockedReason,
+	canRollBack,
+	detectMode,
+	inspectCheckout,
+	needsBuild,
+	previousBuild,
+	readBuildInfo,
+	readStaged,
+	recoverCheckoutQuietly,
+	toolEnv,
+} from "./checkout.ts";
+import { type HostRunAction, type ProgressEvent, readProgressRecord } from "./update-run.ts";
 import {
 	CHECK_INTERVAL_MS,
 	checkForUpdate,
@@ -26,8 +37,11 @@ import {
 	readLastUpdate,
 	readSettings,
 	readStatus,
+	recover,
 	setPolicy,
+	stagedDir,
 	type UpdateStatus,
+	withLock,
 	writeStatus,
 } from "./update.ts";
 
@@ -37,6 +51,7 @@ import {
  */
 export const UPDATE_COMMANDS: Readonly<Record<HostRunAction, readonly string[]>> = Object.freeze({
 	update: Object.freeze(["update", "--host"]),
+	activate: Object.freeze(["update", "--host", "--activate"]),
 	rollback: Object.freeze(["update", "--host", "--rollback"]),
 	reinstall: Object.freeze(["update", "--host", "--reinstall"]),
 });
@@ -50,9 +65,61 @@ function cliEntry(): string {
 
 let extension: { build?: BuildInfo; location: ExtensionLocation } = { location: "unknown" };
 let running: { action: HostRunAction; last?: HostUpdateProgress } | undefined;
+let recovered = false;
+let lastStatus: HostUpdateStatus | undefined;
+
+function pidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Once per host: repair a swap a crash interrupted (unless an updater holds the lock), and pick
+ * up an updater a previous host started that is still running, following its progress file.
+ */
+function startUp(send: Send): void {
+	if (recovered) return;
+	recovered = true;
+	const { mode, root } = detectMode();
+	try {
+		if (mode === "checkout") recoverCheckoutQuietly(root);
+		else if (mode === "release" && existsSync(join(root, ".."))) withLock(recover);
+	} catch {
+		/* an updater holds the lock; it repairs on its own */
+	}
+	const record = readProgressRecord();
+	if (!record || record.phase === "done" || record.phase === "failed") return;
+	if (!pidAlive(record.pid)) {
+		progress(send, record.action, "failed", "The updater stopped before it finished. Nothing half-installed is left live; run it again.");
+		return;
+	}
+	const state: { action: HostRunAction; last?: HostUpdateProgress } = { action: record.action };
+	running = state;
+	let seen = 0;
+	const poll = setInterval(() => {
+		const r = readProgressRecord();
+		if (r && r.at !== seen) {
+			seen = r.at;
+			state.last = forward(send, record.action, r);
+		}
+		const over = !r || r.phase === "done" || r.phase === "failed";
+		if (over || !pidAlive(record.pid)) {
+			clearInterval(poll);
+			if (running === state) running = undefined;
+			if (!over) progress(send, record.action, "failed", "The updater stopped before it finished; run it again.");
+			void sendStatus(send);
+		}
+	}, 1000);
+	poll.unref();
+}
 
 /** The extension said hello: note what it runs and whether it loads from our folder. */
-export function noteHello(hello: ExtHello): void {
+export function noteHello(hello: ExtHello, send: Send): void {
+	startUp(send);
 	const { root } = detectMode();
 	const disk = readBuildInfo(join(root, "dist-chrome"));
 	extension = {
@@ -110,6 +177,8 @@ async function checkoutCheck(force: boolean, root: string, checks: boolean): Pro
 
 /** Everything Settings > Updates and the notice show. `force` checks now. */
 export async function computeStatus(force = false): Promise<HostUpdateStatus> {
+	// While an updater works on the checkout, don't run git next to it: report the last status.
+	if (running && lastStatus) return { ...lastStatus, updating: true };
 	const settings = readSettings();
 	const { mode, root } = detectMode();
 	const checks = settings.policy !== "off" || force;
@@ -121,7 +190,9 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 	let pendingBuild: boolean | undefined;
 	let canRollback = false;
 	let rollbackTo: string | undefined;
+	let staged: string | undefined;
 	if (mode === "checkout") {
+		staged = readStaged(root)?.to;
 		const c = await checkoutCheck(force, root, checks);
 		check = c.status;
 		blocked = c.blocked;
@@ -134,6 +205,7 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 		check = checks ? await releaseCheck(force, root) : { checkedAt: readStatus()?.checkedAt ?? 0, channel: settings.channel, current, available: false };
 		if (!checks) check.available = false;
 		if (mode === "release") {
+			staged = existsSync(join(stagedDir(), ".pending.json")) ? installedVersion(stagedDir()) : undefined;
 			canRollback = existsSync(previousDir());
 			rollbackTo = canRollback ? installedVersion(previousDir()) : undefined;
 		} else {
@@ -144,7 +216,7 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 		blocked = `The browser loads Tabkyra from another folder than ${join(root, "dist-chrome")}, so updating here would not change it. Load that folder on chrome://extensions, or update the copy the browser loads.`;
 	}
 	const mismatch = diagnoseVersions({ extension: extension.build, extensionOnDisk, location: extension.location, host: BUILD, cliOnDisk });
-	return {
+	const status: HostUpdateStatus = {
 		type: "update_status",
 		available: checks && check.available && !check.error,
 		current: check.current,
@@ -161,6 +233,8 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 		needsBuild: pendingBuild,
 		canRollback,
 		rollbackTo,
+		staged,
+		updating: running !== undefined,
 		location: extension.location,
 		mismatch,
 		lastUpdate: readLastUpdate(),
@@ -168,6 +242,8 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 		cliBuild: cliOnDisk,
 		extensionBuild: extensionOnDisk,
 	};
+	lastStatus = status;
+	return status;
 }
 
 export async function sendStatus(send: Send, force = false): Promise<HostUpdateStatus | undefined> {
@@ -189,12 +265,29 @@ function progress(send: Send, action: UpdateAction, phase: UpdatePhase, message:
 	return frame;
 }
 
-/** Run one of the fixed update commands as a child and stream its steps. */
+const PHASES: UpdatePhase[] = ["checking", "downloading", "verifying", "pulling", "installing", "building", "skills", "done", "failed"];
+
+/** One step from the updater (its stdout or its progress file) as an update_progress frame. */
+function forward(send: Send, action: UpdateAction, event: Partial<ProgressEvent> | { phase?: unknown; message?: unknown; staged?: unknown; reload?: unknown; extensionBuild?: unknown }): HostUpdateProgress | undefined {
+	if (typeof event.phase !== "string" || !PHASES.includes(event.phase as UpdatePhase)) return undefined;
+	return progress(send, action, event.phase as UpdatePhase, String(event.message ?? "").slice(0, 2000), {
+		staged: event.staged === true ? true : undefined,
+		reload: event.reload === true ? true : undefined,
+		extensionBuild: typeof event.extensionBuild === "string" ? event.extensionBuild : undefined,
+	});
+}
+
+/**
+ * Run one of the fixed update commands as a child and stream its steps. The child is its own
+ * process group and survives this host: if the browser closes the host mid-update, the update
+ * finishes, and the next host follows it through its progress file (startUp).
+ */
 function runChild(action: HostRunAction, send: Send): void {
 	const child = spawn(process.execPath, [cliEntry(), ...UPDATE_COMMANDS[action]], {
 		env: toolEnv(),
 		stdio: ["ignore", "pipe", "pipe"],
 		shell: false,
+		detached: true,
 	});
 	const state: { action: HostRunAction; last?: HostUpdateProgress } = { action };
 	running = state;
@@ -203,20 +296,16 @@ function runChild(action: HostRunAction, send: Send): void {
 	let finished = false;
 	const onLine = (line: string) => {
 		if (!line.trim()) return;
-		let event: { phase?: unknown; message?: unknown; reload?: unknown; extensionBuild?: unknown };
+		let event: { phase?: unknown };
 		try {
 			event = JSON.parse(line);
 		} catch {
 			return;
 		}
-		const phases: UpdatePhase[] = ["checking", "downloading", "verifying", "pulling", "installing", "building", "skills", "done", "failed"];
-		if (typeof event.phase !== "string" || !phases.includes(event.phase as UpdatePhase)) return;
-		const phase = event.phase as UpdatePhase;
-		if (phase === "done" || phase === "failed") finished = true;
-		state.last = progress(send, action, phase, String(event.message ?? "").slice(0, 2000), {
-			reload: event.reload === true ? true : undefined,
-			extensionBuild: typeof event.extensionBuild === "string" ? event.extensionBuild : undefined,
-		});
+		const frame = forward(send, action, event);
+		if (!frame) return;
+		if (frame.phase === "done" || frame.phase === "failed") finished = true;
+		state.last = frame;
 	};
 	child.stdout.on("data", (chunk: Buffer) => {
 		buffer += chunk.toString("utf8");
@@ -273,11 +362,13 @@ export function handleUpdateAction(raw: unknown, send: Send): void {
 		});
 		return;
 	}
-	if (extension.location === "elsewhere" && action !== "reinstall") {
+	// Only re-registering a release's host is useful when the browser loads another folder.
+	if (extension.location === "elsewhere" && !(action === "reinstall" && detectMode().mode === "release")) {
 		void computeStatus().then((status) => progress(send, action, "failed", status.blocked ?? "The browser loads Tabkyra from another folder."));
 		return;
 	}
 	runChild(action, send);
+	void sendStatus(send);
 }
 
 /** Re-check once a day while the host runs (the browser keeps it running). */

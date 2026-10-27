@@ -9,23 +9,38 @@ What "update" does depends on how Tabkyra runs (the install mode):
 
 | Mode | When | Update now does | Roll back does |
 | --- | --- | --- | --- |
-| **Release** | the native host runs from `~/.local/share/tabkyra/app` | downloads the newest signed GitHub release, verifies it and swaps it in ([checks](#what-an-update-checks-before-it-touches-a-file)) | swaps back to the release before it |
-| **Checkout** | the native host runs from a git checkout of Tabkyra (how Donovan runs it) | `git fetch`, `git pull --ff-only` on main, `./scripts/setup-siblings.sh`, builds the extension and the CLI next to the live builds, swaps them in | swaps back to the build before it (the git checkout stays where it is) |
+| **Release** | the native host runs from `~/.local/share/tabkyra/app` | downloads the newest signed GitHub release, verifies it ([checks](#what-an-update-checks-before-it-touches-a-file)) and unpacks it to `staged/`; once idle, swaps it in | swaps back to the release before it |
+| **Checkout** | the native host runs from a git checkout of Tabkyra (how Donovan runs it) | `git fetch`, `git pull --ff-only` on main, `./scripts/setup-siblings.sh`, builds the extension and the CLI into `.tabkyra-update/next/`; once idle, swaps them in | swaps back to the build before it (the git checkout stays where it is) |
 | Unmanaged | anything else (an npm install, a copied folder) | refuses: run `tabkyra update` in a terminal | |
 
 ## The side panel
 
 - **Update now** (under the header, and in Settings > Updates) sends the native host one
   of a fixed set of action names. The host runs the matching fixed command
-  (`tabkyra update --host`, `--host --rollback` or `--host --reinstall`) as a child process
-  of the CLI it runs from, and streams each step to the panel: checking, downloading,
-  verifying, pulling, installing, building, skills, then done or failed with the reason.
-- **The reload.** When the update is done, the extension reloads itself with
-  `chrome.runtime.reload()`, but never while an agent run is going in any side panel or
-  bridge session. Until then the panel says what it waits for. A harness counts as running
-  while a request is in flight and for 30 seconds after one. Sessions are kept in IndexedDB
-  and `chrome.storage.local`, so chats and agent tab groups come back after the reload;
-  reopen the side panel to continue.
+  (`tabkyra update --host`, `--host --activate`, `--host --rollback` or `--host --reinstall`)
+  as a child process of the CLI it runs from, and streams each step to the panel: checking,
+  downloading, verifying, pulling, installing, building, skills, then done or failed with
+  the reason.
+- **Two steps.** The first step (`--host`) downloads and verifies a release, or pulls and
+  builds a checkout, aside; nothing the browser loads changes, so you can keep working. The
+  panel then shows "Update ready". The second step (`--host --activate`) swaps the new files
+  in, refreshes skills and records What's new. The service worker sends it only when no
+  agent is running, and reloads Tabkyra right after, so the browser never runs a mix of old
+  and new files for more than that moment. Roll back also runs only when idle. **Install
+  now** in the panel asks for the second step (it still waits for idle).
+- **The reload.** The extension reloads itself with `chrome.runtime.reload()`, never while an
+  agent run is going in any side panel or bridge session; until then the panel says what it
+  waits for. "Idle" means: no side panel with a connected port has a run going, no bridge
+  request is in flight, and no harness made a browser call in the last 30 seconds (a harness
+  between two calls looks idle after that). The worker writes its reload record, then checks
+  once more and reloads with nothing awaited in between, so a run that starts during the
+  writes stops the reload; one that starts during that last storage read is the remaining
+  window. Sessions are kept in IndexedDB and `chrome.storage.local`, so chats and agent tab
+  groups come back after the reload; reopen the side panel to continue.
+- **The updater outlives the host.** It runs in its own process group and writes each step
+  to `~/.config/tabkyra/update-progress.json`. If the browser closes the native host
+  mid-update, the update finishes, and the next host reports it (or reports that it stopped,
+  if its process died). A host also repairs an interrupted swap when it starts.
 - **What's new.** After the reload a card shows the release notes (the GitHub release
   body) or, in a checkout, the commits pulled in (first-parent, a pull request shown by its
   title, at most 20, with a link to compare on GitHub). The ✕ hides it.
@@ -64,10 +79,20 @@ An update refuses, changing nothing, when:
 - main and origin/main have diverged, so the pull wouldn't be a fast-forward.
 
 The builds go to `.tabkyra-update/next/` (ignored by git) with `TABKYRA_NO_BUMP=1`, so the
-build never edits the manifest. Only when both the extension and the CLI built are they
-swapped in; the builds they replace move to `.tabkyra-update/previous/` for Roll back. A
-failed build leaves the old build live and says why; the pulled commits stay, and the next
-Update now builds them. One updater runs at a time (`.tabkyra-update/update.lock`).
+build never edits the manifest. Only when both the extension and the CLI built is the build
+staged (`next/staged.json`); activation refuses it if HEAD moved since. The extension folder
+is swapped by renames; the CLI is replaced file by file in place (a rename over each file),
+so `cli/dist/index.js`, which the native host's launcher runs, is never missing. The builds
+they replace go to `.tabkyra-update/previous/` for Roll back. A failed build leaves the old
+build live and says why; the pulled commits stay, and the next Update now builds them, with
+What's new counting from the live build. One updater runs at a time
+(`.tabkyra-update/update.lock`).
+
+**Trust.** A release is checked against the minisign key in the CLI. A checkout is trusted
+the way `git pull` and `npm run build` by hand are: the updater runs `setup-siblings.sh` and
+the build scripts of whatever origin/main holds. Point origin only at a repository you
+trust. "Install automatically when idle" in a checkout runs those scripts without a click;
+use "Tell me" if you want to look at new commits first.
 
 ### What the host runs
 
@@ -78,7 +103,8 @@ else; a frame with any other field, or an unknown name, is refused before anythi
 | Action | The host |
 | --- | --- |
 | `check` | checks now (a GitHub API GET, or `git fetch origin main` in a checkout) |
-| `update` | runs `tabkyra update --host` |
+| `update` | runs `tabkyra update --host` (download or pull, verify or build, stage) |
+| `activate` | runs `tabkyra update --host --activate` (swap the staged build in); the service worker sends it only when idle |
 | `rollback` | runs `tabkyra update --host --rollback` |
 | `reinstall` | runs `tabkyra update --host --reinstall` (the mismatch fix: register the host again, or rebuild a checkout from HEAD) |
 | `policy-off`, `policy-notify`, `policy-auto` | writes the updates choice to `~/.config/tabkyra/update.json` |

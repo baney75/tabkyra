@@ -58,19 +58,78 @@ test("unknown actions and web pages are refused before anything reaches the host
 	assert.equal(ctx.port.sent.slice(before).filter((m) => m.type === "update_action").length, 0);
 });
 
-test("after an update the reload waits while a side panel run is going, then happens", async () => {
-	await chrome.storage.session.set({ sidepanel_busy_1: 105 });
-	ctx.port.deliver({ type: "update_progress", action: "update", phase: "done", message: "Built", at: Date.now(), reload: true, extensionBuild: "new-build" });
+const progressNow = async () => (await chrome.storage.local.get("tabkyra.updateProgress"))["tabkyra.updateProgress"];
+const pendingNow = async () => (await chrome.storage.local.get("tabkyra.updatePending"))["tabkyra.updatePending"];
+const actionsSent = (from) => ctx.port.sent.slice(from).filter((m) => m.type === "update_action").map((m) => m.action);
+
+test("a staged update is activated only when no side panel run is going, then reloads", async () => {
+	await chrome.storage.session.set({ sidepanel_open_windows: [1], sidepanel_busy_1: 105 });
+	const from = ctx.port.sent.length;
+	ctx.port.deliver({ type: "update_progress", action: "update", phase: "done", message: "Built", at: Date.now(), staged: true });
 	await sleep(400);
-	assert.equal(ctx.reloads(), 0, "no reload while the agent runs");
-	const { "tabkyra.updateProgress": waiting } = await chrome.storage.local.get("tabkyra.updateProgress");
+	assert.deepEqual(actionsSent(from), [], "nothing is installed while the agent runs");
+	const waiting = await progressNow();
 	assert.equal(waiting.phase, "waiting");
 	assert.match(waiting.message, /agent run is going in a side panel/);
 
 	await chrome.storage.session.set({ sidepanel_busy_1: false });
 	await sleep(3600);
-	assert.equal(ctx.reloads(), 1, "reloads once the run ended");
-	const { "tabkyra.reloadPending": pending } = await chrome.storage.local.get("tabkyra.reloadPending");
+	assert.deepEqual(actionsSent(from), ["activate"], "activates once the run ended");
+	assert.equal(ctx.reloads(), 0, "no reload before the install is done");
+
+	ctx.port.deliver({ type: "update_progress", action: "activate", phase: "done", message: "Installed", at: Date.now(), reload: true, extensionBuild: "new-build" });
+	await sleep(400);
+	assert.equal(ctx.reloads(), 1, "reloads right after the install");
+	const pending = await pendingNow();
 	assert.equal(pending.extensionBuild, "new-build");
 	assert.ok(pending.reloadedFrom, "remembers the build that reloaded, to check the result after");
+});
+
+test("a run that starts while the reload is being committed stops the reload", async () => {
+	await chrome.storage.local.remove("tabkyra.updatePending");
+	await chrome.storage.session.set({ sidepanel_open_windows: [1], sidepanel_busy_1: false });
+	const before = ctx.reloads();
+	// A side panel starts a run exactly while the worker writes its reload record.
+	const realSet = chrome.storage.local.set;
+	chrome.storage.local.set = async (obj) => {
+		if (obj["tabkyra.updatePending"]?.reloadedFrom) await chrome.storage.session.set({ sidepanel_busy_1: 105 });
+		return realSet(obj);
+	};
+	try {
+		ctx.port.deliver({ type: "update_progress", action: "activate", phase: "done", message: "Installed", at: Date.now(), reload: true, extensionBuild: "b2" });
+		await sleep(600);
+	} finally {
+		chrome.storage.local.set = realSet;
+	}
+	assert.equal(ctx.reloads(), before, "no reload during the run");
+	assert.equal((await progressNow()).phase, "waiting");
+	assert.equal((await pendingNow()).reloadedFrom, undefined, "the reload is not marked as done");
+	await chrome.storage.session.set({ sidepanel_busy_1: false });
+	await sleep(3600);
+	assert.equal(ctx.reloads(), before + 1);
+});
+
+test("a busy flag left by a panel that is gone doesn't hold the reload", async () => {
+	await chrome.storage.local.remove("tabkyra.updatePending");
+	// Window 7's panel crashed mid-run: its flag is set, but no panel of window 7 is connected.
+	await chrome.storage.session.set({ sidepanel_open_windows: [1], sidepanel_busy_1: false, sidepanel_busy_7: 300 });
+	const before = ctx.reloads();
+	assert.deepEqual(await ctx.ask({ type: "tabkyra-update", action: "reload" }, panelUrl), { ok: true });
+	await sleep(600);
+	assert.equal(ctx.reloads(), before + 1);
+});
+
+test("Roll back waits for idle in the worker before the host swaps anything", async () => {
+	await chrome.storage.local.remove("tabkyra.updatePending");
+	await chrome.storage.session.set({ sidepanel_open_windows: [1], sidepanel_busy_1: 9 });
+	const from = ctx.port.sent.length;
+	await ctx.ask({ type: "tabkyra-update", action: "rollback" }, panelUrl);
+	await sleep(400);
+	assert.deepEqual(actionsSent(from), []);
+	await chrome.storage.session.set({ sidepanel_busy_1: false });
+	await sleep(3600);
+	assert.deepEqual(actionsSent(from), ["rollback"]);
+	// "activate" is the worker's own step; the panel can't send it directly.
+	const bad = await ctx.ask({ type: "tabkyra-update", action: "activate" }, panelUrl);
+	assert.equal(bad.ok, false);
 });

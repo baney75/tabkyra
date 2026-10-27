@@ -13,8 +13,8 @@
  * docs/updates.md describes the flow.
  */
 
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import type { InstallMode } from "../../src/bridge/protocol.ts";
 import { asBuildInfo, type BuildInfo, describeBuild } from "../../src/update/build.ts";
@@ -103,7 +103,8 @@ export function toolEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 
 function run(command: string, args: readonly string[], cwd: string, timeoutMs: number, env = toolEnv()): Promise<RunResult> {
 	return new Promise((resolve) => {
-		const child = spawn(command, [...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"], shell: false });
+		// Its own process group, so a timeout stops npm and everything it started, not just the shell.
+		const child = spawn(command, [...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"], shell: false, detached: true });
 		let stdout = "";
 		let tail = "";
 		const keep = (chunk: Buffer) => {
@@ -114,16 +115,36 @@ function run(command: string, args: readonly string[], cwd: string, timeoutMs: n
 			keep(d);
 		});
 		child.stderr.on("data", keep);
+		const killGroup = (signal: NodeJS.Signals) => {
+			try {
+				if (child.pid) process.kill(-child.pid, signal);
+			} catch {
+				/* already gone */
+			}
+		};
+		let settled = false;
 		const timer = setTimeout(() => {
 			tail += `\n(stopped after ${Math.round(timeoutMs / 60000)} minutes)`;
-			child.kill("SIGTERM");
+			killGroup("SIGTERM");
+			setTimeout(() => killGroup("SIGKILL"), 5000).unref();
+			// A grandchild holding the pipes open must not keep the update waiting.
+			child.once("exit", () => {
+				if (!settled) {
+					settled = true;
+					resolve({ code: 124, stdout, tail });
+				}
+			});
 		}, timeoutMs);
 		child.on("error", (err) => {
 			clearTimeout(timer);
+			if (settled) return;
+			settled = true;
 			resolve({ code: 127, stdout, tail: `${tail}\n${err.message}` });
 		});
 		child.on("close", (code) => {
 			clearTimeout(timer);
+			if (settled) return;
+			settled = true;
 			resolve({ code: code ?? 1, stdout, tail });
 		});
 	});
@@ -264,7 +285,7 @@ export async function commitsBetween(root: string, from: string, to: string): Pr
 	return { commits, total, url: base ? `${base}/compare/${from.slice(0, 12)}...${to.slice(0, 12)}` : undefined };
 }
 
-// ---- build, swap, roll back -------------------------------------------------------------
+// ---- build, stage, activate, roll back ---------------------------------------------------
 
 export type Phase = "checking" | "pulling" | "installing" | "building" | "skills";
 export type Emit = (phase: Phase, message: string) => void;
@@ -274,6 +295,24 @@ export async function setupSiblings(root: string, emit: Emit): Promise<void> {
 	emit("installing", "Running scripts/setup-siblings.sh (pinned sibling repos and npm install)");
 	const r = await run("bash", [join(root, "scripts", "setup-siblings.sh")], root, SETUP_TIMEOUT_MS);
 	if (r.code !== 0) throw new UpdateError(`scripts/setup-siblings.sh failed. The old build is still in place.\n${lastLines(r.tail)}`);
+}
+
+/** What a staged build in next/ will install; written last, so its presence means next/ is whole. */
+export interface Staged {
+	head: string;
+	from: string;
+	to: string;
+	commits?: CommitList;
+}
+
+const stagedFile = (root: string) => join(nextDir(root), "staged.json");
+
+export function readStaged(root: string): Staged | undefined {
+	try {
+		return JSON.parse(readFileSync(stagedFile(root), "utf8")) as Staged;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -302,52 +341,75 @@ export async function buildNext(root: string, emit: Emit): Promise<void> {
 }
 
 /**
- * Put next/ live and keep what it replaces in previous/. Each build is two renames; a failed
- * second rename is undone, so a build folder is never left missing. Runs under the lock.
+ * Move every entry of `from` into `live`, each by one rename over the old entry, then drop what
+ * `from` didn't have. Used for cli/dist: the launcher runs cli/dist/index.js, and a rename over
+ * an existing file is atomic, so there is never a moment without an index.js to run.
+ */
+function replaceContents(from: string, live: string): void {
+	mkdirSync(live, { recursive: true });
+	const names = new Set(readdirSync(from));
+	for (const name of names) {
+		const dest = join(live, name);
+		if (existsSync(dest) && lstatSync(dest).isDirectory()) rmSync(dest, { recursive: true, force: true });
+		renameSync(join(from, name), dest);
+	}
+	for (const name of readdirSync(live)) if (!names.has(name)) rmSync(join(live, name), { recursive: true, force: true });
+}
+
+/**
+ * Put next/ live and keep what it replaces in previous/. The extension folder moves by two
+ * renames (a failed second one is undone; a crash between them is repaired by recoverBuilds,
+ * which the native host also runs when it starts). The CLI is replaced file by file in place.
+ * Runs under the lock.
  */
 export function swapInBuilds(root: string): void {
 	const next = nextDir(root);
 	const previous = previousBuildDir(root);
 	rmSync(previous, { recursive: true, force: true });
 	mkdirSync(previous, { recursive: true });
-	for (const b of builds(root)) {
-		const kept = join(previous, b.name);
-		if (existsSync(b.live)) renameSync(b.live, kept);
-		try {
-			renameSync(join(next, b.name), b.live);
-		} catch (err) {
-			if (existsSync(kept) && !existsSync(b.live)) renameSync(kept, b.live);
-			throw err;
-		}
+	const ext = join(root, "dist-chrome");
+	const keptExt = join(previous, "dist-chrome");
+	if (existsSync(ext)) renameSync(ext, keptExt);
+	try {
+		renameSync(join(next, "dist-chrome"), ext);
+	} catch (err) {
+		if (existsSync(keptExt) && !existsSync(ext)) renameSync(keptExt, ext);
+		throw err;
 	}
+	const cli = join(root, "cli", "dist");
+	if (existsSync(cli)) cpSync(cli, join(previous, "cli-dist"), { recursive: true });
+	replaceContents(join(next, "cli-dist"), cli);
 	rmSync(next, { recursive: true, force: true });
 }
 
-/** A crash mid-swap can leave a live build missing: put the kept one back. Runs under the lock. */
+/**
+ * Repair what a crash left: a missing extension folder comes back from swap/ or previous/, a
+ * rollback's held half goes back to previous/, and a next/ without staged.json (a build that
+ * never finished) is removed. A finished staged build is kept for activation. Runs under the lock.
+ */
 export function recoverBuilds(root: string): string | undefined {
 	const notes: string[] = [];
 	const hold = join(stateDir(root), "swap");
-	for (const b of builds(root)) {
-		if (existsSync(b.live)) continue;
-		for (const source of [join(hold, b.name), join(previousBuildDir(root), b.name)]) {
+	const ext = join(root, "dist-chrome");
+	if (!existsSync(ext)) {
+		for (const source of [join(hold, "dist-chrome"), join(previousBuildDir(root), "dist-chrome")]) {
 			if (existsSync(source)) {
-				renameSync(source, b.live);
-				notes.push(`Restored ${b.name} after an interrupted swap.`);
+				renameSync(source, ext);
+				notes.push("Restored dist-chrome after an interrupted swap.");
 				break;
 			}
 		}
 	}
-	// A rollback that stopped after its first rename of a build left it in swap/; it is the other half.
-	for (const b of builds(root)) {
-		const held = join(hold, b.name);
-		const kept = join(previousBuildDir(root), b.name);
+	for (const name of ["dist-chrome", "cli-dist"]) {
+		const held = join(hold, name);
+		const kept = join(previousBuildDir(root), name);
 		if (existsSync(held) && !existsSync(kept)) {
 			mkdirSync(previousBuildDir(root), { recursive: true });
 			renameSync(held, kept);
 		}
 	}
 	rmSync(hold, { recursive: true, force: true });
-	rmSync(nextDir(root), { recursive: true, force: true });
+	if (existsSync(nextDir(root)) && !existsSync(stagedFile(root))) rmSync(nextDir(root), { recursive: true, force: true });
 	return notes.length ? notes.join(" ") : undefined;
 }
 
@@ -367,12 +429,19 @@ export function swapBuilds(root: string): { from?: BuildInfo; to?: BuildInfo } {
 	const hold = join(stateDir(root), "swap");
 	rmSync(hold, { recursive: true, force: true });
 	mkdirSync(hold, { recursive: true });
-	for (const b of builds(root)) {
-		const kept = join(previousBuildDir(root), b.name);
-		renameSync(b.live, join(hold, b.name));
-		renameSync(kept, b.live);
-		renameSync(join(hold, b.name), kept);
-	}
+	// The extension: three renames, each crash point repaired by recoverBuilds.
+	const ext = join(root, "dist-chrome");
+	const keptExt = join(previousBuildDir(root), "dist-chrome");
+	renameSync(ext, join(hold, "dist-chrome"));
+	renameSync(keptExt, ext);
+	renameSync(join(hold, "dist-chrome"), keptExt);
+	// The CLI: a copy of the live one, the kept files renamed over it, the copy kept.
+	const cli = join(root, "cli", "dist");
+	const keptCli = join(previousBuildDir(root), "cli-dist");
+	cpSync(cli, join(hold, "cli-dist"), { recursive: true });
+	replaceContents(keptCli, cli);
+	rmSync(keptCli, { recursive: true, force: true });
+	renameSync(join(hold, "cli-dist"), keptCli);
 	rmSync(hold, { recursive: true, force: true });
 	return { from, to };
 }
@@ -382,27 +451,36 @@ export function lockCheckout(root: string): () => void {
 	return takeLock(stateDir(root));
 }
 
+/** For the native host at start: repair an interrupted swap unless an updater holds the lock. */
+export function recoverCheckoutQuietly(root: string): string | undefined {
+	let release: (() => void) | undefined;
+	try {
+		release = lockCheckout(root);
+		return recoverBuilds(root);
+	} catch {
+		return undefined;
+	} finally {
+		release?.();
+	}
+}
+
 // ---- the whole update -------------------------------------------------------------------
 
 export interface CheckoutResult {
 	/** False when there was nothing to do. */
 	changed: boolean;
-	from?: string;
-	fromCommit?: string;
-	to?: string;
-	toCommit?: string;
-	commits?: CommitList;
 	message: string;
+	staged?: Staged;
 }
 
 /**
- * Fetch, fast-forward main, set up the siblings, build, swap. `pull: false` re-runs the install
- * step for the current HEAD (the version-mismatch fix). Throws UpdateError with the reason; the
- * live builds are then as they were (or, when the pull worked and the build didn't, at the old
- * commit's build, which the side panel reports as a pending build).
- * `beforeSwap` runs right before the swap (noting which skills are unedited).
+ * Fetch, fast-forward main, set up the siblings and build into next/. Nothing live changes:
+ * activateCheckout swaps the build in once no agent runs. `pull: false` rebuilds the current
+ * HEAD (the version-mismatch fix). Throws UpdateError with the reason; when the pull worked and
+ * the build didn't, the live build stays at the old commit and the side panel reports a
+ * pending build.
  */
-export async function updateCheckout(root: string, emit: Emit, options: { pull: boolean; beforeSwap?: () => void }): Promise<CheckoutResult> {
+export async function updateCheckout(root: string, emit: Emit, options: { pull: boolean }): Promise<CheckoutResult> {
 	const release = lockCheckout(root);
 	try {
 		const note = recoverBuilds(root);
@@ -411,8 +489,6 @@ export async function updateCheckout(root: string, emit: Emit, options: { pull: 
 		const info = await inspectCheckout(root, { fetch: options.pull });
 		if (info.fetchError) throw new UpdateError(info.fetchError);
 		if (info.blocked) throw new UpdateError(info.blocked);
-		const from = info.head;
-		let to = info.head;
 		if (options.pull && info.behind > 0) {
 			emit("pulling", `Pulling ${info.behind} new commit${info.behind === 1 ? "" : "s"} (git pull --ff-only)`);
 			const pull = await git(root, ["pull", "--ff-only", "--quiet", "origin", "main"]);
@@ -420,36 +496,59 @@ export async function updateCheckout(root: string, emit: Emit, options: { pull: 
 				const notFf = /fast-forward|diverg/i.test(pull.tail);
 				throw new UpdateError(`${notFf ? "The pull is not a fast-forward" : "git pull failed"}; nothing was changed.\n${lastLines(pull.tail, 4)}`);
 			}
-			to = await gitOut(root, ["rev-parse", "HEAD"]);
 		} else if (options.pull && !needsBuild(info)) {
-			return { changed: false, from: describeBuild(info.built), message: `Up to date (${describeBuild(info.built)})` };
+			rmSync(nextDir(root), { recursive: true, force: true });
+			return { changed: false, message: `Up to date (${describeBuild(info.built)})` };
 		}
+		const head = await gitOut(root, ["rev-parse", "HEAD"]);
 		await setupSiblings(root, emit);
 		await buildNext(root, emit);
-		options.beforeSwap?.();
-		emit("installing", "Swapping in the new build");
-		swapInBuilds(root);
-		const built = readBuildInfo(join(root, "dist-chrome"));
-		const commits = from !== to ? await commitsBetween(root, from, to) : undefined;
-		return {
-			changed: true,
+		// What's new lists everything since the live build, when that build's commit is an ancestor.
+		const builtCommit = info.built?.commit;
+		const since = builtCommit && builtCommit !== head && (await git(root, ["merge-base", "--is-ancestor", builtCommit, head])).code === 0 ? builtCommit : info.head;
+		const staged: Staged = {
+			head,
 			from: describeBuild(info.built),
-			fromCommit: info.built?.commit || from,
-			to: describeBuild(built),
-			toCommit: to,
-			commits,
-			message: `Built ${describeBuild(built)}`,
+			to: describeBuild(readBuildInfo(join(nextDir(root), "dist-chrome"))),
+			commits: since !== head ? await commitsBetween(root, since, head) : undefined,
 		};
+		writeFileSync(stagedFile(root), `${JSON.stringify(staged, null, 2)}\n`);
+		return { changed: true, staged, message: `Built ${staged.to}` };
 	} finally {
 		release();
 	}
 }
 
-/** Roll the live builds back to the kept ones (the git checkout stays where it is). */
+/**
+ * Swap a staged build in. Refuses when nothing is staged, or when HEAD moved since the build
+ * (the staged build is then removed; Update now builds again). `beforeSwap` runs right before
+ * the swap (noting which skills are unedited).
+ */
+export function activateCheckout(root: string, beforeSwap?: () => void): Staged | undefined {
+	const release = lockCheckout(root);
+	try {
+		recoverBuilds(root);
+		const staged = readStaged(root);
+		if (!staged) return undefined;
+		const head = spawnSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8", env: toolEnv() }).stdout.trim();
+		if (head !== staged.head) {
+			rmSync(nextDir(root), { recursive: true, force: true });
+			throw new UpdateError(`The checkout moved to ${head.slice(0, 7)} after the build of ${staged.head.slice(0, 7)}; nothing was installed. Update now builds it again.`);
+		}
+		beforeSwap?.();
+		swapInBuilds(root);
+		return staged;
+	} finally {
+		release();
+	}
+}
+
+/** Roll the live builds back to the kept ones (the git checkout stays where it is). A staged build is dropped. */
 export function rollbackCheckout(root: string): { from?: BuildInfo; to?: BuildInfo } {
 	const release = lockCheckout(root);
 	try {
 		recoverBuilds(root);
+		rmSync(nextDir(root), { recursive: true, force: true });
 		return swapBuilds(root);
 	} finally {
 		release();

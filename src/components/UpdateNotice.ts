@@ -31,7 +31,7 @@ export interface UpdateState {
 
 export const updateState: UpdateState = {};
 const listeners = new Set<() => void>();
-let watching = false;
+let loading: Promise<void> | undefined;
 
 const KEYS = [UPDATE_STATUS_KEY, UPDATE_PROGRESS_KEY, DISMISSED_KEY, WHATS_NEW_DISMISSED_KEY, PROGRESS_DISMISSED_KEY];
 
@@ -49,21 +49,22 @@ function apply(values: Record<string, unknown>): void {
 /** Load the stored state and call `onChange` whenever the host or the worker updates it. */
 export async function watchUpdateStatus(onChange: () => void): Promise<() => void> {
 	listeners.add(onChange);
-	if (!watching) {
-		watching = true;
-		apply(await chrome.storage.local.get(KEYS));
+	// One load for every caller; each waits for it, so none renders before the state is there.
+	loading ??= chrome.storage.local.get(KEYS).then((values) => {
+		apply(values);
 		chrome.storage.onChanged.addListener((changes, area) => {
 			if (area !== "local" || !KEYS.some((k) => k in changes)) return;
 			apply(Object.fromEntries(Object.entries(changes).map(([k, v]) => [k, v.newValue])));
 			for (const l of listeners) l();
 		});
-	}
+	});
+	await loading;
 	onChange();
 	return () => listeners.delete(onChange);
 }
 
 /** Ask the service worker to run an update action, or to reload once idle. */
-export function requestUpdate(action: UpdateAction | "reload"): void {
+export function requestUpdate(action: UpdateAction | "reload" | "install"): void {
 	void chrome.runtime.sendMessage({ type: PANEL_UPDATE_MESSAGE, action }).catch(() => undefined);
 }
 
@@ -81,9 +82,17 @@ const PHASE_LABEL: Record<HostUpdateProgress["phase"], string> = {
 	failed: "Failed",
 };
 
-/** An update step that is still going (stale ones count as over). */
-export function updateRunning(progress = updateState.progress): boolean {
-	return !!progress && !["done", "failed"].includes(progress.phase) && Date.now() - progress.at < 30 * 60 * 1000;
+/**
+ * An update step that is still going. The worker's own steps (waiting, reloading) count while
+ * they are fresh; a host step counts while the host says an updater runs, or for a few seconds
+ * after it was sent, so a step left over from a host that went away doesn't stick.
+ */
+export function updateRunning(progress = updateState.progress, status = updateState.status): boolean {
+	if (!progress || ["done", "failed"].includes(progress.phase)) return false;
+	const age = Date.now() - progress.at;
+	if (progress.phase === "waiting" || progress.phase === "reloading") return age < 24 * 60 * 60 * 1000;
+	if (progress.phase === "checking" && age < 35000) return true;
+	return status?.updating === true || age < 15000;
 }
 
 export function phaseLabel(phase: HostUpdateProgress["phase"]): string {
@@ -134,9 +143,18 @@ function mismatchBanner(): TemplateResult | typeof nothing {
 	</div>`;
 }
 
+function stagedLine(): TemplateResult | typeof nothing {
+	const s = updateState.status;
+	if (!s?.staged || updateRunning()) return nothing;
+	return html`<div class="${bar} text-muted-foreground" role="status" data-testid="update-staged">
+		<span class="min-w-0 truncate">Update ready: ${s.staged}. Installs when no agent is running</span>
+		<button class="${link} ml-auto" @click=${() => requestUpdate("install")}>Install now</button>
+	</div>`;
+}
+
 function availableLine(): TemplateResult | typeof nothing {
 	const s = updateState.status;
-	if (!s?.available || updateRunning() || s.mismatch) return nothing;
+	if (!s?.available || s.staged || updateRunning() || s.mismatch?.fix === "reload") return nothing;
 	const label =
 		s.mode === "checkout"
 			? s.behind
@@ -197,6 +215,7 @@ function whatsNewCard(): TemplateResult | typeof nothing {
 				: nothing
 		}
 		${url ? html`<a class="underline underline-offset-2 text-foreground" href=${url} target="_blank" rel="noopener">${last.mode === "checkout" ? "Compare on GitHub" : "Release page"}</a>` : nothing}
+		${last.skills?.error ? html`<p class="text-destructive">Skills were not refreshed: ${last.skills.error}</p>` : nothing}
 		${
 			skipped.length
 				? html`<p class="text-muted-foreground">
@@ -210,5 +229,5 @@ function whatsNewCard(): TemplateResult | typeof nothing {
 
 /** Everything update-related under the header; nothing when there is nothing to say. */
 export function updateNotice(): TemplateResult {
-	return html`${progressLine()}${mismatchBanner()}${availableLine()}${whatsNewCard()}`;
+	return html`${progressLine()}${mismatchBanner()}${stagedLine()}${availableLine()}${whatsNewCard()}`;
 }

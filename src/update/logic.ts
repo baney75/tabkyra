@@ -16,6 +16,7 @@ import { type BuildInfo, describeBuild } from "./build.js";
 export const UPDATE_ACTIONS = [
 	"check",
 	"update",
+	"activate",
 	"rollback",
 	"reinstall",
 	"policy-off",
@@ -152,7 +153,7 @@ export function diagnoseVersions(b: BuildSet): Mismatch | undefined {
 	if (b.extensionOnDisk && b.cliOnDisk && !sameSource(b.extensionOnDisk, b.cliOnDisk)) {
 		return {
 			fix: "reinstall",
-			reason: `The installed extension is ${describeBuild(b.extensionOnDisk)} but the installed CLI is ${describeBuild(b.cliOnDisk)}: an update stopped partway.`,
+			reason: `The installed extension (${describeBuild(b.extensionOnDisk)}) and CLI (${describeBuild(b.cliOnDisk)}) were built from different commits.`,
 		};
 	}
 	if (b.location === "here" && b.extension && b.extensionOnDisk && !sameSource(b.extension, b.extensionOnDisk)) {
@@ -212,7 +213,9 @@ export function offerKey(s: Pick<HostUpdateStatus, "mode" | "latest" | "current"
  * from, and never the same offer twice (a failed attempt waits for the user or a newer offer).
  */
 export function shouldAutoUpdate(s: HostUpdateStatus | undefined, attempted?: string): boolean {
-	if (!s || s.policy !== "auto" || !s.available || s.blocked || s.mismatch || s.error) return false;
+	// A reinstall mismatch doesn't hold an update back: the update rebuilds both anyway.
+	if (!s || s.policy !== "auto" || !s.available || s.blocked || s.mismatch?.fix === "reload" || s.error) return false;
+	if (s.staged || s.updating) return false;
 	if (s.mode === "unmanaged") return false;
 	// A checkout updates on its own only for new commits, not to rebuild after a rollback.
 	if (s.mode === "checkout" && !(s.behind && s.behind > 0)) return false;

@@ -434,8 +434,13 @@ test("release mode from the side panel: the same signed install, streamed as ste
 	const r = await runHostUpdate();
 	assert.equal(r.code, 0, r.out);
 	const phases = r.events.map((e) => e.phase);
-	for (const p of ["checking", "downloading", "verifying", "installing", "skills", "done"]) assert.ok(phases.includes(p), `${p} in ${phases}`);
-	assert.equal(r.last.reload, true);
+	for (const p of ["checking", "downloading", "verifying", "installing", "done"]) assert.ok(phases.includes(p), `${p} in ${phases}`);
+	assert.equal(r.last.staged, true, "verified and unpacked, waiting to be activated");
+	assert.equal(appVersion(), from, "nothing live changes before activation");
+	const a = await runHostUpdate("--activate");
+	assert.equal(a.code, 0, a.out);
+	assert.ok(a.events.some((e) => e.phase === "skills"));
+	assert.equal(a.last.reload, true);
 	assert.equal(appVersion(), "9.5.0");
 	const record = JSON.parse(readFileSync(join(home, ".config", "tabkyra", "last-update.json"), "utf8"));
 	assert.equal(record.kind, "update");
@@ -451,6 +456,9 @@ test("release mode from the side panel: the same signed install, streamed as ste
 	assert.equal(bad.code, 1);
 	assert.equal(bad.last.phase, "failed");
 	assert.match(bad.last.message, /Checksum mismatch/);
+	assert.equal(appVersion(), "9.5.0");
+	const none = await runHostUpdate("--activate");
+	assert.match(none.last.message, /Nothing was waiting/);
 	assert.equal(appVersion(), "9.5.0");
 	releases.delete("v9.6.0");
 

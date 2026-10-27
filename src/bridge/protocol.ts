@@ -160,7 +160,7 @@ export interface LastUpdate {
 	url?: string;
 	/** The extension build installed by this run: "What's new" shows once the browser runs it. */
 	extensionBuild?: string;
-	skills?: { refreshed: string[]; skipped: Array<{ skill: string; file: string; reason: string }> };
+	skills?: { refreshed: string[]; skipped: Array<{ skill: string; file: string; reason: string }>; error?: string };
 }
 
 /** What the last check found, and everything Settings > Updates shows. */
@@ -187,6 +187,10 @@ export interface HostUpdateStatus {
 	needsBuild?: boolean;
 	canRollback?: boolean;
 	rollbackTo?: string;
+	/** A build or release that is built and verified and waits to be activated. */
+	staged?: string;
+	/** An updater is running in the host right now. */
+	updating?: boolean;
 	location?: ExtensionLocation;
 	mismatch?: Mismatch;
 	lastUpdate?: LastUpdate;
@@ -211,10 +215,12 @@ export type UpdatePhase =
 /** One step of an update the host runs for the extension. */
 export interface HostUpdateProgress {
 	type: "update_progress";
-	action: UpdateAction | "reload";
+	action: UpdateAction | "reload" | "install";
 	phase: UpdatePhase;
 	message: string;
 	at: number;
+	/** Set on "done" when a build is staged: the extension sends "activate" once no agent runs. */
+	staged?: boolean;
 	/** Set on "done" when the extension should reload to run the new build. */
 	reload?: boolean;
 	/** The extension build now on disk, so the reload can tell it worked. */

@@ -79,8 +79,8 @@ export class UpdatesTab extends SettingsTab {
 				<div class="space-y-1">
 					<h3 class="text-lg font-semibold text-foreground">Updates</h3>
 					<p class="text-sm text-muted-foreground">
-						Tabkyra checks once a day. An update installs, then Tabkyra reloads itself when no agent is running in
-						any side panel or bridge session.
+						Tabkyra checks once a day. An update downloads or builds while you work, then installs and reloads
+						Tabkyra when no agent is running in any side panel or bridge session.
 					</p>
 				</div>
 
@@ -120,13 +120,23 @@ export class UpdatesTab extends SettingsTab {
 
 				<div class="flex gap-2 flex-wrap">
 					${Button({ size: "sm", variant: "secondary", children: "Check now", disabled: busy || !s, onClick: () => requestUpdate("check") })}
-					${Button({
-						size: "sm",
-						variant: "default",
-						children: "Update now",
-						disabled: busy || !s || !!s.blocked,
-						onClick: () => requestUpdate("update"),
-					})}
+					${
+						s?.staged
+							? Button({
+									size: "sm",
+									variant: "default",
+									children: `Install ${s.staged} now`,
+									disabled: busy,
+									onClick: () => requestUpdate("install"),
+								})
+							: Button({
+									size: "sm",
+									variant: "default",
+									children: "Update now",
+									disabled: busy || !s || !!s.blocked,
+									onClick: () => requestUpdate("update"),
+								})
+					}
 					${Button({
 						size: "sm",
 						variant: "outline",

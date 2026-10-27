@@ -85,7 +85,7 @@ test("version mismatch: a half-installed update, a stale extension, a stale host
 
 	const partial = diagnoseVersions({ extension: a, extensionOnDisk: b, location: "here", host: aCli, cliOnDisk: aCli });
 	assert.equal(partial.fix, "reinstall");
-	assert.match(partial.reason, /stopped partway/);
+	assert.match(partial.reason, /built from different commits/);
 
 	const stale = diagnoseVersions({ extension: a, extensionOnDisk: b, location: "here", host: bCli, cliOnDisk: bCli });
 	assert.equal(stale.fix, "reload");
@@ -114,6 +114,9 @@ test("automatic updates: only with the setting, only something new, never twice"
 	assert.equal(shouldAutoUpdate({ ...release, blocked: "local changes" }), false);
 	assert.equal(shouldAutoUpdate({ ...release, error: "offline" }), false);
 	assert.equal(shouldAutoUpdate({ ...release, mismatch: { fix: "reload", reason: "x" } }), false);
+	assert.equal(shouldAutoUpdate({ ...release, mismatch: { fix: "reinstall", reason: "x" } }), true, "the update rebuilds both anyway");
+	assert.equal(shouldAutoUpdate({ ...release, staged: "1.2.1" }), false, "already waiting to install");
+	assert.equal(shouldAutoUpdate({ ...release, updating: true }), false);
 	assert.equal(shouldAutoUpdate({ ...release, mode: "unmanaged" }), false);
 	assert.equal(shouldAutoUpdate(release, offerKey(release)), false, "a failed attempt is not retried");
 	assert.equal(shouldAutoUpdate(release, "release:1.2.0"), true);

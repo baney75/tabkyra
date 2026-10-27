@@ -58,7 +58,7 @@ function onExtensionMessage(message: ExtToHost): void {
 	switch (message.type) {
 		case "hello":
 			extensionReady = true;
-			noteHello(message);
+			noteHello(message, toExtension);
 			void sendStatus(toExtension);
 			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true });
 			// The extension restarted; re-announce every live client so it recreates sessions.

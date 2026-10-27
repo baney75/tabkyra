@@ -368,9 +368,20 @@ function readInstalledRecord(): Record<string, string> {
 	}
 }
 
-/** Remember the hash of what is in each of these files now (all written by Tabkyra). */
+/**
+ * Remember the hash of what is in each of these files now (all written by Tabkyra). Best effort:
+ * a record that can't be written only means a later refresh leaves those copies alone.
+ */
 function recordInstalled(files: string[]): void {
 	if (files.length === 0) return;
+	try {
+		writeInstalledRecord(files);
+	} catch {
+		/* a linked or unwritable config folder: refresh will skip these copies */
+	}
+}
+
+function writeInstalledRecord(files: string[]): void {
 	const record = readInstalledRecord();
 	for (const file of files) {
 		try {
