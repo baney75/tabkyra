@@ -152,7 +152,12 @@ Measured on 2026-10-26 (15 skills, after `visual-explainer` and `mechanism-desig
 set of 326 cases, top-1 93.2% (246 of 264) and false invokes 0% (0 of 62); 62 held-out
 cases, top-1 91.8% (45 of 49) and false invokes 7.7% (1 of 13). Adding skills raises every
 word's IDF, so a word held by three skills becomes evidence and a word held by one scores
-higher: the new skills' descriptions were worded so the existing none cases stay none.
+higher: the new skills' descriptions were worded so the existing none cases stay none. On the
+held-out cases written after tuning, `visual-explainer` routes 2 of 4 and `mechanism-design`
+4 of 4. Two measured near-misses are not in the case files: "Sketch my kitchen floor plan as
+a diagram" and "Explain photosynthesis as a diagram" both go to `visual-explainer` (the words
+diagram and plan or explain). Adding the first as a held-out none case would put held-out
+false invokes at 2 of 14, over the 10% floor.
 
 ## CI gates
 
