@@ -719,10 +719,10 @@ index 1f50a7d08..1da1213a3 100644
  		Input: "Eingabe",
 diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
 new file mode 100644
-index 000000000..0174992ff
+index 000000000..1b737448c
 --- /dev/null
 +++ b/packages/web-ui/src/utils/message-queue.ts
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,246 @@
 +import type { AgentMessage } from "@mariozechner/pi-agent-core";
 +import type { Attachment } from "./attachment-utils.js";
 +
@@ -746,8 +746,8 @@ index 000000000..0174992ff
 +
 +/**
 + * How a send went. "started": a prompt is running. "busy": another send or run got there
-+ * first, so the item waits for the next run's end. "refused": it can't go (no key, no model),
-+ * so the queue pauses with the item back on top.
++ * first, so the item goes back in its place and waits for the next chance. "refused": it can't
++ * go (no key, no model), so the item goes back in its place and is held until Send now or ×.
 + */
 +export type SendResult = "started" | "busy" | "refused";
 +
@@ -768,8 +768,11 @@ index 000000000..0174992ff
 +	private seq = 0;
 +	private nowSeq = 0;
 +	private draining = false;
-+	/** The page context last steered in this run, so the same note isn't steered twice. */
++	/** A drain was asked for while one ran; run again when it finishes. */
++	private drainAgain = false;
++	/** The page note steered but not yet injected, so the same note isn't steered twice. */
 +	private lastContext?: string;
++	private pendingContext: AgentMessage[] = [];
 +	/** Send now presses still building their page context; the drain waits for them to decide. */
 +	private sendNowPending = 0;
 +
@@ -837,6 +840,7 @@ index 000000000..0174992ff
 +			if (key && key !== this.lastContext) {
 +				for (const extra of context) this.agent.steer(extra);
 +				this.lastContext = key;
++				this.pendingContext = context;
 +			}
 +			this.agent.steer(message);
 +			this.items = this.items.map((q) => (q.id === id ? { ...q, steered: message, nowSeq } : q));
@@ -883,10 +887,16 @@ index 000000000..0174992ff
 +	onAgentStart(): void {
 +		this.running = true;
 +		this.lastContext = undefined;
++		this.pendingContext = [];
 +	}
 +
 +	/** A message the agent injected: a steered item is now in the transcript. */
 +	onMessageStart(message: AgentMessage): void {
++		// Once the note is in the transcript, the panel's own page check takes over from here.
++		if (this.pendingContext.includes(message)) {
++			this.lastContext = undefined;
++			this.pendingContext = [];
++		}
 +		if (!this.items.some((q) => q.steered === message)) return;
 +		this.items = this.items.filter((q) => q.steered !== message);
 +		this.changed();
@@ -896,6 +906,7 @@ index 000000000..0174992ff
 +	onAgentEnd(messages: AgentMessage[]): void {
 +		this.running = false;
 +		this.lastContext = undefined;
++		this.pendingContext = [];
 +		// A steer that arrived after the last turn is never injected. It was asked for first, so
 +		// it goes out first.
 +		this.agent.clearSteeringQueue();
@@ -918,7 +929,10 @@ index 000000000..0174992ff
 +
 +	/** Once the agent is idle, send the first item not held; the next waits for that run's end. */
 +	private async drain(): Promise<void> {
-+		if (this.draining) return;
++		if (this.draining) {
++			this.drainAgain = true;
++			return;
++		}
 +		this.draining = true;
 +		try {
 +			await this.agent.waitForIdle();
@@ -942,6 +956,11 @@ index 000000000..0174992ff
 +			}
 +		} finally {
 +			this.draining = false;
++			// Can't spin: a refused item is held, and a busy one waits on waitForIdle or a run.
++			if (this.drainAgain) {
++				this.drainAgain = false;
++				void this.drain();
++			}
 +		}
 +	}
 +

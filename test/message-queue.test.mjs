@@ -396,12 +396,11 @@ test("an item that comes back from a send stays behind items pressed meanwhile",
 	stop();
 	await settle(); // drain took x and is waiting on its send
 	await queue.sendNow(queue.items.find((q) => q.input === "y").id); // y pressed while x is out
-	finishSend();
+	finishSend(); // x comes back busy; it goes behind y, and the drain asked for by Send now runs
 	await settle();
-	assert.deepEqual(queue.items.map((q) => q.input), ["y", "x"]);
+	assert.deepEqual(queue.items.map((q) => q.input), ["x"], "y is out next, x waits behind it");
 	answer = "started";
-	queue["send"] = realSend;
-	queue.kick();
+	finishSend(); // y's send goes through
 	await settle();
 	assert.deepEqual(sent, ["y"]);
 });
@@ -418,4 +417,39 @@ test("the page note goes again when the page changed between two Send nows", asy
 	url = "https://b.example/";
 	await queue.sendNow(queue.items[2].id); // page changed: note again
 	assert.deepEqual(agent.steered.filter((m) => m.role === "navigation").map((m) => m.url), ["https://a.example/", "https://b.example/"]);
+});
+
+test("Send now pressed while the drain is mid-send isn't lost when that send is refused", async () => {
+	let answerX;
+	const { sent, queue, start, stop } = setup({ result: (item) => (item.input === "x" ? answerX : "started") });
+	const realSend = queue["send"];
+	let finishX;
+	queue["send"] = (item) => (item.input === "x" ? new Promise((r) => (finishX = () => r(realSend(item)))) : realSend(item));
+	start();
+	queue.add("x");
+	queue.add("y");
+	stop();
+	await settle(); // drain took x; its send waits on a key dialog
+	await queue.sendNow(queue.items.find((q) => q.input === "y").id); // asks for a drain while one runs
+	answerX = "refused"; // the user cancels the dialog
+	finishX();
+	await settle();
+	assert.deepEqual(sent, ["y"], "y still goes");
+	assert.equal(queue.paused, true, "x is held");
+});
+
+test("after the page note is injected, a later Send now on that page gets a note again if the agent moved away", async () => {
+	const noteA = () => ({ role: "navigation", url: "https://a.example/" });
+	let next = noteA();
+	const { agent, queue, start } = setup({ context: async () => [next] });
+	start();
+	queue.add("one");
+	queue.add("two");
+	await queue.sendNow(queue.items[0].id);
+	const first = agent.steered[0];
+	queue.onMessageStart(first); // note A injected
+	// the agent navigated to B, the tab came back to A: the panel's check returns a fresh note for A
+	next = noteA();
+	await queue.sendNow(queue.items[1].id);
+	assert.equal(agent.steered.filter((m) => m.role === "navigation").length, 2);
 });
