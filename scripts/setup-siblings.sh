@@ -12,6 +12,9 @@ mini_lit_rev="dee21bf1175de0cb16a946ba8fb62c1e590fbd3c"
 [ -d "$parent/pi-mono" ] || git clone https://github.com/badlogic/pi-mono.git "$parent/pi-mono"
 
 cd "$parent/pi-mono"
+# The patch can add files. Mark untracked ones intent-to-add so `git diff` shows them and an
+# applied patch compares equal to its own text.
+git ls-files -z --others --exclude-standard | xargs -0 git add --intent-to-add -- 2>/dev/null || true
 if ! git diff --quiet; then
 	if git apply --reverse --check "$here/patches/pi-mono.patch" 2>/dev/null; then
 		echo "pi-mono patch already applied"
@@ -25,7 +28,9 @@ if ! git diff --quiet; then
 			if [ -n "$old_patch" ] && [ "$old_patch" = "$current" ]; then
 				echo "pi-mono has an older patch (${rev:0:7}); updating it"
 				git -C "$here" show "$rev:patches/pi-mono.patch" | git apply --reverse
-				# The tree is clean again; make sure it sits on the pin before patching.
+				# Drop the intent-to-add entries of files the old patch added; the tree is clean again.
+				git reset -q
+				# Make sure it sits on the pin before patching.
 				git checkout -q "$pi_mono_rev"
 				git apply "$here/patches/pi-mono.patch"
 				upgraded=1
