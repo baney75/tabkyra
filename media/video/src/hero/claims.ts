@@ -154,13 +154,33 @@ export function catalogRunFrom(calls: Call[], refs: Record<string, string>, cata
 	const readBack = next("get_page_text of the confirmation", (c) => c.name === "get_page_text" && c.text.includes("Hold placed"));
 	// The sentence the read-back shows is the checked get_page_text call's own result, and it must
 	// name what the fills entered; the capture's cached copy, if present, must agree with it.
-	const confirmation = lineWith(pageTextOf(readBack, "confirmation"), /^Hold placed /, "hold confirmation");
-	if (!confirmation.includes(query)) throw new Error(`capture.json: the hold isn't for "${query}", the book searched`);
-	for (const fill of [fillCard, fillBranch]) {
-		const value = String(calls[fill].args.value ?? "");
-		if (!value || !confirmation.includes(value)) {
-			throw new Error(`capture.json: the confirmation doesn't name the filled value "${value}"`);
+	// Each action the shots show succeeded, by its own recorded result.
+	const result = (i: number): Record<string, unknown> => {
+		try {
+			return JSON.parse(calls[i].text) as Record<string, unknown>;
+		} catch {
+			throw new Error(`capture.json: call ${i} (${calls[i].name}) has no JSON result, so it didn't succeed`);
 		}
+	};
+	if (result(navigate).url !== catalogUrl) throw new Error("capture.json: the catalog navigate didn't land on the catalog");
+	if (result(type).typed !== query.length) throw new Error(`capture.json: the search didn't type "${query}"`);
+	for (const [i, what] of [[clickHold, "hold click"], [clickConfirm, "confirm click"]] as const) {
+		const at = result(i).clicked as { x?: unknown; y?: unknown } | undefined;
+		if (typeof at?.x !== "number" || typeof at?.y !== "number") throw new Error(`capture.json: the ${what} didn't click anything`);
+	}
+	for (const i of [fillCard, fillBranch]) {
+		const filled = result(i).filled as { ref?: unknown } | undefined;
+		if (filled?.ref !== calls[i].args.ref) throw new Error(`capture.json: the fill of ${calls[i].args.ref} didn't succeed`);
+	}
+	// The read-back names the book searched, the card name filled and the branch filled, in their places.
+	const confirmation = lineWith(pageTextOf(readBack, "confirmation"), /^Hold placed /, "hold confirmation");
+	const parts = confirmation.match(/^Hold placed for (.+?): (.+?)\. Pick it up at (.+?) after /);
+	if (!parts) throw new Error(`capture.json: the confirmation "${confirmation}" isn't a hold confirmation`);
+	const [, holder, title, branch] = parts;
+	const card = String(calls[fillCard].args.value ?? "");
+	const branchFill = String(calls[fillBranch].args.value ?? "");
+	if (title !== query || holder !== card || branch !== branchFill) {
+		throw new Error(`capture.json: the hold is for "${holder}", "${title}" at "${branch}", not "${card}", "${query}" at "${branchFill}"`);
 	}
 	if (cachedConfirmation !== undefined && cachedConfirmation.split("\n").at(-1) !== confirmation) {
 		throw new Error("capture.json: catalog.confirmation disagrees with the recorded read-back");
@@ -196,6 +216,10 @@ export function checkRouter(router: RouterCapture) {
 	if (!Number.isInteger(speed.matches) || speed.matches < 1) throw new Error(`router.json: ${speed.matches} timed matches`);
 	if (router.matches.length !== 4) throw new Error(`router.json: expected 4 matches, got ${router.matches.length}`);
 	const rows = router.matches.map((m) => {
+		// The typed command is the task, quoted the way scripts/demo/capture-router.mjs quotes it.
+		if (/[$`"\\!]/.test(m.task)) throw new Error(`router.json: "${m.task}" can't be shown with double quotes`);
+		const shown = `tabkyra skill match ${/^[\w@%+=:,./-]+$/.test(m.task) ? m.task : `"${m.task}"`}`;
+		if (m.shown !== shown) throw new Error(`router.json: "${m.task}" is shown as ${m.shown}, not ${shown}`);
 		if (m.code !== 0) throw new Error(`router.json: "${m.task}" exited ${m.code}`);
 		const none = m.out.match(/^·\s*none:\s*(.+)$/);
 		const hit = m.out.match(/^([a-z0-9][a-z0-9-]*)\s+(\d+(?:\.\d+)?)\s+(\S.*)$/);
@@ -212,6 +236,7 @@ export function checkRouter(router: RouterCapture) {
  */
 export function checkPrompt(
 	prompt: { enum: string[]; enumNames: string[] },
+	message: string,
 	answer: string | undefined,
 	allowedHosts: string[],
 	host: string,
@@ -221,6 +246,9 @@ export function checkPrompt(
 		throw new Error(`capture.json: the recorded answer ${answer} isn't one of the prompt's choices`);
 	}
 	if (!answer?.startsWith("allow")) throw new Error(`capture.json: the recorded answer is ${answer}, not an allow`);
+	if (!message.includes(host) || (answer === "allow_host" && !prompt.enumNames[picked].includes(host))) {
+		throw new Error(`capture.json: the prompt answered isn't the one for ${host}`);
+	}
 	if (!allowedHosts.includes(host)) throw new Error(`capture.json: ${host} isn't in the allowed sites after the answer`);
 	return { picked, label: prompt.enumNames[picked] };
 }

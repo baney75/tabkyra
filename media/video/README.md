@@ -70,9 +70,11 @@ the made-up DOI's refusal line and non-zero exit, the retraction lines and exit 
 errors (each naming a line of the shown skill file) and non-zero exit, the shipped skills'
 "✓ Clean." with no errors and exit 0, the catalog calls, found by content in recorded order, each
 acting on the latest recorded `read_page`, with the `//` labels on the two clicks taken from that
-snapshot's button names, the search text against the recorded results, the read-back sentence (the recorded `get_page_text` result, naming both
-filled values), the prompt choice the run answered, and the router's p95 (under 1 ms) and each
-row's routed skill, parsed from the recorded output. The checks live in `src/hero/claims.ts`, and
+snapshot's button names, the search text against the recorded results, each action's own recorded result (navigate,
+type, click and fill all succeeded), the read-back sentence (the recorded `get_page_text`
+result, with the book searched, the card name and the branch filled in their places), the
+prompt choice the run answered (for the book's site), and the router's p95 (under 1 ms) and
+each row's command (the recorded task, quoted as the capture quotes it) and routed skill, parsed from the recorded output. The checks live in `src/hero/claims.ts`, and
 the scenes show what it returns. `src/hero/heroClaims.ts` runs them when Hero, HeroVertical or
 HeroPoster renders, so a recording that doesn't back a claim fails those renders while the Demo
 composition and Studio still load. `npm test` runs the same checks on the real capture and on

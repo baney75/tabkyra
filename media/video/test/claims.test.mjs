@@ -13,6 +13,7 @@ const catalog = (c) => catalogRunFrom(c.browser.calls, c.browser.catalog.refs, c
 const prompt = (c) =>
 	checkPrompt(
 		c.browser.permissionPrompt.requestedSchema.properties.decision,
+		c.browser.permissionPrompt.message,
 		c.browser.permissionAnswer,
 		c.browser.statusAfter.allowedHosts,
 		new URL(c.browser.book.url).hostname,
@@ -136,7 +137,7 @@ test("a read-back that doesn't name what was filled fails the render", () => {
 	page.text = page.text.replace("Main Street", "Riverside");
 	call.text = JSON.stringify(page);
 	c.browser.catalog.confirmation = page.text;
-	assert.throws(() => catalog(c), /doesn't name the filled value "Main Street"/);
+	assert.throws(() => catalog(c), /at "Riverside", not "Ada Lovelace", "Moby-Dick" at "Main Street"/);
 });
 
 test("a read-back with no confirmation sentence fails the render", () => {
@@ -212,4 +213,56 @@ test("a search for another book than the recorded results fails the render", () 
 	const c = copy();
 	c.browser.calls.find((x) => x.name === "type").args.text = "Hamlet";
 	assert.throws(() => catalog(c), /results aren't for "Hamlet"/);
+});
+
+const setReadBack = (c, sentence) => {
+	const call = c.browser.calls[readBackIndex(c)];
+	const page = JSON.parse(call.text);
+	page.text = page.text.replace(/Hold placed .*$/m, sentence);
+	call.text = JSON.stringify(page);
+	c.browser.catalog.confirmation = page.text;
+};
+
+test("a hold on the other 'Place hold' button (the graphic novel) fails the render", () => {
+	const c = copy();
+	setReadBack(c, "Hold placed for Ada Lovelace: Moby-Dick: A Graphic Novel. Pick it up at Main Street after Thursday.");
+	assert.throws(() => catalog(c), /"Moby-Dick: A Graphic Novel"/);
+});
+
+test("a read-back with the name and branch swapped, or a partial fill, fails the render", () => {
+	const c = copy();
+	setReadBack(c, "Hold placed for Main Street: Moby-Dick. Pick it up at Ada Lovelace after Thursday.");
+	assert.throws(() => catalog(c), /the hold is for "Main Street"/);
+	const d = copy();
+	d.browser.calls.find((x) => x.name === "fill").args.value = "Ada";
+	assert.throws(() => catalog(d), /not "Ada", "Moby-Dick"/);
+});
+
+test("a failed fill, click, type or navigate fails the render", () => {
+	const fail = (pick, text, re) => {
+		const c = copy();
+		pick(c.browser.calls).text = text;
+		assert.throws(() => catalog(c), re);
+	};
+	fail((calls) => calls.filter((x) => x.name === "fill")[1], '{"error":"Element not found; action failed"}', /fill of e2 didn't succeed/);
+	fail((calls) => calls.filter((x) => x.name === "click")[1], "Element not found; action failed", /no JSON result/);
+	fail((calls) => calls.find((x) => x.name === "type"), '{"typed":0}', /didn't type "Moby-Dick"/);
+	fail((calls) => calls.find((x) => x.name === "navigate"), '{"error":"timeout"}', /didn't land on the catalog/);
+});
+
+test("a router command that isn't the recorded task fails the render", () => {
+	const r = structuredClone(realRouter);
+	r.matches[0].shown = "tabkyra skill match /osint";
+	assert.throws(() => checkRouter(r), /is shown as tabkyra skill match \/osint/);
+	const r2 = structuredClone(realRouter);
+	r2.matches[2].shown = 'tabkyra skill match "use the osint skill"';
+	assert.throws(() => checkRouter(r2), /is shown as/);
+});
+
+test("a prompt for another site fails the render", () => {
+	const c = copy();
+	const p = c.browser.permissionPrompt;
+	p.message = p.message.replace("www.gutenberg.org", "example.com");
+	p.requestedSchema.properties.decision.enumNames[0] = "Allow example.com from now on";
+	assert.throws(() => prompt(c), /isn't the one for www.gutenberg.org/);
 });

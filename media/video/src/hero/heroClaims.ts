@@ -14,6 +14,7 @@ const compute = () => {
 		router: checkRouter(router),
 		prompt: checkPrompt(
 			b.permissionPrompt.requestedSchema.properties.decision,
+			b.permissionPrompt.message,
 			b.permissionAnswer,
 			b.statusAfter.allowedHosts,
 			new URL(b.book.url).hostname,

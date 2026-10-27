@@ -91,8 +91,9 @@ Both cuts share the timeline. The vertical cut stacks what the wide cut places s
   (B59). The calls are found by content in the recorded order (`catalogRunFrom` in `src/hero/claims.ts`);
   the `//` labels on the two clicks ("Place hold", "Confirm hold") are the button names in the
   recorded `read_page` the agent acted on, where the filled refs must be its textbox and
-  combobox. The read-back sentence is the recorded `get_page_text` result itself and must name both
-  filled values. The render fails if a step is missing.
+  combobox. The read-back sentence is the recorded `get_page_text` result itself and must name the book
+  searched, the card name and the branch filled, in their places; each action's own result must
+  show it succeeded. The render fails if a step is missing.
 - **Out:** cut on B61.
 
 ## 8. Refused (B61–B71, 29.15–34.36 s)
