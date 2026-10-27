@@ -331,7 +331,9 @@ const SESSION_TASKS = [
 				),
 			]);
 			const run = combine([shop, contact]);
-			const leak = shop.toolText.match(/.{0,120}\/contact.{0,60}/) ?? contact.toolText.match(/.{0,120}\/(shop|cart)\b.{0,60}/);
+			// Only this fixture's own pages count: a skill's worked example can name /contact too.
+			const host = site.replace(/^https?:\/\//, "").replaceAll(".", "\\.");
+			const leak = shop.toolText.match(new RegExp(`.{0,120}${host}/contact.{0,60}`)) ?? contact.toolText.match(new RegExp(`.{0,120}${host}/(shop|cart)\\b.{0,60}`));
 			run.crossTalk = Boolean(leak);
 			run.crossTalkEvidence = leak?.[0];
 			run.shopAnswer = shop.answer;
