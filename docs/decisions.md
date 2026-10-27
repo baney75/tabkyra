@@ -198,7 +198,9 @@ The owner asked for a `visual-explainer` skill adapted from nicobailon/visual-ex
   and kept as text in the page.
 - **Upstream's checks are replaced by Tabkyra's**: serve the page's own folder,
   `navigate`, start `read_console` and `read_network` and reload, `screenshot`, and
-  `run_js` checks for captions, SVG labels, inline event attributes and 375px overflow.
+  `run_js` checks for captions, SVG labels, the script count and 375px overflow. The page's
+  Content-Security-Policy (first in head: `default-src 'none'`, `script-src 'none'` or the
+  SHA-256 of its one script) is the control that blocks injected script; a check confirms it.
 - **Link the mechanism dataset, never bundle it.** Its images were scraped from a YouTube
   channel, DMG-lib and Artobolevsky's book, partly under copyright, and its code repository
   states no license. `mechanism-design` cites the paper and points to the repository as a

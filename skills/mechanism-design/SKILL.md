@@ -10,8 +10,8 @@ A picture of a mechanism is not a design. A design is link lengths, joint types 
 motion check that passed. Ghezelbash, Eskandari and Bidhendi (2024) fine-tuned Stable
 Diffusion on 8,994 mechanism sketches: its 3D sketches roughly matched the prompts, its 2D
 schematics were mostly incoherent, and it invented unrelated parts on some prompts. Their
-fine-tuned BLIP-2 captions were mostly wrong, and the paper reports no quantitative metrics. Use images
-for ideas only. Verify kinematics by calculation or in CAD.
+fine-tuned BLIP-2 captions were mostly wrong, and the paper reports no quantitative
+metrics. Use images for ideas only; verify kinematics by calculation or in CAD.
 
 ## When to use
 
@@ -25,7 +25,7 @@ for ideas only. Verify kinematics by calculation or in CAD.
 
 1. **Pin the motion.** Write: input (motor rotation, hand lever, linear actuator), output
    (angle, stroke, dwell), speed, load, size limit, and how it is made (FDM print, metal).
-   Ask the user only for a number that changes the choice.
+   Ask only for a number that changes the choice.
 2. **Pick a family.**
 
    | Need | Family |
@@ -51,8 +51,9 @@ for ideas only. Verify kinematics by calculation or in CAD.
    (pin), P (slider), or a half joint (cam contact, gear mesh, pin in slot).
 5. **Count mobility.** Planar Gruebler-Kutzbach: M = 3(n - 1) - 2 j1 - j2, with n links
    including ground, j1 full joints, j2 half joints. One motor needs M = 1. If M is 0 or
-   less, it locks; if M is 2, it needs a second input. Spatial, with jk the joints that
-   allow k freedoms: M = 6(n - 1) - 5 j1 - 4 j2 - 3 j3 - 2 j4 - j5.
+   less, it locks; M = 2 needs a second input. Subtract passive freedoms (a roller on its
+   pin); parallel links can move at M = 0, so check them in CAD. Spatial (jk = joints with
+   k freedoms): M = 6(n - 1) - 5 j1 - 4 j2 - 3 j3 - 2 j4 - j5.
 6. **Dimension it.**
    - Four-bar (s shortest, l longest, p and q the others): Grashof when s + l <= p + q,
      so one link turns fully. Crank-rocker when s is next to ground; double-crank when s is
@@ -70,10 +71,9 @@ for ideas only. Verify kinematics by calculation or in CAD.
      distance = module x (N1 + N2) / 2; at least 17 teeth at 20 degrees pressure angle
      to avoid undercut. Keep one spur stage at about 6:1 or less; for more, add stages and
      multiply their ratios.
-   - Ratchet: put the pawl pivot on or near the tangent to the wheel at the tooth tip.
-     Shape the tooth face so its normal at the contact point passes between the pawl pivot
-     and the wheel center; then load pulls the pawl in. Check it on the sketch, and add a
-     spring that holds the pawl engaged.
+   - Ratchet: pawl pivot on or near the tangent at the tooth tip; tooth face shaped so its
+     contact normal passes between pawl pivot and wheel center, so load pulls the pawl in.
+     Check on the sketch; a spring keeps the pawl engaged.
 7. **Check the motion by calculation.** Sweep the input range actually used (a full turn
    for a motor crank, the servo or lever travel otherwise) in 1-degree steps in a short
    script: z^2 = a^2 + d^2 - 2 a d cos t, then cos mu from step 6. If the absolute value of
@@ -103,10 +103,10 @@ for ideas only. Verify kinematics by calculation or in CAD.
 
 | Symptom | Fix |
 | --- | --- |
-| mu drops below 40 degrees | Shorten the crank or lengthen the coupler, then sweep again |
+| mu outside 40-140 degrees | Shorten the crank, or set b^2 + c^2 near a^2 + d^2; keep Grashof; sweep again |
 | Does not assemble inside the used range | Change lengths and redo step 6 |
-| Gear teeth undercut | Use more teeth or a profile shift |
-| Printed joint binds | Add clearance; print pins separately and lay them flat |
+| Gear teeth undercut | More teeth or a profile shift |
+| Printed joint binds | More clearance; print pins flat, separately |
 
 ## Worked example
 

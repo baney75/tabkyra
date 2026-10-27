@@ -25,10 +25,9 @@ For a report, dashboard or comparison built from data or research, use `artifact
 1. **Gather facts:** for a branch `git diff --stat main...HEAD` and `--name-status` (the
    user's base), for a PR `gh pr diff <n>`, for uncommitted work `git diff`; then changed
    functions, callers, tests. Cite `path:line`; never invent a reason.
-2. **Write the answer in one sentence.** It opens the page.
+2. **Write the one-sentence answer** that opens the page.
 3. **Pick the page shape.** How it works: question, overview, stepper, edge cases. Diff
-   review: verdict, file map, before/after, risks. Plan: the change drawn, 2-5 claims,
-   decisions with your default.
+   review: verdict, file map, before/after, risks. Plan: the change, 2-5 claims, decisions.
 4. **Pick one figure per claim**; its caption states the claim.
 
    | Content | Figure |
@@ -43,7 +42,7 @@ For a report, dashboard or comparison built from data or research, use `artifact
    line (`tspan` for more). Each arrow gets a verb ("writes"). Rectangle =
    service, cylinder = datastore, dashed = optional. Over 12 nodes: overview plus details.
 6. **Build one page:** inline CSS, an `@media print` block, no outside scripts, fonts or
-   images; Content-Security-Policy meta `default-src 'none'; style-src
+   images; first in head, the Content-Security-Policy meta `default-src 'none'; style-src
    'unsafe-inline'; script-src 'none'; frame-src 'self'`.
    - No Mermaid: redraw its source as SVG; keep the source as text in `details`.
    - One accent color on 10% of the page or less. Status colors (green, red, amber, blue)
@@ -52,14 +51,14 @@ For a report, dashboard or comparison built from data or research, use `artifact
      no gradient text, glass, emoji or centered body text; code scrolls sideways.
 7. **Motion only for change or flow.** A stepper has Back, Next and a step count, opens on
    the last step, never autoplays, and only shows or hides steps already in the page. One
-   inline script wires buttons with addEventListener, no on* attributes. Write its body to
-   `body.js`, paste it byte for byte, and set `script-src 'sha256-<hash>'` from
+   inline script wires buttons with addEventListener, no on* attributes. Write its body
+   with `printf '%s'` to `body.js` in a new `mktemp -d` folder, paste it byte for byte, and set `script-src 'sha256-<hash>'` from
    `openssl dgst -sha256 -binary body.js | base64`. Animate transform, opacity or
    stroke-dashoffset; reduced motion and print show the end.
 8. **Accessible:** each diagram in a `figure` with a `figcaption`; each SVG with
    `role="img"` and `aria-label`; contrast 4.5:1.
 9. **Serve a copy:** save the page where the user wants it, copy it as `explainer.html`
-   into a new `mktemp -d` folder, and run in the background (it prints "Serving HTTP"):
+   into that folder (or a new `mktemp -d`), and run in the background (it prints "Serving HTTP"):
    `python3 -m http.server 8765 --bind 127.0.0.1 --directory <folder>`
 10. **Open it with capture on:** `navigate {"url":"http://127.0.0.1:8765/explainer.html"}`
     (title "Error response": wrong path; another title: another server, use 8766),
@@ -70,16 +69,16 @@ For a report, dashboard or comparison built from data or research, use `artifact
     - `read_console {"onlyErrors":true}` is empty.
     - `read_network {}` lists the page and nothing from another host or port. No page in
       the list: capture failed; redo step 10 in a `tabs_create` tab or say so.
-    - `run_js {"code":"document.querySelectorAll('script').length+' scripts; '+document.querySelectorAll('figure:not(:has(figcaption)),svg:not([role=img][aria-label])').length+' unlabeled; '+document.querySelector('meta[http-equiv=Content-Security-Policy]')?.content"}`:
+    - `run_js {"code":"document.querySelectorAll('script').length+' scripts; '+document.querySelectorAll('figure:not(:has(figcaption)),svg:not([role=img][aria-label])').length+' unlabeled; '+document.head.firstElementChild.content"}`:
       scripts equal what you wrote (0 or 1), 0 unlabeled, and the policy has
-      `default-src 'none'` and no `unsafe-inline` in script-src.
+      `default-src 'none'`, `frame-src 'self'`, no `unsafe-inline`.
     - `run_js {"code":"[...document.styleSheets].some(s=>[...s.cssRules].some(r=>r.media&&r.media.mediaText.includes('print')))"}` is true.
-    - Stepper: Back, screenshot, Next, screenshot; they differ (this also proves the hash).
+    - Stepper: Back, screenshot, Next, screenshot; they differ (proves the hash).
     - Narrow, last: `run_js {"code":"(()=>{const f=document.createElement('iframe');f.onload=()=>{const d=f.contentDocument.documentElement;f.dataset.w=d.scrollWidth-d.clientWidth};f.src=location.href;f.style.cssText='width:375px;height:700px';document.body.replaceChildren(f);return 1})()"}`,
-      `screenshot {}`, then `run_js {"code":"document.querySelector('iframe').dataset.w"}` is 0 (empty: read again).
+      `screenshot {}`, then `run_js {"code":"document.querySelector('iframe').dataset.w"}` is 0 (empty: retry 3 times, then report not run).
 12. **Fix and recheck**, two rounds at most: edit the saved file, copy it over the served
-    copy, redo step 10. No `overflow-x: hidden` on html or body. Stop the server, `rm -r`
-    the temp folder, `tabs_close {"tabId":123}` each tab you opened, hand over path and answer.
+    copy, redo steps 10-11. No `overflow-x: hidden` on html or body. Stop the server, `rm -r`
+    the temp folder, `tabs_close {"tabId":N}` for each tab you opened, hand over path and answer.
 
 ## Done when
 
@@ -90,7 +89,6 @@ For a report, dashboard or comparison built from data or research, use `artifact
 
 | Symptom | Fix |
 | --- | --- |
-| Labels overlap | Widen columns or split the label with a `tspan` |
 | Wider than 375px | Wrap the SVG in a sideways-scrolling box, min width 640px |
 
 ## Safety
@@ -99,7 +97,8 @@ For a report, dashboard or comparison built from data or research, use `artifact
 - Escape `&`, `<`, `>`, `"` and `'` in all text from code, diffs and commits, in element
   text and attributes. Links from it must be `https://` or `http://`, else plain text.
   Scripts never use innerHTML, insertAdjacentHTML or document.write.
-- Write `[redacted]` for any key, token, password or connection string in a diff.
+- Write `[redacted]` for any key, token, password or connection string from code, diffs,
+  commits, logs or config.
 
 ## Worked example
 
