@@ -14,6 +14,11 @@ declare module "@mariozechner/mini-lit" {
 		messages: string;
 		Delete: string;
 		"Loading...": string;
+		"Error loading document": string;
+		"Error loading spreadsheet": string;
+		"Failed to load spreadsheet": string;
+		"Preview not available for this file type.": string;
+		"Click the download button above to view it on your computer.": string;
 
 		// Tabkyra extension keys
 		// Custom provider dialog
@@ -127,6 +132,26 @@ declare module "@mariozechner/mini-lit" {
 		"Update Required": string;
 		"A new version ({version}) is available. Please update to continue.": string;
 		"Update Now": string;
+
+		// Artifact previews (src/artifacts/)
+		"Error loading media": string;
+		"Error loading notebook": string;
+		"Error loading presentation": string;
+		"Error loading table": string;
+		"Hidden slide": string;
+		"Save it as {format} to preview it, or download it to open it on your computer.": string;
+		"Table or raw text": string;
+		"This browser can't play {filename}. Download it to play it elsewhere.": string;
+		"This notebook has no cells.": string;
+		"This presentation has no slides.": string;
+		"This {type} can't be previewed here.": string;
+		"Truncated for display": string;
+		"showing the first {count}": string;
+		"{cols} columns": string;
+		"{count} slides": string;
+		"1 slide": string;
+		"{rows} rows": string;
+		"columns after {count} not shown": string;
 	}
 }
 
@@ -257,6 +282,26 @@ const tabkyraTranslations = {
 		"A new version ({version}) is available. Please update to continue.":
 			"A new version ({version}) is available. Please update to continue.",
 		"Update Now": "Update Now",
+		"Error loading media": "Error loading media",
+		"Error loading notebook": "Error loading notebook",
+		"Error loading presentation": "Error loading presentation",
+		"Error loading table": "Error loading table",
+		"Hidden slide": "Hidden slide",
+		"Save it as {format} to preview it, or download it to open it on your computer.":
+			"Save it as {format} to preview it, or download it to open it on your computer.",
+		"Table or raw text": "Table or raw text",
+		"This browser can't play {filename}. Download it to play it elsewhere.":
+			"This browser can't play {filename}. Download it to play it elsewhere.",
+		"This notebook has no cells.": "This notebook has no cells.",
+		"This presentation has no slides.": "This presentation has no slides.",
+		"This {type} can't be previewed here.": "This {type} can't be previewed here.",
+		"Truncated for display": "Truncated for display",
+		"showing the first {count}": "showing the first {count}",
+		"{cols} columns": "{cols} columns",
+		"{count} slides": "{count} slides",
+		"1 slide": "1 slide",
+		"{rows} rows": "{rows} rows",
+		"columns after {count} not shown": "columns after {count} not shown",
 	},
 	de: {
 		"A custom provider with that name already exists": "A custom provider with that name already exists",
@@ -386,6 +431,26 @@ const tabkyraTranslations = {
 		"A new version ({version}) is available. Please update to continue.":
 			"Eine neue Version ({version}) ist verfügbar. Bitte aktualisieren Sie, um fortzufahren.",
 		"Update Now": "Jetzt aktualisieren",
+		"Error loading media": "Fehler beim Laden der Mediendatei",
+		"Error loading notebook": "Fehler beim Laden des Notebooks",
+		"Error loading presentation": "Fehler beim Laden der Präsentation",
+		"Error loading table": "Fehler beim Laden der Tabelle",
+		"Hidden slide": "Ausgeblendete Folie",
+		"Save it as {format} to preview it, or download it to open it on your computer.":
+			"Speichern Sie die Datei als {format}, um sie in der Vorschau zu sehen, oder laden Sie sie herunter, um sie auf Ihrem Computer zu öffnen.",
+		"Table or raw text": "Tabelle oder Rohtext",
+		"This browser can't play {filename}. Download it to play it elsewhere.":
+			"Dieser Browser kann {filename} nicht abspielen. Laden Sie die Datei herunter, um sie anderswo abzuspielen.",
+		"This notebook has no cells.": "Dieses Notebook hat keine Zellen.",
+		"This presentation has no slides.": "Diese Präsentation hat keine Folien.",
+		"This {type} can't be previewed here.": "Für diese Datei ({type}) gibt es hier keine Vorschau.",
+		"Truncated for display": "Für die Anzeige gekürzt",
+		"showing the first {count}": "die ersten {count} werden angezeigt",
+		"{cols} columns": "{cols} Spalten",
+		"{count} slides": "{count} Folien",
+		"1 slide": "1 Folie",
+		"{rows} rows": "{rows} Zeilen",
+		"columns after {count} not shown": "Spalten nach {count} nicht angezeigt",
 	},
 };
 

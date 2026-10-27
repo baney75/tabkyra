@@ -151,6 +151,7 @@ src/
   storage/              # IndexedDB storage (sessions, skills, costs)
   prompts/              # System prompt and token counting
   components/           # UI components (Toast, TabPill, HelmMark, helm-svg, AgentSetupPrompt)
+  artifacts/            # Artifact previews (pptx, spreadsheets, CSV, media, notebooks, ODF, RTF); viewers.ts plugs them into pi-web-ui
 test/                   # Extension tests (node --test): auth policy, privacy, setup prompt, custom elements
 skills/                 # Bundled agent skills, one SKILL.md per folder, compiled into the CLI
 cli/

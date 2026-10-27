@@ -132,6 +132,24 @@ const stripRemovedSignIns = {
 	},
 };
 
+/**
+ * marked's ES module entry: Tabkyra's own copy (package.json), which mini-lit's MarkdownBlock shares.
+ * Its package.json "browser" field points at a UMD build, so the module entry is named directly.
+ */
+function markedEntry() {
+	const candidates = [
+		join(packageRoot, "node_modules/marked"),
+		join(packageRoot, "node_modules/@mariozechner/mini-lit/node_modules/marked"),
+	];
+	for (const dir of candidates) {
+		const pkgPath = join(dir, "package.json");
+		if (!existsSync(pkgPath)) continue;
+		const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+		return join(dir, pkg.module ?? pkg.main);
+	}
+	throw new Error("marked not found; run scripts/setup-siblings.sh");
+}
+
 const buildOptions = {
 	plugins: [stripRemovedSignIns],
 	absWorkingDir: packageRoot,
@@ -166,6 +184,13 @@ const buildOptions = {
 		"@mariozechner/pi-ai": join(packageRoot, "../pi-mono/packages/ai/src/index.ts"),
 		"@mariozechner/pi-agent-core": join(packageRoot, "../pi-mono/packages/agent/src/index.ts"),
 		"@mariozechner/pi-web-ui": join(packageRoot, "../pi-mono/packages/web-ui/src/index.ts"),
+		// The notebook preview (src/artifacts) and mini-lit's MarkdownBlock share one copy of marked.
+		marked: markedEntry(),
+		// One copy each of SheetJS and JSZip for pi-web-ui and src/artifacts: Tabkyra's own, the
+		// copies test/artifact-previews.test.mjs exercises. highlight.js stays on pi-web-ui's copy.
+		xlsx: join(packageRoot, "node_modules/xlsx"),
+		jszip: join(packageRoot, "node_modules/jszip"),
+		"highlight.js": join(packageRoot, "../pi-mono/node_modules/highlight.js"),
 		lit: join(packageRoot, "node_modules/lit"),
 		"lit/decorators.js": join(packageRoot, "node_modules/lit/decorators.js"),
 		"lit/directives/class-map.js": join(packageRoot, "node_modules/lit/directives/class-map.js"),
