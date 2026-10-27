@@ -126,21 +126,28 @@ builds it in. The secret half exists in two places only:
 To cut a release, run `./release.sh patch` on a clean, up-to-date main. Then, on a machine
 with the CLI, `tabkyra update --check` exits 100 and `tabkyra update` installs it.
 
-### Rotating the key
+Before the first tag after any change to the secret or the public key, prove they are a pair
+with the real minisign: `gh workflow run release-key-check.yml --repo baney75/tabkyra`. It
+signs a scratch file and verifies it against `keys/tabkyra-release.pub`, and publishes nothing.
 
-If the key ever leaks, or to replace it:
+### Rotating the key (not supported yet)
 
-1. Make a new pair on your Mac, outside any repo. `minisign` is a Homebrew formula.
-   ```sh
-   minisign -G -W -p tabkyra-release.pub -s tabkyra-release.key
-   ```
-2. Replace the Proton Pass note and the repository secret with the new secret key:
-   `gh secret set MINISIGN_SECRET_KEY --repo baney75/tabkyra < tabkyra-release.key`.
-3. Replace `keys/tabkyra-release.pub` in a PR, and ship it in a release signed by the old
-   key, so users on older CLIs pick up the new key when they install that release.
-4. Delete the local secret key file (`rm tabkyra-release.key`).
+The CLI trusts exactly one built-in public key, and `release.yml` verifies each release
+against the one key committed at that tag. So there is no clean rotation today:
 
-Revoke a leaked key by deleting the secret and publishing nothing more under it.
+- A release signed with a new key is refused by every installed CLI, which only knows the
+  old key.
+- A "transition" release signed with the old key while shipping the new public key fails
+  `release.yml`'s own verify step, which checks against the key in that commit.
+
+Until the CLI and the workflow accept a list of trusted keys (issue #33),
+replacing the key means every user reinstalls Tabkyra from a trusted channel. Keep the
+current secret in both places; don't replace either unless you mean to make users reinstall.
+
+**If the key leaks:** delete the repository secret so you stop signing with it, and publish
+nothing more. That doesn't revoke it. Every installed CLI keeps trusting the leaked key, and
+whoever holds it can sign a release those CLIs accept. Tell users to reinstall from a trusted
+channel with a CLI that carries a new key. There is no revocation or expiry yet.
 
 ## Tests
 
