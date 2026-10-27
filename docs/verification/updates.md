@@ -10,8 +10,8 @@ The native host was registered from the checkout under an isolated HOME; the ext
 loaded from the checkout's `dist-chrome` into Playwright's headless Chromium (Chrome for
 Testing 156). A mock model held an agent run open on demand.
 
-Steps and results (20 of 20 passed; run after review round 1 changed the flow to build first
-and install when idle):
+Steps and results (20 of 20 passed; rerun on 8d6642a, after review round 2 added the install
+gate, journaled swaps and the panel heartbeat):
 
 - The panel shows "Update available: 1 new commit on main" with Update now.
 - Settings > Updates: mode "Git checkout", "1 new commit on origin/main", the updates choice
