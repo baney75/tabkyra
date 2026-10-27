@@ -337,6 +337,8 @@ export function completionScript(shell: string): string | undefined {
 		}
 		lines.push(
 			"  esac",
+			"  # Where a path goes, a word without a dash completes as a file name, not as a flag.",
+			'  if [ "$paths" = 1 ] && [[ "$cur" != -* ]]; then return; fi',
 			'  COMPREPLY=( $(compgen -W "$words" -- "$cur") )',
 			"  # File names only where the command takes a path (compopt needs bash 4; older bash keeps them).",
 			'  [ "$paths" = 1 ] || compopt +o default 2>/dev/null',

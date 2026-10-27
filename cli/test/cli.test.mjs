@@ -138,6 +138,9 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.match(withCompopt("tabkyra mcp"), /compopt \+o default/);
 	assert.match(withCompopt("tabkyra token revoke"), /compopt \+o default/);
 	assert.doesNotMatch(withCompopt("tabkyra skill apply"), /compopt/);
+	// ...and an empty word there gets file names (nothing from the script), not just "--yes".
+	assert.match(withCompopt("tabkyra skill apply"), /R:$/);
+	assert.match(withCompopt("tabkyra library obsidian"), /R:$/);
 	assert.match(withCompopt("tabkyra update --channel"), /R:stable nightly$/);
 	assert.match(withCompopt("tabkyra tunnel tailscale --port"), /R:$/);
 	if (spawnSync("zsh", ["--version"]).status === 0) assert.equal(spawnSync("zsh", ["-n"], { input: zsh.out }).status, 0, "zsh script has a syntax error");
