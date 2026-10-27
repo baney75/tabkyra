@@ -1,7 +1,7 @@
 import { startBridge, trace } from "./bridge/native.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
-import { startUpdateWorker } from "./update/worker.js";
+import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
 
 // Keep popups opened by agent-driven background tabs from stealing the user's focus.
 startForegroundGuard();
@@ -51,6 +51,8 @@ const panelPathCache = new Map<number, string | undefined>();
  */
 const pendingOpen = new Map<number, ReturnType<typeof setTimeout>>();
 const PENDING_OPEN_MS = 10_000;
+// The update worker waits for these before it reloads Tabkyra (src/update/worker.ts).
+setPanelsOpening(() => pendingOpen.size);
 
 function clearPendingOpen(tabId: number): void {
 	const timer = pendingOpen.get(tabId);

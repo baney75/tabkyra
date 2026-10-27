@@ -43,6 +43,10 @@ test("the idle gate waits for side panel runs and bridge requests", () => {
 	const now = 1_000_000;
 	const quiet = { now, busyPanels: 0, lastPanelRunAt: 0, bridge: [] };
 	assert.deepEqual(idleGate(quiet), { idle: true });
+	// A side panel that is opening (#36's pending-open marker) would be closed by a reload.
+	const opening = idleGate({ ...quiet, panelsOpening: 1 });
+	assert.equal(opening.idle, false);
+	assert.match(opening.reason, /side panel is opening/);
 
 	const panel = idleGate({ ...quiet, busyPanels: 1 });
 	assert.equal(panel.idle, false);

@@ -17,8 +17,11 @@
 export const INSTALL_GATE_LOCK = "tabkyra-update-install";
 /** chrome.storage.session: { at, action } while an install or rollback may be changing files. */
 export const INSTALL_FENCE_KEY = "tabkyra.installFence";
-/** A gate or fence older than this is let go (a stuck install must not block runs forever). */
-export const INSTALL_GATE_MAX_MS = 10 * 60 * 1000;
+/**
+ * A gate or fence older than this is let go (a stuck install must not block runs forever). Longer
+ * than the worker's give-up limit for an install or rollback (10 min) plus its reload retries.
+ */
+export const INSTALL_GATE_MAX_MS = 15 * 60 * 1000;
 /** chrome.storage.session: the side panel's heartbeat while a run goes, per window. */
 export const BUSY_BEAT_PREFIX = "sidepanel_busy_beat_";
 /**
@@ -63,5 +66,14 @@ export async function reserveRun(markBusy: () => Promise<void>): Promise<boolean
 	const state = await navigator.locks.query();
 	if (state.held?.some((l) => l.name === INSTALL_GATE_LOCK && l.mode === "exclusive") || (await fenced()))
 		return false;
-	return navigator.locks.request(INSTALL_GATE_LOCK, { mode: "shared" }, (lock) => take(lock)());
+	// Wait a few seconds at most: if the worker gets the lock first, the text goes back to the editor.
+	try {
+		return await navigator.locks.request(
+			INSTALL_GATE_LOCK,
+			{ mode: "shared", signal: AbortSignal.timeout(3000) },
+			(lock) => take(lock)(),
+		);
+	} catch {
+		return false;
+	}
 }

@@ -69,6 +69,8 @@ export interface ActivitySnapshot {
 	busyPanels: number;
 	/** When a side panel run last ended, or 0. */
 	lastPanelRunAt: number;
+	/** Side panels opening right now (background.ts pendingOpen): a reload would close them. */
+	panelsOpening?: number;
 	bridge: Array<{ name: string; inFlight: boolean; lastActivityAt: number }>;
 }
 
@@ -91,6 +93,7 @@ export function idleGate(a: ActivitySnapshot, quietMs = 0): IdleVerdict {
 			reason: `an agent run is going in ${a.busyPanels === 1 ? "a side panel" : `${a.busyPanels} side panels`}`,
 		};
 	}
+	if ((a.panelsOpening ?? 0) > 0) return { idle: false, reason: "a side panel is opening" };
 	const running = a.bridge.filter((c) => c.inFlight);
 	if (running.length > 0) return { idle: false, reason: `${running[0].name} is using the browser` };
 	const harnessGap = Math.max(quietMs, BRIDGE_RUN_GAP_MS);

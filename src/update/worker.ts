@@ -82,6 +82,13 @@ interface Pending {
 	at: number;
 }
 
+let panelsOpening: () => number = () => 0;
+
+/** background.ts reports side panels it is opening (#36), so a reload doesn't close one mid-open. */
+export function setPanelsOpening(count: () => number): void {
+	panelsOpening = count;
+}
+
 let releaseGate: (() => void) | undefined;
 let acquiring: Promise<void> | undefined;
 let dropWanted = false;
@@ -146,6 +153,7 @@ async function activity(): Promise<ActivitySnapshot> {
 		now,
 		busyPanels,
 		lastPanelRunAt: Math.max(Number(session[LAST_PANEL_RUN_KEY] ?? 0), WORKER_STARTED_AT),
+		panelsOpening: panelsOpening(),
 		bridge: bridgeActivity(),
 	};
 }
@@ -272,7 +280,10 @@ async function giveUpOnSent(at: number): Promise<void> {
 			"waiting",
 			"No result from the native host. Reloading Tabkyra to run what is installed.",
 		);
-		await queue("reload", pending.action, { auto: pending.auto });
+		await queue("reload", pending.action, {
+			auto: pending.auto,
+			failure: `The ${pending.action === "rollback" ? "rollback" : "install"} didn't report a result.`,
+		});
 		return;
 	}
 	await chrome.storage.local.remove(PENDING_KEY);
@@ -287,7 +298,11 @@ async function giveUpOnSent(at: number): Promise<void> {
 /** After a worker start: finish or report what was pending before it. */
 async function resume(): Promise<void> {
 	const pending = await getPending();
-	if (!pending) return;
+	if (!pending) {
+		// Nothing waits on a gate taken back from a fence: let it go.
+		await release();
+		return;
+	}
 	if (pending.reloadedFrom) {
 		const fence = (await chrome.storage.session.get(INSTALL_FENCE_KEY))[INSTALL_FENCE_KEY];
 		if (BUILD?.id === pending.reloadedFrom && fenceHeld(fence)) {
@@ -342,10 +357,13 @@ async function maybeAutoUpdate(): Promise<void> {
 	const busy = progress && !["done", "failed"].includes(progress.phase) && Date.now() - progress.at < 30 * 60 * 1000;
 	if (busy) return;
 	if (!idleGate(await activity(), AUTO_UPDATE_QUIET_MS).idle) return;
-	if (!sendUpdateAction("update")) return;
+	await setPending({ step: "sent", action: "update", auto: true, at: Date.now() });
+	if (!sendUpdateAction("update")) {
+		await chrome.storage.local.remove(PENDING_KEY);
+		return;
+	}
 	// Only an offer actually sent counts as tried.
 	await chrome.storage.local.set({ [AUTO_KEY]: offerKey(status) });
-	await setPending({ step: "sent", action: "update", auto: true, at: Date.now() });
 	await setProgress("update", "checking", "Updating automatically (Tabkyra is idle)");
 }
 
@@ -408,7 +426,8 @@ function onPanelMessage(
 	const passive = m.action === "check" || (typeof m.action === "string" && m.action.startsWith("policy-"));
 	if (passive) {
 		startPanelAction(m.action, sendResponse);
-		return undefined;
+		// The answer may come after an await (sendUpdateAction's bookkeeping): keep the channel open.
+		return true;
 	}
 	void getPending().then((pending) => {
 		if (pending && !pending.reloadedFrom)
@@ -443,18 +462,26 @@ function startPanelAction(
 		return;
 	}
 	const action = m.action as UpdateAction;
-	if (!sendUpdateAction(action)) {
-		void setProgress(action, "failed", "The Tabkyra native host isn't connected. Run tabkyra doctor in a terminal.");
-		sendResponse({ ok: false, message: "No native host" });
-		return;
-	}
-	if (!action.startsWith("policy-")) {
-		void setProgress(action, "checking", action === "check" ? "Checking for updates" : "Starting");
-		if (action === "update" || action === "reinstall") void setPending({ step: "sent", action, at: Date.now() });
-		expectReply(action);
-	}
-	sendResponse({ ok: true });
-	return;
+	void (async () => {
+		// Recorded before it goes out, as advance does, so its result always finds what waits for it.
+		const tracked = action === "update" || action === "reinstall";
+		if (tracked) await setPending({ step: "sent", action, at: Date.now() });
+		if (!sendUpdateAction(action)) {
+			if (tracked) await chrome.storage.local.remove(PENDING_KEY);
+			await setProgress(
+				action,
+				"failed",
+				"The Tabkyra native host isn't connected. Run tabkyra doctor in a terminal.",
+			);
+			sendResponse({ ok: false, message: "No native host" });
+			return;
+		}
+		if (!action.startsWith("policy-")) {
+			await setProgress(action, "checking", action === "check" ? "Checking for updates" : "Starting");
+			expectReply(action);
+		}
+		sendResponse({ ok: true });
+	})();
 }
 
 export function startUpdateWorker(): void {

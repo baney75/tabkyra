@@ -63,7 +63,7 @@ test("unknown actions and web pages are refused before anything reaches the host
 test("a fence a dead worker left holds panels off even with the lock free", async () => {
 	await chrome.storage.session.set({ "tabkyra.installFence": { at: Date.now(), action: "activate" } });
 	assert.equal(await gate.reserveRun(async () => {}), false);
-	await chrome.storage.session.set({ "tabkyra.installFence": { at: Date.now() - 11 * 60 * 1000, action: "activate" } });
+	await chrome.storage.session.set({ "tabkyra.installFence": { at: Date.now() - 16 * 60 * 1000, action: "activate" } });
 	assert.equal(await gate.reserveRun(async () => {}), true, "a stale fence doesn't count");
 	await chrome.storage.session.remove("tabkyra.installFence");
 });

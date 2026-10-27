@@ -205,7 +205,7 @@ Any failure stops the update, and the installed release stays as it was.
 The update holds a lock: a directory, `update.lock`, holding the owner's pid. It is taken
 over only when that pid is dead, or when no pid was written and the lock is over 10 minutes
 old. Under the lock it does two renames: `app/` becomes `previous/`, and the staged folder
-becomes `app/`. If the second rename fails, the first is undone. Release swaps are these renames, not the journal checkout mode uses; a crash between them leaves `app/` missing until `recover()` (below) runs, which every `tabkyra update` run, and the side panel's install step, does first. Rollback is three renames
+becomes `app/`. If the second rename fails, the first is undone. Release swaps are these renames, not the journal checkout mode uses; a crash between them leaves `app/` missing until `recover()` (below) runs. The native host and launcher run from `app/`, so with it missing run the repair by hand from the kept copy: `node ~/.local/share/tabkyra/previous/cli/dist/index.js update` (every `tabkyra update` run repairs first). Rollback is three renames
 through a `.swap-*` folder.
 
 Every `tabkyra update` run, including `--check` and `--rollback`, first repairs whatever a
@@ -254,9 +254,9 @@ Checked 2026-10-27, before the first release:
   (for example run 40445740971 on main). Public repositories don't use paid minutes.
 - **minisign on the runner.** The publish job installs it with apt; Ubuntu 24.04 (noble) has
   `minisign` 0.11-1 in universe, which GitHub's images enable.
-- **The key.** The release key (minisign `16C760BCAEA0129D`) and the `MINISIGN_SECRET_KEY`
-  repository secret exist; the public key and its handling are in "Release key" (PR #32).
-  Until that public key is on main, the build job stops at "Check the tag".
+- **The key.** The release key (minisign `16C760BCAEA0129D`) is on main, and its secret is in
+  the `release` environment, which needs baney75's approval for every signing run (see
+  "Release key" below).
 - **The workflow has never run.** The `v1.0.0` tag predates it and has no release;
   `tabkyra update` reads releases, not tags, so it is ignored.
 - **The version.** `static/manifest.chrome.json` says 1.1.8, so `./release.sh patch` makes
