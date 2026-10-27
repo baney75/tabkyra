@@ -113,33 +113,41 @@ panel.
 
    A tag with a `-` becomes a prerelease.
 
-## One-time setup (Donovan)
+## Release key
 
-There is no signing key yet. `keys/tabkyra-release.pub` holds only a comment, so every
-`tabkyra update` refuses ("no release signing key") and the release workflow fails at "Check
-the tag". To turn updates on:
+The release key is minisign key `16C760BCAEA0129D`, made 2026-10-27 without a password,
+because CI signs unattended. `keys/tabkyra-release.pub` holds its public half, and the CLI
+builds it in. The secret half exists in two places only:
 
-1. **Make the key on your Mac**, outside any repo. `minisign` is a Homebrew formula.
-   ```sh
-   minisign -G -W -p tabkyra-release.pub -s tabkyra-release.key
-   ```
-   `-W` makes a key without a password, because CI signs unattended. The secret key file is
-   the whole trust root, so treat it like a password.
-2. **Store the secret key** in Proton Pass as a secure note ("Tabkyra release signing key"),
-   with the full contents of `tabkyra-release.key`.
-3. **Add it as a repository secret** named `MINISIGN_SECRET_KEY` on baney75/tabkyra
-   (Settings > Secrets and variables > Actions), with the same contents. Or:
-   `gh secret set MINISIGN_SECRET_KEY --repo baney75/tabkyra < tabkyra-release.key`
-4. **Commit the public key**: replace `keys/tabkyra-release.pub` with `tabkyra-release.pub`,
-   open a PR, merge it.
-5. **Delete the local secret key file** (`rm tabkyra-release.key`). Proton Pass and the
-   repository secret are the only copies.
-6. **Cut the first release** with `./release.sh patch`. Then on a machine with the CLI, run
-   `tabkyra update --check` (it exits 100), then `tabkyra update`.
+- Proton Pass, Personal vault, secure note "Tabkyra release signing key (minisign
+  16C760BCAEA0129D)";
+- the repository secret `MINISIGN_SECRET_KEY` on baney75/tabkyra, which `release.yml` reads.
 
-If the key ever leaks, make a new pair and replace the public key in a release signed
-by the old key. Users on older CLIs pick up the new key when they install that release.
-Revoke by deleting the secret and publishing nothing more under the old key.
+To cut a release, run `./release.sh patch` on a clean, up-to-date main. Then, on a machine
+with the CLI, `tabkyra update --check` exits 100 and `tabkyra update` installs it.
+
+Before the first tag after any change to the secret or the public key, prove they are a pair
+with the real minisign: `gh workflow run release-key-check.yml --repo baney75/tabkyra`. It
+signs a scratch file and verifies it against `keys/tabkyra-release.pub`, and publishes nothing.
+
+### Rotating the key (not supported yet)
+
+The CLI trusts exactly one built-in public key, and `release.yml` verifies each release
+against the one key committed at that tag. So there is no clean rotation today:
+
+- A release signed with a new key is refused by every installed CLI, which only knows the
+  old key.
+- A "transition" release signed with the old key while shipping the new public key fails
+  `release.yml`'s own verify step, which checks against the key in that commit.
+
+Until the CLI and the workflow accept a list of trusted keys (issue #33),
+replacing the key means every user reinstalls Tabkyra from a trusted channel. Keep the
+current secret in both places; don't replace either unless you mean to make users reinstall.
+
+**If the key leaks:** delete the repository secret so you stop signing with it, and publish
+nothing more. That doesn't revoke it. Every installed CLI keeps trusting the leaked key, and
+whoever holds it can sign a release those CLIs accept. Tell users to reinstall from a trusted
+channel with a CLI that carries a new key. There is no revocation or expiry yet.
 
 ## Tests
 
