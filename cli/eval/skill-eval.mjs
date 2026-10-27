@@ -252,6 +252,9 @@ function runClaude(prompt, withSkill) {
 		for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"]) delete env[k];
 		// The eval may itself run inside a harness; its session variables must not leak into the model's.
 		for (const k of HARNESS_SESSION_VARS) delete env[k];
+		// Nobody answers ask_user in a headless run: cap each tool call at 30 s (Claude Code's own
+		// MCP timeout) so a question costs half a minute, not ask_user's five. Rows count the asks.
+		env.MCP_TOOL_TIMEOUT = "30000";
 		const child = spawn("claude", args, { cwd: workdir, env, stdio: ["ignore", "pipe", "pipe"] });
 		let out = "";
 		child.stdout.on("data", (d) => {
@@ -442,6 +445,7 @@ for (let rep = 1; rep <= REPS; rep++) {
 				statusFirst: run.calls[0]?.name === "status",
 				interactiveRead: run.calls.some((c) => c.name === "read_page" && c.input?.filter === "interactive"),
 				dialogHandled: run.calls.some((c) => c.name === "handle_dialog"),
+				askedUser: run.calls.filter((c) => c.name === "ask_user").length,
 				tabsLeftOpen: leftOpen,
 				seconds: Math.round(run.ms / 1000),
 				exit: run.code,
