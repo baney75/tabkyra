@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import JSZip from "jszip";
+import * as XLSX from "xlsx";
 
 import { conversionHint, getArtifactFileType, mimeTypeFor } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/file-types.js";
 import { detectDelimiter, parseDelimited } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/delimited.js";
@@ -12,6 +13,7 @@ import { autoNumberLabel, presetPath, colorOf, emptyTheme } from "../node_module
 import { readPptx } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/pptx.js";
 import { readOdt, readOdp } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/odf.js";
 import { parseRtf } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/rtf.js";
+import { cappedWorkbookZip, clampSheet } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/spreadsheet.js";
 import { parseNotebook, neutralizeRemoteImages, stripAnsi } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/notebook.js";
 import { decodeBase64Content, readTextContent, PreviewLimitError, PREVIEW_LIMITS } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/content.js";
 
@@ -473,4 +475,112 @@ test("an archive that understates an entry's size still stops at the streaming c
 		}
 	}
 	await assert.rejects(readPptx(bytes), PreviewLimitError);
+});
+
+// ---------------------------------------------------------------------------
+// Review round 2: work that draws nothing, or many small things, still costs budget.
+// ---------------------------------------------------------------------------
+
+/** cookieDeck with extra XML injected into the master's shape tree. */
+async function deckWithMaster(extra) {
+	const zip = await JSZip.loadAsync(await cookieDeck());
+	const master = await zip.file("ppt/slideMasters/slideMaster1.xml").async("string");
+	zip.file("ppt/slideMasters/slideMaster1.xml", master.replace("</p:spTree>", `${extra}</p:spTree>`));
+	return zip.generateAsync({ type: "uint8array" });
+}
+
+test("bare master shapes that draw nothing still spend the deck budget", async () => {
+	const bytes = await deckWithMaster("<p:sp/>".repeat(10_000));
+	const deck = await withLimits({ maxDeckElements: 100 }, () => readPptx(bytes));
+	assert.equal(deck.slides.length, 1, "the second slide is never walked");
+});
+
+test("empty paragraphs spend runs, and one text body holds at most 2,000", async () => {
+	const body = `<p:sp><p:nvSpPr><p:cNvPr id="90" name="x"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/>${"<a:p/>".repeat(5000)}<a:p><a:r><a:t>x</a:t></a:r></a:p></p:txBody></p:sp>`;
+	const deck = await readPptx(await deckWithMaster(body));
+	const shape = deck.slides[0].elements.find((e) => e.kind === "shape" && e.box.w === 10);
+	assert.equal(shape.text, undefined, "the body stopped at 2,000 paragraphs, before its one run");
+	const capped = await withLimits({ maxTextRuns: 1500 }, async () => readPptx(await deckWithMaster(body)));
+	assert.equal(capped.slides.length, 1, "empty paragraphs alone spend the run budget on the first slide");
+});
+
+test("pptx tables are capped by columns and cells, and every cell costs an element", async () => {
+	const cells = Array.from({ length: 50 }, () => "<a:tc><a:txBody><a:bodyPr/><a:p/></a:txBody></a:tc>").join("");
+	const zip = await JSZip.loadAsync(await cookieDeck());
+	const slide = await zip.file("ppt/slides/slide1.xml").async("string");
+	zip.file("ppt/slides/slide1.xml", slide.replace(/<a:tr h="1000"><a:tc><a:txBody><a:bodyPr\/><a:p><a:r><a:t>Cookie/, `<a:tr h="1000">${cells}</a:tr><a:tr h="1000"><a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>Cookie`));
+	const deck = await withLimits({ maxTableColumns: 10 }, async () => readPptx(await zip.generateAsync({ type: "uint8array" })));
+	const table = deck.slides[0].elements.find((e) => e.kind === "table");
+	assert.equal(table.rows[0].cells.length, 10);
+});
+
+test("odt tables and lists are capped per cell and per item", async () => {
+	const zip = new JSZip();
+	const row = "<table:table-cell/>".repeat(2000);
+	const items = "<text:list-item/>".repeat(25_000);
+	zip.file("content.xml", `<office:document-content ${ODF_NS}><office:body><office:text><table:table><table:table-row>${row}</table:table-row></table:table><text:list>${items}</text:list></office:text></office:body></office:document-content>`);
+	const doc = await readOdt(await zip.generateAsync({ type: "uint8array" }));
+	assert.equal(doc.blocks[0].rows[0].cells.length, 500);
+	assert.ok(doc.blocks[1].items.length < 25_000);
+	assert.equal(doc.truncated, true);
+});
+
+test("RTF counts line breaks, empty table paragraphs and pictures toward its cap", () => {
+	const breaks = parseRtf(`{\\rtf1 ${"\\line ".repeat(500)}x\\par}`, 1000, 100);
+	assert.equal(breaks.truncated, true);
+	assert.ok(breaks.blocks.flatMap((b) => b.runs ?? []).length <= 100);
+	const cells = parseRtf(`{\\rtf1 \\intbl${"\\par".repeat(500)}\\cell\\row}`, 1000, 100);
+	assert.equal(cells.truncated, true);
+	const pics = parseRtf(`{\\rtf1 ${"{\\pict\\pngblip 89}".repeat(500)}\\par}`, 1000, 100);
+	assert.equal(pics.truncated, true);
+});
+
+test("notebook cell sources share a budget, and a bad attachment escape doesn't break the notebook", () => {
+	const big = "x".repeat(3_000_000);
+	const nb = parseNotebook(JSON.stringify({ cells: [0, 1, 2].map(() => ({ cell_type: "markdown", source: big })) }));
+	assert.equal(nb.cells.length, 2);
+	assert.equal(nb.truncated, true);
+	assert.match(neutralizeRemoteImages("![x](attachment:%E0%A4%A)", {}), /\[Image: x\]/);
+});
+
+test("text stored as wrapped base64 is decoded, not shown as base64", () => {
+	const csv = "name,score\n".concat("alice,1\n".repeat(30));
+	const wrapped = Buffer.from(csv).toString("base64").replace(/(.{76})/g, "$1\n");
+	assert.equal(readTextContent(wrapped, (t) => /[,\n]/.test(t)), csv);
+	assert.equal(readTextContent("abcd\nefgh", (t) => t.length > 0), "abcd\nefgh", "plain text that happens to be base64-shaped stays as written");
+});
+
+test("SheetJS only sees capped parts: a duplicate name can't smuggle in the uncapped entry", async () => {
+	const zip = new JSZip();
+	zip.file("xl/worksheets/sheet1.xml", "a".repeat(5 * 1024 * 1024), { compression: "DEFLATE" });
+	zip.file("xl/worksheets/sheetX.xml", "<small/>");
+	const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+	// Rename the second entry to the first one's name in both headers.
+	const text = Buffer.from(bytes);
+	let at = text.indexOf("sheetX.xml");
+	while (at >= 0) {
+		text.write("sheet1.xml", at);
+		at = text.indexOf("sheetX.xml", at + 1);
+	}
+	const clean = await JSZip.loadAsync(await cappedWorkbookZip(new Uint8Array(text)));
+	const names = Object.keys(clean.files).filter((n) => !clean.files[n].dir);
+	assert.deepEqual(names, ["xl/worksheets/sheet1.xml"]);
+	assert.equal(await clean.file("xl/worksheets/sheet1.xml").async("string"), "<small/>");
+});
+
+test("a large honest workbook still previews its first rows, and media is left out", async () => {
+	const rows = Array.from({ length: 120_000 }, (_, i) => [i, `row ${i}`, i * 2, "some text in a cell", i % 7, i / 3, "x", "y", "z", i]);
+	const wb = XLSX.utils.book_new();
+	XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "Big");
+	const raw = XLSX.write(wb, { type: "array", bookType: "xlsx", compression: true });
+	const zip = await JSZip.loadAsync(raw);
+	const sheetSize = (await zip.file("xl/worksheets/sheet1.xml").async("uint8array")).length;
+	assert.ok(sheetSize > 30 * 1024 * 1024, `sheet part is ${sheetSize} bytes, over the document entry cap`);
+	zip.file("xl/media/image1.png", new Uint8Array(10));
+	const capped = await cappedWorkbookZip(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }));
+	assert.equal((await JSZip.loadAsync(capped)).file("xl/media/image1.png"), null);
+	const read = XLSX.read(capped, { type: "array", sheetRows: 5000 });
+	const sheet = read.Sheets.Big;
+	clampSheet(sheet);
+	assert.equal(XLSX.utils.decode_range(sheet["!ref"]).e.r, 4999);
 });
