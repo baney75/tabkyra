@@ -178,3 +178,80 @@ test("dispose clears the agent's steering and the list", async () => {
 	assert.deepEqual(agent.steered, []);
 	assert.equal(queue.items.length, 0);
 });
+
+test("an item queued behind a send that never started goes out on kick", async () => {
+	let answer = "busy";
+	const { sent, queue, start, stop } = setup({ result: () => answer });
+	start();
+	queue.add("waiting");
+	stop(); // drain tries; another send holds the panel
+	await settle();
+	assert.deepEqual(sent, []);
+	assert.equal(queue.paused, false);
+	answer = "started"; // that send ended without a run (key prompt cancelled): it kicks the queue
+	queue.kick();
+	await settle();
+	assert.deepEqual(sent, ["waiting"]);
+});
+
+test("Send now whose page context resolves after a Stop still resumes and sends", async () => {
+	let release;
+	const { sent, queue, start, stop } = setup({ context: () => new Promise((r) => (release = () => r([]))) });
+	start();
+	queue.add("old");
+	queue.add("mine");
+	const pressed = queue.sendNow(queue.items[1].id);
+	stop("aborted");
+	release();
+	await pressed;
+	await settle();
+	assert.equal(queue.paused, false);
+	assert.deepEqual(sent, ["mine"], "the Send now item goes first");
+});
+
+test("Send now whose page context resolves after a normal end goes before older items", async () => {
+	let release;
+	const { sent, queue, start, stop } = setup({ context: () => new Promise((r) => (release = () => r([]))) });
+	start();
+	queue.add("old");
+	queue.add("mine");
+	const pressed = queue.sendNow(queue.items[1].id);
+	stop();
+	release();
+	await pressed;
+	await settle();
+	assert.deepEqual(sent, ["mine"]);
+});
+
+test("the page context goes with the first Send now in a run only", async () => {
+	const note = { role: "navigation", url: "https://example.com/" };
+	let calls = 0;
+	const { agent, queue, start, stop } = setup({ context: async () => { calls++; return [note]; } });
+	start();
+	queue.add("a");
+	queue.add("b");
+	await queue.sendNow(queue.items[0].id);
+	await queue.sendNow(queue.items[1].id);
+	assert.equal(agent.steered.filter((m) => m === note).length, 1);
+	assert.equal(calls, 1);
+	stop();
+	start();
+	queue.add("c");
+	await queue.sendNow(queue.items.at(-1).id);
+	assert.equal(agent.steered.filter((m) => m === note).length, 1, "a new run gets its own note");
+});
+
+test("unpicked Send now items go out in the order they were pressed", async () => {
+	const { sent, queue, start, stop } = setup();
+	start();
+	queue.add("a");
+	queue.add("b");
+	await queue.sendNow(queue.items[1].id); // b first
+	await queue.sendNow(queue.items[0].id); // then a
+	stop();
+	await settle();
+	assert.deepEqual(sent, ["b"]);
+	stop();
+	await settle();
+	assert.deepEqual(sent, ["b", "a"]);
+});
