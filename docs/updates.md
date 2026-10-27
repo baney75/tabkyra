@@ -223,7 +223,41 @@ never downloads or installs anything. The host sends the result to the extension
 (`update_status` in `src/bridge/protocol.ts`). The ✕ on "Update available" hides it until
 the next version.
 
+## Starting with an older build
+
+A build from before the update system has no Update now button, and its native host can't
+run updates. Update a checkout once by hand, then reload Tabkyra:
+
+```sh
+git pull --ff-only && ./scripts/setup-siblings.sh
+TABKYRA_NO_BUMP=1 npm run build && (cd cli && npm run build)
+tabkyra reload    # or the reload button on chrome://extensions
+```
+
+`TABKYRA_NO_BUMP=1` keeps the build from editing the manifest; a checkout with local changes
+can't update itself.
+
 ## Releasing
+
+### Is the release workflow ready?
+
+Checked 2026-10-27, before the first release:
+
+- **Runner.** Both jobs run on `ubuntu-24.04`, GitHub-hosted. The repository is public, Actions
+  are enabled for all actions, and the CI workflow already runs on the same runner and passes
+  (for example run 40445740971 on main). Public repositories don't use paid minutes.
+- **minisign on the runner.** The publish job installs it with apt; Ubuntu 24.04 (noble) has
+  `minisign` 0.11-1 in universe, which GitHub's images enable.
+- **The key.** The release key (minisign `16C760BCAEA0129D`) and the `MINISIGN_SECRET_KEY`
+  repository secret exist; the public key and its handling are in "Release key" (PR #32).
+  Until that public key is on main, the build job stops at "Check the tag".
+- **The workflow has never run.** The `v1.0.0` tag predates it and has no release;
+  `tabkyra update` reads releases, not tags, so it is ignored.
+- **The version.** `static/manifest.chrome.json` says 1.1.8, so `./release.sh patch` makes
+  `v1.1.9`. Build with `TABKYRA_NO_BUMP=1` (the workflow does): a plain `npm run build` bumps
+  the manifest in the checkout.
+- **The notes** are the `CHANGELOG.md` section for the version (`scripts/release/notes.mjs`);
+  the side panel shows them in "What's new". Checkout mode needs no release at all.
 
 1. Add entries under `## [Unreleased]` in `CHANGELOG.md`.
 2. Stable: `./release.sh patch` (or `minor`, `major`). It bumps
@@ -243,32 +277,7 @@ the next version.
 
    A tag with a `-` becomes a prerelease.
 
-### Is the release workflow ready?
-
-Checked 2026-10-27, before the first release:
-
-- **Runner.** Both jobs run on `ubuntu-24.04`, GitHub-hosted. The repository is public, Actions
-  are enabled for all actions, and the CI workflow already runs on the same runner and passes
-  (for example run 40445740971 on main). Public repositories don't use paid minutes.
-- **minisign on the runner.** The publish job installs it with apt; Ubuntu 24.04 (noble) has
-  `minisign` 0.11-1 in universe, which GitHub's images enable.
-- **What still blocks a release:** `keys/tabkyra-release.pub` holds no key (the build job
-  stops at "Check the tag") and the repository has no secrets, so `MINISIGN_SECRET_KEY` is
-  missing (the publish job would stop at "Sign"). The workflow has never run. The `v1.0.0`
-  tag predates it and has no release; `tabkyra update` reads releases, not tags, so it is
-  ignored.
-- **The version.** `static/manifest.chrome.json` says 1.1.8, so `./release.sh patch` makes
-  `v1.1.9`. Build with `TABKYRA_NO_BUMP=1` (the workflow does): a plain `npm run build` bumps
-  the manifest in the checkout.
-- **The notes** are the `CHANGELOG.md` section for the version (`scripts/release/notes.mjs`);
-  the side panel shows them in "What's new".
-
 ## One-time setup (Donovan)
-
-Checkout mode needs none of this: Update now works from a git checkout without a release.
-These steps are for signed releases (release mode and `tabkyra update`). Each step that
-creates the key or the secret is yours to decide and do; an agent can do the PR and the
-release command once you say so.
 
 There is no signing key yet. `keys/tabkyra-release.pub` holds only a comment, so every
 `tabkyra update` refuses ("no release signing key") and the release workflow fails at "Check
@@ -289,29 +298,12 @@ the tag". To turn updates on:
    open a PR, merge it.
 5. **Delete the local secret key file** (`rm tabkyra-release.key`). Proton Pass and the
    repository secret are the only copies.
-6. **Cut the first release** with `./release.sh patch` on an up-to-date, clean main (it
-   pushes the release commit to main and the tag `v1.1.9`). Watch the Release workflow on
-   the Actions tab; it should end with a release that has `tabkyra-1.1.9.zip`, `SHA256SUMS`
-   and `SHA256SUMS.minisig`. Then on a machine with the CLI, run `tabkyra update --check`
-   (it exits 100), then `tabkyra update`.
+6. **Cut the first release** with `./release.sh patch`. Then on a machine with the CLI, run
+   `tabkyra update --check` (it exits 100), then `tabkyra update`.
 
 If the key ever leaks, make a new pair and replace the public key in a release signed
 by the old key. Users on older CLIs pick up the new key when they install that release.
 Revoke by deleting the secret and publishing nothing more under the old key.
-
-## Starting with an older build
-
-A build from before the update system has no Update now button, and its native host can't
-run updates. Update a checkout once by hand, then reload Tabkyra:
-
-```sh
-git pull --ff-only && ./scripts/setup-siblings.sh
-TABKYRA_NO_BUMP=1 npm run build && (cd cli && npm run build)
-tabkyra reload    # or the reload button on chrome://extensions
-```
-
-`TABKYRA_NO_BUMP=1` keeps the build from editing the manifest; a checkout with local changes
-can't update itself.
 
 ## Tests
 
