@@ -54,6 +54,11 @@ export function checkCli(cli: { libraryMadeUp: Run; libraryRetracted: Run; lintB
 	const lintErrors = lint.out.split("\n").filter((l) => /\berror\b/.test(l));
 	const lintLines = lintErrors.map((l) => Number(l.match(/SKILL\.md:(\d+)/)?.[1]));
 	expectCode(lint, (c) => c !== null && c !== 0, "the bad skill's lint (BLOCKED means it failed)");
+	// The scene counts up to the errors it lists; the CLI's own summary must give the same count.
+	const summary = lineWith(lint.out, /^✗ \d+ problems?\./, "lint summary");
+	if (Number(summary.match(/^✗ (\d+)/)?.[1]) !== lintErrors.length) {
+		throw new Error(`capture.json: the lint summary says "${summary}", but ${lintErrors.length} errors are listed`);
+	}
 	if (lintErrors.length !== 4 || lintLines.some((n) => !(n > 0))) {
 		throw new Error(`capture.json: expected 4 lint errors with line numbers, got ${lintErrors.length}`);
 	}
@@ -200,7 +205,7 @@ export function catalogRunFrom(calls: Call[], refs: Record<string, string>, cata
 }
 
 export type RouterCapture = {
-	matches: { task: string; expected: string; shown: string; code: number | null; out: string }[];
+	matches: { task: string; expected: string; shown: string; code: number | null; ms: number; out: string }[];
 	eval: { skills: number; speed: { p95Ms: number; matches: number } };
 };
 
@@ -227,7 +232,11 @@ export function checkRouter(router: RouterCapture) {
 		if (!name || name !== m.expected) throw new Error(`router.json: "${m.task}" routed to ${name ?? "unparsed output"}, expected ${m.expected}`);
 		return { task: m.task, shown: m.shown, none: !!none, name, score: hit?.[2] ?? "", description: none ? none[1] : (hit?.[3] ?? "") };
 	});
-	return { rows, p95Ms: speed.p95Ms, timed: speed.matches, skills };
+	// Each whole command's wall time (Node start-up included), so the rows aren't read as the p95.
+	const ms = router.matches.map((m) => m.ms);
+	if (ms.some((v) => !(Number.isFinite(v) && v > 0))) throw new Error("router.json: a match has no recorded wall time");
+	const commandMs = { min: Math.min(...ms), max: Math.max(...ms) };
+	return { rows, p95Ms: speed.p95Ms, timed: speed.matches, skills, commandMs };
 }
 
 /**
@@ -251,4 +260,21 @@ export function checkPrompt(
 	}
 	if (!allowedHosts.includes(host)) throw new Error(`capture.json: ${host} isn't in the allowed sites after the answer`);
 	return { picked, label: prompt.enumNames[picked] };
+}
+
+/**
+ * "Its own tab group": the group the book tab sits in after the run is a Tabkyra group named for
+ * the agent, and the tab title and URL drawn under it are the recorded tab's.
+ */
+export function checkGroup(
+	status: { tabGroup?: string | null; tabs?: { url: string; title: string; current?: boolean }[] },
+	book: { url: string; title: string },
+	agent: string,
+) {
+	const group = status.tabGroup ?? "";
+	if (group !== `Tabkyra · ${agent}`) throw new Error(`capture.json: the tab group is "${group}", not "Tabkyra · ${agent}"`);
+	const tab = (status.tabs ?? []).find((t) => t.url === book.url);
+	if (!tab) throw new Error(`capture.json: no tab in the group holds ${book.url}`);
+	if (tab.title !== book.title) throw new Error(`capture.json: the tab's title is "${tab.title}", not the book page's "${book.title}"`);
+	return { group, title: tab.title, url: tab.url };
 }

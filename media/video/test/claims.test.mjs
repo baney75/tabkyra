@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { catalogRunFrom, checkCli, checkPrompt, checkRouter } from "../src/hero/claims.ts";
+import { catalogRunFrom, checkCli, checkGroup, checkPrompt, checkRouter } from "../src/hero/claims.ts";
 
 const real = JSON.parse(readFileSync(new URL("../public/capture/capture.json", import.meta.url), "utf8"));
 const realRouter = JSON.parse(readFileSync(new URL("../public/capture/router.json", import.meta.url), "utf8"));
@@ -265,4 +265,43 @@ test("a prompt for another site fails the render", () => {
 	p.message = p.message.replace("www.gutenberg.org", "example.com");
 	p.requestedSchema.properties.decision.enumNames[0] = "Allow example.com from now on";
 	assert.throws(() => prompt(c), /isn't the one for www.gutenberg.org/);
+});
+
+const group = (c) => checkGroup(c.browser.statusAfter, c.browser.book, "claude");
+
+test("the real capture's tab group, title and URL are the recorded ones", () => {
+	assert.deepEqual(group(real), {
+		group: "Tabkyra · claude",
+		title: "Moby Dick; Or, The Whale by Herman Melville | Project Gutenberg",
+		url: "https://www.gutenberg.org/ebooks/2701",
+	});
+	assert.deepEqual(checkRouter(realRouter).commandMs, { min: 114, max: 117 });
+});
+
+test("an ungrouped tab, another agent's group or a wrong tab fails the render", () => {
+	for (const tabGroup of ["", null, "Tabkyra · codex"]) {
+		const c = copy();
+		c.browser.statusAfter.tabGroup = tabGroup;
+		assert.throws(() => group(c), /the tab group is/);
+	}
+	const empty = copy();
+	empty.browser.statusAfter.tabs = [];
+	assert.throws(() => group(empty), /no tab in the group holds/);
+	const retitled = copy();
+	retitled.browser.statusAfter.tabs[0].title = "Hamlet | Project Gutenberg";
+	assert.throws(() => group(retitled), /the tab's title is "Hamlet/);
+});
+
+test("a lint summary that counts more problems than the scene lists fails the render", () => {
+	const c = copy();
+	c.cli.lintBad.out = c.cli.lintBad.out
+		.replace("✗ 4 problems.", "✗ 5 problems.")
+		.replace("\n✗", "\npage-helper/SKILL.md:9  warning  budget  Over budget.\n✗");
+	assert.throws(() => checkCli(c.cli), /the lint summary says "✗ 5 problems/);
+});
+
+test("a match with no recorded wall time fails the render", () => {
+	const r = structuredClone(realRouter);
+	r.matches[1].ms = 0;
+	assert.throws(() => checkRouter(r), /no recorded wall time/);
 });

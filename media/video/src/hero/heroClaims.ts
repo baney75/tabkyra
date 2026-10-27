@@ -4,7 +4,7 @@
 import capture from "../../public/capture/capture.json";
 import router from "../../public/capture/router.json";
 import { DATA } from "../data";
-import { type Call, catalogRunFrom, checkCli, checkPrompt, checkRouter } from "./claims";
+import { type Call, catalogRunFrom, checkCli, checkGroup, checkPrompt, checkRouter } from "./claims";
 
 const compute = () => {
 	const b = capture.browser;
@@ -12,6 +12,8 @@ const compute = () => {
 		cli: checkCli(DATA.cli),
 		catalog: catalogRunFrom(b.calls as Call[], b.catalog.refs, b.catalogUrl, b.catalog.confirmation),
 		router: checkRouter(router),
+		// The capture's MCP client is "claude-code" (scripts/demo/capture-video.mjs); its group is "Tabkyra · claude".
+		group: checkGroup(b.statusAfter, b.book, "claude"),
 		prompt: checkPrompt(
 			b.permissionPrompt.requestedSchema.properties.decision,
 			b.permissionPrompt.message,

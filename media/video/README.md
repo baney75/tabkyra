@@ -73,7 +73,8 @@ acting on the latest recorded `read_page`, with the `//` labels on the two click
 snapshot's button names, the search text against the recorded results, each action's own recorded result (navigate,
 type, click and fill all succeeded), the read-back sentence (the recorded `get_page_text`
 result, with the book searched, the card name and the branch filled in their places), the
-prompt choice the run answered (for the book's site), and the router's p95 (under 1 ms) and
+prompt choice the run answered (for the book's site), the tab group ("Tabkyra · claude") with the
+recorded tab's title and URL, the lint summary's count against the errors listed, and the router's p95 (under 1 ms) and
 each row's command (the recorded task, quoted as the capture quotes it) and routed skill, parsed from the recorded output. The checks live in `src/hero/claims.ts`, and
 the scenes show what it returns. `src/hero/heroClaims.ts` runs them when Hero, HeroVertical or
 HeroPoster renders, so a recording that doesn't back a claim fails those renders while the Demo
@@ -123,6 +124,6 @@ re-checked).
 `tabkyra skill match` runs and, from one `tabkyra skill eval --json` run, the router's p95 time
 per match, the number of timed matches and the bundled skill count. The headline says "in under
 a millisecond at p95": the figure is the match itself, not a whole `tabkyra` command, which also
-starts Node. `node scripts/demo/capture-router.mjs` (after `cd cli && npm run build`) records it
+starts Node. A caption under the rows gives the recorded wall time of each whole command. `node scripts/demo/capture-router.mjs` (after `cd cli && npm run build`) records it
 into `public/capture/router.json` (stdout only; a `skill match` that writes to stderr fails it), and fails if a task routes anywhere other than its expected
 skill, if the eval's gates fail, or if p95 is not under a millisecond.

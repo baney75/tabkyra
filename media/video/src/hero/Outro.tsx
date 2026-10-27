@@ -70,6 +70,9 @@ export const Router: React.FC = () => {
 						);
 					})}
 				</div>
+				<div style={{ textAlign: "center", fontFamily: FONT.mono, fontSize: size(24, 26), color: C.mist, opacity: ease(frame, at(96), 6) }}>
+					each whole command: {ROUTER.commandMs.min}–{ROUTER.commandMs.max} ms, starting Node; the match inside it is the p95 above
+				</div>
 			</AbsoluteFill>
 		</Whip>
 	);

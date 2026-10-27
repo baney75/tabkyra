@@ -112,6 +112,7 @@ export const Moment: React.FC = () => {
 
 /** B44–B51: the browser flies in with parallax; push in on the agent's own tab group. */
 export const TabGroup: React.FC = () => {
+	const { group } = heroClaims();
 	const frame = useCurrentFrame();
 	const at = useBeat();
 	const size = useSize();
@@ -134,11 +135,11 @@ export const TabGroup: React.FC = () => {
 					<BrowserWindow
 						width={w}
 						style={{ position: "relative" }}
-						group={DATA.group}
+						group={group.group}
 						ringAt={6}
 						shots={[{ src: "capture/book.jpg", from: 0 }]}
-						tabTitle={() => DATA.bookTitle}
-						url={() => DATA.bookUrl}
+						tabTitle={() => group.title}
+						url={() => group.url}
 					/>
 				</div>
 			</Center>
