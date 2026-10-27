@@ -31,14 +31,20 @@ What "update" does depends on how Tabkyra runs (the install mode):
 - **The reload.** The extension reloads itself with `chrome.runtime.reload()`, never while an
   agent run is going in any side panel or bridge session; until then the panel says what it
   waits for. "Idle" means: no side panel run is going (a running panel beats every 15
-  seconds, so a flag a crashed panel left stops counting after 45), no bridge request is in
+  seconds and on agent events, so a flag a crashed panel left stops counting after 3
+  minutes), no bridge request is in
   flight, and no harness made a browser call in the last 30 seconds (a harness between two
   calls looks idle after that). An automatic update also waits 3 quiet minutes before each
   step.
 - **The install gate.** For an install, a rollback or the reload, the worker checks idle,
   then takes a gate (a Web Lock, `src/update/gate.ts`) and checks again. A side panel takes
-  the same lock, only if it is free, to mark itself busy before it starts a run, so either
-  the worker sees the run or the panel sees the install. While the worker holds the gate, a
+  the same lock in shared mode, only if the worker doesn't hold it, to mark itself busy
+  before it starts a run, so either the worker sees the run or the panel sees the install.
+  Before the install or rollback is sent, the worker also writes a fence to
+  `chrome.storage.session` that lasts until the reload: if the worker dies mid-install, the
+  fence still holds panels off and the next worker takes the gate back before it lets a
+  bridge request through. An install or rollback that fails, or doesn't answer, still ends
+  in a reload, since files may have changed. While the worker holds the gate, a
   side panel send is refused with "Tabkyra is installing an update and reloads in a moment"
   (the text goes back into the editor) and a bridge request gets an error saying to repeat
   it after the bridge reconnects; a bridge request counts as running from the moment it
@@ -93,8 +99,8 @@ staged (`next/staged.json`); activation refuses it if HEAD moved since. The exte
 is swapped by renames; the CLI is replaced file by file in place (a rename over each file),
 so `cli/dist/index.js`, which the native host's launcher runs, is never missing. Install
 and Roll back write a journal (`.tabkyra-update/journal.json`) and keep every source whole
-until they commit, so a crash at any point is finished or undone by the next updater or the
-next native host start. The builds they replace go to `.tabkyra-update/previous/` for Roll
+until they commit, so a crash at any point is finished or undone by the next updater, the
+next native host start, or `tabkyra doctor`, `status`, `setup` or `update` in a terminal. The builds they replace go to `.tabkyra-update/previous/` for Roll
 back. If `npm install` in `setup-siblings.sh` rewrote a `package-lock.json`, the updater puts
 it back as committed (any other changed tracked file stops the update), so the next update
 isn't refused for local changes. `setup-siblings.sh` fetches a pinned sibling revision the
@@ -199,7 +205,7 @@ Any failure stops the update, and the installed release stays as it was.
 The update holds a lock: a directory, `update.lock`, holding the owner's pid. It is taken
 over only when that pid is dead, or when no pid was written and the lock is over 10 minutes
 old. Under the lock it does two renames: `app/` becomes `previous/`, and the staged folder
-becomes `app/`. If the second rename fails, the first is undone. Rollback is three renames
+becomes `app/`. If the second rename fails, the first is undone. Release swaps are these renames, not the journal checkout mode uses; a crash between them leaves `app/` missing until `recover()` (below) runs, which every `tabkyra update` run, and the side panel's install step, does first. Rollback is three renames
 through a `.swap-*` folder.
 
 Every `tabkyra update` run, including `--check` and `--rollback`, first repairs whatever a

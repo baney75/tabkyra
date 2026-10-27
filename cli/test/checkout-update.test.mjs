@@ -434,9 +434,7 @@ test("the host runs an update only for a bare {type, action} and streams its ste
 	const steps = h.messages.slice(sentAt).filter((m) => m.type === "update_progress" && m.action === "update").map((m) => m.phase);
 	assert.ok(steps.includes("pulling") && steps.includes("building"), steps.join(","));
 	assert.equal(git(c.checkout, "rev-parse", "HEAD"), head);
-	const staged = await h.waitFor((m) => h.messages.indexOf(m) > h.messages.indexOf(done) && m.type === "update_status" && m.staged, "status with the staged build");
-	assert.match(staged.staged, /1\.2\.0/);
-
+	// Activate right away, as the worker may, before the update process has even exited.
 	const activateAt = h.messages.length;
 	h.send({ type: "update_action", action: "activate" });
 	const installed = await h.waitFor(
@@ -445,6 +443,7 @@ test("the host runs an update only for a bare {type, action} and streams its ste
 		60000,
 	);
 	assert.equal(installed.reload, true, installed.message);
+	assert.ok(!h.messages.slice(activateAt).some((m) => m.type === "update_progress" && /already running/.test(m.message)), "not refused as busy");
 
 	// The extension still runs the old build: the host reports it and offers the reload.
 	const doneAt = h.messages.indexOf(installed);

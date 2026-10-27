@@ -82,7 +82,11 @@ function noteSkills(): string | undefined {
 function refreshSkills(cli: string, noteError?: string): LastUpdate["skills"] {
 	phase("skills", "Refreshing the bundled skills you haven't edited");
 	try {
-		const out = execFileSync(process.execPath, [cli, "skill", "refresh", "--json"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
+		const out = execFileSync(process.execPath, [cli, "skill", "refresh", "--json"], {
+			encoding: "utf8",
+			env: { ...process.env, NO_COLOR: "1" },
+			timeout: 60000,
+		});
 		const line = out.trim().split("\n").pop() ?? "{}";
 		const r = JSON.parse(line) as { refreshed?: string[]; skipped?: Array<{ skill: string; file: string; reason: string }> };
 		return { refreshed: r.refreshed ?? [], skipped: r.skipped ?? [], error: noteError };
@@ -153,15 +157,18 @@ function releaseActivate(): void {
 		recover();
 		if (!existsSync(pendingFile())) return;
 		const staged = JSON.parse(readFileSync(pendingFile(), "utf8")) as ReleasePending;
-		rmSync(pendingFile(), { force: true });
 		if (installedVersion(stagedDir()) !== staged.to) throw new UpdateError(`The staged release is not ${staged.to}; run Update now again.`);
 		// Never install something older than what runs (say, staged before a rollback or a terminal update).
 		if (!isNewer(staged.to, installedVersion(appDir()))) {
 			rmSync(stagedDir(), { recursive: true, force: true });
 			return;
 		}
+		// The record moves out of the folder that becomes app/, and goes only once the swap is done.
+		const aside = join(installRoot(), ".pending-activating.json");
+		renameSync(pendingFile(), aside);
 		pending = staged;
 		swapIn(stagedDir());
+		rmSync(aside, { force: true });
 	});
 	if (!pending) {
 		emit({ phase: "done", message: "Nothing was waiting to install." });
@@ -277,7 +284,13 @@ export async function runHostAction(action: HostRunAction): Promise<number> {
 		else await checkoutUpdate(root, action === "update");
 		return 0;
 	} catch (err) {
-		emit({ phase: "failed", message: err instanceof Error ? err.message : String(err) });
+		const message = err instanceof Error ? err.message : String(err);
+		if (action === "activate" || action === "rollback") {
+			// It may have stopped after files changed. Whatever is installed now is what the browser
+			// should run: reload into it (under the gate) rather than let runs start on mixed files.
+			const extensionBuild = readBuildInfo(join(mode === "release" ? appDir() : root, "dist-chrome"))?.id;
+			emit({ phase: "failed", message: `${message} Reloading Tabkyra to run what is installed.`, reload: true, extensionBuild });
+		} else emit({ phase: "failed", message });
 		return 1;
 	}
 }

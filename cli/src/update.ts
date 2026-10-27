@@ -402,6 +402,8 @@ export function stage(zip: Buffer, version: string): string {
 
 /** A lock older than this whose owner can't be identified is taken over. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
+/** A lock older than this is taken over even if its pid is alive (pids are reused). */
+const LOCK_MAX_MS = 60 * 60 * 1000;
 
 /**
  * One updater at a time. The lock is a directory (mkdir is atomic) holding the owner's pid.
@@ -432,7 +434,8 @@ export function takeLock(root = installRoot()): () => void {
 		if (pid > 0) {
 			try {
 				process.kill(pid, 0);
-				held = true;
+				// A pid can be reused; no update holds the lock for an hour.
+				held = Date.now() - statSync(lock).mtimeMs < LOCK_MAX_MS;
 			} catch {
 				held = false;
 			}

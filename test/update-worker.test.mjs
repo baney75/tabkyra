@@ -39,6 +39,8 @@ async function start() {
 }
 
 const ctx = await start();
+const gate = await import("../src/update/gate.ts");
+
 const panelUrl = "chrome-extension://fake/sidepanel.html";
 
 test("Update now sends only the action name to the native host", async () => {
@@ -58,11 +60,18 @@ test("unknown actions and web pages are refused before anything reaches the host
 	assert.equal(ctx.port.sent.slice(before).filter((m) => m.type === "update_action").length, 0);
 });
 
+test("a fence a dead worker left holds panels off even with the lock free", async () => {
+	await chrome.storage.session.set({ "tabkyra.installFence": { at: Date.now(), action: "activate" } });
+	assert.equal(await gate.reserveRun(async () => {}), false);
+	await chrome.storage.session.set({ "tabkyra.installFence": { at: Date.now() - 11 * 60 * 1000, action: "activate" } });
+	assert.equal(await gate.reserveRun(async () => {}), true, "a stale fence doesn't count");
+	await chrome.storage.session.remove("tabkyra.installFence");
+});
+
 const progressNow = async () => (await chrome.storage.local.get("tabkyra.updateProgress"))["tabkyra.updateProgress"];
 const pendingNow = async () => (await chrome.storage.local.get("tabkyra.updatePending"))["tabkyra.updatePending"];
 const actionsSent = (from) => ctx.port.sent.slice(from).filter((m) => m.type === "update_action").map((m) => m.action);
 
-const gate = await import("../src/update/gate.ts");
 const gateHeld = async () => (await navigator.locks.query()).held.some((l) => l.name === gate.INSTALL_GATE_LOCK);
 const busy = (on) => chrome.storage.session.set({ sidepanel_busy_1: on ? 105 : false, sidepanel_busy_beat_1: Date.now() });
 
@@ -121,6 +130,7 @@ test("a failed install drops the gate and nothing reloads", async () => {
 	await sleep(400);
 	ctx.port.deliver({ type: "update_progress", action: "activate", phase: "failed", message: "disk full", at: Date.now() });
 	await sleep(300);
+	assert.equal((await chrome.storage.session.get("tabkyra.installFence"))["tabkyra.installFence"], undefined, "the fence goes too");
 	assert.equal(await gateHeld(), false);
 	assert.equal(await pendingNow(), undefined);
 	assert.equal(await gate.reserveRun(async () => {}), true, "runs may start again");
@@ -129,7 +139,7 @@ test("a failed install drops the gate and nothing reloads", async () => {
 
 test("a busy flag without a fresh heartbeat (its panel crashed) doesn't hold the reload", async () => {
 	await chrome.storage.local.remove("tabkyra.updatePending");
-	await chrome.storage.session.set({ sidepanel_busy_1: false, sidepanel_busy_7: 300, sidepanel_busy_beat_7: Date.now() - 120000 });
+	await chrome.storage.session.set({ sidepanel_busy_1: false, sidepanel_busy_7: 300, sidepanel_busy_beat_7: Date.now() - 4 * 60 * 1000 });
 	const before = ctx.reloads();
 	assert.deepEqual(await ctx.ask({ type: "tabkyra-update", action: "reload" }, panelUrl), { ok: true });
 	await sleep(600);
@@ -160,4 +170,16 @@ test("a result a new host replays is matched, not shown", async () => {
 	await sleep(300);
 	assert.deepEqual(await progressNow(), shown, "the panel's progress line is unchanged");
 	assert.deepEqual(await pendingNow(), waiting, "an older result for another step moves nothing");
+});
+
+test("an install that failed after it may have changed files still reloads", async () => {
+	await chrome.storage.local.remove("tabkyra.updatePending");
+	await busy(false);
+	await sleep(3500);
+	const before = ctx.reloads();
+	await ctx.ask({ type: "tabkyra-update", action: "rollback" }, panelUrl);
+	await sleep(400);
+	ctx.port.deliver({ type: "update_progress", action: "rollback", phase: "failed", message: "rename failed. Reloading Tabkyra to run what is installed.", at: Date.now(), reload: true, extensionBuild: "x" });
+	await sleep(400);
+	assert.equal(ctx.reloads(), before + 1);
 });

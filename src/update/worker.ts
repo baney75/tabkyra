@@ -12,7 +12,7 @@
  * AUTO_UPDATE_QUIET_MS, for every step.
  */
 
-import { bridgeActivity, onUpdateMessages, sendUpdateAction, setInstallGate } from "../bridge/native.js";
+import { bridgeActivity, onUpdateMessages, sendUpdateAction, setGateReady, setInstallGate } from "../bridge/native.js";
 import {
 	type HostUpdateProgress,
 	type HostUpdateStatus,
@@ -20,7 +20,14 @@ import {
 	UPDATE_STATUS_KEY,
 } from "../bridge/protocol.js";
 import { BUILD, describeBuild } from "./build.js";
-import { BUSY_BEAT_MAX_MS, BUSY_BEAT_PREFIX, INSTALL_GATE_LOCK, INSTALL_GATE_MAX_MS } from "./gate.js";
+import {
+	BUSY_BEAT_MAX_MS,
+	BUSY_BEAT_PREFIX,
+	fenceHeld,
+	INSTALL_FENCE_KEY,
+	INSTALL_GATE_LOCK,
+	INSTALL_GATE_MAX_MS,
+} from "./gate.js";
 import {
 	type ActivitySnapshot,
 	AUTO_UPDATE_QUIET_MS,
@@ -68,15 +75,19 @@ interface Pending {
 }
 
 let releaseGate: (() => void) | undefined;
+let acquiring: Promise<void> | undefined;
+let dropWanted = false;
 setInstallGate(() => releaseGate !== undefined);
 
 /**
- * Take the install gate (a Web Lock, src/update/gate.ts) and hold it until dropGate. A worker
- * that dies lets go of it with its context; a stuck one lets go after INSTALL_GATE_MAX_MS.
+ * Take the install gate (a Web Lock, src/update/gate.ts) and hold it until dropGate. Concurrent
+ * calls share one acquisition. A worker that dies lets go of the lock with its context (the
+ * fence in storage still holds); a stuck one lets go after INSTALL_GATE_MAX_MS.
  */
-async function takeGate(): Promise<void> {
-	if (releaseGate) return;
-	await new Promise<void>((acquired) => {
+function takeGate(): Promise<void> {
+	if (releaseGate) return Promise.resolve();
+	dropWanted = false;
+	acquiring ??= new Promise<void>((acquired) => {
 		void navigator.locks.request(
 			INSTALL_GATE_LOCK,
 			() =>
@@ -88,14 +99,29 @@ async function takeGate(): Promise<void> {
 						releaseGate = undefined;
 						release();
 					};
+					acquiring = undefined;
 					acquired();
+					// dropGate was called while the lock was still being acquired.
+					if (dropWanted) releaseGate();
 				}),
 		);
 	});
+	return acquiring;
 }
 
 function dropGate(): void {
-	releaseGate?.();
+	if (releaseGate) releaseGate();
+	else if (acquiring) dropWanted = true;
+}
+
+/** The durable half of the gate: written before files change, gone with the reload. */
+const setFence = (action: string) => chrome.storage.session.set({ [INSTALL_FENCE_KEY]: { at: Date.now(), action } });
+const clearFence = () => chrome.storage.session.remove(INSTALL_FENCE_KEY);
+
+/** Let go of the gate and the fence: nothing was changed, runs may start again. */
+async function release(): Promise<void> {
+	dropGate();
+	await clearFence();
 }
 
 async function activity(): Promise<ActivitySnapshot> {
@@ -155,7 +181,7 @@ async function advance(): Promise<void> {
 	const wait = async (reason: string | undefined) => {
 		// After an install the files are already swapped: keep the gate, so nothing new starts
 		// before the reload. Before one, let go while waiting, so the bridge isn't refused for nothing.
-		if (pending.step !== "reload") dropGate();
+		if (pending.step !== "reload") await release();
 		const what =
 			pending.step === "reload"
 				? "Reloading Tabkyra"
@@ -173,8 +199,9 @@ async function advance(): Promise<void> {
 	const verdict = idleGate(await activity(), quiet);
 	if (!verdict.idle) return wait(verdict.reason);
 	if (pending.step === "run") {
+		await setFence(pending.action);
 		if (!sendUpdateAction(pending.action as UpdateAction)) {
-			dropGate();
+			await release();
 			await setProgress(pending.action, "waiting", "Waiting for the Tabkyra native host to connect.");
 			later();
 			return;
@@ -189,7 +216,7 @@ async function advance(): Promise<void> {
 	// A reload ends this worker at once. Still here a few seconds later means it didn't happen:
 	// let runs start again and say so, rather than hold everything back.
 	const timer = setTimeout(() => {
-		dropGate();
+		void release();
 		void chrome.storage.local.remove(PENDING_KEY);
 		void setProgress(pending.action, "failed", "Tabkyra didn't reload. Reload it on chrome://extensions.");
 	}, RELOAD_GRACE_MS);
@@ -210,8 +237,19 @@ function armGiveUp(pending: Pending): void {
 async function giveUpOnSent(at: number): Promise<void> {
 	const pending = await getPending();
 	if (pending?.step !== "sent" || pending.at !== at) return;
+	if (pending.action === "activate" || pending.action === "rollback") {
+		// Files may have changed: don't let runs start on them. Reload into whatever is installed
+		// (the mismatch banner reports a half-done install after it), keeping the gate.
+		await setProgress(
+			pending.action,
+			"waiting",
+			"No result from the native host. Reloading Tabkyra to run what is installed.",
+		);
+		await queue("reload", pending.action, { auto: pending.auto });
+		return;
+	}
 	await chrome.storage.local.remove(PENDING_KEY);
-	dropGate();
+	await release();
 	await setProgress(
 		pending.action,
 		"failed",
@@ -278,11 +316,13 @@ async function onProgress(progress: HostUpdateProgress): Promise<void> {
 	const mine = pending?.step === "sent" && pending.action === progress.action && progress.at >= pending.at - 2000;
 	if (!mine || (progress.phase !== "done" && progress.phase !== "failed")) return;
 	if (progress.phase === "done" && progress.staged) return queue("run", "activate", { auto: pending?.auto });
-	if (progress.phase === "done" && progress.reload) {
+	// A failed install or rollback that may have changed files also says reload.
+	if (progress.reload) {
 		return queue("reload", progress.action, { extensionBuild: progress.extensionBuild, auto: pending?.auto });
 	}
+	// A failure reported before the swap: nothing changed (after the swap the updater reports done).
 	await chrome.storage.local.remove(PENDING_KEY);
-	dropGate();
+	await release();
 }
 
 /** Say so when the host never answers (a host older than this extension ignores the request). */
@@ -382,5 +422,12 @@ export function startUpdateWorker(): void {
 	chrome.alarms.onAlarm.addListener((alarm) => {
 		if (alarm.name === AUTO_ALARM) void maybeAutoUpdate().catch(() => undefined);
 	});
-	void resume().catch(() => undefined);
+	// Before any bridge request goes through: a fence a dead worker left means an install may
+	// be changing files right now; take the lock back from it.
+	const ready = (async () => {
+		const fence = (await chrome.storage.session.get(INSTALL_FENCE_KEY))[INSTALL_FENCE_KEY];
+		if (fenceHeld(fence)) await takeGate();
+	})().catch(() => undefined);
+	setGateReady(ready);
+	void ready.then(() => resume()).catch(() => undefined);
 }

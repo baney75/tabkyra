@@ -142,6 +142,8 @@ let isRecording = false;
 let lastPublishedBusy: boolean | undefined;
 function publishBusyState(): void {
 	const busy = agent?.state.isStreaming === true;
+	// Agent events beat too: a hidden panel's timers can be throttled to once a minute.
+	if (busy && Date.now() - lastBeatAt > 10000) beatBusy();
 	if (busy === lastPublishedBusy) return;
 	lastPublishedBusy = busy;
 	// The value names the running task's home tab so the worker keeps exactly that panel up.
@@ -160,8 +162,24 @@ function publishBusyState(): void {
 }
 const BUSY_BEAT_MS = 15000;
 let busyBeat: ReturnType<typeof setInterval> | undefined;
+let lastBeatAt = 0;
 function beatBusy(): void {
-	chrome.storage.session.set({ [`${BUSY_BEAT_PREFIX}${currentWindowId}`]: Date.now() }).catch(() => undefined);
+	lastBeatAt = Date.now();
+	chrome.storage.session.set({ [`${BUSY_BEAT_PREFIX}${currentWindowId}`]: lastBeatAt }).catch(() => undefined);
+}
+
+/**
+ * Mark this panel busy before a run starts (under the install gate, see onBeforeSend), through
+ * the same state publishBusyState keeps, so it clears the flag again if no run starts.
+ */
+async function markBusyForSend(): Promise<void> {
+	lastPublishedBusy = true;
+	lastBeatAt = Date.now();
+	await chrome.storage.session.set({
+		[`sidepanel_busy_${currentWindowId}`]: homeTabId ?? true,
+		[`${BUSY_BEAT_PREFIX}${currentWindowId}`]: lastBeatAt,
+	});
+	busyBeat ??= setInterval(beatBusy, BUSY_BEAT_MS);
 }
 window.addEventListener("pagehide", () => {
 	chrome.storage.session
@@ -763,12 +781,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		onBeforeSend: async () => {
 			// Tabkyra may be swapping in an update and about to reload; a run started then would be cut
 			// off. Marking the panel busy under the gate makes the update wait for this run instead.
-			const reserved = await reserveRun(() =>
-				chrome.storage.session.set({
-					[`sidepanel_busy_${currentWindowId}`]: homeTabId ?? true,
-					[`${BUSY_BEAT_PREFIX}${currentWindowId}`]: Date.now(),
-				}),
-			);
+			const reserved = await reserveRun(markBusyForSend);
+			// A send that ends up queued or refused starts no run: drop the mark again.
+			if (reserved) setTimeout(publishBusyState, 5000);
 			if (!reserved) {
 				throw new Error("Tabkyra is installing an update and reloads in a moment. Send it again after the reload.");
 			}

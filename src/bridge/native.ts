@@ -277,6 +277,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			...(error ? { error: error.toRpc() } : { result }),
 		});
 
+	// At worker start, until the update worker knows whether an install was in flight.
+	await gateReady;
 	if (installGate()) {
 		// Refused before it counts as activity: a request started now would run on files being
 		// replaced, and the reload right after the install would cut it off.
@@ -672,6 +674,13 @@ let installGate: () => boolean = () => false;
 /** The update worker holds this while it swaps an update in and reloads (src/update/gate.ts). */
 export function setInstallGate(held: () => boolean): void {
 	installGate = held;
+}
+
+let gateReady: Promise<unknown> = Promise.resolve();
+
+/** Resolves once the update worker has restored a gate an earlier worker held. */
+export function setGateReady(ready: Promise<unknown>): void {
+	gateReady = ready;
 }
 
 /** Set once the hello went out on the current port; the host refuses actions before it. */

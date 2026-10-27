@@ -69,6 +69,14 @@ let running: { action: HostRunAction; last?: HostUpdateProgress } | undefined;
 let recovered = false;
 let lastStatus: HostUpdateStatus | undefined;
 
+/** No update runs this long (setup 20 min, two builds 10 min each, git); an older record is dead. */
+export const MAX_RUN_MS = 60 * 60 * 1000;
+
+/** The updater that wrote a record still runs: its pid is alive and the record isn't older than any run. */
+function updaterAlive(record: { pid: number; at: number }): boolean {
+	return pidAlive(record.pid) && Date.now() - record.at < MAX_RUN_MS;
+}
+
 function pidAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
@@ -103,7 +111,7 @@ function startUp(send: Send): void {
 		}
 		return;
 	}
-	if (!pidAlive(record.pid)) {
+	if (!updaterAlive(record)) {
 		const message = "The updater stopped before it finished. An interrupted swap is repaired; run it again.";
 		// Once: the record says failed from now on.
 		writeProgressRecord({ ...record, phase: "failed", message, at: Date.now() });
@@ -120,7 +128,8 @@ function startUp(send: Send): void {
 			state.last = forward(send, record.action, r);
 		}
 		const over = !r || r.phase === "done" || r.phase === "failed";
-		if (over || !pidAlive(record.pid)) {
+		if (over && running === state) running = undefined;
+		if (over || !updaterAlive(r ?? record)) {
 			clearInterval(poll);
 			if (running === state) running = undefined;
 			if (!over) {
@@ -340,7 +349,11 @@ function runChild(action: HostRunAction, send: Send): void {
 		}
 		const frame = forward(send, action, event);
 		if (!frame) return;
-		if (frame.phase === "done" || frame.phase === "failed") finished = true;
+		if (frame.phase === "done" || frame.phase === "failed") {
+			finished = true;
+			// The next step (activate after update) may come before the process has exited.
+			if (running === state) running = undefined;
+		}
 		state.last = frame;
 	};
 	child.stdout.on("data", (chunk: Buffer) => {
@@ -387,7 +400,7 @@ export function handleUpdateAction(raw: unknown, send: Send): void {
 	if (running) {
 		// Say what is going on instead of starting a second updater; another action gets its own answer.
 		if (action !== running.action) progress(send, action, "failed", `An update is already running (${running.action}); try again when it finishes.`);
-		else if (running.last) send({ ...running.last, at: Date.now() });
+		else if (running.last) send(running.last);
 		else progress(send, running.action, "checking", "An update is already running.");
 		return;
 	}

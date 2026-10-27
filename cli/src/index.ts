@@ -14,6 +14,7 @@ import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
 import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
+import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
 import { type HostRunAction, runHostAction } from "./update-run.ts";
 import { VERSION } from "./version.ts";
 
@@ -288,6 +289,15 @@ async function main(): Promise<void> {
 	}
 	// `host` is spawned by the browser with its origin as an argument; leave it alone.
 	if (command && command !== "host") checkArgs(command, argv.slice(1));
+	// A checkout whose install or rollback a crash interrupted is repaired by any of these, so
+	// the side panel isn't the only way back (docs/updates.md).
+	if (command === "doctor" || command === "status" || command === "update" || command === "setup") {
+		const { mode, root } = detectMode();
+		if (mode === "checkout") {
+			const note = recoverCheckoutQuietly(root);
+			if (note) console.error(`${sym.warn} ${note}`);
+		}
+	}
 	switch (command) {
 		case "setup": {
 			const parsed = parseSetupArgs(argv.slice(1));

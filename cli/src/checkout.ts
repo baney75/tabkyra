@@ -498,6 +498,8 @@ export function lockCheckout(root: string): () => void {
 
 /** For the native host at start: repair an interrupted swap unless an updater holds the lock. */
 export function recoverCheckoutQuietly(root: string): string | undefined {
+	// A checkout the updater never touched has nothing to repair; don't create its folder.
+	if (!existsSync(stateDir(root))) return undefined;
 	let release: (() => void) | undefined;
 	try {
 		release = lockCheckout(root);
