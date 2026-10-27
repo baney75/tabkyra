@@ -2,7 +2,7 @@ import type { Attachment, MessageRenderer } from "@mariozechner/pi-web-ui";
 import { registerMessageRenderer, type UserMessageWithAttachments } from "@mariozechner/pi-web-ui";
 import { html, LitElement, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { sentChips } from "../composer/chips.js";
+import { knownSkills, sentChips } from "../composer/chips.js";
 import { type ComposerRefs, displayText, parseRefs, REFS_RESOLVED } from "../composer/refs.js";
 
 /**
@@ -40,7 +40,9 @@ export class TabkyraUserMessage extends LitElement {
 		// References typed in the composer (/skill, @tab:<id>) show as chips, not raw tokens.
 		const refs = (this.message as { tabkyraRefs?: ComposerRefs }).tabkyraRefs;
 		const chips = sentChips(content, refs);
-		const skill = refs?.skill?.name ?? (chips === nothing ? undefined : parseRefs(content).skill);
+		// Only a real skill's token is hidden: "/deploy staging" stays as typed.
+		const typed = parseRefs(content).skill;
+		const skill = refs ? refs.skill?.name : typed && knownSkills.has(typed) ? typed : undefined;
 		const shown = chips === nothing ? content : displayText(content, skill);
 
 		return html`
@@ -76,4 +78,5 @@ export function createUserMessageRenderer(): MessageRenderer<UserMessageWithAtta
 
 export function registerUserMessageRenderer() {
 	registerMessageRenderer("user", createUserMessageRenderer());
+	registerMessageRenderer("user-with-attachments", createUserMessageRenderer());
 }

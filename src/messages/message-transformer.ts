@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Message } from "@mariozechner/pi-ai";
+import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
 import { type ComposerRefs, refsForModel } from "../composer/refs.js";
 import type { NavigationMessage } from "./NavigationMessage.js";
 
@@ -85,7 +85,35 @@ export async function browserMessageTransformer(messages: AgentMessage[]): Promi
 		}
 
 		// Filter non-LLM messages
-		if (m.role !== "user" && m.role !== "assistant" && m.role !== "toolResult" && m.role !== "navigation") {
+		if (
+			m.role !== "user" &&
+			m.role !== "user-with-attachments" &&
+			m.role !== "assistant" &&
+			m.role !== "toolResult" &&
+			m.role !== "navigation"
+		) {
+			continue;
+		}
+
+		// Files and images sent with a message: the text, then each image and each document's text.
+		if (m.role === "user-with-attachments") {
+			const { tabkyraRefs, attachments, content, timestamp } = m as {
+				tabkyraRefs?: ComposerRefs;
+				attachments?: AttachmentLike[];
+				content: string | Array<{ type: string; text?: string }>;
+				timestamp: number;
+			};
+			const base = withRefs({ role: "user", content, timestamp } as Message & { role: "user" }, tabkyraRefs);
+			const parts: Array<TextContent | ImageContent> =
+				typeof base.content === "string"
+					? [{ type: "text", text: base.content }]
+					: [...(base.content as Array<TextContent | ImageContent>)];
+			for (const a of attachments ?? []) {
+				if (a.type === "image") parts.push({ type: "image", data: a.content, mimeType: a.mimeType });
+				else if (a.type === "document" && a.extractedText)
+					parts.push({ type: "text", text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}` });
+			}
+			transformed.push({ ...base, content: parts } as Message);
 			continue;
 		}
 
@@ -121,6 +149,15 @@ ${skillsInfo}
 	}
 
 	return reorderMessages(transformed);
+}
+
+/** The fields of pi-web-ui's Attachment the transformer reads. */
+interface AttachmentLike {
+	type: "image" | "document";
+	fileName: string;
+	mimeType: string;
+	content: string;
+	extractedText?: string;
 }
 
 /** A user message whose composer references were resolved: the model gets the expanded text. */

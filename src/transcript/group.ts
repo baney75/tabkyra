@@ -146,7 +146,8 @@ export function groupTranscript(messages: readonly TMessage[], opts: GroupOption
 		const flushThought = (at: number) => {
 			if (thought.trim().length >= NEAR_EMPTY_THINKING) {
 				const step: Step = { kind: "thought", key: `thought:${index}:${at}`, thinking: thought.trim() };
-				openSteps(`steps:${index}`).push(step);
+				// Keyed by the chunk that opens it: text can split one message into several step lists.
+				openSteps(`steps:${index}:${at}`).push(step);
 				lastStep = step;
 				lastText = undefined;
 			}
@@ -174,7 +175,7 @@ export function groupTranscript(messages: readonly TMessage[], opts: GroupOption
 					showSkills: call.name === "navigate" ? visit(navigateUrl(result)) : false,
 				};
 				thought = "";
-				openSteps(`steps:${index}`).push(step);
+				openSteps(`steps:${index}:${ci}`).push(step);
 				lastStep = step;
 				lastText = undefined;
 			}
@@ -195,11 +196,6 @@ export function groupTranscript(messages: readonly TMessage[], opts: GroupOption
 		}
 	});
 	return { blocks, lastSite };
-}
-
-/** The site of the last page change in a transcript (for grouping the live message). */
-export function lastSiteOf(messages: readonly TMessage[], results?: Map<string, TMessage>): string | undefined {
-	return groupTranscript(messages, { results }).lastSite;
 }
 
 /** A one-line label for a tool call row. */

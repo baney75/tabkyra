@@ -447,7 +447,7 @@ index b8f6550ec..f95c50374 100644
  							.onAbort=${() => session.abort()}
  							.onModelSelect=${() => {
 diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
-index f0987c4d1..4957932e3 100644
+index f0987c4d1..c0f692bd9 100644
 --- a/packages/web-ui/src/components/MessageEditor.ts
 +++ b/packages/web-ui/src/components/MessageEditor.ts
 @@ -11,6 +11,32 @@ import { i18n } from "../utils/i18n.js";
@@ -508,7 +508,7 @@ index f0987c4d1..4957932e3 100644
  	private fileInputRef = createRef<HTMLInputElement>();
  
  	protected override createRenderRoot(): HTMLElement | DocumentFragment {
-@@ -57,12 +94,116 @@ export class MessageEditor extends LitElement {
+@@ -57,12 +94,118 @@ export class MessageEditor extends LitElement {
  		const textarea = e.target as HTMLTextAreaElement;
  		this.value = textarea.value;
  		this.onInput?.(this.value);
@@ -583,6 +583,8 @@ index f0987c4d1..4957932e3 100644
 +	}
 +
  	private handleKeyDown = (e: KeyboardEvent) => {
++		// Keys that confirm an IME composition belong to the IME, not the menu.
++		if (e.isComposing || e.keyCode === 229) return;
 +		if (this.slashItems.length > 0) {
 +			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 +				e.preventDefault();
@@ -626,7 +628,7 @@ index f0987c4d1..4957932e3 100644
  				this.handleSend();
  			}
  		} else if (e.key === "Escape" && this.isStreaming) {
-@@ -225,6 +366,66 @@ export class MessageEditor extends LitElement {
+@@ -225,6 +368,66 @@ export class MessageEditor extends LitElement {
  		this.processingFiles = false;
  	};
  
@@ -693,7 +695,7 @@ index f0987c4d1..4957932e3 100644
  	override firstUpdated() {
  		const textarea = this.textareaRef.value;
  		if (textarea) {
-@@ -274,13 +475,25 @@ export class MessageEditor extends LitElement {
+@@ -274,13 +477,25 @@ export class MessageEditor extends LitElement {
  						: ""
  				}
  
@@ -719,7 +721,7 @@ index f0987c4d1..4957932e3 100644
  					@keydown=${this.handleKeyDown}
  					@paste=${this.handlePaste}
  					${ref(this.textareaRef)}
-@@ -383,17 +596,17 @@ export class MessageEditor extends LitElement {
+@@ -383,17 +598,17 @@ export class MessageEditor extends LitElement {
  										className: "h-8 w-8",
  									})}
  								`

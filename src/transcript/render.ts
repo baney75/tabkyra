@@ -30,13 +30,9 @@ import {
 const VISIBLE_TAIL = 5;
 const COLLAPSE_OVER = 8;
 
-function faviconFor(url: string | undefined, favicon?: string): string | undefined {
-	if (favicon) return favicon;
-	try {
-		return url ? `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=32` : undefined;
-	} catch {
-		return undefined;
-	}
+/** The page's own favicon from the tab; no third-party favicon service ever sees the host. */
+function faviconFor(_url: string | undefined, favicon?: string): string | undefined {
+	return favicon && /^(https?:|data:image\/)/.test(favicon) ? favicon : undefined;
 }
 
 const statusIcon = (s: "running" | "done" | "error") =>
@@ -274,11 +270,15 @@ function renderBlock(block: Block, ctx: TranscriptContext): TemplateResult | und
 }
 
 /** The transcript renderer Tabkyra installs with setTranscriptRenderer. */
+/** The site of the last page change in the stable list, so the live message continues the count. */
+let stableLastSite: string | undefined;
+
 export const tabkyraTranscript: TranscriptRenderer = {
 	items(messages, ctx) {
-		const { blocks } = groupTranscript(messages as unknown as TMessage[], {
+		const { blocks, lastSite } = groupTranscript(messages as unknown as TMessage[], {
 			results: ctx.toolResultsById as unknown as Map<string, TMessage>,
 		});
+		stableLastSite = lastSite;
 		const items: Array<{ key: string; template: TemplateResult }> = [];
 		for (const b of blocks) {
 			const template = renderBlock(b, ctx);
@@ -289,6 +289,7 @@ export const tabkyraTranscript: TranscriptRenderer = {
 	live(message: AssistantMessage, ctx) {
 		const { blocks } = groupTranscript([message as unknown as TMessage], {
 			results: ctx.toolResultsById as unknown as Map<string, TMessage>,
+			lastSite: stableLastSite,
 		});
 		const content = Array.isArray(message.content) ? message.content : [];
 		const reasoningOnly = content.length > 0 && content.every((c) => c.type === "thinking");

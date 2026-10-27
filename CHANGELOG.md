@@ -11,6 +11,7 @@
 - The floating "Artifacts" pill over the chat is gone. Artifacts open from a header button with a count badge and from their tool cards.
 
 ### Fixed
+- Messages sent with files or images reached the model with nothing: the side panel's message transformer dropped `user-with-attachments` messages. They now go as the text plus each image and each document's extracted text.
 - The `google-calendar-events` site skill listed `mail.google.com` as a domain, so it showed on every Gmail page. It now matches Calendar only; an unedited stored copy is replaced at startup, an edited one is kept. Domain matching moved to `src/storage/stores/domain-match.ts` with tests.
 
 ## [1.1.9] - 2026-10-27

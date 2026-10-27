@@ -366,7 +366,8 @@ type RefMessage = AgentMessage & { tabkyraRefs?: ComposerRefs | null };
  */
 async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Promise<void> {
 	for (const m of messages as RefMessage[]) {
-		if (m.role !== "user" || loaded.has(m) || m.tabkyraRefs !== undefined) continue;
+		if ((m.role !== "user" && m.role !== "user-with-attachments") || loaded.has(m) || m.tabkyraRefs !== undefined)
+			continue;
 		const text =
 			typeof m.content === "string"
 				? m.content
@@ -388,7 +389,7 @@ async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Pr
 			sessionId: session?.id ?? "",
 			adopt: async (id, makeCurrent) => {
 				if (!session) throw new Error("No browser session");
-				await session.adopt(id, makeCurrent);
+				return session.adoptIfFree(id, makeCurrent);
 			},
 			isRestricted: isRestrictedUrl,
 			findSkill,
@@ -595,7 +596,8 @@ const generateTitle = (messages: AgentMessage[]): string => {
 	}
 
 	// A chosen skill or tab shows as a chip; the title reads the words, not the tokens.
-	text = displayText(text, parseRefs(text).skill).trim() || text.trim();
+	const skill = parseRefs(text).skill;
+	text = displayText(text, skill && knownSkills.has(skill) ? skill : undefined).trim() || text.trim();
 	if (!text) return "";
 
 	const sentenceEnd = text.search(/[.!?]/);

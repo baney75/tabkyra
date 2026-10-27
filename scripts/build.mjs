@@ -133,6 +133,22 @@ const stripRemovedSignIns = {
 	},
 };
 
+/** A SKILL.md's frontmatter description: one line, or a YAML block (`>`, `|`) folded to one line. */
+function frontmatterDescription(text) {
+	const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? "";
+	const lines = front.split(/\r?\n/);
+	const at = lines.findIndex((l) => /^description:/.test(l));
+	if (at < 0) return "";
+	const first = lines[at].replace(/^description:\s*/, "").trim();
+	if (!/^[>|][-+]?$/.test(first)) return first.replace(/^(["'])(.*)\1$/, "$2");
+	const body = [];
+	for (const l of lines.slice(at + 1)) {
+		if (!/^\s+\S/.test(l) && l.trim() !== "") break;
+		body.push(l.trim());
+	}
+	return body.join(" ").replace(/\s+/g, " ").trim();
+}
+
 /**
  * The bundled skill library (skills/<name>/SKILL.md, what `tabkyra skill list` shows) as a
  * module, so the side panel's "/" menu can list and run them: `virtual:library-skills`.
@@ -155,7 +171,9 @@ const librarySkills = {
 					const file = join(dir, name, "SKILL.md");
 					files.push(file);
 					const text = readFileSync(file, "utf8");
-					const description = /^description: (.*)$/m.exec(text)?.[1]?.trim() ?? "";
+					const description = frontmatterDescription(text);
+					if (!description || /^[>|]/.test(description))
+						throw new Error(`${file}: no readable description in its frontmatter`);
 					return { name, description, text };
 				});
 			return {

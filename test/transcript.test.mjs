@@ -159,3 +159,20 @@ test("row labels: the REPL title, the page title, the artifact file", () => {
 	assert.equal(stepLabel(call("d", "artifacts", { command: "create", filename: "r.md" })).label, "create r.md");
 	assert.equal(siteOf("https://www.example.com/x"), "example.com");
 });
+
+test("text between tool calls in one message never repeats a block key", () => {
+	const long = "A long enough piece of reasoning to get a row of its own here.";
+	const { blocks } = groupTranscript([
+		assistant([{ type: "thinking", thinking: long }, { type: "text", text: "Let me check." }, call("a", "repl", { title: "x", code: "" })]),
+		assistant([call("b", "repl", { title: "y", code: "" }), { type: "text", text: "Now this." }, call("c", "repl", { title: "z", code: "" })]),
+	]);
+	const keys = blocks.map((b) => b.key);
+	assert.equal(new Set(keys).size, keys.length, JSON.stringify(keys));
+	assert.deepEqual(kinds(blocks), ["steps(thought)", "text", "steps(tool,tool)", "text", "steps(tool)"]);
+});
+
+test("the live message continues the site count from the stable list", () => {
+	const live = [assistant([call("z", "navigate", { url: "https://mail.google.com/x" })]), result("z", "navigate", { finalUrl: "https://mail.google.com/x" })];
+	assert.equal(groupTranscript(live, { lastSite: "mail.google.com" }).blocks[0].steps[0].showSkills, false);
+	assert.equal(groupTranscript(live, { lastSite: "calendar.google.com" }).blocks[0].steps[0].showSkills, true);
+});
