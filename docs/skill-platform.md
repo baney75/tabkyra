@@ -55,16 +55,40 @@ How a task names a skill ("<name> skill") decides what the name does:
   "I have no idea who runs this, so use the osint skill") rules nothing out.
 - **The CLI:** `tabkyra skill install` (or another subcommand) is the Tabkyra CLI, read as
   "tabkyra cli", not a request for the tabkyra skill.
+- **A subject, not a skill:** nothing points the mention at a skill: no "the", "this" or
+  "that" before a singular mention, no use, edit or negation verb, no slash command and no
+  backticks. "My biology skill", "what chemistry skills do employers want" and "improve my
+  writing skill" (improve or refine with no determiner is about a person) score for no skill.
+  "A Tabkyra skill" (a kind of skill to make) keeps its words but asks for no skill. A plural
+  with one name ("the chemistry skills employers want") is a subject too.
+- **Lists:** several names before one "skills" ("use the osint and dorks skills", "the maps,
+  osint or dorks skills", spaced or hyphenated) are read together, and the verb before the
+  list applies to every name: "don't use the osint and dorks skills" rules out both.
 - **Requested:** otherwise ("use the osint skill on this landlord"), +6 for that skill.
 
 The name `none` is reserved for "no skill fits": lint, `skill apply`, `skill edit` and the
 catalog script refuse a skill by that name, so a real match can't look like no match.
 
 A skill matches when it scores at least 2.5 and has two pieces of evidence (specific words,
-word pairs, a phrase or a command), or one piece and a score of 4.5. Otherwise the answer is
-`none`: a small model does better with no skill than with the wrong one. A word that
-appears in more than about a quarter of the skills doesn't count as evidence, so common
-words alone never make a match, however high they add up.
+word pairs, a phrase or a command), or one piece and a score of 4.5 (4.8 past 13 skills, rising past 32 skills as below).
+Otherwise the answer is `none`: a small model does better with no skill than with the wrong
+one. A word or word pair counts as evidence when its IDF, computed as if the catalog had
+min(catalog size, 13) skills, is at least 1.5: so it is evidence when held by at most two
+skills in a catalog of 11 or more, by only one in a catalog of 6 to 10, and by none in a
+catalog of 5 or fewer. (Past 13 skills the IDF used for scoring is scaled and can be higher;
+it doesn't decide evidence.) So common words alone never make a match, however high they add up.
+
+Plain IDF rises as skills are added: in a larger catalog a word unique to one skill weighs
+more, and a word in three skills would turn into evidence. Past 13 skills, the catalog the
+thresholds were calibrated on, IDF is scaled so a word unique to one skill weighs what it
+did at 13, a word or word pair is evidence only if at most two skills hold it, and one piece
+of evidence needs a score of 4.8, because mid-frequency words still score a little higher than
+they did at 13. Past 32 skills (the catalog 4.8 was measured on) a word held by two skills,
+which is still evidence, keeps gaining weight, so the bar grows in proportion: one such word
+clears it no more easily at 52 skills than at 32. Without that, adding 19 skills made one ordinary word in an old skill enough
+for a match ("a good name for a puppy" went to `fix`, "a bug in my login handler" to `bug`).
+A catalog of 13 skills or fewer scores as before; on `main`'s 13 skills the only change across
+the 608 case texts is that "a Tabkyra skill" no longer asks for the tabkyra skill.
 
 The router indexes the skills in use: the bundled skills and the user's applied local
 copies (`tabkyra skill apply`). The index is built once per process and rebuilt only when
@@ -147,6 +171,25 @@ and false invokes 0% (0 of 52); on the 49 held-out cases, top-1 94.9% (37 of 39)
 invokes 10% (1 of 10). The top-1 gate needs 206 of 228, so the margin is three cases.
 Matching takes about 0.2 ms at p95 and the index build about 20 ms on the CI runner (about
 0.1 ms and under 10 ms on an Apple-silicon Mac).
+
+Measured on 2026-10-26 (15 skills, after `visual-explainer` and `mechanism-design`): tuned
+set of 326 cases, top-1 93.2% (246 of 264) and false invokes 0% (0 of 62); 62 held-out
+cases, top-1 91.8% (45 of 49) and false invokes 7.7% (1 of 13). Adding skills raises every
+word's IDF, so a word held by three skills becomes evidence and a word held by one scores
+higher: the new skills' descriptions were worded so the existing none cases stay none. On the
+held-out cases written after tuning, `visual-explainer` routes 2 of 4 and `mechanism-design`
+4 of 4. The two `visual-explainer` misses: "Draw me a picture of how our
+microservices call each other, as an HTML page" goes to `artifacts` (a wrong skill, a known
+gap), and "Diagram the database schema and the foreign keys between tables" goes to none. Two measured near-misses are not in the case files: "Sketch my kitchen floor plan as
+a diagram" and "Explain photosynthesis as a diagram" both go to `visual-explainer` (the words
+diagram and plan or explain). Adding the first as a held-out none case would put held-out
+false invokes at 2 of 14, over the 10% floor.
+
+With #19 and #26 merged (34 skills, measured 2026-10-26): tuned set of 545 cases, top-1 92.9% (421 of 453) and false invokes 0% (0 of 92); held-out top-1 87.7% over 106 cases and false invokes 5.9% (1 of 17). The merged catalog moved three skills below main's baseline, recorded in `accepted-drops.json`: kyraskillmaker 77.8% to 72.2%, mechanism-design 100% to 93.3%, visual-explainer 100% to 94.1%.
+
+With the 19 skills from pull request #19 (32 skills, measured 2026-10-26): on the tuned set of
+499 cases, top-1 93.3% (389 of 417) and false invokes 0% (0 of 82); on the 110 held-out cases,
+top-1 88.5% (85 of 96) and false invokes 0% (0 of 14). The top-1 gate needs 376 of 417.
 
 ## CI gates
 

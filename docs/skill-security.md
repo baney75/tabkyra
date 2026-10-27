@@ -118,8 +118,12 @@ user has turned on both adversarial review and auto-apply, and the reviewer appr
 
 ## Sources studied
 
-The bundled skills were written for Tabkyra, not forked. These were read for
-coverage and rejected as fork bases for the reasons given:
+The bundled skills were written for Tabkyra, not forked. One is adapted:
+`visual-explainer` rewrites the rules of nicobailon/visual-explainer (MIT) into one
+`SKILL.md`, with the MIT notice in its folder. Its kit scripts, renderer, CDN libraries,
+reader-reply loop and the reference that fetched older recipes from GitHub at run time
+were left out (D17). These were read for coverage and rejected as fork bases for the
+reasons given:
 
 | Source | Why it wasn't forked |
 | --- | --- |

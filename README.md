@@ -202,6 +202,8 @@ instructions and tool schemas.
 | `dorks` | Search operators and recipes for Google, Bing, DuckDuckGo, GitHub and Scholar |
 | `autoresearch` | `/autoresearch`: a research loop with sub-questions, a budget and a stop rule |
 | `artifacts` | Self-contained HTML reports, checked in the browser before hand-off |
+| `visual-explainer` | Code, diffs, systems and plans drawn as an offline SVG diagram page (adapted from nicobailon/visual-explainer, MIT) |
+| `mechanism-design` | Pick and size a linkage, cam, gear train or ratchet, check its motion by calculation, then hand off to CAD |
 | `proton-pass` | Credentials through Proton Pass, 1Password or Bitwarden, never through the model |
 | `rsi` | `/rsi`: turn lessons from real work into small, linted, reviewed skill edits |
 | `fix` | `/fix`: rewrite a skill for the model tier that failed with it, and test the rewrite |

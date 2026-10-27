@@ -50,10 +50,13 @@ async function onNewTab(tabId: number, sourceTabId: number, via: string): Promis
 		}
 	}
 
-	const session = await BrowserSession.open(owner.id, owner.label, owner.windowId);
+	// Re-resolve the owner under the lock: the panel may have renamed it (first save) while
+	// this ran, and opening the id read above would recreate the old record.
+	const session = await BrowserSession.openOwnerOf(sourceTabId);
+	if (!session) return;
 	// The popup becomes the session's current tab, as the model would expect after a click.
 	await session.adopt(tabId, true);
-	guardLog(`popup tab=${tabId} from=${sourceTabId} -> ${owner.id}${restored ? " (focus restored)" : ""}`);
+	guardLog(`popup tab=${tabId} from=${sourceTabId} -> ${session.id}${restored ? " (focus restored)" : ""}`);
 }
 
 export function startForegroundGuard(): void {
