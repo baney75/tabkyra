@@ -25,21 +25,23 @@ for f in $( { added_files < "$here/patches/pi-mono.patch"; for rev in $(git -C "
 done
 # On a refusal, leave the index as we found it.
 unmark() { if [ "${#marked[@]}" -gt 0 ]; then git reset -q -- "${marked[@]}"; fi; }
-if ! git diff --quiet; then
+# Compare with HEAD, so a staged hand edit counts as a local change too.
+if ! git diff HEAD --quiet; then
 	if git apply --reverse --check "$here/patches/pi-mono.patch" 2>/dev/null; then
 		echo "pi-mono patch already applied"
 	else
 		# An older revision of the patch is applied: swap it for the current one, but only
 		# when the local changes are exactly that older patch, so no hand edits are lost.
-		current="$(git diff)"
+		current="$(git diff HEAD)"
 		upgraded=""
 		for rev in $(git -C "$here" log --format=%H -- patches/pi-mono.patch); do
 			old_patch="$(git -C "$here" show "$rev:patches/pi-mono.patch" 2>/dev/null || true)"
 			if [ -n "$old_patch" ] && [ "$old_patch" = "$current" ]; then
 				echo "pi-mono has an older patch (${rev:0:7}); updating it"
 				git -C "$here" show "$rev:patches/pi-mono.patch" | git apply --reverse
-				# Drop the intent-to-add entries of files the old patch added; the tree is clean again.
-				git reset -q
+				# Drop only the intent-to-add entries of files that revision added; nothing else in the index.
+				old_added=( $(git -C "$here" show "$rev:patches/pi-mono.patch" | added_files) )
+				if [ "${#old_added[@]}" -gt 0 ]; then git reset -q -- "${old_added[@]}"; fi
 				# Make sure it sits on the pin before patching.
 				git checkout -q "$pi_mono_rev"
 				git apply "$here/patches/pi-mono.patch"

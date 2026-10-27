@@ -58,7 +58,7 @@ index 2c76c391d..b2e1df6d5 100644
  
  		// Set up artifacts panel
 diff --git a/packages/web-ui/src/components/AgentInterface.ts b/packages/web-ui/src/components/AgentInterface.ts
-index b8f6550ec..0edec8fdc 100644
+index b8f6550ec..14b3a292d 100644
 --- a/packages/web-ui/src/components/AgentInterface.ts
 +++ b/packages/web-ui/src/components/AgentInterface.ts
 @@ -1,3 +1,4 @@
@@ -111,7 +111,7 @@ index b8f6550ec..0edec8fdc 100644
  	public setInput(text: string, attachments?: Attachment[]) {
  		const update = () => {
  			if (!this._messageEditor) requestAnimationFrame(update);
-@@ -150,12 +164,32 @@ export class AgentInterface extends LitElement {
+@@ -150,12 +164,37 @@ export class AgentInterface extends LitElement {
  			};
  		}
  
@@ -122,12 +122,17 @@ index b8f6550ec..0edec8fdc 100644
 +		} else {
 +			this._queue?.dispose();
 +			session.setSteeringMode("all"); // a Send now message and its page context arrive together
-+			this._queue = new MessageQueue(
++			const queue: MessageQueue = new MessageQueue(
 +				session,
-+				(item) => this.startSend(item.input, item.attachments, "queue").then((r) => r.result),
++				// A queue sends only into its own session, and only while it is the panel's queue.
++				(item) =>
++					this.session === session && this._queue === queue
++						? this.startSend(item.input, item.attachments, "queue").then((r) => r.result)
++						: Promise.resolve<SendResult>("busy"),
 +				() => this.requestUpdate(),
 +				() => this.steerContext?.() ?? Promise.resolve([]),
 +			);
++			this._queue = queue;
 +		}
  		this._unsubscribeSession = this.session.subscribe(async (ev: AgentEvent) => {
  			switch (ev.type) {
@@ -145,7 +150,7 @@ index b8f6550ec..0edec8fdc 100644
  					this.requestUpdate();
  					break;
  				case "message_end":
-@@ -166,14 +200,16 @@ export class AgentInterface extends LitElement {
+@@ -166,14 +205,16 @@ export class AgentInterface extends LitElement {
  					}
  					this.requestUpdate();
  					break;
@@ -163,7 +168,7 @@ index b8f6550ec..0edec8fdc 100644
  				case "message_update":
  					if (this._streamingContainer) {
  						const isStreaming = this.session?.state.isStreaming || false;
-@@ -213,52 +249,165 @@ export class AgentInterface extends LitElement {
+@@ -213,52 +254,167 @@ export class AgentInterface extends LitElement {
  	};
  
  	public async sendMessage(input: string, attachments?: Attachment[]) {
@@ -286,7 +291,9 @@ index b8f6550ec..0edec8fdc 100644
 +		} finally {
 +			this._starting = false;
 +			// Items that queued behind this send would otherwise wait for a run that never comes.
-+			if (!started) {
++			// A queue send's drain decides what comes next itself; kicking it here would retry the next
++			// item at once (another key dialog right after the user cancelled one).
++			if (!started && !fromQueue) {
 +				queue?.kick();
 +				// _starting held up the whole panel, so a queue for another session may be waiting too.
 +				if (this._queue !== queue) this._queue?.kick();
@@ -366,7 +373,7 @@ index b8f6550ec..0edec8fdc 100644
  	}
  
  	private renderMessages() {
-@@ -361,6 +510,7 @@ export class AgentInterface extends LitElement {
+@@ -361,6 +517,7 @@ export class AgentInterface extends LitElement {
  				<!-- Input Area -->
  				<div class="shrink-0">
  					<div class="max-w-3xl mx-auto px-2">
@@ -374,7 +381,7 @@ index b8f6550ec..0edec8fdc 100644
  						<message-editor
  							.isStreaming=${state.isStreaming}
  							.currentModel=${state.model}
-@@ -368,8 +518,10 @@ export class AgentInterface extends LitElement {
+@@ -368,8 +525,10 @@ export class AgentInterface extends LitElement {
  							.showAttachmentButton=${this.enableAttachments}
  							.showModelSelector=${this.enableModelSelector}
  							.showThinkingSelector=${this.enableThinkingSelector}
@@ -719,10 +726,10 @@ index 1f50a7d08..1da1213a3 100644
  		Input: "Eingabe",
 diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
 new file mode 100644
-index 000000000..1b737448c
+index 000000000..daa256961
 --- /dev/null
 +++ b/packages/web-ui/src/utils/message-queue.ts
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,248 @@
 +import type { AgentMessage } from "@mariozechner/pi-agent-core";
 +import type { Attachment } from "./attachment-utils.js";
 +
@@ -770,6 +777,7 @@ index 000000000..1b737448c
 +	private draining = false;
 +	/** A drain was asked for while one ran; run again when it finishes. */
 +	private drainAgain = false;
++	private disposed = false;
 +	/** The page note steered but not yet injected, so the same note isn't steered twice. */
 +	private lastContext?: string;
 +	private pendingContext: AgentMessage[] = [];
@@ -922,6 +930,7 @@ index 000000000..1b737448c
 +
 +	/** Forget everything (the panel switched to another session). */
 +	dispose(): void {
++		this.disposed = true;
 +		this.agent.clearSteeringQueue();
 +		this.items = [];
 +		this.held.clear();
@@ -937,7 +946,7 @@ index 000000000..1b737448c
 +		try {
 +			await this.agent.waitForIdle();
 +			// A Send now still building its context decides what goes next; it drains when done.
-+			if (this.running || this.sendNowPending > 0) return;
++			if (this.disposed || this.running || this.sendNowPending > 0) return;
 +			const next = this.items.find((q) => !this.held.has(q.id));
 +			if (!next) return;
 +			this.items = this.items.filter((q) => q !== next);
@@ -948,7 +957,7 @@ index 000000000..1b737448c
 +			} catch {
 +				result = "refused";
 +			}
-+			if (result !== "started") {
++			if (result !== "started" && !this.disposed) {
 +				// Back in its place: behind anything pressed while it was out.
 +				this.items = this.ordered([next, ...this.items]);
 +				if (result === "refused") this.held.add(next.id);

@@ -453,3 +453,18 @@ test("after the page note is injected, a later Send now on that page gets a note
 	await queue.sendNow(queue.items[1].id);
 	assert.equal(agent.steered.filter((m) => m.role === "navigation").length, 2);
 });
+
+test("a queue disposed while its send was out doesn't take the item back", async () => {
+	let finishSend;
+	const { queue, start, stop } = setup({ result: () => "busy" });
+	const realSend = queue["send"];
+	queue["send"] = (item) => new Promise((r) => (finishSend = () => r(realSend(item))));
+	start();
+	queue.add("x");
+	stop();
+	await settle(); // x is out
+	queue.dispose(); // the panel switched chats
+	finishSend();
+	await settle();
+	assert.equal(queue.items.length, 0);
+});
