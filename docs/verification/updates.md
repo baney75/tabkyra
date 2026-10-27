@@ -10,18 +10,23 @@ The native host was registered from the checkout under an isolated HOME; the ext
 loaded from the checkout's `dist-chrome` into Playwright's headless Chromium (Chrome for
 Testing 156). A mock model held an agent run open on demand.
 
-Steps and results (18 of 18 passed):
+Steps and results (20 of 20 passed; run after review round 1 changed the flow to build first
+and install when idle):
 
 - The panel shows "Update available: 1 new commit on main" with Update now.
-- Settings > Updates: mode "Git checkout", "1 new commit on origin/main (0f2aaaf)", the
-  updates choice on "Tell me".
-- With an agent run going, Update now: progress checking, pulling, installing
-  (setup-siblings.sh, about 6 s), building, skills, done, then "Waiting ... an agent run is
-  going in a side panel". No reload for 6 more seconds while the run continued.
-- The run ended: the extension called `chrome.runtime.reload()` (its page closed).
+- Settings > Updates: mode "Git checkout", "1 new commit on origin/main", the updates choice
+  on "Tell me".
+- With an agent run going, Update now: checking, pulling, installing (setup-siblings.sh,
+  about 6 s), building, then "Waiting: Ready. Installing when no agent is running: an agent
+  run is going in a side panel". The live build was still the old one and the new one sat
+  in `.tabkyra-update/next/`; no reload for 6 more seconds while the run continued.
+- The run ended: the worker sent `activate`, the updater installed and refreshed skills
+  (its progress file read from outside the browser: update checking > pulling > installing >
+  building > done, then activate installing > skills > done), and the extension called
+  `chrome.runtime.reload()`.
 - After the reload: version 1.1.9, What's new lists "Live check: version 1.1.9", the panel
-  says "Tabkyra reloaded and runs 1.1.9 (0f2aaaf)", the session from before is still stored,
-  the checkout is at the new commit with no local changes, and its build is from that commit.
+  says "Tabkyra reloaded and runs 1.1.9", the session from before is still stored, the
+  checkout is at the new commit with no local changes, and its build is from that commit.
 - What's new dismisses; Roll back in Settings reloads into 1.1.8, the exact build from
   before the update (same build id).
 
