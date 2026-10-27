@@ -337,12 +337,13 @@ safely or fails with a clear retryable error, never a hang". Defaults chosen:
   input and is sent at most once.
 - **The host answers for the extension.** When the extension goes away with requests out
   (reload, update, worker restart, a bad frame), the native host answers each one with
-  `interrupted` before it exits, so no client waits on a reply that can't come. A request
-  that reaches a host that is shutting down gets `not_sent`.
+  `interrupted` before it exits, so no client waits on a reply that can't come. A stopping
+  host keeps its client sockets open for 250 ms, and a request that arrives then gets
+  `not_sent`.
 - **The client resends** a read cut off in flight and anything that never left (no socket, or
   `not_sent`), after the bridge is back, up to three sends in all. A cut-off input request
-  fails with `interrupted`, telling the agent it may have run and to check the page before
-  repeating it. This replaces the one blind retry, which ran a click twice when a reload cut
-  off its reply.
-- **No new waits.** The reconnect budget stays 40 s, after which the call reports not
-  connected; nothing waits longer than before.
+  fails with `interrupted` at once, without waiting for the bridge, telling the agent it may
+  have run and to check the page before repeating it; the next call reconnects. This replaces
+  the one blind retry, which ran a click twice when a reload cut off its reply.
+- **No new waits.** One call waits at most 40 s in all for the bridge, however many times it
+  drops; concurrent calls share one reconnect, and a client never holds more than one socket.

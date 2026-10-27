@@ -182,6 +182,12 @@ test("when the extension goes away, the host answers every waiting request as in
 		assert.ok(answer?.error, `the click got an answer, not just a closed socket: ${JSON.stringify(received)}`);
 		assert.equal(answer.error.code, "interrupted");
 		assert.match(answer.error.message, /may have run: check the page \(read_page\) before repeating it/);
+		// A request that arrives while the host is stopping is answered not_sent, never dropped.
+		client.write(encodeFrame({ type: "request", id: 2, method: "click", params: {} }));
+		for (let i = 0; i < 50 && !received.some((m) => m.id === 2); i++) await new Promise((r) => setTimeout(r, 10));
+		const late = received.find((m) => m.type === "response" && m.id === 2);
+		assert.equal(late?.error?.code, "not_sent", `the late request got no not_sent answer: ${JSON.stringify(received)}`);
+		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 2).length, 0, "a late request was forwarded");
 		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
 	} finally {
 		host.kill();

@@ -25,6 +25,8 @@ const SNAP = { url: "https://example.com/", title: "Example", viewport: { width:
 
 let root;
 let server;
+/** Sockets the fake host has open right now: a client must never hold more than one. */
+const open = new Set();
 let mcp;
 /** method -> how many times the host received it. */
 const seen = {};
@@ -33,6 +35,8 @@ const seen = {};
  * "interrupted" or "not_sent" answers with that RPC error, anything else answers normally.
  */
 const plan = {};
+/** When set, the host goes away for good right after its next drop. */
+let vanishOnDrop = false;
 
 before(async () => {
 	root = mkdtempSync(join(tmpdir(), "tabkyra-retry-"));
@@ -41,6 +45,8 @@ before(async () => {
 	mkdirSync(join(root, "home"));
 	const path = join(dir, `${process.pid}.sock`);
 	server = createServer((socket) => {
+		open.add(socket);
+		socket.on("close", () => open.delete(socket));
 		let buffered = Buffer.alloc(0);
 		socket.on("data", (chunk) => {
 			buffered = Buffer.concat([buffered, chunk]);
@@ -55,6 +61,10 @@ before(async () => {
 				const step = plan[msg.method]?.shift();
 				if (step === "drop") {
 					socket.destroy();
+					if (vanishOnDrop) {
+						server.close();
+						for (const s of open) s.destroy();
+					}
 					return;
 				}
 				if (step === "interrupted" || step === "not_sent")
@@ -98,7 +108,7 @@ test("a click cut off by a drop is not replayed, and the agent is told it may ha
 	plan.click = ["drop"];
 	const r = await mcp.callTool({ name: "click", arguments: { ref: "e1" } });
 	assert.equal(r.isError, true);
-	assert.match(text(r), /^interrupted: The browser connection dropped while click was running .* may have run\. The connection is back: check the page \(read_page\) before repeating it\./);
+	assert.match(text(r), /^interrupted: The browser connection dropped while click was running .* may have run\. Check the page with read_page before you repeat it; Tabkyra reconnects on your next call\./);
 	assert.equal(seen.click, 1, "the click reached the browser twice");
 	// The bridge is back: the next call works without the agent doing anything special.
 	assert.ok(!(await mcp.callTool({ name: "tabs_context", arguments: {} })).isError);
@@ -142,4 +152,28 @@ test("a read that keeps getting cut off is reported after three sends, not chase
 	assert.match(text(r), /dropped 3 times in a row during get_page_html/);
 	assert.equal(seen.html, 3);
 	plan.html = [];
+});
+
+test("reads cut off together share one reconnect, and the client never holds two sockets", async () => {
+	seen.snapshot = 0;
+	seen.text = 0;
+	plan.snapshot = ["drop"];
+	const [a, b] = await Promise.all([mcp.callTool({ name: "read_page", arguments: {} }), mcp.callTool({ name: "get_page_text", arguments: {} })]);
+	assert.ok(!a.isError && !b.isError, `${text(a)} | ${text(b)}`);
+	// The dropped snapshot went twice; the text read, cut off with it or sent after, at most twice.
+	assert.equal(seen.snapshot, 2);
+	assert.ok(seen.text <= 2, `get_page_text went ${seen.text} times`);
+	await new Promise((r) => setTimeout(r, 200));
+	assert.equal(open.size, 1, `the client holds ${open.size} sockets to the host`);
+});
+
+test("input cut off while no host comes back fails at once, without waiting out the reconnect budget", async () => {
+	// The press reaches the host, which drops it and never comes back.
+	plan.press = ["drop"];
+	vanishOnDrop = true;
+	const started = Date.now();
+	const r = await mcp.callTool({ name: "press", arguments: { key: "Enter" } });
+	assert.equal(r.isError, true);
+	assert.match(text(r), /^interrupted: /);
+	assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
 });

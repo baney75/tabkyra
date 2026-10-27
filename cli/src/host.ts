@@ -196,28 +196,36 @@ export function runNativeHost(): void {
 	});
 
 	let exiting = false;
+	/** How long a stopping host keeps client sockets open, so a request that arrives late gets `not_sent`. */
+	const LINGER_MS = 250;
 	const shutdown = (code = 0) => {
 		if (exiting) return;
 		exiting = true;
 		stopping = true;
+		// No new clients; the ones connected keep their sockets a moment longer, and anything they
+		// send meanwhile is answered not_sent (onClientMessage), which they resend to the next host.
 		server.close();
 		rmSync(path, { force: true });
-		// end() flushes what is queued (the answers above) before closing; destroy() would drop it.
-		for (const client of clients.values()) client.socket.end();
-		const exit = setTimeout(() => process.exit(code), 500);
-		const open = [...clients.values()].filter((c) => !c.socket.destroyed);
-		if (open.length === 0) {
-			clearTimeout(exit);
-			process.exit(code);
-		}
-		let left = open.length;
-		for (const c of open)
-			c.socket.once("close", () => {
-				if (--left === 0) {
-					clearTimeout(exit);
-					process.exit(code);
-				}
-			});
+		const finish = () => {
+			// end() flushes what is queued (the answers above) before closing; destroy() would drop it.
+			for (const client of clients.values()) client.socket.end();
+			const exit = setTimeout(() => process.exit(code), 500);
+			const open = [...clients.values()].filter((c) => !c.socket.destroyed);
+			if (open.length === 0) {
+				clearTimeout(exit);
+				process.exit(code);
+			}
+			let left = open.length;
+			for (const c of open)
+				c.socket.once("close", () => {
+					if (--left === 0) {
+						clearTimeout(exit);
+						process.exit(code);
+					}
+				});
+		};
+		if (clients.size === 0) finish();
+		else setTimeout(finish, LINGER_MS);
 	};
 	// The extension went away (reloaded, updated, worker restarted): what it had not answered
 	// never will be.
