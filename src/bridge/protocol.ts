@@ -8,6 +8,9 @@
  * copies frames between the two and only adds/strips `clientId`.
  */
 
+import type { BuildInfo } from "../update/build.js";
+import type { ExtensionLocation, Mismatch, UpdateAction, UpdatePolicy } from "../update/logic.js";
+
 export const NATIVE_HOST_NAME = "ai.tabkyra.bridge";
 export const PROTOCOL_VERSION = 1;
 
@@ -75,6 +78,20 @@ export interface ExtHello {
 	version: string;
 	protocol: number;
 	methods: string[];
+	/** The build the extension runs (compiled in). Absent from builds before the update system. */
+	build?: BuildInfo;
+	/** The extension folder's build-info.json as the browser serves it now (where it loads from). */
+	diskBuild?: BuildInfo;
+}
+
+/**
+ * Ask the native host to check, update, roll back, re-run the install step or change the
+ * updates setting. Exactly these two fields: the host refuses a frame with anything more
+ * (parseUpdateRequest in src/update/logic.ts) and runs only fixed commands.
+ */
+export interface ExtUpdateAction {
+	type: "update_action";
+	action: UpdateAction;
 }
 
 export interface ExtResponse {
@@ -97,7 +114,7 @@ export interface ExtPong {
 	type: "pong";
 }
 
-export type ExtToHost = ExtHello | ExtResponse | ExtEvent | ExtPong;
+export type ExtToHost = ExtHello | ExtResponse | ExtEvent | ExtPong | ExtUpdateAction;
 
 export interface HostClientConnected {
 	type: "client_connected";
@@ -122,15 +139,98 @@ export interface HostPing {
 	type: "ping";
 }
 
-/** What `tabkyra update --check` last found; the side panel shows "Update available". */
+/** How Tabkyra was installed, which decides what "update" does (docs/updates.md). */
+export type InstallMode = "release" | "checkout" | "unmanaged";
+
+/** The record of the last update, rollback or reinstall (~/.config/tabkyra/last-update.json). */
+export interface LastUpdate {
+	/** New for every run; the side panel remembers which one's "What's new" was dismissed. */
+	id: string;
+	kind: "update" | "rollback" | "reinstall";
+	mode: InstallMode;
+	at: number;
+	from: string;
+	to: string;
+	/** Release notes (the GitHub release body), release mode. Plain text; never rendered as HTML. */
+	notes?: string;
+	/** Commits pulled in, newest first, capped; checkout mode. */
+	commits?: Array<{ sha: string; subject: string }>;
+	totalCommits?: number;
+	/** The release page or the compare view. */
+	url?: string;
+	/** The extension build installed by this run: "What's new" shows once the browser runs it. */
+	extensionBuild?: string;
+	skills?: { refreshed: string[]; skipped: Array<{ skill: string; file: string; reason: string }>; error?: string };
+}
+
+/** What the last check found, and everything Settings > Updates shows. */
 export interface HostUpdateStatus {
 	type: "update_status";
 	available: boolean;
+	/** Release version, or "<version> (<commit>)" in a checkout. */
 	current: string;
 	latest?: string;
 	channel: string;
 	checkedAt: number;
+	mode?: InstallMode;
+	policy?: UpdatePolicy;
+	/** When the host checks next; absent when checks are off. */
+	nextCheckAt?: number;
+	/** Where updates install: the checkout or ~/.local/share/tabkyra/app. */
+	root?: string;
+	error?: string;
+	/** Why "Update now" would refuse right now (local changes, not on main, diverged, elsewhere). */
+	blocked?: string;
+	/** Commits waiting on origin/main (checkout mode). */
+	behind?: number;
+	/** The build "Update now" would replace still differs from the checkout's HEAD. */
+	needsBuild?: boolean;
+	canRollback?: boolean;
+	rollbackTo?: string;
+	/** A build or release that is built and verified and waits to be activated. */
+	staged?: string;
+	/** An updater is running in the host right now. */
+	updating?: boolean;
+	location?: ExtensionLocation;
+	mismatch?: Mismatch;
+	lastUpdate?: LastUpdate;
+	hostBuild?: BuildInfo;
+	cliBuild?: BuildInfo;
+	extensionBuild?: BuildInfo;
 }
+
+export type UpdatePhase =
+	| "checking"
+	| "downloading"
+	| "verifying"
+	| "pulling"
+	| "installing"
+	| "building"
+	| "skills"
+	| "waiting"
+	| "reloading"
+	| "done"
+	| "failed";
+
+/** One step of an update the host runs for the extension. */
+export interface HostUpdateProgress {
+	type: "update_progress";
+	action: UpdateAction | "reload" | "install";
+	phase: UpdatePhase;
+	message: string;
+	at: number;
+	/** Set on "done" when a build is staged: the extension sends "activate" once no agent runs. */
+	staged?: boolean;
+	/** Set on "done" when the extension should reload to run the new build. */
+	reload?: boolean;
+	/** The extension build now on disk, so the reload can tell it worked. */
+	extensionBuild?: string;
+	/** A result a new host sends again in case the extension missed it; not shown, only matched. */
+	replay?: boolean;
+}
+
+/** chrome.storage.local key where the extension keeps the last HostUpdateProgress. */
+export const UPDATE_PROGRESS_KEY = "tabkyra.updateProgress";
 
 /** chrome.storage.local key where the extension keeps the last HostUpdateStatus. */
 export const UPDATE_STATUS_KEY = "tabkyra.updateStatus";
@@ -140,7 +240,8 @@ export type HostToExt =
 	| HostClientDisconnected
 	| HostForwardedRequest
 	| HostPing
-	| HostUpdateStatus;
+	| HostUpdateStatus
+	| HostUpdateProgress;
 
 /** Error codes the extension returns. */
 export const ERR = {

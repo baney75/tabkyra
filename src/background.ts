@@ -1,6 +1,7 @@
 import { startBridge, trace } from "./bridge/native.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
+import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
 
 // Keep popups opened by agent-driven background tabs from stealing the user's focus.
 startForegroundGuard();
@@ -17,6 +18,9 @@ chrome.webNavigation.onTabReplaced.addListener(({ replacedTabId, tabId }) => {
 // External harnesses (omp, pi, Claude Code, Codex) drive the browser through the
 // native-messaging bridge. Connects when the CLI has installed the host manifest.
 startBridge();
+
+// "Update now", the reload after an update (only when no agent runs), automatic updates.
+startUpdateWorker();
 
 // ============================================================================
 // PER-TAB SIDE PANEL (Claude-in-Chrome model)
@@ -48,6 +52,8 @@ const panelPathCache = new Map<number, string | undefined>();
 const pendingOpen = new Map<number, ReturnType<typeof setTimeout>>();
 /** How long a fresh open waits for its task to name the tab (tests shorten it). */
 const PENDING_OPEN_MS = (globalThis as { __TABKYRA_PENDING_OPEN_MS?: number }).__TABKYRA_PENDING_OPEN_MS ?? 10_000;
+// The update worker waits for these before it reloads Tabkyra (src/update/worker.ts).
+setPanelsOpening(() => pendingOpen.size);
 
 function clearPendingOpen(tabId: number): void {
 	const timer = pendingOpen.get(tabId);
@@ -203,7 +209,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
 	if (area === "local" && "browser_sessions" in changes) void onSessionsChanged();
-	if (area === "session" && Object.keys(changes).some((k) => k.startsWith(PANEL_BUSY_PREFIX)))
+	// Heartbeats share the prefix but say nothing about which tab shows the panel.
+	if (
+		area === "session" &&
+		Object.keys(changes).some((k) => k.startsWith(PANEL_BUSY_PREFIX) && !k.startsWith(`${PANEL_BUSY_PREFIX}beat_`))
+	)
 		void onActiveTabsChanged();
 });
 

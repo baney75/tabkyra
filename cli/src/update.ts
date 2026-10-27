@@ -16,6 +16,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { InstallMode, LastUpdate, UpdatePhase } from "../../src/bridge/protocol.ts";
+import type { UpdatePolicy } from "../../src/update/logic.ts";
 import RELEASE_KEY from "../../keys/tabkyra-release.pub";
 import { parsePublicKey, SignatureError, verifyMinisign } from "./minisign.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
@@ -44,8 +46,11 @@ export function installRoot(): string {
 }
 export const appDir = () => join(installRoot(), "app");
 export const previousDir = () => join(installRoot(), "previous");
+/** A verified release unpacked and waiting for the side panel to activate it (update-run.ts). */
+export const stagedDir = () => join(installRoot(), "staged");
 const statusFile = () => join(configDir(), "update-status.json");
 const settingsFile = () => join(configDir(), "update.json");
+const lastUpdateFile = () => join(configDir(), "last-update.json");
 
 /** GitHub's API, or a test server. */
 function apiBase(): string {
@@ -64,14 +69,22 @@ export interface UpdateSettings {
 	channel: Channel;
 	/** The native host checks once a day and the side panel shows "Update available". */
 	autoCheck: boolean;
+	/**
+	 * Settings > Updates: off (no checks), notify (check daily, tell the user; the default) or auto
+	 * (the extension also installs when no agent has run for a few minutes). autoCheck is
+	 * policy !== "off"; both are saved so older CLIs read the file the same way.
+	 */
+	policy: UpdatePolicy;
 }
 
 function readSavedSettings(): UpdateSettings {
-	const settings: UpdateSettings = { channel: "stable", autoCheck: true };
+	const settings: UpdateSettings = { channel: "stable", autoCheck: true, policy: "notify" };
 	try {
 		const raw = JSON.parse(readFileSync(settingsFile(), "utf8")) as Partial<UpdateSettings>;
 		if (raw.channel === "stable" || raw.channel === "nightly") settings.channel = raw.channel;
-		if (typeof raw.autoCheck === "boolean") settings.autoCheck = raw.autoCheck;
+		if (raw.policy === "off" || raw.policy === "notify" || raw.policy === "auto") settings.policy = raw.policy;
+		else if (raw.autoCheck === false) settings.policy = "off";
+		settings.autoCheck = settings.policy !== "off";
 	} catch {
 		/* defaults */
 	}
@@ -81,23 +94,57 @@ function readSavedSettings(): UpdateSettings {
 /** Saved settings; TABKYRA_NO_UPDATE_CHECK turns the daily check off for this process. */
 export function readSettings(): UpdateSettings {
 	const settings = readSavedSettings();
-	if (process.env.TABKYRA_NO_UPDATE_CHECK) settings.autoCheck = false;
+	if (process.env.TABKYRA_NO_UPDATE_CHECK) {
+		settings.autoCheck = false;
+		settings.policy = "off";
+	}
 	return settings;
 }
 
 function writeSettings(settings: UpdateSettings): void {
 	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+	settings.autoCheck = settings.policy !== "off";
 	writeFileSync(settingsFile(), `${JSON.stringify(settings, null, 2)}\n`);
+}
+
+/** Settings > Updates and `tabkyra update --auto-check`. */
+export function setPolicy(policy: UpdatePolicy): void {
+	const saved = readSavedSettings();
+	saved.policy = policy;
+	writeSettings(saved);
+}
+
+// ---- the last update, for "What's new" --------------------------------------------------
+
+export function readLastUpdate(): LastUpdate | undefined {
+	try {
+		return JSON.parse(readFileSync(lastUpdateFile(), "utf8")) as LastUpdate;
+	} catch {
+		return undefined;
+	}
+}
+
+export function writeLastUpdate(record: LastUpdate): void {
+	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+	const tmp = `${lastUpdateFile()}.${process.pid}.tmp`;
+	writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`);
+	renameSync(tmp, lastUpdateFile());
 }
 
 export interface UpdateStatus {
 	checkedAt: number;
-	channel: Channel;
+	/** "main" in a checkout. */
+	channel: Channel | "main";
 	current: string;
 	latest?: string;
 	available: boolean;
 	url?: string;
 	error?: string;
+	/** Absent in files written before checkout mode: a release check. */
+	mode?: InstallMode;
+	/** Checkout mode: HEAD and origin/main when the check ran. */
+	head?: string;
+	origin?: string;
 }
 
 export function readStatus(): UpdateStatus | undefined {
@@ -108,7 +155,7 @@ export function readStatus(): UpdateStatus | undefined {
 	}
 }
 
-function writeStatus(status: UpdateStatus): void {
+export function writeStatus(status: UpdateStatus): void {
 	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
 	const tmp = `${statusFile()}.${process.pid}.tmp`;
 	writeFileSync(tmp, `${JSON.stringify(status, null, 2)}\n`);
@@ -183,12 +230,18 @@ interface GitHubRelease {
 	draft: boolean;
 	prerelease: boolean;
 	html_url: string;
+	body?: string | null;
 	assets: ReleaseAsset[];
 }
+
+/** Release notes are shown as plain text in the side panel; keep them to a readable size. */
+const MAX_NOTES_CHARS = 8000;
 
 export interface Release {
 	version: string;
 	url: string;
+	/** The GitHub release body (scripts/release/notes.mjs writes it from CHANGELOG.md). */
+	notes?: string;
 	zip: ReleaseAsset;
 	sums: ReleaseAsset;
 	signature: ReleaseAsset;
@@ -250,7 +303,9 @@ export async function latestRelease(channel: Channel): Promise<Release | undefin
 	if (!zip || !sums || !signature) {
 		throw new UpdateError(`Release ${best.release.tag_name} is missing its zip, SHA256SUMS or SHA256SUMS.minisig; not installing it`);
 	}
-	return { version: best.version.text, url: best.release.html_url, zip, sums, signature };
+	const body = typeof best.release.body === "string" ? best.release.body.trim() : "";
+	const notes = body ? (body.length > MAX_NOTES_CHARS ? `${body.slice(0, MAX_NOTES_CHARS)}...` : body) : undefined;
+	return { version: best.version.text, url: best.release.html_url, notes, zip, sums, signature };
 }
 
 // ---- check -----------------------------------------------------------------
@@ -272,18 +327,6 @@ export async function checkForUpdate(channel: Channel): Promise<UpdateStatus> {
 	return status;
 }
 
-/** For the native host: the cached check, refreshed in the background once a day. */
-export async function cachedOrFreshStatus(): Promise<UpdateStatus | undefined> {
-	const settings = readSettings();
-	if (!settings.autoCheck) return undefined;
-	const cached = readStatus();
-	const current = installedVersion();
-	if (cached && cached.channel === settings.channel && cached.current === current && Date.now() - cached.checkedAt < CHECK_INTERVAL_MS) {
-		return cached;
-	}
-	return checkForUpdate(settings.channel);
-}
-
 // ---- download and verify ---------------------------------------------------
 
 function sha256(data: Buffer): string {
@@ -291,15 +334,21 @@ function sha256(data: Buffer): string {
 }
 
 /** Download a release and prove it: signature, signed version, checksum. Returns the zip. */
-export async function downloadVerified(release: Release, log: (line: string) => void): Promise<Buffer> {
+export async function downloadVerified(
+	release: Release,
+	log: (line: string) => void,
+	phase: (phase: UpdatePhase, message: string) => void = () => {},
+): Promise<Buffer> {
 	let key: ReturnType<typeof parsePublicKey>;
 	try {
 		key = parsePublicKey(releaseKeyText());
 	} catch {
 		throw new UpdateError("This build has no release signing key (keys/tabkyra-release.pub), so it can't verify a release. Updates stay off until one is published.");
 	}
+	phase("downloading", `Downloading the checksums for ${release.version}`);
 	const sums = await fetchBytes(release.sums.browser_download_url, MAX_SUMS_BYTES);
 	const signature = (await fetchBytes(release.signature.browser_download_url, MAX_SUMS_BYTES)).toString("utf8");
+	phase("verifying", "Checking the minisign signature");
 	let trusted: string;
 	try {
 		trusted = verifyMinisign(sums, signature, key);
@@ -318,7 +367,9 @@ export async function downloadVerified(release: Release, log: (line: string) => 
 		.map((l) => /^([0-9a-f]{64})\s+\*?(.+)$/.exec(l.trim()))
 		.find((m) => m && m[2] === release.zip.name)?.[1];
 	if (!expected) throw new UpdateError(`SHA256SUMS has no entry for ${release.zip.name}`);
+	phase("downloading", `Downloading ${release.zip.name}`);
 	const zip = await fetchBytes(release.zip.browser_download_url, MAX_ZIP_BYTES, 300000);
+	phase("verifying", "Checking the archive's checksum");
 	const actual = sha256(zip);
 	if (actual !== expected) throw new UpdateError(`Checksum mismatch for ${release.zip.name}: expected ${expected}, got ${actual}`);
 	log(`${sym.ok} Checksum verified ${c.dim(`(sha256 ${actual.slice(0, 16)}...)`)}`);
@@ -326,7 +377,7 @@ export async function downloadVerified(release: Release, log: (line: string) => 
 }
 
 /** Unpack into a fresh staging folder next to app/ and check it is a whole release of `version`. */
-function stage(zip: Buffer, version: string): string {
+export function stage(zip: Buffer, version: string): string {
 	const root = installRoot();
 	mkdirSync(root, { recursive: true, mode: 0o700 });
 	const dir = join(root, `.staging-${randomBytes(6).toString("hex")}`);
@@ -351,13 +402,16 @@ function stage(zip: Buffer, version: string): string {
 
 /** A lock older than this whose owner can't be identified is taken over. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
+/** A lock older than this is taken over even if its pid is alive (pids are reused). */
+const LOCK_MAX_MS = 60 * 60 * 1000;
 
 /**
  * One updater at a time. The lock is a directory (mkdir is atomic) holding the owner's pid.
  * It is taken over only when that pid is dead, or when no pid was written and it is old.
+ * Returns the release function. `root` defaults to the release install; a checkout locks its
+ * own .tabkyra-update folder.
  */
-function withLock<T>(fn: () => T): T {
-	const root = installRoot();
+export function takeLock(root = installRoot()): () => void {
 	mkdirSync(root, { recursive: true, mode: 0o700 });
 	const lock = join(root, "update.lock");
 	const take = (): boolean => {
@@ -380,7 +434,8 @@ function withLock<T>(fn: () => T): T {
 		if (pid > 0) {
 			try {
 				process.kill(pid, 0);
-				held = true;
+				// A pid can be reused; no update holds the lock for an hour.
+				held = Date.now() - statSync(lock).mtimeMs < LOCK_MAX_MS;
 			} catch {
 				held = false;
 			}
@@ -398,10 +453,15 @@ function withLock<T>(fn: () => T): T {
 		}
 		if (!take()) throw new UpdateError("Another tabkyra update just started. Try again when it finishes.");
 	}
+	return () => rmSync(lock, { recursive: true, force: true });
+}
+
+export function withLock<T>(fn: () => T, root = installRoot()): T {
+	const release = takeLock(root);
 	try {
 		return fn();
 	} finally {
-		rmSync(lock, { recursive: true, force: true });
+		release();
 	}
 }
 
@@ -438,7 +498,7 @@ export function recover(): string | undefined {
 }
 
 /** app/ -> previous/, staged -> app/. Each step is one rename; a failed second step is undone. */
-function swapIn(staged: string): void {
+export function swapIn(staged: string): void {
 	const app = appDir();
 	const prev = previousDir();
 	if (existsSync(app)) {
@@ -454,20 +514,22 @@ function swapIn(staged: string): void {
 }
 
 /** Re-register the native host and the launcher from the release now in app/. */
-function reinstallHost(log: (line: string) => void): void {
+export function reinstallHost(log: (line: string) => void): boolean {
 	const cli = join(appDir(), "cli", "dist", "index.js");
 	try {
-		const out = execFileSync(process.execPath, [cli, "install"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
+		const out = execFileSync(process.execPath, [cli, "install"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" }, timeout: 60000 });
 		const wrote = out.split("\n").filter((l) => l.includes("Wrote")).length;
 		log(`${sym.ok} Native host ${wrote > 0 ? "re-registered" : "already current"} ${c.dim(`(${cli})`)}`);
+		return true;
 	} catch (err) {
 		const e = err as { stdout?: string; message: string };
 		log(`${sym.warn} The release is installed, but registering the native host failed: ${(e.stdout || e.message).trim()}`);
 		log(`  ${sym.arrow} Run ${c.bold(`node ${cli} install`)}`);
+		return false;
 	}
 }
 
-function isManagedCopy(): boolean {
+export function isManagedCopy(): boolean {
 	try {
 		return realpathSync(repoRoot()) === realpathSync(appDir());
 	} catch {
@@ -503,7 +565,8 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 	if (!options.check && (options.channel || options.autoCheck !== undefined)) {
 		const saved = readSavedSettings();
 		if (options.channel) saved.channel = options.channel;
-		if (options.autoCheck !== undefined) saved.autoCheck = options.autoCheck;
+		// --auto-check on keeps "install automatically" if that was the setting.
+		if (options.autoCheck !== undefined) saved.policy = options.autoCheck ? (saved.policy === "off" ? "notify" : saved.policy) : "off";
 		writeSettings(saved);
 	}
 	const channel = options.channel ?? readSettings().channel;
@@ -567,6 +630,8 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 	const zip = await downloadVerified(release, log);
 	withLock(() => {
 		recover();
+		// A release the side panel staged earlier is older than or equal to this one; drop it.
+		rmSync(stagedDir(), { recursive: true, force: true });
 		const staged = stage(zip, release.version);
 		swapIn(staged);
 	});
@@ -586,6 +651,16 @@ async function rollback(log: (line: string) => void, yes: boolean): Promise<numb
 		const ok = await confirm(`Roll back the release install in ${appDir()}?`, { assumeYes: yes, defaultYes: false });
 		if (!ok) return 1;
 	}
+	const { from, to } = swapBack(log);
+	log(`${sym.ok} Rolled back ${c.bold(from ?? "?")} ${sym.arrow} ${c.bold(to ?? "?")}`);
+	log(`${sym.ok} Kept ${from ?? "the newer release"} as the previous release ${c.dim("(roll back again to return to it)")}`);
+	reinstallHost(log);
+	reloadHint(log);
+	return 0;
+}
+
+/** app/ <-> previous/ under the lock, and the cached check updated to match. */
+export function swapBack(log: (line: string) => void): { from?: string; to?: string } {
 	let from: string | undefined;
 	let to: string | undefined;
 	withLock(() => {
@@ -598,16 +673,14 @@ async function rollback(log: (line: string) => void, yes: boolean): Promise<numb
 		from = installedVersion(app);
 		to = installedVersion(prev);
 		const hold = join(installRoot(), `.swap-${randomBytes(6).toString("hex")}`);
+		// A staged newer release would undo the rollback when activated; drop it.
+		rmSync(stagedDir(), { recursive: true, force: true });
 		// Three renames; recover() repairs any point a crash can stop at (see above).
 		renameSync(app, hold);
 		renameSync(prev, app);
 		renameSync(hold, prev);
 	});
-	log(`${sym.ok} Rolled back ${c.bold(from ?? "?")} ${sym.arrow} ${c.bold(to ?? "?")}`);
-	log(`${sym.ok} Kept ${from ?? "the newer release"} as the previous release ${c.dim("(roll back again to return to it)")}`);
-	reinstallHost(log);
 	const status = readStatus();
 	if (status) writeStatus({ ...status, current: to ?? status.current, available: isNewer(status.latest, to) });
-	reloadHint(log);
-	return 0;
+	return { from, to };
 }

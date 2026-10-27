@@ -14,6 +14,8 @@ import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
 import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
+import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
+import { type HostRunAction, runHostAction } from "./update-run.ts";
 import { VERSION } from "./version.ts";
 
 /** One help row. Padding counts visible characters, so color codes don't shift the column. */
@@ -207,6 +209,13 @@ async function status(json: boolean): Promise<number> {
 }
 
 const UPDATE_USAGE = "Usage: tabkyra update [--check] [--json] [--rollback] [--yes] [--channel stable|nightly] [--auto-check on|off]";
+/** The fixed command lines the native host runs for the side panel (cli/src/update-host.ts). */
+const HOST_UPDATE_ACTIONS: Record<string, HostRunAction> = {
+	"--host": "update",
+	"--host --activate": "activate",
+	"--host --rollback": "rollback",
+	"--host --reinstall": "reinstall",
+};
 
 /** Parse `update` flags strictly, like setup. */
 function parseUpdateArgs(args: string[]): UpdateOptions | string {
@@ -280,6 +289,15 @@ async function main(): Promise<void> {
 	}
 	// `host` is spawned by the browser with its origin as an argument; leave it alone.
 	if (command && command !== "host") checkArgs(command, argv.slice(1));
+	// A checkout whose install or rollback a crash interrupted is repaired by any of these, so
+	// the side panel isn't the only way back (docs/updates.md).
+	if (command === "doctor" || command === "status" || command === "update" || command === "setup") {
+		const { mode, root } = detectMode();
+		if (mode === "checkout") {
+			const note = recoverCheckoutQuietly(root);
+			if (note) console.error(`${sym.warn} ${note}`);
+		}
+	}
 	switch (command) {
 		case "setup": {
 			const parsed = parseSetupArgs(argv.slice(1));
@@ -291,6 +309,13 @@ async function main(): Promise<void> {
 			process.exitCode = await runDoctor({ json: flag("--json") });
 			return;
 		case "update": {
+			if (argv[1] === "--host") {
+				// Run by the native host, never with anything the extension sent (docs/updates.md).
+				const action = HOST_UPDATE_ACTIONS[argv.slice(1).join(" ")];
+				if (!action) throw new UsageError(`Unknown host update action. ${UPDATE_USAGE}`);
+				process.exitCode = await runHostAction(action);
+				return;
+			}
 			const parsed = parseUpdateArgs(argv.slice(1));
 			if (typeof parsed === "string") throw new UsageError(`${parsed} ${UPDATE_USAGE}`);
 			process.exitCode = await runUpdate(parsed);
@@ -374,6 +399,7 @@ async function main(): Promise<void> {
 				versions: { flags: ["--json"], max: 1 },
 				rollback: { flags: ["--to", "--yes"], max: 1 },
 				edit: { flags: ["--yes", "--draft-only"], max: 1 },
+				refresh: { flags: ["--json"], max: 0 },
 			};
 			const spec = sub && Object.hasOwn(SKILL_SUB, sub) ? SKILL_SUB[sub] : undefined;
 			const badFlag = args.find((a) => a.startsWith("-") && !(spec?.flags ?? []).includes(flagName(a)));
@@ -382,7 +408,7 @@ async function main(): Promise<void> {
 			}
 			if (!sub || !spec) {
 				throw new UsageError(
-					'Usage: tabkyra skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] [--router <script>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only]',
+					'Usage: tabkyra skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] [--router <script>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only] | refresh [--json]',
 				);
 			}
 			for (const name of VALUE_FLAGS) {

@@ -1,10 +1,15 @@
-import { chmodSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { buildInfo } from "../../scripts/build-info.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = join(root, "dist");
+// TABKYRA_CLI_OUT_DIR builds elsewhere: the checkout updater builds next to dist and swaps it in
+// only when the build succeeded (cli/src/checkout.ts).
+const outDir = process.env.TABKYRA_CLI_OUT_DIR || join(root, "dist");
+// What this build was made from; compared with the extension's (src/update/build.ts).
+const info = buildInfo(join(root, ".."));
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
@@ -25,6 +30,8 @@ await build({
 	sourcemap: true,
 	// keys/tabkyra-release.pub is bundled as text: the key that verifies releases ships inside the CLI.
 	loader: { ".pub": "text", ".md": "text" },
+	define: { __TABKYRA_BUILD__: JSON.stringify(info) },
 	logLevel: "info",
 });
 chmodSync(join(outDir, "index.js"), 0o755);
+writeFileSync(join(outDir, "build-info.json"), `${JSON.stringify(info, null, "\t")}\n`);

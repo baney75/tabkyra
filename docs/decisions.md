@@ -240,3 +240,34 @@ available"). Defaults chosen:
 - **Slides show as a scrolling column** scaled to the panel width, which suits a narrow
   side panel better than one slide with a thumbnail strip.
 
+## D19. Updates from the side panel (Claude, 2026-10-27)
+
+The owner asked for "a great update system" (2026-10-26) with Update now, checkout mode,
+Settings > Updates and an automatic choice defaulting to "Tell me". Defaults chosen:
+
+- **The mode comes from where the native host runs**: `~/.local/share/tabkyra/app` is a
+  release, a Tabkyra git checkout is a checkout, anything else updates only from a terminal.
+  The browser's extension folder is confirmed by its `build-info.json` (build ids are new for
+  every build); if it differs from the host's folder, Update now refuses, because updating
+  the host's folder would not change what the browser runs.
+- **A checkout rollback restores the builds, not git.** It swaps `dist-chrome` and
+  `cli/dist` with the kept ones and leaves HEAD alone; Update now rebuilds HEAD. Resetting a
+  branch the user may have work on is not the updater's call.
+- **Untracked files don't block a checkout update**; tracked changes, another branch and a
+  diverged main do. `git pull --ff-only` itself refuses an untracked file it would overwrite.
+- **Build first, swap when idle.** Downloading, verifying, pulling and building run while
+  agents work; the swap of live files (activation, rollback) and the reload wait for idle and
+  follow each other at once, so the browser doesn't run old and new files side by side.
+- **"Idle"** means no side panel run (counted while its heartbeat is under 3 minutes old) and
+  no bridge request in flight; a harness also counts as running for 30 seconds after a
+  browser call. Automatic updates wait for 3 quiet minutes.
+- **A checkout trusts its origin** as a manual `git pull` and build would; there is no
+  signature to check. Automatic updates are still offered in a checkout; docs/updates.md says
+  what that means.
+- **Automatic updates never undo a rollback**: not the release rolled back from, and in a
+  checkout only new commits. A failed automatic attempt isn't retried for the same version.
+- **Skill refresh only rewrites what Tabkyra wrote.** A hash record of installed files decides;
+  a copy without a record is refreshed only if it matched the old CLI's text right before the
+  swap. Anything else is reported, never overwritten.
+- **What's new is plain text.** Release notes come from GitHub and are rendered as text, never
+  HTML; links must be https.

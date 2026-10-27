@@ -54,6 +54,9 @@ for (const path of walk(dist)) {
 	files.push({ name: `dist-chrome/${relative(dist, path).split("\\").join("/")}`, data: readFileSync(path) });
 }
 files.push({ name: "cli/dist/index.js", data: readFileSync(cli) });
+// What the CLI was built from; the native host compares it with the extension's (docs/updates.md).
+const cliInfo = join(root, "cli", "dist", "build-info.json");
+if (existsSync(cliInfo)) files.push({ name: "cli/dist/build-info.json", data: readFileSync(cliInfo) });
 files.push({ name: "cli/package.json", data: readFileSync(join(root, "cli", "package.json")) });
 let commit = "unknown";
 try {

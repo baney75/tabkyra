@@ -51,7 +51,7 @@ function fakeCheckout(version) {
 }
 
 /** Build a release with the real packaging script, then sign it (or not, or wrongly). */
-function publish(version, { prerelease = false, signer = key, comment = `tabkyra ${version}`, tamper = false } = {}) {
+function publish(version, { prerelease = false, signer = key, comment = `tabkyra ${version}`, tamper = false, notes } = {}) {
 	const root = fakeCheckout(version);
 	const out = join(tmp, `out-${version}`);
 	const r = spawnSync(process.execPath, [packageScript, "--version", version, "--out", out, "--root", root], { encoding: "utf8" });
@@ -65,6 +65,7 @@ function publish(version, { prerelease = false, signer = key, comment = `tabkyra
 	}
 	releases.set(`v${version}`, {
 		prerelease,
+		body: notes,
 		assets: { [zipName]: zip, SHA256SUMS: sums, "SHA256SUMS.minisig": Buffer.from(signMinisign(sums, signer, comment)) },
 	});
 }
@@ -91,10 +92,14 @@ function env(extra = {}) {
 		TABKYRA_UPDATE_API: base,
 		TABKYRA_UPDATE_PUBKEY: keyFile,
 		TABKYRA_SOCKET_DIR: socketDir,
+		// An update refreshes installed skills; keep it away from the real harness folders.
+		CLAUDE_CONFIG_DIR: join(home, ".claude"),
+		CODEX_HOME: join(home, ".codex"),
 		NO_COLOR: "1",
 		...extra,
 	};
 	delete e.XDG_CONFIG_HOME;
+	delete e.TABKYRA_CONFIG_DIR;
 	delete e.FORCE_COLOR;
 	return e;
 }
@@ -130,6 +135,7 @@ before(async () => {
 				draft: false,
 				prerelease: r.prerelease,
 				html_url: `${base}/releases/${tag}`,
+				body: r.body,
 				assets: Object.entries(r.assets).map(([name, data]) => ({ name, size: data.length, browser_download_url: `${base}/dl/${tag}/${name}` })),
 			}));
 			res.writeHead(200, { "content-type": "application/json" });
@@ -410,4 +416,59 @@ test("the native host tells the extension an update is available", async () => {
 	assert.equal(message.available, true);
 	assert.equal(message.latest, "9.4.0");
 	assert.equal(message.current, appVersion());
+});
+
+/** `tabkyra update --host ...` as the native host runs it: one JSON event per line. */
+async function runHostUpdate(...args) {
+	const r = await run(appCli(), "update", "--host", ...args);
+	const events = r.out
+		.split("\n")
+		.filter((l) => l.startsWith("{"))
+		.map((l) => JSON.parse(l));
+	return { ...r, events, last: events.at(-1) };
+}
+
+test("release mode from the side panel: the same signed install, streamed as steps, with the notes", async () => {
+	const from = appVersion();
+	publish("9.5.0", { notes: "Faster tab groups.\n\n- Fixed the side panel on narrow windows." });
+	const r = await runHostUpdate();
+	assert.equal(r.code, 0, r.out);
+	const phases = r.events.map((e) => e.phase);
+	for (const p of ["checking", "downloading", "verifying", "installing", "done"]) assert.ok(phases.includes(p), `${p} in ${phases}`);
+	assert.equal(r.last.staged, true, "verified and unpacked, waiting to be activated");
+	assert.equal(appVersion(), from, "nothing live changes before activation");
+	const a = await runHostUpdate("--activate");
+	assert.equal(a.code, 0, a.out);
+	assert.ok(a.events.some((e) => e.phase === "skills"));
+	assert.equal(a.last.reload, true);
+	assert.equal(appVersion(), "9.5.0");
+	const record = JSON.parse(readFileSync(join(home, ".config", "tabkyra", "last-update.json"), "utf8"));
+	assert.equal(record.kind, "update");
+	assert.equal(record.mode, "release");
+	assert.equal(record.from, from);
+	assert.equal(record.to, "9.5.0");
+	assert.match(record.notes, /Faster tab groups/);
+	assert.equal(record.url, `${base}/releases/v9.5.0`);
+
+	// The release checks are the terminal's: a tampered archive is refused and nothing changes.
+	publish("9.6.0", { tamper: true });
+	const bad = await runHostUpdate();
+	assert.equal(bad.code, 1);
+	assert.equal(bad.last.phase, "failed");
+	assert.match(bad.last.message, /Checksum mismatch/);
+	assert.equal(appVersion(), "9.5.0");
+	const none = await runHostUpdate("--activate");
+	assert.match(none.last.message, /Nothing was waiting/);
+	assert.equal(appVersion(), "9.5.0");
+	releases.delete("v9.6.0");
+
+	const back = await runHostUpdate("--rollback");
+	assert.equal(back.last.phase, "done", back.out);
+	assert.equal(appVersion(), from);
+	const again = await runHostUpdate("--rollback");
+	assert.equal(again.last.phase, "done");
+	assert.equal(appVersion(), "9.5.0");
+
+	const usage = await run(appCli(), "update", "--host", "--channel", "nightly");
+	assert.equal(usage.code, 2, "the host's command lines are fixed; nothing else is accepted");
 });

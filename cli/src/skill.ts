@@ -343,7 +343,113 @@ export function installSkills(options: { force: boolean; all: boolean; only?: st
 			results.push({ target, skill, file, state: "written", backup });
 		}
 	}
+	recordInstalled(results.filter((r) => r.state === "written" || r.state === "current").map((r) => r.file));
 	return results;
+}
+
+// --- Refresh after an update ---------------------------------------------------------------
+//
+// After `tabkyra update` installs a new CLI, the skills it bundles may be newer than the copies
+// installed in each harness. A copy is refreshed only when it is still exactly what Tabkyra
+// wrote: skills-installed.json records the hash of every file install wrote, and the updater
+// records the installed copies that match the old CLI's text right before it swaps the new one
+// in. Anything else was edited by hand and is reported, never overwritten.
+
+function installedRecordFile(): string {
+	return join(configDir(), "skills-installed.json");
+}
+
+function readInstalledRecord(): Record<string, string> {
+	try {
+		const data = JSON.parse(readFileSync(installedRecordFile(), "utf8")) as Record<string, unknown>;
+		return Object.fromEntries(Object.entries(data).filter((e): e is [string, string] => typeof e[1] === "string"));
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * Remember the hash of what is in each of these files now (all written by Tabkyra). Best effort:
+ * a record that can't be written only means a later refresh leaves those copies alone.
+ */
+function recordInstalled(files: string[]): void {
+	if (files.length === 0) return;
+	try {
+		writeInstalledRecord(files);
+	} catch {
+		/* a linked or unwritable config folder: refresh will skip these copies */
+	}
+}
+
+function writeInstalledRecord(files: string[]): void {
+	const record = readInstalledRecord();
+	for (const file of files) {
+		try {
+			record[file] = sha256(readFileSync(file, "utf8"));
+		} catch {
+			/* gone meanwhile */
+		}
+	}
+	assertNoLinks([configDir(), installedRecordFile()]);
+	mkdirSync(configDir(), { recursive: true });
+	const tmp = `${installedRecordFile()}.${process.pid}.tmp`;
+	writeFileSync(tmp, `${JSON.stringify(record, null, "\t")}\n`);
+	renameSync(tmp, installedRecordFile());
+}
+
+/** Installed skill files of ours (they carry the marker) in every detected harness. */
+function installedSkillFiles(): Array<{ skill: string; file: string; target: SkillTarget }> {
+	const out: Array<{ skill: string; file: string; target: SkillTarget }> = [];
+	for (const target of skillTargets()) {
+		if (!target.detected) continue;
+		for (const skill of allNames()) {
+			const file = join(target.dir, skill, "SKILL.md");
+			if (!existsSync(file) || isLink(file) || isLink(dirname(file)) || !lstatSync(file).isFile()) continue;
+			if (readFileSync(file, "utf8").includes(MARKER)) out.push({ skill, file, target });
+		}
+	}
+	return out;
+}
+
+/**
+ * Before an update swaps in a new CLI: record every installed copy that is exactly what this
+ * (old) CLI would write, so the new CLI knows it is unedited even if it was installed before
+ * skills-installed.json existed.
+ */
+export function noteUneditedSkills(): number {
+	const unedited = installedSkillFiles().filter(({ skill, file }) => readFileSync(file, "utf8") === skillFile(skill));
+	recordInstalled(unedited.map((u) => u.file));
+	return unedited.length;
+}
+
+export interface RefreshResult {
+	refreshed: string[];
+	current: string[];
+	skipped: Array<{ skill: string; file: string; reason: string }>;
+}
+
+/** After an update: bring every unedited installed copy up to this CLI's text. */
+export function refreshInstalledSkills(): RefreshResult {
+	const record = readInstalledRecord();
+	const result: RefreshResult = { refreshed: [], current: [], skipped: [] };
+	const written: string[] = [];
+	for (const { skill, file } of installedSkillFiles()) {
+		const existing = readFileSync(file, "utf8");
+		const wanted = skillFile(skill);
+		if (existing === wanted) {
+			result.current.push(file);
+			continue;
+		}
+		if (record[file] !== sha256(existing)) {
+			result.skipped.push({ skill, file, reason: "edited since Tabkyra installed it" });
+			continue;
+		}
+		writeFileSync(file, wanted);
+		written.push(file);
+		result.refreshed.push(file);
+	}
+	recordInstalled(written);
+	return result;
 }
 
 // --- Apply and revert --------------------------------------------------------------------
@@ -835,6 +941,19 @@ function runBaseCommand(flags: SkillFlags, skills: RouterSkill[], casesFile: str
 }
 
 function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFlags): number {
+	if (sub === "refresh") {
+		// Run by the updater with the new CLI; also safe to run by hand.
+		if (args.length !== 0) throw new SkillError("Usage: tabkyra skill refresh [--json]");
+		const result = refreshInstalledSkills();
+		if (flags.json) {
+			console.log(JSON.stringify(result));
+			return 0;
+		}
+		for (const file of result.refreshed) console.log(`${sym.ok} refreshed ${c.dim(file)}`);
+		for (const s of result.skipped) console.log(`${sym.warn} left alone: ${c.dim(s.file)} (${s.reason}). tabkyra skill install ${s.skill} --force replaces it.`);
+		if (result.refreshed.length + result.skipped.length === 0) console.log(`${sym.ok} Installed skills are current.`);
+		return 0;
+	}
 	if (sub === "match") {
 		const task = args.join(" ").trim();
 		if (!task) throw new SkillError('Usage: tabkyra skill match "<task>" [--json] [--top N]');

@@ -42,6 +42,7 @@ import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
+import { UpdatesTab } from "./dialogs/UpdatesTab.js";
 import { WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
 import { browserMessageTransformer } from "./messages/message-transformer.js";
 import {
@@ -72,6 +73,7 @@ import { createArtifactViewer } from "./artifacts/viewers.js";
 import "./utils/live-reload.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tutorials } from "./tutorials.js";
+import { BUSY_BEAT_PREFIX, reserveRun } from "./update/gate.js";
 
 // Previews for more file types in the artifacts panel (src/artifacts/)
 setArtifactViewerFactory(createArtifactViewer);
@@ -144,16 +146,53 @@ let isRecording = false;
 // (and its document destroyed) on other tabs while work is in progress.
 let lastPublishedBusy: boolean | undefined;
 function publishBusyState(): void {
-	const busy = agent?.state.isStreaming === true;
+	// A send that holds a reservation counts as busy until it has started its run or given up.
+	const busy = agent?.state.isStreaming === true || sendReserving;
+	// Agent events beat too: a hidden panel's timers can be throttled to once a minute.
+	if (busy && Date.now() - lastBeatAt > 10000) beatBusy();
 	if (busy === lastPublishedBusy) return;
 	lastPublishedBusy = busy;
 	// The value names the running task's home tab so the worker keeps exactly that panel up.
 	chrome.storage.session
 		.set({ [`sidepanel_busy_${currentWindowId}`]: busy ? (homeTabId ?? true) : false })
 		.catch(() => undefined);
+	// A heartbeat while the run goes, so the update idle gate can tell a run from a flag a
+	// crashed panel left behind (src/update/worker.ts).
+	if (busy && !busyBeat) {
+		beatBusy();
+		busyBeat = setInterval(beatBusy, BUSY_BEAT_MS);
+	} else if (!busy && busyBeat) {
+		clearInterval(busyBeat);
+		busyBeat = undefined;
+	}
+}
+const BUSY_BEAT_MS = 15000;
+let busyBeat: ReturnType<typeof setInterval> | undefined;
+let lastBeatAt = 0;
+function beatBusy(): void {
+	lastBeatAt = Date.now();
+	chrome.storage.session.set({ [`${BUSY_BEAT_PREFIX}${currentWindowId}`]: lastBeatAt }).catch(() => undefined);
+}
+
+/**
+ * Mark this panel busy before a run starts (under the install gate, see onBeforeSend), through
+ * the same state publishBusyState keeps, so it clears the flag again if no run starts.
+ */
+let sendReserving = false;
+async function markBusyForSend(): Promise<void> {
+	sendReserving = true;
+	lastPublishedBusy = true;
+	lastBeatAt = Date.now();
+	await chrome.storage.session.set({
+		[`sidepanel_busy_${currentWindowId}`]: homeTabId ?? true,
+		[`${BUSY_BEAT_PREFIX}${currentWindowId}`]: lastBeatAt,
+	});
+	busyBeat ??= setInterval(beatBusy, BUSY_BEAT_MS);
 }
 window.addEventListener("pagehide", () => {
-	chrome.storage.session.remove(`sidepanel_busy_${currentWindowId}`).catch(() => undefined);
+	chrome.storage.session
+		.remove([`sidepanel_busy_${currentWindowId}`, `${BUSY_BEAT_PREFIX}${currentWindowId}`])
+		.catch(() => undefined);
 });
 
 // The tabs this chat session owns (its own tab group; never the user's tabs)
@@ -415,6 +454,7 @@ function openApiKeysDialog(): Promise<void> {
 				new BridgeTab(),
 				new PrivacyTab(),
 				new ProxyTab(),
+				new UpdatesTab(),
 				new AboutTab(),
 			],
 			resolve,
@@ -747,8 +787,22 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			);
 		},
 		onBeforeSend: async () => {
+			// Tabkyra may be swapping in an update and about to reload; a run started then would be cut
+			// off. Marking the panel busy under the gate makes the update wait for this run instead.
+			// Everything that waits comes first, so nothing async lies between the reservation and
+			// the run starting (AgentInterface calls prompt() right after this hook, synchronously).
 			const note = await pageChangeNote();
+			const reserved = await reserveRun(markBusyForSend);
+			if (!reserved) {
+				throw new Error("Tabkyra is installing an update and reloads in a moment. Send it again after the reload.");
+			}
 			if (note && agent) agent.appendMessage(note);
+			// After this hook the send either starts its run (streaming) or queues; either way the
+			// reservation ends there, and publishBusyState keeps or clears the busy mark.
+			setTimeout(() => {
+				sendReserving = false;
+				publishBusyState();
+			}, 0);
 		},
 		// "Send now" mid-run: the same note, delivered with the message.
 		steerContext: async () => {
@@ -1003,6 +1057,7 @@ const renderApp = () => {
 								new BridgeTab(),
 								new PrivacyTab(),
 								new ProxyTab(),
+								new UpdatesTab(),
 								new AboutTab(),
 							]),
 						title: "Settings",
