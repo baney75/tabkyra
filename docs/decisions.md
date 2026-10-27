@@ -206,3 +206,29 @@ The owner asked for a `visual-explainer` skill adapted from nicobailon/visual-ex
   channel, DMG-lib and Artobolevsky's book, partly under copyright, and its code repository
   states no license. `mechanism-design` cites the paper and points to the repository as a
   catalogue of mechanism names only.
+
+## D18. Updates from the side panel (Claude, 2026-10-27)
+
+The owner asked for "a great update system" (2026-10-26) with Update now, checkout mode,
+Settings > Updates and an automatic choice defaulting to "Tell me". Defaults chosen:
+
+- **The mode comes from where the native host runs**: `~/.local/share/tabkyra/app` is a
+  release, a Tabkyra git checkout is a checkout, anything else updates only from a terminal.
+  The browser's extension folder is confirmed by its `build-info.json` (build ids are new for
+  every build); if it differs from the host's folder, Update now refuses, because updating
+  the host's folder would not change what the browser runs.
+- **A checkout rollback restores the builds, not git.** It swaps `dist-chrome` and
+  `cli/dist` with the kept ones and leaves HEAD alone; Update now rebuilds HEAD. Resetting a
+  branch the user may have work on is not the updater's call.
+- **Untracked files don't block a checkout update**; tracked changes, another branch and a
+  diverged main do. `git pull --ff-only` itself refuses an untracked file it would overwrite.
+- **"Idle"** means no side panel run and no bridge request in flight; a harness also counts
+  as running for 30 seconds after a request (its next call usually follows). Automatic updates
+  wait for 3 quiet minutes. An update may start while an agent runs; only the reload waits.
+- **Automatic updates never undo a rollback**: not the release rolled back from, and in a
+  checkout only new commits. A failed automatic attempt isn't retried for the same version.
+- **Skill refresh only rewrites what Tabkyra wrote.** A hash record of installed files decides;
+  a copy without a record is refreshed only if it matched the old CLI's text right before the
+  swap. Anything else is reported, never overwritten.
+- **What's new is plain text.** Release notes come from GitHub and are rendered as text, never
+  HTML; links must be https.

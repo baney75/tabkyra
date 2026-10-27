@@ -37,6 +37,8 @@ const LAST_PANEL_RUN_KEY = "tabkyra.lastPanelRunAt";
 const BUSY_PREFIX = "sidepanel_busy_";
 const AUTO_ALARM = "tabkyra-auto-update";
 const WAIT_POLL_MS = 3000;
+/** Nothing is known about activity before the worker started; automatic updates count from here. */
+const WORKER_STARTED_AT = Date.now();
 
 interface PendingReload {
 	action: UpdateAction | "reload";
@@ -53,7 +55,7 @@ async function activity(): Promise<ActivitySnapshot> {
 	return {
 		now: Date.now(),
 		busyPanels,
-		lastPanelRunAt: Number(session[LAST_PANEL_RUN_KEY] ?? 0),
+		lastPanelRunAt: Math.max(Number(session[LAST_PANEL_RUN_KEY] ?? 0), WORKER_STARTED_AT),
 		bridge: bridgeActivity(),
 	};
 }

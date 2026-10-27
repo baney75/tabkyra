@@ -3,7 +3,7 @@
 Labels: `none` (no code), `prepared` (code written, Check not run), `verified` (a Check that
 could fail passed; the record is linked), `deployed`, `published`. An item is only
 `verified` when its own DC Check ran. A narrower test that passed is noted under
-Evidence, and the item stays `prepared`. Decisions are in [../decisions.md](../decisions.md) (D1 to D16).
+Evidence, and the item stays `prepared`. Decisions are in [../decisions.md](../decisions.md) (D1 to D18).
 
 Updated 2026-10-25. #13 (skills, lint, CI), #14 (library) and #15 (private mode, bug
 reports) are merged to main (published). Merged code is still `prepared` against its DC
@@ -55,7 +55,7 @@ item until that item's own Check runs. Review records are in each PR's Review bl
 | DC-14 | STRIDE threat model, SBOM, signed reproducible CLI build | prepared (partial) | Releases are minisign-signed (existing); no SBOM, threat model or reproducible build |
 | DC-14 | Daybreak identified | resolved | Owner confirmed, D4 (a decision, not a Check) |
 | Extra | Session management on device and across devices | none | |
-| Extra | Improved update system | none | `tabkyra update` exists (signed, rollback) |
+| Extra | Improved update system | prepared | Update now, checkout mode, Settings > Updates, What's new, skill refresh, mismatch banner (D18). Unit tests and a headless live check pass ([updates.md](updates.md)); the in-place reload in Helium is untested live; no release is published |
 | New | Skills: maps, map data, Google world data, mathematics, chemistry, biology, genetics | none | |
 | New | Skills: notes and documents (Obsidian, Notion, Google Docs, Slides, Sheets), Proton and Proton Drive | none | |
 | New | Skill and system for adversarial review | prepared | skills/adversarial-review (lint clean, no eval); `rsi` step 7; D4 |

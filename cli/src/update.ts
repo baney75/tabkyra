@@ -325,18 +325,6 @@ export async function checkForUpdate(channel: Channel): Promise<UpdateStatus> {
 	return status;
 }
 
-/** For the native host: the cached check, refreshed in the background once a day. */
-export async function cachedOrFreshStatus(): Promise<UpdateStatus | undefined> {
-	const settings = readSettings();
-	if (!settings.autoCheck) return undefined;
-	const cached = readStatus();
-	const current = installedVersion();
-	if (cached && cached.channel === settings.channel && cached.current === current && Date.now() - cached.checkedAt < CHECK_INTERVAL_MS) {
-		return cached;
-	}
-	return checkForUpdate(settings.channel);
-}
-
 // ---- download and verify ---------------------------------------------------
 
 function sha256(data: Buffer): string {
