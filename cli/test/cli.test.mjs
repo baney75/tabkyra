@@ -2,7 +2,7 @@
 // table, --json on the read commands, and the documented exit codes.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -19,8 +19,9 @@ mkdirSync(socketDir, { mode: 0o700 });
 after(() => rmSync(home, { recursive: true, force: true }));
 
 function run(...args) {
-	const env = { ...process.env, HOME: home, TABKYRA_SOCKET_DIR: socketDir, NO_COLOR: "1" };
-	delete env.XDG_CONFIG_HOME;
+	// Nothing from the developer's own Tabkyra setup (config dir, session, extension dir) leaks in.
+	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("TABKYRA_") && k !== "XDG_CONFIG_HOME"));
+	Object.assign(env, { HOME: home, TABKYRA_SOCKET_DIR: socketDir, NO_COLOR: "1" });
 	// A command that ignores an unknown flag could start serving; the timeout turns that into a failure.
 	const r = spawnSync(process.execPath, [cli, ...args], { env, encoding: "utf8", timeout: 20000 });
 	return { code: r.status, out: r.stdout, err: r.stderr };
@@ -90,6 +91,9 @@ test("options are checked per subcommand, and a value option needs its value", (
 	}
 	assert.match(run("serve", "--port").err, /--port needs a value/);
 	assert.match(run("pi-extension", "a", "b").err, /Usage: tabkyra pi-extension \[dir\]/);
+	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port\]$/m);
+	assert.match(run("token", "create", "x", "--bogus").err, /Usage: tabkyra token create <name> \[--scope\]$/m);
+	assert.match(run("token", "revoke", "--bogus").err, /Usage: tabkyra token revoke <id\|name>$/m);
 	// The value of a value option isn't counted as an extra argument.
 	assert.equal(run("token", "list", "--json").code, 0);
 });
@@ -151,6 +155,13 @@ test("the launcher harnesses run turns on Node's compile cache without overridin
 	assert.ok(statSync(launcher).mode & 0o100);
 	const out = execFileSync(launcher, ["--version"], { env: { ...process.env, HOME: home }, encoding: "utf8" });
 	assert.equal(out.trim(), manifestVersion);
+	// What the launcher's prefix leaves in the environment: the user's value if set, else ours.
+	const prefix = text.split("\n").slice(1, 3).join("\n");
+	const effective = (extra) => execFileSync("sh", ["-c", `${prefix}\nprintf %s "$NODE_COMPILE_CACHE"`], { env: { PATH: process.env.PATH, HOME: home, ...extra }, encoding: "utf8" });
+	assert.equal(effective({ NODE_COMPILE_CACHE: "/tmp/mine" }), "/tmp/mine");
+	assert.match(effective({}), /\.cache\/tabkyra\/node-compile-cache$/);
+	// The native host the browser starts keeps its environment as it was.
+	assert.doesNotMatch(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), /NODE_COMPILE_CACHE/);
 });
 
 test("completions offer exactly the options each subcommand's parser accepts", async () => {
@@ -171,4 +182,16 @@ test("completions offer exactly the options each subcommand's parser accepts", a
 		Object.fromEntries(library.subcommands.map((s) => [s.name, [...(s.flags ?? [])].sort()])),
 		Object.fromEntries(Object.entries(LIBRARY_OPTIONS).map(([k, v]) => [k, [...v].sort()])),
 	);
+});
+
+test("token list and token list --json agree on when a token was last used", () => {
+	const dir = join(home, ".config", "tabkyra");
+	mkdirSync(dir, { recursive: true });
+	const record = { id: "t1", name: "phone", scopes: ["browser.read"], sha256: "0".repeat(64), createdAt: "2026-10-01T00:00:00.000Z", lastUsedAt: "2026-10-20T00:00:00.000Z" };
+	writeFileSync(join(dir, "tokens.json"), JSON.stringify({ tokens: [record] }));
+	const [json] = JSON.parse(run("token", "list", "--json").out);
+	assert.equal(json.lastUsed, "2026-10-20T00:00:00.000Z");
+	assert.equal(json.sha256, undefined, "the token hash is printed");
+	assert.match(run("token", "list").out, /phone .* last used 2026-10-20T00:00:00\.000Z/);
+	rmSync(join(dir, "tokens.json"));
 });

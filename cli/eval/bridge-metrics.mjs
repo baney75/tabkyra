@@ -59,6 +59,22 @@ const site = `http://127.0.0.1:${server.address().port}`;
 const results = { at: new Date().toISOString() };
 /** Temp directories to remove however the run ends. */
 const temps = [];
+/** The throwaway browser, once launched. */
+let fx;
+
+// Registered before anything is launched: the browser, the fixture server and the temp
+// directories go away however the run ends, an early failure included.
+async function cleanup() {
+	await fx?.close().catch(() => {});
+	server.close();
+	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
+}
+for (const event of ["uncaughtException", "unhandledRejection"])
+	process.on(event, async (err) => {
+		console.error(err);
+		await cleanup();
+		process.exit(1);
+	});
 
 async function mcpClient(env, { cwd, name = "metrics" } = {}) {
 	const client = new Client({ name, version: "0.0.0" });
@@ -167,7 +183,7 @@ if (ONLY.has("launcher")) {
 // ---- the browser ---------------------------------------------------------------
 
 const needsBrowser = ["cold", "reload", "multi", "groups"].some((k) => ONLY.has(k));
-const fx = needsBrowser ? await launchFixtureBrowser() : undefined;
+fx = needsBrowser ? await launchFixtureBrowser() : undefined;
 if (fx) await fx.waitConnected();
 const project = needsBrowser ? mkdtempSync(join(tmpdir(), "tk-project-")) : "";
 if (project) {
@@ -175,22 +191,6 @@ if (project) {
 	execFileSync("git", ["init", "-q", project]);
 }
 
-// The browser, the fixture server and the temp directories go away however the run ends.
-async function cleanup() {
-	await fx?.close().catch(() => {});
-	server.close();
-	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
-}
-process.on("uncaughtException", async (err) => {
-	console.error(err);
-	await cleanup();
-	process.exit(1);
-});
-process.on("unhandledRejection", async (err) => {
-	console.error(err);
-	await cleanup();
-	process.exit(1);
-});
 
 // ---- cold start -----------------------------------------------------------------
 
@@ -203,7 +203,10 @@ if (ONLY.has("cold")) {
 		const firstMs = Math.round(performance.now() - t0);
 		const nav = await call(client, "navigate", { url: `${site}/page?agent=cold${i}` });
 		runs.push({ initMs, firstResultMs: firstMs, firstOutcome: first.outcome, navigateMs: nav.ms });
-		await call(client, "tabs_close", { tabId: Number(nav.text.match(/"tabId":(\d+)/)?.[1]) });
+		const tabId = Number(nav.full.match(/"tabId"\s*:\s*(\d+)/)?.[1]);
+		// A tab left open here would sit in the groups the later sections count.
+		if (!Number.isInteger(tabId)) throw new Error(`cold run ${i}: no tabId in navigate's result: ${nav.text}`);
+		await call(client, "tabs_close", { tabId });
 		await client.close();
 	}
 	const median = (k) => runs.map((r) => r[k]).sort((a, b) => a - b)[Math.floor(runs.length / 2)];
@@ -536,6 +539,7 @@ if (ONLY.has("groups")) {
 	console.log(`groups: ${results.groups.passed}/${results.groups.total} behaviors as specified`);
 }
 
+if (fx) results.reloadsSent = fx.reloads();
 writeFileSync(OUT, `${JSON.stringify(results, null, 2)}\n`);
 console.log(`\nRaw results: ${OUT}`);
 await cleanup();

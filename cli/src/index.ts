@@ -419,7 +419,10 @@ async function main(): Promise<void> {
 					console.log(JSON.stringify(loadTokens().map(({ sha256: _hash, lastUsedAt, ...t }) => ({ ...t, lastUsed: usage[t.id] ?? lastUsedAt ?? null })), null, 2));
 					return;
 				}
-				for (const t of loadTokens()) console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : "active "}  ${t.scopes.join(",")}  ${c.dim(usage[t.id] ? `last used ${usage[t.id]}` : "never used")}`);
+				for (const t of loadTokens()) {
+					const lastUsed = usage[t.id] ?? t.lastUsedAt;
+					console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : "active "}  ${t.scopes.join(",")}  ${c.dim(lastUsed ? `last used ${lastUsed}` : "never used")}`);
+				}
 				return;
 			}
 			if (sub === "revoke") {

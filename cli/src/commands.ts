@@ -14,7 +14,15 @@ export interface CommandSpec {
 	group: "Get started" | "Agents" | "Sessions" | "Remote" | "Library" | "Sites" | "Troubleshoot";
 	flags?: string[];
 	/** Second words (`skill install`, `token list`), completed after the command. */
-	subcommands?: Array<{ name: string; what: string; flags?: string[]; /** Arguments after the subcommand, at most (default 0). */ max?: number }>;
+	subcommands?: Array<{
+		name: string;
+		what: string;
+		flags?: string[];
+		/** Arguments after the subcommand, at most (default 0). */
+		max?: number;
+		/** Its arguments as usage shows them ("<name>"). */
+		args?: string;
+	}>;
 	/** Arguments after the command a command takes at most (default 0). Ignored with subcommands. */
 	positional?: number;
 	/** The command parses its own arguments (setup, update, library, skill); checkArgs leaves it alone. */
@@ -76,9 +84,9 @@ export const COMMANDS: CommandSpec[] = [
 		group: "Remote",
 		more: [{ args: "list|revoke|scopes [--json]", what: "See tokens, end one, or list the scopes" }],
 		subcommands: [
-			{ name: "create", what: "A scoped, revocable token", flags: ["--scope"], max: 1 },
+			{ name: "create", what: "A scoped, revocable token", flags: ["--scope"], max: 1, args: "<name>" },
 			{ name: "list", what: "Every token and when it was last used", flags: ["--json"], max: 0 },
-			{ name: "revoke", what: "End a token", max: 1 },
+			{ name: "revoke", what: "End a token", max: 1, args: "<id|name>" },
 			{ name: "scopes", what: "The scopes a token can have", flags: ["--json"], max: 0 },
 		],
 	},
@@ -185,8 +193,9 @@ export function argsProblem(command: string, args: string[]): string | undefined
 	let max = spec.positional ?? 0;
 	// The usage line: the flags, then the arguments the help shows (anything that isn't a flag).
 	const argWords = spec.args
+		.replace(/\[--[^\]]*\]/g, "")
 		.split(" ")
-		.filter((w) => w && !/^\[?--/.test(w))
+		.filter((w) => w && !w.startsWith("--"))
 		.join(" ");
 	let usage = `Usage: tabkyra ${spec.name}${flags.map((f) => ` [${f}]`).join("")}${argWords ? ` ${argWords}` : ""}`;
 	if (spec.subcommands) {
@@ -195,7 +204,7 @@ export function argsProblem(command: string, args: string[]): string | undefined
 		if (!sub) return undefined;
 		flags = sub.flags ?? [];
 		max = 1 + (sub.max ?? 0);
-		usage = `Usage: tabkyra ${spec.name} ${sub.name}${flags.map((f) => ` [${f}]`).join("")}`;
+		usage = `Usage: tabkyra ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flags.map((f) => ` [${f}]`).join("")}`;
 	}
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];

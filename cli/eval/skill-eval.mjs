@@ -184,7 +184,23 @@ const SKILL_TASKS = [
 
 // ---- browser and bridge ----------------------------------------------------
 
-const fx = await launchFixtureBrowser();
+// Registered before the browser starts: it, the fixture server and the temp folders go away
+// however the run ends, an early failure included.
+let fx;
+const workdirs = [];
+async function cleanup() {
+	server.close();
+	await fx?.close().catch(() => {});
+	for (const dir of workdirs) rmSync(dir, { recursive: true, force: true });
+}
+for (const event of ["uncaughtException", "unhandledRejection"])
+	process.on(event, async (err) => {
+		console.error(err);
+		await cleanup();
+		process.exit(1);
+	});
+
+fx = await launchFixtureBrowser();
 await fx.waitConnected().catch(() => {
 	throw new Error("the extension never connected to the bridge");
 });
@@ -200,25 +216,11 @@ writeFileSync(
 // A project folder (a git repo) the agent works in, like a real harness session. Each row gets a
 // fresh one, so a session one row leaves behind is never resumed by the next.
 let workdir;
-const workdirs = [];
 function newWorkdir() {
 	workdir = mkdtempSync(join(tmpdir(), "tk-eval-cwd-"));
 	workdirs.push(workdir);
 	execFileSync("git", ["init", "-q", workdir]);
 }
-
-// The browser, the fixture server and the temp folders go away however the run ends.
-async function cleanup() {
-	server.close();
-	await fx.close().catch(() => {});
-	for (const dir of workdirs) rmSync(dir, { recursive: true, force: true });
-}
-for (const event of ["uncaughtException", "unhandledRejection"])
-	process.on(event, async (err) => {
-		console.error(err);
-		await cleanup();
-		process.exit(1);
-	});
 
 function runClaude(prompt, withSkill) {
 	const args = [
@@ -453,7 +455,7 @@ for (let rep = 1; rep <= REPS; rep++) {
 	}
 }
 
-writeFileSync(OUT, `${JSON.stringify({ model: MODEL, suite: SUITE, reps: REPS, results }, null, 2)}\n`);
+writeFileSync(OUT, `${JSON.stringify({ model: MODEL, suite: SUITE, reps: REPS, reloadsSent: fx.reloads(), results }, null, 2)}\n`);
 
 const agg = (rows, f) => rows.filter(f).length;
 const mean = (rows, k) => (rows.reduce((t, r) => t + r[k], 0) / rows.length).toFixed(1);
