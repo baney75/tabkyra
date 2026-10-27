@@ -5,11 +5,26 @@
 // by every module instance in the process, as the real one is shared across extension contexts.
 // Node 24 has navigator.locks; older Node (CI runs 22) gets a process-wide FIFO stand-in.
 if (!globalThis.navigator?.locks) {
+	// Exclusive locks only, with the parts of the API Tabkyra uses: request(name, [options,]
+	// callback) with ifAvailable, and query() for what is held.
 	const queues = new Map();
+	const held = new Map();
 	const locks = {
-		request(name, callback) {
+		request(name, options, callback) {
+			if (typeof options === "function") {
+				callback = options;
+				options = {};
+			}
+			if (options?.ifAvailable && (held.get(name) ?? 0) > 0) return Promise.resolve().then(() => callback(null));
 			const prev = queues.get(name) ?? Promise.resolve();
-			const run = prev.then(() => callback({ name, mode: "exclusive" }));
+			const run = prev.then(async () => {
+				held.set(name, (held.get(name) ?? 0) + 1);
+				try {
+					return await callback({ name, mode: "exclusive" });
+				} finally {
+					held.set(name, held.get(name) - 1);
+				}
+			});
 			queues.set(
 				name,
 				run.then(
@@ -18,6 +33,9 @@ if (!globalThis.navigator?.locks) {
 				),
 			);
 			return run;
+		},
+		async query() {
+			return { held: [...held.entries()].filter(([, n]) => n > 0).map(([name]) => ({ name, mode: "exclusive" })), pending: [] };
 		},
 	};
 	if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "locks", { value: locks, configurable: true });
