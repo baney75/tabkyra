@@ -3,6 +3,8 @@
 //
 //   tools     the tools/list payload and server instructions an agent pays for on every turn
 //             (bytes, and with --claude the real input-token cost measured through `claude -p`)
+//   launcher  `tabkyra mcp` started through the launcher harness configs run (~/.config/tabkyra/
+//             tabkyra), median of 7, with and without Node's compile cache
 //   cold      cold start: spawn `tabkyra mcp` -> initialize -> first tool result
 //   reload    a read and a click sent while the extension reloads, and a read sent while the
 //             native host restarts: did each succeed, fail with a clear error, or hang, and did
@@ -17,7 +19,7 @@
 // Needs the built extension (npm run build) and CLI (cd cli && npm run build) and Playwright's
 // Chromium. --claude also needs a signed-in `claude` CLI (subscription; no API key is used).
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,7 +31,7 @@ const arg = (name, fallback) => {
 	const i = process.argv.indexOf(name);
 	return i > 0 ? process.argv[i + 1] : fallback;
 };
-const ONLY = new Set((arg("--only", "tools,cold,reload,multi,groups") ?? "").split(","));
+const ONLY = new Set((arg("--only", "tools,launcher,cold,reload,multi,groups") ?? "").split(","));
 const CYCLES = Number(arg("--cycles", "3"));
 const OUT = arg("--out", join(tmpdir(), "tabkyra-bridge-metrics.json"));
 const CLAUDE = process.argv.includes("--claude");
@@ -55,6 +57,8 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const site = `http://127.0.0.1:${server.address().port}`;
 
 const results = { at: new Date().toISOString() };
+/** Temp directories to remove however the run ends. */
+const temps = [];
 
 async function mcpClient(env, { cwd, name = "metrics" } = {}) {
 	const client = new Client({ name, version: "0.0.0" });
@@ -92,6 +96,7 @@ const actionable = (text) => /(repeat|retry|try again|call it again|check the pa
 if (ONLY.has("tools")) {
 	const home = mkdtempSync(join(tmpdir(), "tk-metrics-"));
 	const env = { HOME: home, PATH: process.env.PATH, TABKYRA_SOCKET_DIR: mkdtempSync("/tmp/tkm-") };
+	temps.push(home, env.TABKYRA_SOCKET_DIR);
 	const { client } = await mcpClient(env);
 	const { tools } = await client.listTools();
 	const instructions = client.getInstructions() ?? "";
@@ -129,13 +134,62 @@ if (ONLY.has("tools")) {
 	console.log(`tools: ${results.tools.count} tools, tools/list ${results.tools.toolsListBytes} B, instructions ${results.tools.instructionsBytes} B, ~${results.tools.estTokens} tokens${results.tools.claudeTokens !== undefined ? `, measured ${results.tools.claudeTokens} tokens` : ""}`);
 }
 
+// ---- launcher start ------------------------------------------------------------------
+
+if (ONLY.has("launcher")) {
+	const home = mkdtempSync(join(tmpdir(), "tk-launcher-"));
+	temps.push(home);
+	const sock = join(home, "sock");
+	mkdirSync(sock, { mode: 0o700 });
+	const env = { HOME: home, PATH: process.env.PATH, TABKYRA_SOCKET_DIR: sock };
+	// install exits 1 without a browser profile, after it wrote the launcher.
+	spawnSync(process.execPath, [cli, "install"], { env, stdio: "ignore" });
+	const launcher = join(home, ".config", "tabkyra", "tabkyra");
+	const start = async (extra) => {
+		const client = new Client({ name: "launcher", version: "0.0.0" });
+		const t0 = performance.now();
+		await client.connect(new StdioClientTransport({ command: launcher, args: ["mcp"], env: { ...env, ...extra }, stderr: "ignore" }));
+		const ms = performance.now() - t0;
+		await client.close();
+		return ms;
+	};
+	const median = async (extra) => {
+		await start(extra); // warm the cache and the disk
+		const xs = [];
+		for (let i = 0; i < 7; i++) xs.push(await start(extra));
+		return Math.round(xs.sort((x, y) => x - y)[3]);
+	};
+	results.launcher = { noCacheMs: await median({ NODE_DISABLE_COMPILE_CACHE: "1" }), cacheMs: await median({}) };
+	console.log(`launcher: tabkyra mcp initialize ${results.launcher.noCacheMs} ms without the compile cache, ${results.launcher.cacheMs} ms with it (median of 7)`);
+}
+
 // ---- the browser ---------------------------------------------------------------
 
 const needsBrowser = ["cold", "reload", "multi", "groups"].some((k) => ONLY.has(k));
 const fx = needsBrowser ? await launchFixtureBrowser() : undefined;
 if (fx) await fx.waitConnected();
 const project = needsBrowser ? mkdtempSync(join(tmpdir(), "tk-project-")) : "";
-if (project) execFileSync("git", ["init", "-q", project]);
+if (project) {
+	temps.push(project);
+	execFileSync("git", ["init", "-q", project]);
+}
+
+// The browser, the fixture server and the temp directories go away however the run ends.
+async function cleanup() {
+	await fx?.close().catch(() => {});
+	server.close();
+	for (const dir of temps) rmSync(dir, { recursive: true, force: true });
+}
+process.on("uncaughtException", async (err) => {
+	console.error(err);
+	await cleanup();
+	process.exit(1);
+});
+process.on("unhandledRejection", async (err) => {
+	console.error(err);
+	await cleanup();
+	process.exit(1);
+});
 
 // ---- cold start -----------------------------------------------------------------
 
@@ -311,11 +365,19 @@ if (ONLY.has("groups")) {
 		console.log(`groups ${pass ? "PASS" : "FAIL"} ${id}: ${detail}`);
 	};
 	const projectName = project.split("/").pop();
+	// One scenario that throws (say, no session record to read) fails itself, not the other twelve.
+	const scenario = async (label, fn) => {
+		try {
+			await fn();
+		} catch (err) {
+			check(`${label} (threw)`, false, err.message.slice(0, 160));
+		}
+	};
 	const agent = async (session, extra = {}) =>
 		(await mcpClient({ ...fx.env, TABKYRA_CLIENT_NAME: "claude", ...(session ? { TABKYRA_SESSION: session } : {}), ...extra }, { cwd: project })).client;
 
 	// Identity, and stability across a reload and a restart of the harness.
-	{
+	await scenario("identity", async () => {
 		const env = { ...fx.env, TABKYRA_CLIENT_NAME: "claude" };
 		delete env.TABKYRA_SESSION;
 		let c = (await mcpClient(env, { cwd: project })).client;
@@ -336,20 +398,20 @@ if (ONLY.has("groups")) {
 		check("resume-same-project", resumed, "a new harness process in the same project sees the old tab");
 		check("resume-keeps-color", resumed && resumedColor === color, `resumed ${resumed}; color ${color} -> ${resumedColor}`);
 		await c.close();
-	}
+	});
 
 	// Distinct colors for concurrent sessions.
-	{
+	await scenario("colors", async () => {
 		const cs = await Promise.all(["c1", "c2", "c3", "c4"].map((n) => agent(`colors-${n}`)));
 		await Promise.all(cs.map((c, i) => call(c, "navigate", { url: `${site}/page?agent=color${i}` })));
 		const colors = [];
 		for (let i = 0; i < cs.length; i++) colors.push((await groupOf(`colors-c${i + 1}`)).group?.color);
 		check("distinct-colors", new Set(colors).size === colors.length, colors.join(","));
 		await Promise.all(cs.map((c) => c.close()));
-	}
+	});
 
 	// The user closes the whole group.
-	{
+	await scenario("close", async () => {
 		const c = await agent("gesture-close");
 		await call(c, "navigate", { url: `${site}/page?agent=close1` });
 		await call(c, "tabs_create", { url: `${site}/page?agent=close2` });
@@ -360,10 +422,10 @@ if (ONLY.has("groups")) {
 		const next = await call(c, "read_page");
 		check("close-group-ends-session", gone, `record ${gone ? "gone" : "still stored"}; next call: ${next.outcome} ${next.text.slice(0, 120)}`);
 		await c.close();
-	}
+	});
 
 	// The user drags a tab out of the group (ungroups it).
-	{
+	await scenario("drag-out", async () => {
 		const c = await agent("gesture-out");
 		await call(c, "navigate", { url: `${site}/page?agent=out1` });
 		await call(c, "tabs_create", { url: `${site}/page?agent=out2` });
@@ -376,10 +438,10 @@ if (ONLY.has("groups")) {
 		const told = /out2|handed|released|user took|no longer/i.test(ctx.text);
 		check("drag-out-agent-told", told && !ctx.text.includes(`"url":"${site}/page?agent=out2"`), `tabs_context: ${ctx.text.slice(0, 160)}`);
 		await c.close();
-	}
+	});
 
 	// The user drags one of their tabs into the agent's group.
-	{
+	await scenario("drag-in", async () => {
 		const c = await agent("gesture-in");
 		await call(c, "navigate", { url: `${site}/page?agent=in1` });
 		const { session } = await groupOf("gesture-in");
@@ -390,10 +452,10 @@ if (ONLY.has("groups")) {
 		const ctx = await call(c, "tabs_context");
 		check("drag-in-gives-to-agent", ctx.text.includes("agent=user-in"), `agent lists the dragged-in tab: ${ctx.text.includes("agent=user-in")}`);
 		await c.close();
-	}
+	});
 
 	// The user collapses the group; the agent keeps working.
-	{
+	await scenario("collapse", async () => {
 		const c = await agent("gesture-collapse");
 		await call(c, "navigate", { url: `${site}/page?agent=col1` });
 		const { session } = await groupOf("gesture-collapse");
@@ -403,10 +465,10 @@ if (ONLY.has("groups")) {
 		const g = (await groupOf("gesture-collapse")).group;
 		check("collapse-respected", g?.collapsed === true, `collapsed after agent work: ${g?.collapsed}`);
 		await c.close();
-	}
+	});
 
 	// The user ungroups the whole group.
-	{
+	await scenario("ungroup", async () => {
 		const c = await agent("gesture-ungroup");
 		await call(c, "navigate", { url: `${site}/page?agent=ug1` });
 		await call(c, "tabs_create", { url: `${site}/page?agent=ug2` });
@@ -417,10 +479,10 @@ if (ONLY.has("groups")) {
 		const tabs = await pageTabs("agent=ug");
 		check("ungroup-releases", !/agent=ug/.test(ctx.text) && tabs.every((t) => t.group === null), `agent lists ${(/agent=ug1/.test(ctx.text) ? 1 : 0) + (/agent=ug2/.test(ctx.text) ? 1 : 0)} of 2; groups now ${tabs.map((t) => t.group).join(",")}`);
 		await c.close();
-	}
+	});
 
 	// A cap on tabs per group.
-	{
+	await scenario("cap", async () => {
 		const c = await agent("cap");
 		let opened = 0;
 		let error = "";
@@ -436,10 +498,10 @@ if (ONLY.has("groups")) {
 		const { session } = await groupOf("cap");
 		await fx.swEval(`chrome.tabs.remove(${JSON.stringify(session?.tabIds ?? [])})`);
 		await c.close();
-	}
+	});
 
 	// The session's window closes.
-	{
+	await scenario("window", async () => {
 		const c = await agent("window");
 		await call(c, "navigate", { url: `${site}/page?agent=win1` });
 		const { session } = await groupOf("window");
@@ -452,7 +514,7 @@ if (ONLY.has("groups")) {
 		const tabWindow = tab ? await fx.swEval(`chrome.tabs.get(${tab.id}).then((t) => t.windowId)`) : undefined;
 		check("window-close-survives", nav.outcome === "ok" && after.session && tabWindow === other && tab?.group, `navigate ${nav.outcome}; new tab in window ${tabWindow} (open window ${other}), group ${JSON.stringify(tab?.group)}`);
 		await c.close();
-	}
+	});
 
 	results.groups = { checks, passed: Object.values(checks).filter((c) => c.pass).length, total: Object.keys(checks).length };
 	console.log(`groups: ${results.groups.passed}/${results.groups.total} behaviors as specified`);
@@ -460,6 +522,5 @@ if (ONLY.has("groups")) {
 
 writeFileSync(OUT, `${JSON.stringify(results, null, 2)}\n`);
 console.log(`\nRaw results: ${OUT}`);
-await fx?.close();
-server.close();
+await cleanup();
 process.exit(0);

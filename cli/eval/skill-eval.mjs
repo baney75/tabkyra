@@ -286,14 +286,16 @@ const SESSION_TASKS = [
 		id: "multitab",
 		run: (arm) =>
 			runClaude(
-				`Use the browser to open ${site}/store-a and ${site}/store-b in two tabs at the same time, and tell me which store sells the Blue Widget for less and at what price. Close your tabs when you're done.`,
+				`Use the browser to open ${site}/store-a and ${site}/store-b in two tabs at the same time, and tell me which store sells the Blue Widget for less and at what price. Close your tabs when you're done. End your reply with one line in this form: ANSWER: Store <letter> $<price>`,
 				arm,
 			),
 		score: async (run) => {
 			const both = state.visits["/store-a"] > 0 && state.visits["/store-b"] > 0;
-			const right = /store\s*b\b|\bB\b/i.test(run.answer) && /\$13\b/.test(run.answer);
+			// The store the model chose, from its ANSWER line, not any mention of the right one.
+			const chosen = [...run.answer.matchAll(/ANSWER:\s*\**\s*Store\s+([AB])\b[^$\n]*\$(\d+)/gi)].at(-1);
+			const right = chosen?.[1].toUpperCase() === "B" && chosen?.[2] === "13";
 			const left = (await siteTabs()).length;
-			return { success: both && right && left === 0, detail: `visited a=${state.visits["/store-a"] ?? 0} b=${state.visits["/store-b"] ?? 0} tabsLeft=${left}` };
+			return { success: both && right && left === 0, detail: `answer=${chosen ? `${chosen[1]} $${chosen[2]}` : "none"} visited a=${state.visits["/store-a"] ?? 0} b=${state.visits["/store-b"] ?? 0} tabsLeft=${left}` };
 		},
 	},
 	{

@@ -14,7 +14,11 @@ export interface CommandSpec {
 	group: "Get started" | "Agents" | "Sessions" | "Remote" | "Library" | "Sites" | "Troubleshoot";
 	flags?: string[];
 	/** Second words (`skill install`, `token list`), completed after the command. */
-	subcommands?: Array<{ name: string; what: string; flags?: string[] }>;
+	subcommands?: Array<{ name: string; what: string; flags?: string[]; /** Arguments after the subcommand, at most (default 0). */ max?: number }>;
+	/** Arguments after the command a command takes at most (default 0). Ignored with subcommands. */
+	positional?: number;
+	/** The command parses its own arguments (setup, update, library, skill); checkArgs leaves it alone. */
+	selfParsed?: boolean;
 	/** Values completed for the first argument (`completion zsh`). */
 	values?: string[];
 	/** Hidden from help and completions (aliases, internal entry points). */
@@ -24,12 +28,13 @@ export interface CommandSpec {
 }
 
 export const COMMANDS: CommandSpec[] = [
-	{ name: "setup", args: "[--yes]", what: "Build, register, load, connect and add to your agents", group: "Get started", flags: ["--yes", "--no-wait", "--timeout"] },
+	{ name: "setup", selfParsed: true, args: "[--yes]", what: "Build, register, load, connect and add to your agents", group: "Get started", flags: ["--yes", "--no-wait", "--timeout"] },
 	{ name: "status", args: "[--json]", what: "Is the extension connected? Which sites are allowed?", group: "Get started", flags: ["--json"] },
 	{ name: "mcp", args: "", what: "MCP server on stdio (what Claude Code, Codex, OpenCode run)", group: "Agents" },
-	{ name: "pi-extension", args: "", what: "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts", group: "Agents" },
+	{ name: "pi-extension", positional: 1, args: "", what: "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts", group: "Agents" },
 	{
 		name: "skill",
+		selfParsed: true,
 		summary: "Install, list, lint, match and edit skills",
 		args: "install [name...] [--all] [--force]",
 		what: "Install the bundled skills into Claude Code, Codex and OpenCode",
@@ -45,20 +50,21 @@ export const COMMANDS: CommandSpec[] = [
 			{ args: "versions <name> [--json]", what: "Bundled, local and backed-up versions of a skill" },
 			{ args: "rollback <name> --to <version> [--yes]", what: "Restore a backed-up version, with apply's checks" },
 			{ args: "edit <name> [--yes] [--draft-only]", what: "Draft an edit in $EDITOR, show the diff, apply on yes" },
+			{ args: "refresh [--json]", what: "Refresh installed bundled skills you haven't edited" },
 		],
 		subcommands: [
-			{ name: "install", what: "Install bundled skills into your agents", flags: ["--all", "--force"] },
-			{ name: "list", what: "The skills in use", flags: ["--json"] },
-			{ name: "print", what: "A skill as text for AGENTS.md", flags: ["--raw"] },
-			{ name: "lint", what: "Check skills for hidden text and injection" },
-			{ name: "apply", what: "Check and install an edited skill", flags: ["--yes"] },
-			{ name: "revert", what: "Go back to the bundled skill" },
-			{ name: "match", what: "Which skill fits a task", flags: ["--json", "--top"] },
-			{ name: "eval", what: "Run the router's regression cases", flags: ["--json", "--update-baseline", "--cases", "--base", "--router"] },
-			{ name: "versions", what: "Versions of a skill", flags: ["--json"] },
-			{ name: "rollback", what: "Restore a backed-up version", flags: ["--to", "--yes"] },
-			{ name: "edit", what: "Edit a skill in $EDITOR", flags: ["--yes", "--draft-only"] },
-			{ name: "refresh", what: "Refresh installed skills", flags: ["--json"] },
+			{ name: "install", what: "Install bundled skills into your agents", flags: ["--all", "--force"], max: 64 },
+			{ name: "list", what: "The skills in use", flags: ["--json"], max: 0 },
+			{ name: "print", what: "A skill as text for AGENTS.md", flags: ["--raw"], max: 1 },
+			{ name: "lint", what: "Check skills for hidden text and injection", max: 64 },
+			{ name: "apply", what: "Check and install an edited skill", flags: ["--yes"], max: 1 },
+			{ name: "revert", what: "Go back to the bundled skill", max: 1 },
+			{ name: "match", what: "Which skill fits a task", flags: ["--json", "--top"], max: 64 },
+			{ name: "eval", what: "Run the router's regression cases", flags: ["--json", "--update-baseline", "--cases", "--base", "--router"], max: 0 },
+			{ name: "versions", what: "Versions of a skill", flags: ["--json"], max: 1 },
+			{ name: "rollback", what: "Restore a backed-up version", flags: ["--to", "--yes"], max: 1 },
+			{ name: "edit", what: "Edit a skill in $EDITOR", flags: ["--yes", "--draft-only"], max: 1 },
+			{ name: "refresh", what: "Refresh installed skills", flags: ["--json"], max: 0 },
 		],
 	},
 	{ name: "serve", args: "[--port 8787]", what: "MCP over HTTP on loopback, for tunnels; every request needs a token", group: "Remote", flags: ["--port"] },
@@ -70,10 +76,10 @@ export const COMMANDS: CommandSpec[] = [
 		group: "Remote",
 		more: [{ args: "list|revoke|scopes [--json]", what: "See tokens, end one, or list the scopes" }],
 		subcommands: [
-			{ name: "create", what: "A scoped, revocable token", flags: ["--scope"] },
-			{ name: "list", what: "Every token and when it was last used", flags: ["--json"] },
-			{ name: "revoke", what: "End a token" },
-			{ name: "scopes", what: "The scopes a token can have", flags: ["--json"] },
+			{ name: "create", what: "A scoped, revocable token", flags: ["--scope"], max: 1 },
+			{ name: "list", what: "Every token and when it was last used", flags: ["--json"], max: 0 },
+			{ name: "revoke", what: "End a token", max: 1 },
+			{ name: "scopes", what: "The scopes a token can have", flags: ["--json"], max: 0 },
 		],
 	},
 	{
@@ -90,6 +96,7 @@ export const COMMANDS: CommandSpec[] = [
 	},
 	{
 		name: "library",
+		selfParsed: true,
 		summary: "Verified sources: add, search, cite, export",
 		args: "add <doi|arxiv>",
 		what: "Save a source, verified against its registry, OpenAlex and retractions",
@@ -112,13 +119,14 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "remove", what: "Drop a source" },
 		],
 	},
-	{ name: "allow", args: "<host>", what: "Let agents open a site (subdomains included)", group: "Sites" },
+	{ name: "allow", positional: 1, args: "<host>", what: "Let agents open a site (subdomains included)", group: "Sites" },
 	{ name: "ask", args: "", what: "Agents ask before opening a site not yet allowed (default)", group: "Sites" },
 	{ name: "allow-all", args: "", what: "Agents may open any site without asking", group: "Sites" },
 	{ name: "yolo", args: "", what: "Old name of allow-all", group: "Sites", hidden: true },
 	{ name: "doctor", args: "[--json]", what: "Check everything; one fix per problem", group: "Troubleshoot", flags: ["--json"] },
 	{
 		name: "update",
+		selfParsed: true,
 		args: "[--check] [--rollback]",
 		what: "Install the latest signed release (--channel stable|nightly)",
 		group: "Troubleshoot",
@@ -127,16 +135,79 @@ export const COMMANDS: CommandSpec[] = [
 	{ name: "install", args: "[--force]", what: "Re-register the native host with every browser", group: "Troubleshoot", flags: ["--force"] },
 	{ name: "reload", args: "", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot" },
 	{ name: "debug", args: "", what: "Bridge state, request timings and a benchmark (JSON)", group: "Troubleshoot" },
-	{ name: "completion", args: "zsh|bash|fish", what: "Shell completions: eval \"$(tabkyra completion zsh)\"", group: "Troubleshoot", values: ["zsh", "bash", "fish"] },
+	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: "Shell completions: eval \"$(tabkyra completion zsh)\"", group: "Troubleshoot", values: ["zsh", "bash", "fish"] },
 	{ name: "version", args: "[--json]", what: "This CLI's version (also --version)", group: "Troubleshoot", flags: ["--json"] },
-	{ name: "help", args: "", what: "This help (also --help)", group: "Troubleshoot", hidden: true },
-	{ name: "host", args: "", what: "The native host the browser starts", group: "Troubleshoot", hidden: true },
+	{ name: "help", selfParsed: true, args: "", what: "This help (also --help)", group: "Troubleshoot", hidden: true },
+	{ name: "host", selfParsed: true, args: "", what: "The native host the browser starts", group: "Troubleshoot", hidden: true },
 ];
 
 export const VISIBLE_COMMANDS = COMMANDS.filter((c) => !c.hidden);
 
+/** Options that take a value (`--top 3` or `--top=3`); the value isn't a positional argument. */
+export const VALUE_FLAGS = new Set([
+	"--top",
+	"--to",
+	"--cases",
+	"--base",
+	"--router",
+	"--port",
+	"--scope",
+	"--timeout",
+	"--channel",
+	"--auto-check",
+	"--quote",
+	"--location",
+	"--note",
+	"--tag",
+	"--style",
+	"--format",
+	"--out",
+	"--folder",
+]);
+
+export function commandSpec(name: string): CommandSpec | undefined {
+	// --version and -v are the version command.
+	const key = name === "--version" || name === "-v" ? "version" : name === "--help" || name === "-h" ? "help" : name;
+	return COMMANDS.find((c) => c.name === key);
+}
+
+/**
+ * Why `args` (everything after the command word) don't fit the command's spec, or undefined when
+ * they do: an unknown option, a value option without its value, or too many arguments. Commands
+ * with subcommands are checked against the subcommand's own flags.
+ */
+export function argsProblem(command: string, args: string[]): string | undefined {
+	const spec = commandSpec(command);
+	if (!spec || spec.selfParsed) return undefined;
+	const name = (a: string) => a.split("=")[0];
+	const positional = args.filter((a, i) => !a.startsWith("-") && !(VALUE_FLAGS.has(args[i - 1] ?? "") && !args[i - 1].includes("=")));
+	let flags = spec.flags ?? [];
+	let max = spec.positional ?? 0;
+	let usage = `Usage: tabkyra ${spec.name === "version" ? "version" : spec.name}${flags.map((f) => ` [${f}]`).join("")}${spec.args && !spec.args.startsWith("[") ? ` ${spec.args}` : ""}`;
+	if (spec.subcommands) {
+		const sub = spec.subcommands.find((x) => x.name === positional[0]);
+		// An unknown or missing subcommand is the command's own usage error, with its list.
+		if (!sub) return undefined;
+		flags = sub.flags ?? [];
+		max = 1 + (sub.max ?? 0);
+		usage = `Usage: tabkyra ${spec.name} ${sub.name}${flags.map((f) => ` [${f}]`).join("")}`;
+	}
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (!a.startsWith("-")) continue;
+		if (!flags.includes(name(a))) return `Unknown option "${name(a)}". ${usage}`;
+		if (VALUE_FLAGS.has(name(a))) {
+			const value = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[i + 1];
+			if (value === undefined || value === "" || (!a.includes("=") && value.startsWith("-"))) return `${name(a)} needs a value. ${usage}`;
+		}
+	}
+	if (positional.length > max) return `Unexpected argument "${positional[max]}". ${usage}`;
+	return undefined;
+}
+
 /** Exit codes every command uses; also printed by --help. */
-export const EXIT_CODES = "Exit codes: 0 success, 1 failed or not connected, 2 usage error.";
+export const EXIT_CODES =
+	"Exit codes: 0 success, 1 failed, not connected or nothing found, 2 usage error; update --check 100 when an update exists, library add 3 retracted and 4 unchecked.";
 
 function sh(word: string): string {
 	return word.replace(/[^A-Za-z0-9_.:,|/-]/g, "");

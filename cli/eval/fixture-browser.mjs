@@ -6,7 +6,8 @@
 // chrome.debugger, and a second client attached to every page gets in its way. Pages are
 // listed over the DevTools HTTP endpoint, and the extension's service worker is evaluated
 // over its own target's websocket (read-only probes for scoring).
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -67,6 +68,9 @@ export async function launchFixtureBrowser({ extraEnv = {} } = {}) {
 	const profile = process.platform === "darwin" ? join(home, "Library", "Application Support", "Chromium") : join(home, ".config", "chromium");
 	mkdirSync(profile, { recursive: true });
 	const env = { ...process.env, HOME: home, TABKYRA_SOCKET_DIR: socketDir, TABKYRA_AUTO_ALLOW: "1", ...extraEnv };
+	// The eval may itself run inside a harness: its session variables must not decide which
+	// session the measured clients share.
+	for (const k of ["TABKYRA_SESSION", "TABKYRA_CLIENT_NAME", "CLAUDE_SESSION_ID", "CODEX_THREAD_ID", "OMP_SESSION_ID", "PI_SESSION_ID"]) if (!(k in extraEnv)) delete env[k];
 	execFileSync(process.execPath, [cli, "install"], { env, stdio: "ignore" });
 	const ext = join(repo, "dist-chrome");
 	const browser = spawn(
@@ -144,7 +148,7 @@ export async function launchFixtureBrowser({ extraEnv = {} } = {}) {
 		await until(
 			async () => {
 				try {
-					return JSON.parse(tabkyra(["status", "--json"])).connected;
+					return JSON.parse((await tabkyraAsync(["status", "--json"])).stdout).connected;
 				} catch (err) {
 					// status exits 1 while not connected; its stdout is still the report.
 					return JSON.parse(err.stdout?.toString() || "{}").connected;
@@ -156,9 +160,12 @@ export async function launchFixtureBrowser({ extraEnv = {} } = {}) {
 	}
 
 	/** Reload the extension through the bridge (what `tabkyra reload` does) and wait for it to come back. */
+	/** Async, so the fixture server and the timers keep running while the CLI waits. */
+	const tabkyraAsync = (args) => promisify(execFile)(process.execPath, [cli, ...args], { env, encoding: "utf8" });
+
 	async function reloadExtension({ wait = true } = {}) {
 		// Right after a reload the new host can be up before the extension has said hello to it.
-		await until(async () => (tabkyra(["reload"]), true), 30000, "the extension to accept a reload");
+		await until(async () => (await tabkyraAsync(["reload"]), true), 30000, "the extension to accept a reload");
 		if (wait) {
 			await sleep(1500);
 			await waitConnected();

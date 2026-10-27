@@ -944,7 +944,7 @@ function parse(args: string[], allowed: string[]): { positional: string[]; opts:
 }
 
 /** Options each subcommand reads; any other option is a usage error, not silently ignored. */
-const LIBRARY_OPTIONS: Record<string, string[]> = {
+export const LIBRARY_OPTIONS: Record<string, string[]> = {
 	add: ["--quote", "--location", "--note", "--tag"],
 	list: ["--json"],
 	search: ["--json"],

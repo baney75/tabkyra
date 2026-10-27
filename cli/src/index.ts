@@ -17,7 +17,7 @@ import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./upda
 import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
 import { type HostRunAction, runHostAction } from "./update-run.ts";
 import { BUILD } from "../../src/update/build.ts";
-import { completionScript, EXIT_CODES, VISIBLE_COMMANDS } from "./commands.ts";
+import { argsProblem, COMMANDS, completionScript, EXIT_CODES, VALUE_FLAGS, VISIBLE_COMMANDS } from "./commands.ts";
 import { VERSION } from "./version.ts";
 
 /** One help row. Padding counts visible characters, so color codes don't shift the column. */
@@ -50,7 +50,7 @@ function help(): string {
 		c.dim("A browser your coding agents can drive, in its own tab group, under your command."),
 		...rows,
 		"",
-		`${c.dim("Flags:")} --help, --version. --json on every read command prints JSON for scripts.`,
+		`${c.dim("Flags:")} --help, --version. Read commands that list [--json] print JSON for scripts.`,
 		c.dim(EXIT_CODES),
 		`${c.dim("Docs:")} https://github.com/baney75/tabkyra`,
 		"",
@@ -221,39 +221,9 @@ function parseUpdateArgs(args: string[]): UpdateOptions | string {
 	return options;
 }
 
-/** Options each command accepts; anything else is a usage error. `setup` parses its own. */
-const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
-	doctor: { flags: ["--json"], positional: 0 },
-	status: { flags: ["--json"], positional: 0 },
-	install: { flags: ["--force"], positional: 0 },
-	allow: { flags: [], positional: 1 },
-	"allow-all": { flags: [], positional: 0 },
-	yolo: { flags: [], positional: 0 },
-	ask: { flags: [], positional: 0 },
-	reload: { flags: [], positional: 0 },
-	debug: { flags: [], positional: 0 },
-	mcp: { flags: [], positional: 0 },
-	"pi-extension": { flags: [], positional: 1 },
-	completion: { flags: [], positional: 1 },
-	serve: { flags: ["--port"], positional: 0 },
-	token: { flags: ["--scope", "--json"], positional: 2 },
-	tunnel: { flags: ["--port", "--public", "--off"], positional: 1 },
-	version: { flags: ["--json"], positional: 0 },
-	skill: { flags: ["--force", "--all", "--raw", "--yes", "--json", "--top", "--to", "--cases", "--base", "--router", "--update-baseline", "--draft-only"], positional: 64 },
-};
-
-/** Options that take a value (`--top 3` or `--top=3`); the value isn't a positional argument. */
-const VALUE_FLAGS = new Set(["--top", "--to", "--cases", "--base", "--router", "--port", "--scope"]);
-
 function checkArgs(command: string, args: string[]): void {
-	const accepts = ACCEPTS[command];
-	if (!accepts) return;
-	const flags = args.filter((a) => a.startsWith("-")).map((a) => (VALUE_FLAGS.has(a.split("=")[0]) ? a.split("=")[0] : a));
-	const positional = args.filter((a, i) => !a.startsWith("-") && !VALUE_FLAGS.has(args[i - 1] ?? ""));
-	const unknown = flags.find((f) => !accepts.flags.includes(f));
-	const usage = `Usage: tabkyra ${command}${accepts.flags.map((f) => ` [${f}]`).join("")}${command === "allow" ? " <host>" : command === "pi-extension" ? " [dir]" : ""}`;
-	if (unknown) throw new UsageError(`Unknown option "${unknown}". ${usage}`);
-	if (positional.length > accepts.positional) throw new UsageError(`Unexpected argument "${positional[accepts.positional]}". ${usage}`);
+	const problem = argsProblem(command, args);
+	if (problem) throw new UsageError(problem);
 }
 
 async function main(): Promise<void> {
@@ -273,6 +243,11 @@ async function main(): Promise<void> {
 	}
 	// `host` is spawned by the browser with its origin as an argument; leave it alone.
 	if (command && command !== "host") checkArgs(command, argv.slice(1));
+	// Bad setup or update options are refused before anything below touches the checkout.
+	const setupArgs = command === "setup" ? parseSetupArgs(argv.slice(1)) : undefined;
+	if (typeof setupArgs === "string") throw new UsageError(`${setupArgs} Usage: tabkyra setup [--yes] [--no-wait] [--timeout <seconds>]`);
+	const updateArgs = command === "update" && argv[1] !== "--host" ? parseUpdateArgs(argv.slice(1)) : undefined;
+	if (typeof updateArgs === "string") throw new UsageError(`${updateArgs} ${UPDATE_USAGE}`);
 	// A checkout whose install or rollback a crash interrupted is repaired by any of these, so
 	// the side panel isn't the only way back (docs/updates.md).
 	if (command === "doctor" || command === "status" || command === "update" || command === "setup") {
@@ -284,9 +259,8 @@ async function main(): Promise<void> {
 	}
 	switch (command) {
 		case "setup": {
-			const parsed = parseSetupArgs(argv.slice(1));
-			if (typeof parsed === "string") throw new UsageError(`${parsed} Usage: tabkyra setup [--yes] [--no-wait] [--timeout <seconds>]`);
-			process.exitCode = await runSetup(parsed);
+			if (!setupArgs) throw new UsageError("Usage: tabkyra setup [--yes] [--no-wait] [--timeout <seconds>]");
+			process.exitCode = await runSetup(setupArgs);
 			return;
 		}
 		case "doctor":
@@ -300,9 +274,8 @@ async function main(): Promise<void> {
 				process.exitCode = await runHostAction(action);
 				return;
 			}
-			const parsed = parseUpdateArgs(argv.slice(1));
-			if (typeof parsed === "string") throw new UsageError(`${parsed} ${UPDATE_USAGE}`);
-			process.exitCode = await runUpdate(parsed);
+			if (!updateArgs) throw new UsageError(UPDATE_USAGE);
+			process.exitCode = await runUpdate(updateArgs);
 			return;
 		}
 		case "status":
@@ -371,20 +344,9 @@ async function main(): Promise<void> {
 			const flagName = (a: string) => (VALUE_FLAGS.has(a.split("=")[0]) ? a.split("=")[0] : a);
 			const [sub, ...rest] = args.filter((a, i) => !a.startsWith("-") && !VALUE_FLAGS.has(args[i - 1] ?? ""));
 			// Flags and argument counts each subcommand accepts; anything else is a usage error.
-			const SKILL_SUB: Record<string, { flags: string[]; max: number }> = {
-				install: { flags: ["--force", "--all"], max: 64 },
-				list: { flags: ["--json"], max: 0 },
-				print: { flags: ["--raw"], max: 1 },
-				lint: { flags: [], max: 64 },
-				apply: { flags: ["--yes"], max: 1 },
-				revert: { flags: [], max: 1 },
-				match: { flags: ["--json", "--top"], max: 64 },
-				eval: { flags: ["--json", "--update-baseline", "--cases", "--base", "--router"], max: 0 },
-				versions: { flags: ["--json"], max: 1 },
-				rollback: { flags: ["--to", "--yes"], max: 1 },
-				edit: { flags: ["--yes", "--draft-only"], max: 1 },
-				refresh: { flags: ["--json"], max: 0 },
-			};
+			const SKILL_SUB: Record<string, { flags: string[]; max: number }> = Object.fromEntries(
+				(COMMANDS.find((x) => x.name === "skill")?.subcommands ?? []).map((x) => [x.name, { flags: x.flags ?? [], max: x.max ?? 0 }]),
+			);
 			const spec = sub && Object.hasOwn(SKILL_SUB, sub) ? SKILL_SUB[sub] : undefined;
 			const badFlag = args.find((a) => a.startsWith("-") && !(spec?.flags ?? []).includes(flagName(a)));
 			if (spec && (badFlag || rest.length > spec.max)) {
@@ -454,7 +416,7 @@ async function main(): Promise<void> {
 				const usage = loadUsage();
 				if (flag("--json")) {
 					// The token is never stored; its hash stays out of the output too.
-					console.log(JSON.stringify(loadTokens().map(({ sha256: _hash, ...t }) => ({ ...t, lastUsed: usage[t.id] ?? null })), null, 2));
+					console.log(JSON.stringify(loadTokens().map(({ sha256: _hash, lastUsedAt, ...t }) => ({ ...t, lastUsed: usage[t.id] ?? lastUsedAt ?? null })), null, 2));
 					return;
 				}
 				for (const t of loadTokens()) console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : "active "}  ${t.scopes.join(",")}  ${c.dim(usage[t.id] ? `last used ${usage[t.id]}` : "never used")}`);
