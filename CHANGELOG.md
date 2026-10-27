@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `ask_user`: agents can ask you questions. The side panel's agent, and external agents through `tabkyra mcp` and `tabkyra serve`, ask 1 to 4 multiple-choice questions (a short header, the question, 2 to 4 options with a description, and multiSelect); you pick options or type your own "Other" answer, and the answer returns as the tool result, mapped question to answer. Skip, Stop, closing or reloading the panel, a 5-minute timeout (bridge) or the agent disconnecting returns a no-answer result that tells the agent not to assume one. The side panel agent's card is inline in the chat and stays readable in history; an external agent's question shows above the chat in every open panel, names the agent, and badges the toolbar icon while no panel is open. Answers go back only to the agent that asked, through the service worker, and no bridge method can answer a question. Question text renders as text, never HTML. Remote tokens need the new `user.ask` scope. The system prompt, the MCP instructions and the `tabkyra` skill say to ask only when the answer changes what the agent does, with the recommended option first. Code in `src/ask/`, `src/tools/ask-user.ts` and `cli/src/ask.ts`; tests in `test/ask-user.test.mjs`, `cli/test/mcp.test.mjs` and `cli/test/remote.test.mjs`. See D20.
+
 ## [1.1.9] - 2026-10-27
 
 ### Added

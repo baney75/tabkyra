@@ -185,6 +185,28 @@ test("only an initialize request opens a session; unknown sessions get 404; serv
 	assert.equal(readFileSync(file, "utf8"), before, "tokens.json is only written by token commands");
 });
 
+test("user.ask grants ask_user, and only that scope does", async () => {
+	const asker = await connect(token("asker", "user.ask"));
+	try {
+		const names = (await asker.listTools()).tools.map((t) => t.name);
+		assert.deepEqual(names, ["ask_user"]);
+		assert.match(asker.getInstructions() ?? "", /call ask_user instead of guessing/);
+	} finally {
+		await asker.close();
+	}
+	assert.match(cliRun(["token", "scopes"]).out, /user\.ask\s+Ask the user multiple-choice questions[^\n]*\n\s+ask_user/);
+	const others = await connect(token("no-ask", "browser.read,browser.navigate,browser.act,browser.script,library.read,library.write,skills.read"));
+	try {
+		const names = (await others.listTools()).tools.map((t) => t.name);
+		assert.ok(!names.includes("ask_user"), names.join(","));
+		assert.doesNotMatch(others.getInstructions() ?? "", /ask_user/);
+		const denied = await others.callTool({ name: "ask_user", arguments: { questions: [] } }).catch((e) => ({ isError: true, content: [{ text: String(e) }] }));
+		assert.equal(denied.isError, true);
+	} finally {
+		await others.close();
+	}
+});
+
 test("a scoped session's instructions mention only its tools", async () => {
 	const client = await connect(token("instr", "library.read"));
 	try {

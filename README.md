@@ -172,6 +172,7 @@ agent on another machine, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 | `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits and debugging |
 | `handle_dialog` | Answer an alert, confirm or prompt box. While one is open, other calls fail at once with its text |
 | `tabs_show` | Bring a tab in front of you, when you need to sign in or see it |
+| `ask_user` | Ask you 1 to 4 multiple-choice questions in the side panel and wait for your answer (you can always type your own). The toolbar icon shows a badge while one waits; it gives up after 5 minutes |
 | `library_add`, `library_search`, `library_cite` | Save verified sources and cite them (see [Library](#library)) |
 
 Every tool's description documents its parameters and includes an example. `actions`
@@ -294,6 +295,8 @@ tabkyra tunnel cloudflare       # a cloudflared quick tunnel at a random tryclou
 - Scopes have no wildcard. A session sees only the tools its scopes grant
   (`tabkyra token scopes` lists them). Acting under your sign-in (`browser.act`) and
   running scripts (`browser.script`) are separate scopes, never implied by the others.
+  So is asking you questions in the side panel (`user.ask`, the `ask_user` tool); the card
+  names the token (`remote-<name>`), and the answer goes back only to that session.
 - `tabkyra tunnel tailscale --public` uses Funnel, which anyone on the internet can reach;
   the token is then the only lock, and the command says so. A Cloudflare quick tunnel is
   public in the same way.

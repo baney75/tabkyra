@@ -7,6 +7,7 @@
  * backoff and on a 30 s alarm, which also keeps the worker alive.
  */
 
+import { cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
 import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, NoTabError, pruneSessions } from "../browser/session.js";
@@ -161,6 +162,8 @@ async function onClientDisconnected(clientId: string): Promise<void> {
 	const state = clients.get(clientId);
 	clients.delete(clientId);
 	await stopScreencastsOwnedBy(clientId).catch(() => undefined);
+	// ask_user: a question from a client that left has nobody to answer to.
+	cancelQuestionsFor(clientId);
 	// A restarted harness (same session key) can connect before its old socket closes; the
 	// session is still in use then, so leave it alone.
 	const successors = state ? [...clients.values()].filter((c) => c.sessionKey === state.sessionKey) : [];
@@ -297,6 +300,18 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	try {
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Bridge.");
+		}
+
+		// ask_user (src/ask/bridge-worker.ts): waits for the user in the side panel. It needs no tabs
+		// and has its own timeout, so it skips the session and the handler timeout.
+		if (req.method === "ask_user") {
+			send({
+				type: "response",
+				clientId: req.clientId,
+				id: req.id,
+				...(await handleBridgeAsk(state, req.params ?? {})),
+			});
+			return;
 		}
 
 		const handler = handlers[req.method];
@@ -625,6 +640,7 @@ function connect(): void {
 		if (port === next) port = undefined;
 		for (const state of clients.values()) void state.session?.suspend();
 		clients.clear();
+		cancelQuestionsFor(undefined);
 		void stopScreencastsOwnedBy(undefined).catch(() => undefined);
 		scheduleReconnect();
 	});
@@ -741,6 +757,7 @@ export function startBridge(): void {
 	setTimeout(() => void prune("startup").catch(() => undefined), 20000);
 	// Injected code has no runtime providers in the worker; echo so callers can probe the shim.
 	setCdpMessageHandler(async (message) => ({ echo: message }));
+	startAskBridge();
 	chrome.alarms.create(ALARM_NAME, { periodInMinutes: 0.5 });
 	chrome.alarms.onAlarm.addListener((alarm) => {
 		if (alarm.name === ALARM_NAME) {

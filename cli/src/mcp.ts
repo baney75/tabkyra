@@ -7,6 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
 import { addSource, cite, search, summary } from "./library.ts";
@@ -106,7 +107,7 @@ function sessionKey(): string {
 }
 
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
-const INSTRUCTION_TOOLS = ["status", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read"];
+const INSTRUCTION_TOOLS = ["status", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user"];
 
 function mentionedTools(sentence: string): string[] {
 	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
@@ -153,6 +154,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"Close tabs you no longer need with tabs_close. Prefer read_page/get_page_text over screenshots for reading.",
 				"Refs expire when the page changes; take a new read_page after navigation or big updates.",
 				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
+				ASK_USER_INSTRUCTION,
 				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
 			]
 				// A scoped session hears only about the tools it has, so a small model isn't sent
@@ -734,6 +736,9 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		(args) => library(() => readSkill(args.name, bundledOnly)),
 	);
+
+	// ask_user (cli/src/ask.ts): questions for the user, answered in the side panel.
+	registerAskUser(server, client);
 
 	if (allowedTools) {
 		// Every way of adding a tool must have gone through the gate above.

@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
+import { noAnswer, outcomeText, validateAskParams } from "../ask/core.js";
 import type { NavigationMessage } from "./NavigationMessage.js";
 
 // Helper: Check if a message has toolCall blocks
@@ -119,5 +120,39 @@ ${skillsInfo}
 		}
 	}
 
-	return reorderMessages(transformed);
+	return reorderMessages(answerCutOffQuestions(transformed));
+}
+
+/**
+ * An ask_user call left without a result (the panel closed or reloaded while the question was
+ * open) gets an explicit no-answer result, so the model is told not to assume one instead of
+ * the provider layer's generic "No result provided".
+ */
+function answerCutOffQuestions(messages: Message[]): Message[] {
+	const answered = new Set(messages.filter((m) => m.role === "toolResult").map((m) => m.toolCallId));
+	const out: Message[] = [];
+	for (const m of messages) {
+		out.push(m);
+		if (m.role !== "assistant") continue;
+		for (const block of m.content) {
+			if (block.type !== "toolCall" || block.name !== "ask_user" || answered.has(block.id)) continue;
+			let questions: ReturnType<typeof validateAskParams>["questions"] = [];
+			try {
+				questions = validateAskParams(block.arguments).questions;
+			} catch {
+				// The text doesn't depend on the questions.
+			}
+			const outcome = noAnswer(questions, m.stopReason === "aborted" ? "aborted" : "closed");
+			out.push({
+				role: "toolResult",
+				toolCallId: block.id,
+				toolName: block.name,
+				content: [{ type: "text", text: outcomeText(outcome) }],
+				details: outcome,
+				isError: false,
+				timestamp: m.timestamp,
+			});
+		}
+	}
+	return out;
 }

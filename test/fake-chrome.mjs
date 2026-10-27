@@ -90,6 +90,7 @@ export function installFakeChrome() {
 		},
 	});
 	const detachCalls = [];
+	const badge = { text: "", title: "" };
 	const ports = [];
 	globalThis.chrome = {
 		storage: { local: area("local"), session: area("session"), onChanged },
@@ -221,7 +222,16 @@ export function installFakeChrome() {
 			},
 		},
 		alarms: { create() {}, onAlarm: event() },
-		action: { onClicked: event() },
+		action: {
+			onClicked: event(),
+			async setBadgeText({ text }) {
+				badge.text = text;
+			},
+			async setBadgeBackgroundColor() {},
+			async setTitle({ title }) {
+				badge.title = title;
+			},
+		},
 		permissions: { async getAll() { return { permissions: [] }; } },
 		webNavigation: { onCreatedNavigationTarget: event(), onTabReplaced: event() },
 		sidePanel: { async getOptions() { return {}; } },
@@ -237,6 +247,10 @@ export function installFakeChrome() {
 		hasTab: (id) => tabs.has(id),
 		detachCalls,
 		ports,
+		/** The toolbar icon's badge text and title. */
+		badge: () => ({ ...badge }),
+		/** chrome.storage.session as it is now. */
+		session: () => structuredClone(store.session),
 		holdChanges: () => {
 			held = [];
 		},

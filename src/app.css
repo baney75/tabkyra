@@ -148,3 +148,171 @@ body {
 	backdrop-filter: blur(10px);
 	max-width: 100%;
 }
+
+/* ask_user question card (src/ask/AskCard.ts): brass marks the choice, like the user pill. */
+.tk-ask-card {
+	border: 1px solid var(--color-border);
+	border-left: 3px solid var(--tk-brass);
+	border-radius: var(--radius);
+	background: var(--color-card);
+	color: var(--color-card-foreground);
+	padding: 0.75rem 0.875rem;
+	box-shadow: var(--shadow-xs);
+}
+
+.tk-ask-card.tk-ask-done {
+	border-left-color: var(--color-border);
+	box-shadow: none;
+}
+
+.tk-ask-card fieldset {
+	border: 0;
+	padding: 0;
+	margin-inline: 0;
+}
+
+.tk-ask-icon {
+	display: inline-flex;
+	color: var(--tk-brass-deep);
+}
+
+.dark .tk-ask-icon {
+	color: var(--tk-brass);
+}
+
+.tk-ask-chip {
+	display: inline-block;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: middle;
+	font-size: 0.6875rem;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	padding: 0.0625rem 0.4375rem;
+	border-radius: 999px;
+	color: var(--tk-brass-deep);
+	background: rgba(227, 169, 59, 0.14);
+}
+
+.dark .tk-ask-chip {
+	color: var(--tk-brass);
+	background: rgba(227, 169, 59, 0.12);
+}
+
+.tk-ask-option {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.625rem;
+	width: 100%;
+	text-align: left;
+	padding: 0.5rem 0.625rem;
+	border: 1px solid var(--color-border);
+	border-radius: calc(var(--radius) - 2px);
+	background: var(--color-background);
+	cursor: pointer;
+}
+
+.tk-ask-option:hover:not(:disabled) {
+	border-color: rgba(227, 169, 59, 0.55);
+}
+
+.tk-ask-option:focus-visible,
+.tk-ask-other:focus-within {
+	outline: 2px solid var(--color-ring);
+	outline-offset: 1px;
+}
+
+.tk-ask-option[aria-checked="true"] {
+	border-color: var(--tk-brass);
+	background: rgba(227, 169, 59, 0.1);
+}
+
+.tk-ask-other {
+	align-items: center;
+	cursor: text;
+}
+
+.tk-ask-mark {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1rem;
+	height: 1rem;
+	margin-top: 0.125rem;
+	border: 1.5px solid var(--color-muted-foreground);
+	border-radius: 999px;
+	color: var(--tk-ink);
+	background: transparent;
+	cursor: pointer;
+}
+
+.tk-ask-other .tk-ask-mark {
+	margin-top: 0;
+}
+
+.tk-ask-mark-box {
+	border-radius: 4px;
+}
+
+[aria-checked="true"] > .tk-ask-mark,
+.tk-ask-mark[aria-checked="true"] {
+	border-color: var(--tk-brass);
+	background: var(--tk-brass);
+}
+
+.tk-ask-answer {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	max-width: 100%;
+	font-size: 0.8125rem;
+	font-weight: 500;
+	padding: 0.125rem 0.5rem;
+	border-radius: calc(var(--radius) - 4px);
+	color: var(--color-foreground);
+	background: rgba(227, 169, 59, 0.12);
+	overflow-wrap: anywhere;
+}
+
+.tk-ask-btn {
+	font-size: 0.8125rem;
+	font-weight: 500;
+	padding: 0.3125rem 0.875rem;
+	border-radius: calc(var(--radius) - 2px);
+	cursor: pointer;
+}
+
+.tk-ask-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.tk-ask-btn-ghost {
+	color: var(--color-muted-foreground);
+	background: transparent;
+}
+
+.tk-ask-btn-ghost:hover:not(:disabled) {
+	color: var(--color-foreground);
+	background: var(--color-secondary);
+}
+
+.tk-ask-btn-primary {
+	color: var(--tk-ink);
+	background: var(--tk-brass);
+}
+
+.tk-ask-btn-primary:hover:not(:disabled) {
+	background: #eab650;
+}
+
+/* Choices answer the click at once; the page-wide 0.3 s fade made them look unselected. */
+.tk-ask-card *,
+.tk-ask-card *::before,
+.tk-ask-card *::after {
+	transition-duration: 0.08s;
+}

@@ -286,6 +286,7 @@ export const BRIDGE_METHODS = [
 	"dialog",
 	"console.read",
 	"network.read",
+	"ask_user",
 	"permission.respond",
 	"permission.allow",
 	"permission.setMode",
