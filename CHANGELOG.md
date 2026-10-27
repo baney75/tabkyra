@@ -13,7 +13,7 @@
 ### Changed
 - The side panel transcript reads as a log. The agent's own text stays full size; the work between texts (tool calls, page changes, reasoning) folds into one compact list of rows, each expandable to the full tool card, the reasoning behind it and its usage. Long runs show their last rows with an "N earlier steps" row. Reasoning shorter than 40 characters gets no row; longer reasoning joins the step it led to. Per-step usage moved into the expanded row and a tooltip; the run total stays below the composer. A site's skills show on the first page change to that site, not on every navigation. Artifact cards stay whole. pi-web-ui gains a transcript hook (`setTranscriptRenderer`, through `patches/pi-mono.patch`); the layout is `src/transcript/`. `test/transcript.test.mjs`.
 - The floating "Artifacts" pill over the chat is gone. Artifacts open from a header button with a count badge and from their tool cards.
-- The launcher harnesses run (`~/.config/tabkyra/tabkyra`) sets `NODE_COMPILE_CACHE`: `tabkyra mcp` started in 112 ms instead of 129 ms on one machine (medians of 15 interleaved starts each, `bridge-metrics.mjs --only launcher`).
+- The launcher harnesses run (`~/.config/tabkyra/tabkyra`) sets `NODE_COMPILE_CACHE`: a small start-up saving, about 10 ms of 120 on one machine and close to run-to-run noise (`bridge-metrics.mjs --only launcher`).
 
 ### Fixed
 - Side panel transcript follow-ups to #41: an ask_user card still streaming its arguments shows as being prepared, not as a closed question; "N earlier steps" rows sit where the hidden steps were, so a card kept in view (artifacts, ask_user) keeps its place in time; the toast for a tab another session owns says how to hand it over (Share tab on that tab).

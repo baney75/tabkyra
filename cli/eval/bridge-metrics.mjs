@@ -248,7 +248,7 @@ async function reloadAndWaitDown() {
 		} catch {
 			return true;
 		}
-	}, 10000, "the old native host to exit");
+	}, 30000, "the old native host to exit"); // a loaded machine can take a while to reload
 }
 
 /** Start `work`, reload the extension `afterMs` into it, and return the call's outcome. */

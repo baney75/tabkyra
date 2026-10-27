@@ -95,33 +95,50 @@ node cli/eval/skill-eval.mjs --suite sessions --reps 2
 node cli/eval/skill-eval.mjs --suite skill --reps 2
 ```
 
-## Baseline (main at 9e37df3, v1.1.9)
+## Baseline (main at b81629d: v1.1.9 plus ask_user and the panel UI work)
 
 | Measure | Baseline |
 | --- | --- |
-| Tools listed | 30 |
-| tools/list + instructions | 23,976 + 2,444 bytes |
-| Input tokens the server adds to every turn (`claude -p`, Haiku) | 10,473 |
-| Cold start: initialize / first tool result (median of 5) | 115 ms / 125 ms |
-| `tabkyra mcp` start through the launcher, no compile cache (median of 7) | 119 ms |
+| Tools listed | 31 |
+| tools/list + instructions | 26,460 + 2,709 bytes |
+| Input tokens the server adds to every turn (`claude -p`, Haiku) | 11,471 |
+| Cold start: initialize / first tool result (median of 5) | 119 ms / 131 ms (115 to 150 ms across idle runs) |
 | Calls across forced reloads and host kills (3 cycles, 15 calls) | 15 answered, 0 hangs, slowest 4.8 s |
 | Cycles where a click in flight during a reload ran twice | **3 of 3** |
 | Three clients at once: separate groups / cross-talk / labels naming the project | yes / 0 / 0 of 3 |
 | Tab group behaviors as specified | 5 of 13 |
 
-Session tasks, Haiku, 2 reps, MCP server only:
+Session tasks, Haiku, 2 reps, MCP server only, each row in a fresh project folder:
 
 | Task | Success | Mean tool calls | Mean tool errors | Mean seconds |
 | --- | --- | --- | --- | --- |
-| multitab | 2/2 | 8.0 | 0.0 | 7.5 |
-| resume | 0/2 | 12.5 | 0.5 | 13.0 |
-| parallel | 2/2 | 29.0 | 3.5 | 18.0 |
-| handover | 0/2 | 13.5 | 0.0 | 14.5 |
-| reload | 2/2 | 15.0 | 0.5 | 19.0 |
-| all | 6/10 | 15.6 | 0.9 | 14.4 |
+| multitab | 2/2 | 7.5 | 0.0 | 8.0 |
+| resume | 0/2 | 12.5 | 0.0 | 13.0 |
+| parallel | 2/2 | 28.0 | 3.0 | 18.5 |
+| handover | 0/2 | 12.5 | 0.0 | 14.0 |
+| reload | 2/2 | 14.5 | 0.5 | 16.5 |
+| all | 6/10 | 15.0 | 0.7 | 14.0 |
 
-Each row runs in a fresh project folder. multitab is scored from the model's closing `ANSWER: Store <letter> $<price>` line, and
+Skill suite (shop, contact, forum), Haiku, 2 reps: 6/6 without the skill (11.2 calls, 16.0 s
+mean) and 6/6 with it (11.0 calls, 15.8 s).
+
+multitab is scored from the model's closing `ANSWER: Store <letter> $<price>` line, and
 parallel counts cross-talk only when one agent's tool results show the other's fixture pages.
+## After each change
+
+| Measure | Baseline (b81629d) | CLI polish and evals (#40) |
+| --- | --- | --- |
+| Tools / tools/list + instructions bytes | 31 / 26,460 + 2,709 | 31 / 26,460 + 2,709 (no MCP change) |
+| Input tokens per turn (Haiku) | 11,471 | 11,471 |
+| `tabkyra mcp` start through the launcher, interleaved medians | 140 / 131 ms (both arms identical on main) | 119 ms without the compile cache, 108 ms with it |
+| Duplicate clicks across reloads | 3 of 3 cycles | 3 of 3 |
+| Tab group behaviors | 5 of 13 | 5 of 13 |
+| Session tasks | 6/10 | 6/10 |
+| Skill suite, without / with the skill | 6/6 / 6/6 | 6/6 / 6/6 |
+| `tabkyra --version` | 0.1.0 | 1.1.9 |
+
+An earlier baseline on 9e37df3 (before ask_user) measured 30 tools and 10,473 tokens, with
+the same task and group results.
 
 What failed: a new harness process gets a new session, so **resume** can't find the tab it
 left; there is no way to give a tab to the user, so **handover** leaves it in the agent's

@@ -90,8 +90,8 @@ function writeScript(path: string, args: string, options: { compileCache?: boole
 	if (process.platform === "win32") {
 		writeFileSync(path, `@echo off\r\n"${node}" "${script}" ${args} %*\r\n`);
 	} else {
-		// Node's compile cache (Node 22.1+; older versions ignore it) took about 13% off each start
-		// on one machine (129 to 112 ms, `cli/eval/bridge-metrics.mjs --only launcher`).
+		// Node's compile cache (Node 22.1+; older versions ignore it): a small saving, about 10 ms
+		// of 120 on one machine, near run-to-run noise (`cli/eval/bridge-metrics.mjs --only launcher`).
 		const cache = join(homedir(), ".cache", "tabkyra", "node-compile-cache");
 		// Only the launcher harnesses run; the native host's environment (and what it spawns) is unchanged.
 		const prefix = options.compileCache ? `: "\${NODE_COMPILE_CACHE:=${cache}}"\nexport NODE_COMPILE_CACHE\n` : "";

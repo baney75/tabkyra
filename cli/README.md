@@ -79,9 +79,10 @@ tabkyra completion fish > ~/.config/fish/completions/tabkyra.fish
 ```
 
 The launcher `tabkyra install` writes (`~/.config/tabkyra/tabkyra`, what harness configs run)
-sets `NODE_COMPILE_CACHE` (Node 22.1+). On one Apple M-series machine `tabkyra mcp` started in
-112 ms instead of 129 ms (medians of 15 interleaved starts each; interquartile ranges 106-116
-and 125-141 ms; `cli/eval/bridge-metrics.mjs --only launcher`).
+sets `NODE_COMPILE_CACHE` (Node 22.1+). The saving is small: on one Apple M-series machine
+`tabkyra mcp` started in 108 ms with it and 119 ms without (medians of 15 interleaved starts
+each, `cli/eval/bridge-metrics.mjs --only launcher`), while the same harness on main, where
+both arms are identical, differed by 9 ms. Treat it as at most about 10%.
 
 ## Harness setup
 
