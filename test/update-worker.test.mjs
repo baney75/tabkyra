@@ -62,26 +62,37 @@ const progressNow = async () => (await chrome.storage.local.get("tabkyra.updateP
 const pendingNow = async () => (await chrome.storage.local.get("tabkyra.updatePending"))["tabkyra.updatePending"];
 const actionsSent = (from) => ctx.port.sent.slice(from).filter((m) => m.type === "update_action").map((m) => m.action);
 
+const gate = await import("../src/update/gate.ts");
+const gateHeld = async () => (await navigator.locks.query()).held.some((l) => l.name === gate.INSTALL_GATE_LOCK);
 const busy = (on) => chrome.storage.session.set({ sidepanel_busy_1: on ? 105 : false, sidepanel_busy_beat_1: Date.now() });
 
 test("a staged update is activated only when no side panel run is going, then reloads", async () => {
+	// The first test's Update now is still pending (no host answers here).
+	await chrome.storage.local.remove("tabkyra.updatePending");
 	await busy(true);
+	assert.equal((await ctx.ask({ type: "tabkyra-update", action: "update" }, panelUrl)).ok, true, "builds while the agent runs");
 	const from = ctx.port.sent.length;
+	await sleep(100);
 	ctx.port.deliver({ type: "update_progress", action: "update", phase: "done", message: "Built", at: Date.now(), staged: true });
 	await sleep(400);
 	assert.deepEqual(actionsSent(from), [], "nothing is installed while the agent runs");
 	const waiting = await progressNow();
 	assert.equal(waiting.phase, "waiting");
 	assert.match(waiting.message, /agent run is going in a side panel/);
-	assert.equal((await chrome.storage.session.get("tabkyra.updateInstalling"))["tabkyra.updateInstalling"], undefined, "no gate while waiting");
+	assert.equal(await gateHeld(), false, "no gate while waiting");
 
 	await busy(false);
 	await sleep(3600);
 	assert.deepEqual(actionsSent(from), ["activate"], "activates once the run ended");
 	assert.equal(ctx.reloads(), 0, "no reload before the install is done");
 
-	// While it installs, the gate holds: new bridge requests are refused, the panel sees it too.
-	assert.ok((await chrome.storage.session.get("tabkyra.updateInstalling"))["tabkyra.updateInstalling"], "the gate is held");
+	// While it installs, the gate holds: new bridge requests are refused, a panel can't start a run.
+	assert.equal(await gateHeld(), true, "the gate is held");
+	let marked = false;
+	assert.equal(await gate.reserveRun(async () => { marked = true; }), false, "a panel send is refused");
+	assert.equal(marked, false);
+	// Another update action while this one runs is refused, not queued behind it.
+	assert.equal((await ctx.ask({ type: "tabkyra-update", action: "rollback" }, panelUrl)).ok, false);
 	ctx.port.deliver({ type: "client_connected", clientId: "c9", client: { name: "claude", session: "s9" } });
 	await sleep(50);
 	ctx.port.deliver({ type: "request", clientId: "c9", id: 77, method: "tabs.context", params: {} });
@@ -98,15 +109,21 @@ test("a staged update is activated only when no side panel run is going, then re
 });
 
 test("a failed install drops the gate and nothing reloads", async () => {
-	await chrome.storage.local.remove("tabkyra.updatePending");
+	// The stub reload didn't end the worker: after the grace period it lets go of the gate.
+	await sleep(3500);
+	assert.equal(await gateHeld(), false, "a reload that didn't happen releases the gate");
+	assert.equal((await progressNow()).phase, "failed");
 	await busy(false);
 	const before = ctx.reloads();
+	assert.equal((await ctx.ask({ type: "tabkyra-update", action: "update" }, panelUrl)).ok, true);
+	await sleep(100);
 	ctx.port.deliver({ type: "update_progress", action: "update", phase: "done", message: "Built", at: Date.now(), staged: true });
 	await sleep(400);
 	ctx.port.deliver({ type: "update_progress", action: "activate", phase: "failed", message: "disk full", at: Date.now() });
 	await sleep(300);
-	assert.equal((await chrome.storage.session.get("tabkyra.updateInstalling"))["tabkyra.updateInstalling"], undefined);
+	assert.equal(await gateHeld(), false);
 	assert.equal(await pendingNow(), undefined);
+	assert.equal(await gate.reserveRun(async () => {}), true, "runs may start again");
 	assert.equal(ctx.reloads(), before);
 });
 
@@ -118,6 +135,7 @@ test("a busy flag without a fresh heartbeat (its panel crashed) doesn't hold the
 	await sleep(600);
 	assert.equal(ctx.reloads(), before + 1);
 	await chrome.storage.session.set({ sidepanel_busy_7: false });
+	await sleep(3500);
 });
 
 test("Roll back waits for idle in the worker before the host swaps anything", async () => {

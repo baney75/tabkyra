@@ -71,7 +71,7 @@ import "./utils/i18n-extension.js";
 import "./utils/live-reload.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tutorials } from "./tutorials.js";
-import { BUSY_BEAT_PREFIX, updateInstalling } from "./update/gate.js";
+import { BUSY_BEAT_PREFIX, reserveRun } from "./update/gate.js";
 
 // Register custom message renderers
 registerNavigationRenderer();
@@ -761,8 +761,15 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			);
 		},
 		onBeforeSend: async () => {
-			// Tabkyra is swapping in an update and reloads in a moment; a run started now would be cut off.
-			if (await updateInstalling()) {
+			// Tabkyra may be swapping in an update and about to reload; a run started then would be cut
+			// off. Marking the panel busy under the gate makes the update wait for this run instead.
+			const reserved = await reserveRun(() =>
+				chrome.storage.session.set({
+					[`sidepanel_busy_${currentWindowId}`]: homeTabId ?? true,
+					[`${BUSY_BEAT_PREFIX}${currentWindowId}`]: Date.now(),
+				}),
+			);
+			if (!reserved) {
 				throw new Error("Tabkyra is installing an update and reloads in a moment. Send it again after the reload.");
 			}
 			const note = await pageChangeNote();

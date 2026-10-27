@@ -35,13 +35,15 @@ What "update" does depends on how Tabkyra runs (the install mode):
   flight, and no harness made a browser call in the last 30 seconds (a harness between two
   calls looks idle after that). An automatic update also waits 3 quiet minutes before each
   step.
-- **The install gate.** Before the worker checks idle for an install, a rollback or the
-  reload, it takes a gate (`tabkyra.updateInstalling` in `chrome.storage.session`). While it
-  holds the gate, a side panel send is refused with "Tabkyra is installing an update and
-  reloads in a moment" (the text goes back into the editor) and a bridge request gets an
-  error saying to repeat it after the bridge reconnects. So nothing new starts between the
-  idle check, the swap and the reload. The remaining window is a send that passed its check
-  just before the gate and hasn't marked its panel busy yet. Sessions are kept in IndexedDB
+- **The install gate.** For an install, a rollback or the reload, the worker checks idle,
+  then takes a gate (a Web Lock, `src/update/gate.ts`) and checks again. A side panel takes
+  the same lock, only if it is free, to mark itself busy before it starts a run, so either
+  the worker sees the run or the panel sees the install. While the worker holds the gate, a
+  side panel send is refused with "Tabkyra is installing an update and reloads in a moment"
+  (the text goes back into the editor) and a bridge request gets an error saying to repeat
+  it after the bridge reconnects; a bridge request counts as running from the moment it
+  arrives. After an install the gate stays held until the reload. One update operation runs
+  at a time. Sessions are kept in IndexedDB
   and `chrome.storage.local`, so chats and agent tab groups come back after the reload;
   reopen the side panel to continue.
 - **The updater outlives the host.** It runs in its own process group and writes each step

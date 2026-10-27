@@ -289,6 +289,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		);
 		return;
 	}
+	// In flight from here, before the first await, so the update idle gate sees it at once.
+	state.inFlight = { method: req.method, since: Date.now() };
+	state.lastActivityAt = Date.now();
 	try {
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Bridge.");
@@ -296,8 +299,6 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 
 		const handler = handlers[req.method];
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
-		state.inFlight = { method: req.method, since: Date.now() };
-		state.lastActivityAt = Date.now();
 		const t0 = performance.now();
 		let aborted = false;
 		const session = await withTimeout(getSession(state), 15000, "session open");
@@ -537,6 +538,19 @@ function onHostMessage(message: HostToExt): void {
 				})();
 				return;
 			}
+			if ((message.method === "bridge.activate" || message.method === "bridge.reload") && installGate()) {
+				send({
+					type: "response",
+					clientId: message.clientId,
+					id: message.id,
+					error: {
+						code: ERR.INTERNAL,
+						message:
+							"Tabkyra is installing an update and reloads in a few seconds. Repeat the request once the bridge reconnects.",
+					},
+				});
+				return;
+			}
 			if (message.method === "bridge.activate") {
 				// Development aid: put a given tab back in front (e.g. after a test popup stole focus).
 				const tabId = Number(message.params?.tabId);
@@ -614,8 +628,10 @@ function connect(): void {
 	trace("native port connected");
 	// The hello says which build runs and which build the extension folder holds now, so the host
 	// can tell whether the browser loads Tabkyra from the folder it updates (docs/updates.md).
+	helloSent = false;
 	void readDiskBuild().then((diskBuild) => {
 		if (port !== next) return;
+		helloSent = true;
 		send({
 			type: "hello",
 			version: chrome.runtime.getManifest().version,
@@ -657,9 +673,12 @@ export function setInstallGate(held: () => boolean): void {
 	installGate = held;
 }
 
-/** Ask the native host for an update action; false when no host is connected. */
+/** Set once the hello went out on the current port; the host refuses actions before it. */
+let helloSent = false;
+
+/** Ask the native host for an update action; false when no host is connected or hasn't had the hello. */
 export function sendUpdateAction(action: UpdateAction): boolean {
-	if (!port) return false;
+	if (!port || !helloSent) return false;
 	send({ type: "update_action", action });
 	return true;
 }

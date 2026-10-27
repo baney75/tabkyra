@@ -20,7 +20,7 @@ import {
 	UPDATE_STATUS_KEY,
 } from "../bridge/protocol.js";
 import { BUILD, describeBuild } from "./build.js";
-import { BUSY_BEAT_MAX_MS, BUSY_BEAT_PREFIX, gateHeld, INSTALL_GATE_KEY } from "./gate.js";
+import { BUSY_BEAT_MAX_MS, BUSY_BEAT_PREFIX, INSTALL_GATE_LOCK, INSTALL_GATE_MAX_MS } from "./gate.js";
 import {
 	type ActivitySnapshot,
 	AUTO_UPDATE_QUIET_MS,
@@ -41,6 +41,8 @@ const LAST_PANEL_RUN_KEY = "tabkyra.lastPanelRunAt";
 const BUSY_PREFIX = "sidepanel_busy_";
 const AUTO_ALARM = "tabkyra-auto-update";
 const WAIT_POLL_MS = 3000;
+/** How long after chrome.runtime.reload() the worker may still run before it counts as not reloaded. */
+const RELOAD_GRACE_MS = 3000;
 /** How long to wait for the host to answer an action before saying it didn't. */
 const NO_REPLY_MS = 30000;
 /** How long a sent action may take before the worker stops waiting for it. */
@@ -65,17 +67,35 @@ interface Pending {
 	at: number;
 }
 
-let gateTakenAt: number | undefined;
-setInstallGate(() => gateHeld(gateTakenAt));
+let releaseGate: (() => void) | undefined;
+setInstallGate(() => releaseGate !== undefined);
 
+/**
+ * Take the install gate (a Web Lock, src/update/gate.ts) and hold it until dropGate. A worker
+ * that dies lets go of it with its context; a stuck one lets go after INSTALL_GATE_MAX_MS.
+ */
 async function takeGate(): Promise<void> {
-	gateTakenAt = Date.now();
-	await chrome.storage.session.set({ [INSTALL_GATE_KEY]: gateTakenAt });
+	if (releaseGate) return;
+	await new Promise<void>((acquired) => {
+		void navigator.locks.request(
+			INSTALL_GATE_LOCK,
+			() =>
+				new Promise<void>((release) => {
+					const timer = setTimeout(() => dropGate(), INSTALL_GATE_MAX_MS);
+					(timer as { unref?: () => void }).unref?.();
+					releaseGate = () => {
+						clearTimeout(timer);
+						releaseGate = undefined;
+						release();
+					};
+					acquired();
+				}),
+		);
+	});
 }
 
-async function dropGate(): Promise<void> {
-	gateTakenAt = undefined;
-	await chrome.storage.session.remove(INSTALL_GATE_KEY);
+function dropGate(): void {
+	releaseGate?.();
 }
 
 async function activity(): Promise<ActivitySnapshot> {
@@ -132,24 +152,29 @@ async function advance(): Promise<void> {
 	const pending = await getPending();
 	if (!pending || pending.step === "sent" || pending.reloadedFrom) return;
 	const quiet = pending.auto ? AUTO_UPDATE_QUIET_MS : 0;
-	// Gate first, then look: a send or bridge request after this point waits for the reload.
-	await takeGate();
-	const verdict = idleGate(await activity(), quiet);
-	if (!verdict.idle) {
-		await dropGate();
+	const wait = async (reason: string | undefined) => {
+		// After an install the files are already swapped: keep the gate, so nothing new starts
+		// before the reload. Before one, let go while waiting, so the bridge isn't refused for nothing.
+		if (pending.step !== "reload") dropGate();
 		const what =
 			pending.step === "reload"
 				? "Reloading Tabkyra"
 				: pending.action === "rollback"
 					? "Rolling back"
 					: "Ready. Installing";
-		await setProgress(pending.action, "waiting", `${what} when no agent is running: ${verdict.reason}.`);
+		await setProgress(pending.action, "waiting", `${what} when no agent is running: ${reason}.`);
 		later();
-		return;
-	}
+	};
+	// Look first without the gate (the usual wait), then take it and look again: a send or a
+	// bridge request after that point waits for the reload or is refused.
+	const first = idleGate(await activity(), quiet);
+	if (!first.idle) return wait(first.reason);
+	await takeGate();
+	const verdict = idleGate(await activity(), quiet);
+	if (!verdict.idle) return wait(verdict.reason);
 	if (pending.step === "run") {
 		if (!sendUpdateAction(pending.action as UpdateAction)) {
-			await dropGate();
+			dropGate();
 			await setProgress(pending.action, "waiting", "Waiting for the Tabkyra native host to connect.");
 			later();
 			return;
@@ -161,6 +186,14 @@ async function advance(): Promise<void> {
 	await setPending({ ...pending, reloadedFrom: BUILD?.id ?? "unknown" });
 	await setProgress(pending.action, "reloading", "Reloading Tabkyra");
 	chrome.runtime.reload();
+	// A reload ends this worker at once. Still here a few seconds later means it didn't happen:
+	// let runs start again and say so, rather than hold everything back.
+	const timer = setTimeout(() => {
+		dropGate();
+		void chrome.storage.local.remove(PENDING_KEY);
+		void setProgress(pending.action, "failed", "Tabkyra didn't reload. Reload it on chrome://extensions.");
+	}, RELOAD_GRACE_MS);
+	(timer as { unref?: () => void }).unref?.();
 }
 
 async function queue(step: Pending["step"], action: Pending["action"], extra: Partial<Pending> = {}): Promise<void> {
@@ -178,7 +211,7 @@ async function giveUpOnSent(at: number): Promise<void> {
 	const pending = await getPending();
 	if (pending?.step !== "sent" || pending.at !== at) return;
 	await chrome.storage.local.remove(PENDING_KEY);
-	await dropGate();
+	dropGate();
 	await setProgress(
 		pending.action,
 		"failed",
@@ -204,8 +237,11 @@ async function resume(): Promise<void> {
 		return;
 	}
 	// The host follows a running updater after a restart and reports its result.
-	if (pending.step === "sent") armGiveUp(pending);
-	else await advance();
+	if (pending.step === "sent") {
+		// An install or rollback that may still be swapping files keeps the gate until its result.
+		if (pending.action === "activate" || pending.action === "rollback") await takeGate();
+		armGiveUp(pending);
+	} else await advance();
 }
 
 async function maybeAutoUpdate(): Promise<void> {
@@ -237,19 +273,16 @@ const lastFrameAt = new Map<string, number>();
 async function onProgress(progress: HostUpdateProgress): Promise<void> {
 	lastFrameAt.set(progress.action, Date.now());
 	const pending = await getPending();
-	const mine = pending?.step === "sent" && pending.action === progress.action;
-	if (progress.phase === "done" && progress.staged)
-		return queue("run", "activate", { auto: mine ? pending?.auto : undefined });
+	// Only the result of the step this worker sent moves anything (a host replays the last
+	// result after a restart; an older one doesn't count).
+	const mine = pending?.step === "sent" && pending.action === progress.action && progress.at >= pending.at - 2000;
+	if (!mine || (progress.phase !== "done" && progress.phase !== "failed")) return;
+	if (progress.phase === "done" && progress.staged) return queue("run", "activate", { auto: pending?.auto });
 	if (progress.phase === "done" && progress.reload) {
-		return queue("reload", progress.action, {
-			extensionBuild: progress.extensionBuild,
-			auto: mine ? pending?.auto : undefined,
-		});
+		return queue("reload", progress.action, { extensionBuild: progress.extensionBuild, auto: pending?.auto });
 	}
-	if (progress.phase === "done" || progress.phase === "failed") {
-		if (mine) await chrome.storage.local.remove(PENDING_KEY);
-		if (progress.action === "activate" || progress.action === "rollback") await dropGate();
-	}
+	await chrome.storage.local.remove(PENDING_KEY);
+	dropGate();
 }
 
 /** Say so when the host never answers (a host older than this extension ignores the request). */
@@ -280,16 +313,35 @@ function onPanelMessage(
 		sendResponse({ ok: false, message: "Refused" });
 		return undefined;
 	}
+	// One update operation at a time; checks and settings always go through.
+	const passive = m.action === "check" || (typeof m.action === "string" && m.action.startsWith("policy-"));
+	if (passive) {
+		startPanelAction(m.action, sendResponse);
+		return undefined;
+	}
+	void getPending().then((pending) => {
+		if (pending && !pending.reloadedFrom)
+			sendResponse({ ok: false, message: "An update step is already waiting or running" });
+		else startPanelAction(m.action, sendResponse);
+	});
+	return true;
+}
+
+function startPanelAction(
+	requested: unknown,
+	sendResponse: (response: { ok: boolean; message?: string }) => void,
+): void {
+	const m = { action: requested };
 	// Steps that change live files wait for idle in the worker; the rest go to the host now.
 	if (m.action === "reload") {
 		void queue("reload", "reload");
 		sendResponse({ ok: true });
-		return undefined;
+		return;
 	}
 	if (m.action === "install" || m.action === "rollback") {
 		void queue("run", m.action === "install" ? "activate" : "rollback");
 		sendResponse({ ok: true });
-		return undefined;
+		return;
 	}
 	if (
 		typeof m.action !== "string" ||
@@ -297,13 +349,13 @@ function onPanelMessage(
 		m.action === "activate"
 	) {
 		sendResponse({ ok: false, message: "Unknown update action" });
-		return undefined;
+		return;
 	}
 	const action = m.action as UpdateAction;
 	if (!sendUpdateAction(action)) {
 		void setProgress(action, "failed", "The Tabkyra native host isn't connected. Run tabkyra doctor in a terminal.");
 		sendResponse({ ok: false, message: "No native host" });
-		return undefined;
+		return;
 	}
 	if (!action.startsWith("policy-")) {
 		void setProgress(action, "checking", action === "check" ? "Checking for updates" : "Starting");
@@ -311,7 +363,7 @@ function onPanelMessage(
 		expectReply(action);
 	}
 	sendResponse({ ok: true });
-	return undefined;
+	return;
 }
 
 export function startUpdateWorker(): void {
@@ -330,11 +382,5 @@ export function startUpdateWorker(): void {
 	chrome.alarms.onAlarm.addListener((alarm) => {
 		if (alarm.name === AUTO_ALARM) void maybeAutoUpdate().catch(() => undefined);
 	});
-	// A gate a previous worker left is stale: that worker either reloaded (and storage.session
-	// was cleared) or died.
-	void chrome.storage.session
-		.remove(INSTALL_GATE_KEY)
-		.catch(() => undefined)
-		.then(() => resume())
-		.catch(() => undefined);
+	void resume().catch(() => undefined);
 }

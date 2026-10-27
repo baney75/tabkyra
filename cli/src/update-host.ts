@@ -93,7 +93,16 @@ function startUp(send: Send): void {
 		/* an updater holds the lock; it repairs on its own */
 	}
 	const record = readProgressRecord();
-	if (!record || record.phase === "done" || record.phase === "failed") return;
+	if (!record) return;
+	if (record.phase === "done" || record.phase === "failed") {
+		// A result the extension may have missed while no host ran: send it once more with its own
+		// time. The worker acts on it only if it is the result of the step it is waiting for.
+		if (Date.now() - record.at < 10 * 60 * 1000) {
+			const frame = forward(send, record.action, record, record.at);
+			if (!frame) return;
+		}
+		return;
+	}
 	if (!pidAlive(record.pid)) {
 		const message = "The updater stopped before it finished. An interrupted swap is repaired; run it again.";
 		// Once: the record says failed from now on.
@@ -272,7 +281,13 @@ export async function sendStatus(send: Send, force = false): Promise<HostUpdateS
 
 // ---- actions ------------------------------------------------------------------------------
 
-function progress(send: Send, action: UpdateAction, phase: UpdatePhase, message: string, extra: Partial<HostUpdateProgress> = {}): HostUpdateProgress {
+function progress(
+	send: Send,
+	action: UpdateAction,
+	phase: UpdatePhase,
+	message: string,
+	extra: Partial<HostUpdateProgress> = {},
+): HostUpdateProgress {
 	const frame: HostUpdateProgress = { type: "update_progress", action, phase, message, at: Date.now(), ...extra };
 	send(frame);
 	return frame;
@@ -281,12 +296,18 @@ function progress(send: Send, action: UpdateAction, phase: UpdatePhase, message:
 const PHASES: UpdatePhase[] = ["checking", "downloading", "verifying", "pulling", "installing", "building", "skills", "done", "failed"];
 
 /** One step from the updater (its stdout or its progress file) as an update_progress frame. */
-function forward(send: Send, action: UpdateAction, event: Partial<ProgressEvent> | { phase?: unknown; message?: unknown; staged?: unknown; reload?: unknown; extensionBuild?: unknown }): HostUpdateProgress | undefined {
+function forward(
+	send: Send,
+	action: UpdateAction,
+	event: Partial<ProgressEvent> | { phase?: unknown; message?: unknown; staged?: unknown; reload?: unknown; extensionBuild?: unknown },
+	at?: number,
+): HostUpdateProgress | undefined {
 	if (typeof event.phase !== "string" || !PHASES.includes(event.phase as UpdatePhase)) return undefined;
 	return progress(send, action, event.phase as UpdatePhase, String(event.message ?? "").slice(0, 2000), {
 		staged: event.staged === true ? true : undefined,
 		reload: event.reload === true ? true : undefined,
 		extensionBuild: typeof event.extensionBuild === "string" ? event.extensionBuild : undefined,
+		...(at ? { at } : {}),
 	});
 }
 

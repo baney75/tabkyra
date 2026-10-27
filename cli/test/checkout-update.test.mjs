@@ -538,6 +538,28 @@ test("the host finishes a rollback a crash interrupted when it starts", async ()
 	assert.equal(cliBuild(c).commit, fresh.commit);
 });
 
+test("a crash inside the commit step is finished without touching the kept build", async () => {
+	const c = makeCheckout();
+	const old = extBuild(c);
+	pushCommit(c, "Something new");
+	await runHost(c.cli);
+	await runHost(c.cli, "--activate");
+	const fresh = extBuild(c);
+	// The commit had already moved prev-new to previous/ but not yet dropped next/ and the journal.
+	const state = join(c.checkout, ".tabkyra-update");
+	mkdirSync(join(state, "next"), { recursive: true });
+	writeFileSync(join(state, "next", "staged.json"), "{}");
+	writeFileSync(join(state, "journal.json"), JSON.stringify({ op: "activate", step: "commit" }));
+	const h = startHost(c.cli);
+	h.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: fresh, diskBuild: fresh });
+	await h.waitFor((m) => m.type === "update_status", "update_status");
+	h.host.kill();
+	assert.equal(extBuild(c).id, fresh.id);
+	assert.equal(buildId(join(state, "previous", "dist-chrome")).id, old.id, "the kept build is untouched");
+	assert.ok(existsSync(join(state, "previous", "cli-dist", "index.js")));
+	assert.ok(!existsSync(join(state, "journal.json")) && !existsSync(join(state, "next")));
+});
+
 test("an install stopped before it changed anything is undone, and the staged build stays", async () => {
 	const c = makeCheckout();
 	const old = extBuild(c);

@@ -385,7 +385,7 @@ function overlay(from: string, live: string): void {
  */
 interface Journal {
 	op: "activate" | "rollback";
-	step: "prepare" | "swap";
+	step: "prepare" | "swap" | "commit";
 }
 
 const journalFile = (root: string) => join(stateDir(root), "journal.json");
@@ -417,9 +417,16 @@ function swapStep(root: string, op: Journal["op"]): void {
 	overlay(join(source, "cli-dist"), join(root, "cli", "dist"));
 }
 
+/**
+ * Journaled as its own step, and safe to run again from any point: prev-new replaces previous
+ * only while prev-new exists, and dropping next/ and the journal can repeat.
+ */
 function commitStep(root: string, op: Journal["op"]): void {
-	rmSync(previousBuildDir(root), { recursive: true, force: true });
-	renameSync(prevNewDir(root), previousBuildDir(root));
+	writeJournal(root, { op, step: "commit" });
+	if (existsSync(prevNewDir(root))) {
+		rmSync(previousBuildDir(root), { recursive: true, force: true });
+		renameSync(prevNewDir(root), previousBuildDir(root));
+	}
 	if (op === "activate") rmSync(nextDir(root), { recursive: true, force: true });
 	rmSync(journalFile(root), { force: true });
 }
@@ -456,6 +463,10 @@ export function recoverBuilds(root: string): string | undefined {
 		notes.push(`An interrupted ${journal.op} was undone before it changed anything.`);
 	} else if (journal?.step === "swap") {
 		swapStep(root, journal.op);
+		commitStep(root, journal.op);
+		notes.push(`An interrupted ${journal.op === "activate" ? "install" : "rollback"} was finished.`);
+	} else if (journal?.step === "commit") {
+		// The sources may already be gone: only the commit is left to finish.
 		commitStep(root, journal.op);
 		notes.push(`An interrupted ${journal.op === "activate" ? "install" : "rollback"} was finished.`);
 	} else rmSync(prevNewDir(root), { recursive: true, force: true });

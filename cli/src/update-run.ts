@@ -168,23 +168,27 @@ function releaseActivate(): void {
 		return;
 	}
 	const done = pending;
-	reinstallHost(quiet);
+	// The launcher already points at app/ (this host runs from it), so a failed re-registration
+	// only means the manifest wasn't refreshed; say so instead of hiding it.
+	const registered = reinstallHost(quiet);
 	const status = readStatus();
 	if (status) writeStatus({ ...status, current: done.to, available: false, checkedAt: Date.now() });
 	const skills = refreshSkills(join(appDir(), "cli", "dist", "index.js"), noteError);
 	const extensionBuild = readBuildInfo(join(appDir(), "dist-chrome"))?.id;
 	writeLastUpdate({ id: randomUUID(), kind: "update", mode: "release", at: Date.now(), from: done.from, to: done.to, notes: done.notes, url: done.url, extensionBuild, skills });
-	emit({ phase: "done", message: `Installed ${done.to}.${skillsLine(skills)}`, reload: true, extensionBuild });
+	const warn = registered ? "" : ` Registering the native host again failed; run: node ${join(appDir(), "cli", "dist", "index.js")} install.`;
+	emit({ phase: "done", message: `Installed ${done.to}.${skillsLine(skills)}${warn}`, reload: true, extensionBuild });
 }
 
 function releaseRollback(): void {
 	phase("installing", `Rolling back to the release in ${previousDir()}`);
 	withLock(() => rmSync(stagedDir(), { recursive: true, force: true }));
 	const { from, to } = swapBack(quiet);
-	reinstallHost(quiet);
+	const registered = reinstallHost(quiet);
 	const extensionBuild = readBuildInfo(join(appDir(), "dist-chrome"))?.id;
 	writeLastUpdate({ id: randomUUID(), kind: "rollback", mode: "release", at: Date.now(), from: from ?? "?", to: to ?? "?", extensionBuild });
-	emit({ phase: "done", message: `Rolled back ${from ?? "?"} to ${to ?? "?"}.`, reload: true, extensionBuild });
+	const warn = registered ? "" : ` Registering the native host again failed; run: node ${join(appDir(), "cli", "dist", "index.js")} install.`;
+	emit({ phase: "done", message: `Rolled back ${from ?? "?"} to ${to ?? "?"}.${warn}`, reload: true, extensionBuild });
 }
 
 function releaseReinstall(): void {
