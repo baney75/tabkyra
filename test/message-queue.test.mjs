@@ -3,98 +3,178 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MessageQueue } from "../node_modules/@mariozechner/pi-web-ui/dist/utils/message-queue.js";
 
-const settle = () => new Promise((r) => setTimeout(r, 20));
-
-function setup() {
-	const agent = { state: { isStreaming: true }, steered: [], steer(m) { this.steered.push(m); }, clearSteeringQueue() { this.steered = []; } };
-	const sent = [];
-	const queue = new MessageQueue(() => agent, (input) => sent.push(input), () => {}, 1);
-	return { agent, sent, queue };
-}
+const settle = () => new Promise((r) => setTimeout(r, 10));
 const end = (stopReason = "stop") => [{ role: "assistant", stopReason }];
+const text = (m) => (typeof m.content === "string" ? m.content : m.content.map((c) => c.text).join(""));
+
+/** A fake agent with a run lifecycle; `result` decides what each send reports. */
+function setup({ result = () => "started", context } = {}) {
+	let idle = Promise.resolve();
+	let finish = () => {};
+	const agent = {
+		state: { isStreaming: false },
+		steered: [],
+		steer(m) { this.steered.push(m); },
+		clearSteeringQueue() { this.steered = []; },
+		waitForIdle: () => idle,
+	};
+	const sent = [];
+	const queue = new MessageQueue(
+		agent,
+		async (item) => { const r = result(item); if (r === "started") { sent.push(item.input); start(); } return r; },
+		() => {},
+		context,
+	);
+	function start() { agent.state.isStreaming = true; idle = new Promise((r) => (finish = r)); queue.onAgentStart(); }
+	function stop(stopReason) { agent.state.isStreaming = false; queue.onAgentEnd(end(stopReason)); finish(); }
+	return { agent, sent, queue, start, stop };
+}
 
 test("messages sent while the agent runs go out in order, one per finished run", async () => {
-	const { agent, sent, queue } = setup();
+	const { sent, queue, start, stop } = setup();
+	start();
 	queue.add("first");
 	queue.add("second");
 	assert.deepEqual(sent, []);
-	agent.state.isStreaming = false;
-	queue.onAgentEnd(end());
+	stop();
 	await settle();
 	assert.deepEqual(sent, ["first"]);
-	assert.deepEqual(queue.items.map((q) => q.input), ["second"]);
-	queue.onAgentEnd(end());
+	stop();
 	await settle();
 	assert.deepEqual(sent, ["first", "second"]);
+	assert.equal(queue.items.length, 0);
 });
 
-test("the next item waits until the agent has actually stopped streaming", async () => {
-	const { agent, sent, queue } = setup();
+test("the next item waits for the agent's idle signal", async () => {
+	const { agent, sent, queue, start } = setup();
+	start();
 	queue.add("next");
-	queue.onAgentEnd(end()); // agent_end fires before isStreaming clears
-	await settle();
-	assert.deepEqual(sent, []);
+	let release;
+	agent.waitForIdle = () => new Promise((r) => (release = r));
 	agent.state.isStreaming = false;
+	queue.onAgentEnd(end());
+	await settle();
+	assert.deepEqual(sent, [], "not before idle");
+	release();
 	await settle();
 	assert.deepEqual(sent, ["next"]);
 });
 
-test("Send now steers the running agent and leaves the list once it is injected", () => {
-	const { agent, sent, queue } = setup();
+test("Send now steers the running agent; the item leaves the list once injected and can't be removed before", async () => {
+	const { agent, sent, queue, start } = setup();
+	start();
 	queue.add("a");
 	queue.add("b");
-	queue.sendNow(queue.items[1].id);
+	await queue.sendNow(queue.items[1].id);
 	assert.equal(agent.steered.length, 1);
-	assert.deepEqual(agent.steered[0].content, [{ type: "text", text: "b" }]);
-	assert.deepEqual(sent, [], "steered, not prompted");
+	assert.equal(text(agent.steered[0]), "b");
+	assert.deepEqual(sent, []);
 	queue.remove(queue.items[1].id);
-	assert.equal(queue.items.length, 2, "a message already handed to the agent can't be removed");
+	assert.equal(queue.items.length, 2);
 	queue.onMessageStart(agent.steered[0]);
 	assert.deepEqual(queue.items.map((q) => q.input), ["a"]);
 });
 
-test("a steer the agent never picked up goes out as the next prompt", async () => {
-	const { agent, sent, queue } = setup();
-	queue.add("late");
-	queue.sendNow(queue.items[0].id);
-	agent.state.isStreaming = false;
-	queue.onAgentEnd(end());
-	assert.deepEqual(agent.steered, [], "the agent's steering queue is cleared");
-	await settle();
-	assert.deepEqual(sent, ["late"]);
+test("Send now delivers the page context first", async () => {
+	const note = { role: "navigation", url: "https://example.com/" };
+	const { agent, queue, start } = setup({ context: async () => [note] });
+	start();
+	queue.add("what does this page say?");
+	await queue.sendNow(queue.items[0].id);
+	assert.equal(agent.steered[0], note);
+	assert.equal(text(agent.steered[1]), "what does this page say?");
 });
 
-test("Stop pauses the queue; removing doesn't resume it, Send now does", async () => {
-	const { agent, sent, queue } = setup();
+test("a Send now the agent never picked up goes out before older items", async () => {
+	const { agent, sent, queue, start, stop } = setup();
+	start();
+	queue.add("a");
+	queue.add("b");
+	await queue.sendNow(queue.items[1].id);
+	stop();
+	assert.deepEqual(agent.steered, [], "the agent's steering queue is cleared");
+	await settle();
+	assert.deepEqual(sent, ["b"]);
+	stop();
+	await settle();
+	assert.deepEqual(sent, ["b", "a"]);
+});
+
+test("Send now right after a run ends is sent once, not steered into the finished run", async () => {
+	const { agent, sent, queue, start, stop } = setup();
+	start();
+	queue.add("a");
+	queue.add("b");
+	stop(); // agent_end has fired; the drain hasn't sent yet
+	await queue.sendNow(queue.items[1].id);
+	await settle();
+	assert.deepEqual(agent.steered, [], "nothing steered into the finished run");
+	assert.deepEqual(sent, ["b"], "b first, once");
+	assert.deepEqual(queue.items.map((q) => q.input), ["a"]);
+});
+
+test("Stop pauses; removing doesn't resume; Send now resumes, also when it steers a new run", async () => {
+	const { sent, queue, start, stop } = setup();
+	start();
 	queue.add("one");
 	queue.add("two");
 	queue.add("three");
-	agent.state.isStreaming = false;
-	queue.onAgentEnd(end("aborted"));
+	stop("aborted");
 	await settle();
 	assert.equal(queue.paused, true);
-	assert.deepEqual(sent, []);
 	queue.remove(queue.items[0].id);
 	await settle();
-	assert.deepEqual(sent, [], "remove does not resume");
-	// A fresh message the user sends (not from the queue) ends normally; the queue stays paused.
-	queue.onAgentEnd(end());
-	await settle();
 	assert.deepEqual(sent, []);
-	queue.sendNow(queue.items[1].id);
-	assert.deepEqual(sent, ["three"], "Send now with nothing running prompts at once");
+	// The user sends a fresh message; the queue stays paused through that run...
+	start();
+	// ...until Send now, which steers into it and resumes.
+	await queue.sendNow(queue.items[1].id);
 	assert.equal(queue.paused, false);
-	queue.onAgentEnd(end());
+	stop(); // ended before the steer was picked up
 	await settle();
-	assert.deepEqual(sent, ["three", "two"], "the rest follow");
+	assert.deepEqual(sent, ["three"]);
+	stop();
+	await settle();
+	assert.deepEqual(sent, ["three", "two"]);
 });
 
-test("an error pauses the queue too, and an empty queue is never paused", () => {
-	const { agent, queue } = setup();
+test("a refused send goes back on top and pauses; a busy one goes back without pausing", async () => {
+	let answer = "refused";
+	const { sent, queue, start, stop } = setup({ result: () => answer });
+	start();
 	queue.add("x");
-	agent.state.isStreaming = false;
-	queue.onAgentEnd(end("error"));
+	queue.add("y");
+	stop();
+	await settle();
+	assert.deepEqual(queue.items.map((q) => q.input), ["x", "y"]);
+	assert.equal(queue.paused, true);
+	answer = "busy";
+	await queue.sendNow(queue.items[0].id);
+	await settle();
+	assert.deepEqual(queue.items.map((q) => q.input), ["x", "y"]);
+	assert.equal(queue.paused, false);
+	answer = "started";
+	stop();
+	await settle();
+	assert.deepEqual(sent, ["x"]);
+});
+
+test("an error pauses the queue, and an empty queue is never paused", () => {
+	const { queue, start, stop } = setup();
+	start();
+	queue.add("x");
+	stop("error");
 	assert.equal(queue.paused, true);
 	queue.remove(queue.items[0].id);
 	assert.equal(queue.paused, false);
+});
+
+test("dispose clears the agent's steering and the list", async () => {
+	const { agent, queue, start } = setup();
+	start();
+	queue.add("a");
+	await queue.sendNow(queue.items[0].id);
+	queue.dispose();
+	assert.deepEqual(agent.steered, []);
+	assert.equal(queue.items.length, 0);
 });

@@ -12,9 +12,13 @@ mini_lit_rev="dee21bf1175de0cb16a946ba8fb62c1e590fbd3c"
 [ -d "$parent/pi-mono" ] || git clone https://github.com/badlogic/pi-mono.git "$parent/pi-mono"
 
 cd "$parent/pi-mono"
-# The patch can add files. Mark untracked ones intent-to-add so `git diff` shows them and an
-# applied patch compares equal to its own text.
-git ls-files -z --others --exclude-standard | xargs -0 git add --intent-to-add -- 2>/dev/null || true
+# The patch can add files. Mark the ones it adds (in this or any earlier revision) intent-to-add,
+# so `git diff` shows them and an applied patch compares equal to its own text. Other untracked
+# files are left alone.
+added_files() { git apply --summary 2>/dev/null | awk '$1 == "create" { print $4 }'; }
+for f in $( { added_files < "$here/patches/pi-mono.patch"; for rev in $(git -C "$here" log --format=%H -- patches/pi-mono.patch); do git -C "$here" show "$rev:patches/pi-mono.patch" 2>/dev/null | added_files; done; } | sort -u); do
+	if [ -f "$f" ] && ! git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then git add --intent-to-add -- "$f"; fi
+done
 if ! git diff --quiet; then
 	if git apply --reverse --check "$here/patches/pi-mono.patch" 2>/dev/null; then
 		echo "pi-mono patch already applied"
