@@ -628,3 +628,25 @@ test("an install whose updater died is reported with a reload, after repairing t
 	assert.equal(failed.extensionBuild, disk.id);
 	rmSync(join(home, ".config", "tabkyra", "update-progress.json"), { force: true });
 });
+
+test("a dead install's result keeps its reload when a later host replays it", async () => {
+	const c = makeCheckout();
+	const disk = extBuild(c);
+	mkdirSync(join(home, ".config", "tabkyra"), { recursive: true });
+	writeFileSync(join(home, ".config", "tabkyra", "update-progress.json"), JSON.stringify({ pid: 999999, action: "activate", phase: "installing", message: "Swapping", at: Date.now() }));
+	// The first host finds the dead updater and reports it.
+	const first = startHost(c.cli);
+	first.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
+	await first.waitFor((m) => m.type === "update_progress" && m.phase === "failed", "first report");
+	first.host.kill();
+	// The next host (the extension reloaded, or the browser restarted) replays it: still a reload.
+	const second = startHost(c.cli);
+	second.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
+	const replay = await second.waitFor((m) => m.type === "update_progress" && m.replay, "the replayed result");
+	second.host.kill();
+	assert.equal(replay.phase, "failed");
+	assert.equal(replay.reload, true, "a replay must not let the gate go onto a mixed install");
+	assert.equal(replay.extensionBuild, disk.id);
+	rmSync(join(home, ".config", "tabkyra", "update-progress.json"), { force: true });
+});
+

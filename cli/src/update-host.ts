@@ -28,7 +28,7 @@ import {
 	recoverCheckoutQuietly,
 	toolEnv,
 } from "./checkout.ts";
-import { type HostRunAction, type ProgressEvent, readProgressRecord, writeProgressRecord } from "./update-progress.ts";
+import { type HostRunAction, type ProgressEvent, type ProgressRecord, readProgressRecord, writeProgressRecord } from "./update-progress.ts";
 import {
 	CHECK_INTERVAL_MS,
 	checkForUpdate,
@@ -114,8 +114,7 @@ function startUp(send: Send): void {
 	if (!updaterAlive(record)) {
 		const message = "The updater stopped before it finished. An interrupted swap is repaired; run it again.";
 		// Once: the record says failed from now on.
-		writeProgressRecord({ ...record, phase: "failed", message, at: Date.now() });
-		failed(send, record.action, message);
+		recordFailure(record, failed(send, record.action, message));
 		return;
 	}
 	const state: { action: HostRunAction; last?: HostUpdateProgress } = { action: record.action };
@@ -134,8 +133,8 @@ function startUp(send: Send): void {
 			if (running === state) running = undefined;
 			if (!over) {
 				const message = "The updater stopped before it finished; run it again.";
-				if (r) writeProgressRecord({ ...r, phase: "failed", message, at: Date.now() });
-				failed(send, record.action, message);
+				const frame = failed(send, record.action, message);
+				recordFailure(r ?? record, frame);
 			}
 			void sendStatus(send);
 		}
@@ -148,11 +147,8 @@ function startUp(send: Send): void {
  * install or rollback, files may have changed: repair an interrupted swap, then ask for a reload
  * into whatever is installed, as the updater does.
  */
-function failed(send: Send, action: HostRunAction, message: string): void {
-	if (action !== "activate" && action !== "rollback") {
-		progress(send, action, "failed", message);
-		return;
-	}
+function failed(send: Send, action: HostRunAction, message: string): HostUpdateProgress {
+	if (action !== "activate" && action !== "rollback") return progress(send, action, "failed", message);
 	const { mode, root } = detectMode();
 	try {
 		if (mode === "checkout") recoverCheckoutQuietly(root);
@@ -161,7 +157,15 @@ function failed(send: Send, action: HostRunAction, message: string): void {
 		/* held by a live updater: it finishes on its own */
 	}
 	const extensionBuild = readBuildInfo(join(root, "dist-chrome"))?.id;
-	progress(send, action, "failed", `${message} Reloading Tabkyra to run what is installed.`, { reload: true, extensionBuild });
+	return progress(send, action, "failed", `${message} Reloading Tabkyra to run what is installed.`, { reload: true, extensionBuild });
+}
+
+/**
+ * Mark a dead updater's record failed, once, with the same result the extension was sent
+ * (reload included), so a host that replays it later asks for the reload too.
+ */
+function recordFailure(record: ProgressRecord, frame: HostUpdateProgress): void {
+	writeProgressRecord({ ...record, phase: "failed", message: frame.message, reload: frame.reload, extensionBuild: frame.extensionBuild, at: Date.now() });
 }
 
 let helloSeen = false;
