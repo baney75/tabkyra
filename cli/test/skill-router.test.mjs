@@ -305,7 +305,9 @@ test("--base fails a pull request that loosens a threshold or hides them", () =>
 
 test("--base runs the base code's gates on the pull request's skills, with no tolerance below the base baseline", () => {
 	const accuracy = repoBaseline();
-	const weak = Object.entries(accuracy).find(([name, v]) => name !== "none" && v <= 0.85)[0];
+	// A weak skill with no drop already on record: a drop the base has counts only once.
+	const recorded = new Set((JSON.parse(readFileSync(join(repo, "skills-eval", "accepted-drops.json"), "utf8")).drops ?? []).map((d) => d.skill));
+	const weak = Object.entries(accuracy).find(([name, v]) => name !== "none" && v <= 0.85 && !recorded.has(name))[0];
 	const raised = { "baseline.json": JSON.stringify({ accuracy: { ...accuracy, [weak]: Math.min(1, accuracy[weak] + 0.02) } }) };
 	const r = baseRun(headCheckout(), baseCheckout(raised));
 	assert.equal(r.code, 1);
@@ -420,6 +422,76 @@ test("common words alone never make a match, however many add up", () => {
 	assert.deepEqual(top("harbor quartz lantern"), ["none"]);
 	// One specific word is enough to make them count.
 	assert.equal(top("harbor quartz lantern zephyr")[0], "shared-one");
+});
+
+test("adding unrelated skills doesn't turn a lone ordinary word into a match", () => {
+	const home = mkdtempSync(join(root, "grow-"));
+	// Twenty skills about things no case mentions: the catalog grows, so plain IDF would rise.
+	for (let i = 0; i < 20; i++) {
+		const name = `grown-${String.fromCharCode(97 + i)}`;
+		const word = `zq${String.fromCharCode(97 + i)}${String.fromCharCode(122 - i)}x`;
+		const dir = join(home, "drafts", name);
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, "SKILL.md"),
+			`---\nname: ${name}\ndescription: Handles ${word} and ${word}q records. Use when the user asks about ${word} or ${word}q.\n---\n# ${name}\n\n## When to use\n\n- The user asks about ${word}.\n\n## Steps\n\n1. **Read.** Read the ${word} record.\n2. **Answer.** Answer.\n\n## Done when\n\n- The ${word} question is answered.\n`,
+		);
+		assert.equal(run(["skill", "apply", dir, "--yes"], { home }).code, 0);
+	}
+	const top = (task) => JSON.parse(run(["skill", "match", "--json", task], { home }).stdout)[0].name;
+	// One ordinary word from a bundled skill ("good" in fix, "bug" in bug) stays below the bar.
+	assert.equal(top("What's a good name for a golden retriever puppy?"), "none");
+	assert.equal(top("There's a bug in my login handler; the session cookie isn't set"), "none");
+	// Real matches still route.
+	assert.equal(top("Find peer-reviewed studies on sleep and memory"), "academic-research");
+	assert.equal(top("compare the zqazx and zqazxq figures"), "grown-a");
+});
+
+test("the single-evidence bar is 4.5 up to 13 skills and 4.8 past it", async () => {
+	const { build } = await import("esbuild");
+	const out = join(mkdtempSync(join(root, "router-unit-")), "router.mjs");
+	await build({ entryPoints: [join(here, "..", "src", "skill-router.ts")], bundle: true, platform: "node", format: "esm", outfile: out, logLevel: "silent" });
+	const r = await import(out);
+	assert.equal(r.SINGLE_SCORE, 4.5);
+	assert.equal(r.SINGLE_SCORE_LARGE, 4.8);
+	const skill = (name, body) => ({
+		name,
+		text: `---\nname: ${name}\ndescription: ${body}. Use when the user asks about ${body}.\n---\n# ${name}\n\n## When to use\n\n- ${body}.\n`,
+	});
+	// Filler skills share one common word, so only the target's own word can be evidence.
+	const catalog = (n, reps) => [
+		skill("target", `${Array(reps).fill("quillwort").join(" ")} plants and common matters`),
+		...Array.from({ length: n - 1 }, (_, i) => skill(`filler-${String.fromCharCode(97 + i)}`, `zz${String.fromCharCode(97 + i)}q records and common matters`)),
+	];
+	// Find a catalog where the target's one piece of evidence scores in [4.5, 4.8).
+	const inBand = (n) => {
+		for (let reps = 1; reps <= 12; reps++) {
+			const index = r.buildRouterIndex(catalog(n, reps));
+			const top = r.scoreSkills(index, "quillwort")[0];
+			if (top.name === "target" && top.evidence === 1 && top.score >= 4.5 && top.score < 4.8) return index;
+		}
+		return undefined;
+	};
+	for (const n of [13]) {
+		const index = inBand(n);
+		assert.ok(index, `a ${n}-skill catalog with a score between 4.5 and 4.8`);
+		assert.equal(index.single, 4.5);
+		assert.equal(r.matchSkills(index, "quillwort", 1)[0]?.name, "target", `${n} skills: one piece of evidence at 4.5 or more matches, as on main`);
+	}
+	const large = inBand(20);
+	assert.ok(large, "a 20-skill catalog with a score between 4.5 and 4.8");
+	assert.equal(large.single, 4.8);
+	assert.equal(r.matchSkills(large, "quillwort", 1).length, 0, "20 skills: the same evidence below 4.8 is none");
+	// isMatch takes the bar from the index, so it agrees with matchSkills at every size.
+	assert.equal(r.isMatch.length, 2);
+	assert.equal(r.isMatch(large, r.scoreSkills(large, "quillwort")[0]), false);
+	assert.equal(r.isMatch(inBand(13), r.scoreSkills(inBand(13), "quillwort")[0]), true);
+	// The eval and the judge's router worker decide through matchSkills, never a bar of their own.
+	for (const file of ["skill-eval.ts", "router-worker.ts"]) {
+		const source = readFileSync(join(here, "..", "src", file), "utf8");
+		assert.match(source, /matchSkills\(index, task, 1\)/, file);
+		assert.doesNotMatch(source, /isMatch|SINGLE_SCORE/, file);
+	}
 });
 
 test("an accepted drop is a floor, not an exemption, in the head eval and the base-code eval", () => {
@@ -776,4 +848,64 @@ test("the catalog script refuses a skill folder named none", () => {
 	assert.equal(r.status, 1);
 	assert.match(r.stderr, /"none" is reserved/);
 	assert.equal(existsSync(join(scratch, "cli", "src", "skills-catalog.ts")), false);
+});
+
+test("'<name> skill(s)' about a person's abilities names no skill; lists, negations and pointed mentions still do", () => {
+	const top = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "3", task]).stdout).map((m) => m.name);
+	for (const task of [
+		"How can I improve my writing skills?",
+		"How can I improve my writing skill?",
+		"Recommend a course to build my video editing skills",
+		"What chemistry skills do employers want?",
+		"What chemistry skill is most useful for a lab job?",
+		"I want to sharpen my biology skill before the exam",
+		"I want to sharpen my chemistry and biology skills before the exam",
+		"How can I improve my writing and video editing skills?",
+		"Don't use the osint skills; do a background check on this landlord",
+		"Don't use the `osint` skill; do a background check on this landlord.",
+	]) {
+		assert.deepEqual(top(task), ["none"], task);
+	}
+	// A negated list rules out every name in it.
+	const ruledOut = top("Don't use the osint and dorks skills; search the news for the landlord");
+	assert.ok(!ruledOut.includes("osint") && !ruledOut.includes("dorks"), ruledOut.join(","));
+	// A list of names, spaced or hyphenated, with "and", "or" or commas, invokes every name.
+	assert.deepEqual(top("Use the osint and dorks skills on this landlord").sort(), ["dorks", "osint"]);
+	assert.deepEqual(top("Use the video editing and biology skills.").sort(), ["biology", "video-editing"]);
+	assert.deepEqual(top("Use the video editing and osint skills on this clip of the landlord").sort(), ["osint", "video-editing"]);
+	assert.deepEqual(top("Use the maps, osint or dorks skills for this").sort(), ["dorks", "maps", "osint"]);
+	// A determiner points at a skill: use, edit and back-reference still work.
+	assert.equal(top("use the video-editing skill to trim talk.mp4")[0], "video-editing");
+	assert.equal(top("Improve the osint skill so a small model follows it")[0], "kyraskillmaker");
+	assert.equal(top("The autoresearch skill gave a weak report on my 8B model. Fix it")[0], "fix");
+	// "a Tabkyra skill" is a kind of skill to make, not a request for the tabkyra skill.
+	assert.ok(!top("Port my Cursor rule into a Tabkyra skill that passes lint").includes("tabkyra"));
+});
+
+test("past 32 skills the single-evidence bar grows with a two-skill word's weight", async () => {
+	const { build } = await import("esbuild");
+	const out = join(mkdtempSync(join(root, "router-unit-")), "router.mjs");
+	await build({ entryPoints: [join(here, "..", "src", "skill-router.ts")], bundle: true, platform: "node", format: "esm", outfile: out, logLevel: "silent" });
+	const r = await import(out);
+	const skill = (name, body) => ({
+		name,
+		text: `---\nname: ${name}\ndescription: ${body}. Use when the user asks about ${body}.\n---\n# ${name}\n\n## When to use\n\n- ${body}.\n`,
+	});
+	// Two skills hold "quillwort", so it is evidence; the rest are filler.
+	const index = (n) =>
+		r.buildRouterIndex([
+			skill("target-a", "quillwort plants"),
+			skill("target-b", "quillwort ferns"),
+			...Array.from({ length: n - 2 }, (_, i) => skill(`filler-${i}`, `zz${i}q records`)),
+		]);
+	const ratio = (n) => {
+		const ix = index(n);
+		const key = [...ix.idf.keys()].find((k) => k.startsWith("quillwort"));
+		return { single: ix.single, ratio: ix.idf.get(key) / ix.single };
+	};
+	assert.equal(ratio(20).single, 4.8);
+	assert.equal(ratio(32).single, 4.8);
+	assert.ok(ratio(52).single > 4.8);
+	// The word's weight relative to the bar is the same at 52 skills as at 32.
+	assert.ok(Math.abs(ratio(52).ratio - ratio(32).ratio) < 1e-9, `${ratio(32).ratio} vs ${ratio(52).ratio}`);
 });

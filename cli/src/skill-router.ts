@@ -51,9 +51,18 @@ interface Doc {
 export interface RouterIndex {
 	docs: Doc[];
 	idf: Map<string, number>;
+	/** Words held by few enough skills to count as evidence. */
+	specific: ReadonlySet<string>;
+	/** The score one piece of evidence needs: SINGLE_SCORE, or SINGLE_SCORE_LARGE past REFERENCE_SKILLS (growing past 32 skills). */
+	single: number;
 	avg: Record<Field, number>;
-	/** Per skill, the pattern for "<name> skill" (or "<name> skills"), hyphen or space. */
-	named: Array<{ name: string; pattern: RegExp }>;
+	/**
+	 * A mention: one skill name, or a list of them ("osint and dorks", "maps, osint or dorks"),
+	 * then "skill" or "skills". Hyphenated names also match with a space or nothing between parts.
+	 */
+	mention: RegExp;
+	/** Each name with its hyphens removed, to read a matched name back: "video editing" is video-editing. */
+	nameKeys: ReadonlyMap<string, string>;
 	names: ReadonlySet<string>;
 	/** Inverse document frequency of each word pair, as for words. */
 	pairIdf: Map<string, number>;
@@ -70,7 +79,12 @@ const PAIR_BONUS = 2;
 export const MIN_SCORE = 2.5;
 /** A match on one piece of evidence alone needs a word this specific ("osint", "dorks"). */
 export const SINGLE_SCORE = 4.5;
-/** A word in more than about a quarter of the skills is too common to count as evidence. */
+/**
+ * The same bar past REFERENCE_SKILLS. Scaled IDF still lets a mid-frequency word in an old skill
+ * score a little higher than it did at 13 skills, so one such word needs a little more.
+ */
+export const SINGLE_SCORE_LARGE = 4.8;
+/** A word with lower IDF is too common to count as evidence: held by more than two of 13 skills (see buildRouterIndex). */
 const EVIDENCE_IDF = 1.5;
 
 const STOPWORDS = new Set(
@@ -266,6 +280,13 @@ function parse(skill: RouterSkill, names: ReadonlySet<string>): Doc {
 	};
 }
 
+/** The catalog size the score thresholds were calibrated on (skills-eval, 2026-10-25). */
+const REFERENCE_SKILLS = 13;
+
+function idfOf(n: number, k: number): number {
+	return Math.log(1 + (n - k + 0.5) / (k + 0.5));
+}
+
 /** Build the index once; matching is then a few map lookups per word. */
 export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 	const names = new Set(skills.map((s) => s.name));
@@ -276,15 +297,35 @@ export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 		for (const t of seen) df.set(t, (df.get(t) ?? 0) + 1);
 	}
 	const n = docs.length;
-	const idf = new Map([...df].map(([t, k]) => [t, Math.log(1 + (n - k + 0.5) / (k + 0.5))]));
-	for (const d of docs) for (const p of d.phrases) p.strong = terms(p.seq.join(" ")).some((t) => (idf.get(t) ?? 0) >= EVIDENCE_IDF);
+	// Plain IDF grows with the number of skills: in a larger catalog a word unique to one skill
+	// weighs more, and a word in three skills turns into evidence. Past REFERENCE_SKILLS, IDF is
+	// scaled so a word unique to one skill weighs what it did there, and a word or word pair
+	// counts as evidence only if it would have at REFERENCE_SKILLS (held by at most two skills).
+	// MIN_SCORE, the single-evidence bar and EVIDENCE_IDF keep their meaning as skills are added.
+	// The bar is SINGLE_SCORE up to REFERENCE_SKILLS and SINGLE_SCORE_LARGE past it. A catalog of
+	// REFERENCE_SKILLS or fewer scores and matches exactly as before.
+	const ref = Math.min(n, REFERENCE_SKILLS);
+	const scale = n > REFERENCE_SKILLS ? idfOf(REFERENCE_SKILLS, 1) / idfOf(n, 1) : 1;
+	const idf = new Map([...df].map(([t, k]) => [t, idfOf(n, k) * scale]));
+	const specific = new Set([...df].filter(([, k]) => idfOf(ref, k) >= EVIDENCE_IDF).map(([t]) => t));
+	for (const d of docs) for (const p of d.phrases) p.strong = terms(p.seq.join(" ")).some((t) => specific.has(t));
 	const pairDf = new Map<string, number>();
 	for (const d of docs) for (const p of d.pairs) pairDf.set(p, (pairDf.get(p) ?? 0) + 1);
-	const pairIdf = new Map([...pairDf].map(([p, k]) => [p, Math.log(1 + (n - k + 0.5) / (k + 0.5))]));
+	const pairIdf = new Map([...pairDf].map(([p, k]) => [p, idfOf(ref, k)]));
 	const mean = (f: Field) => (n ? docs.reduce((s, d) => s + d.len[f], 0) / n : 1) || 1;
-	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern.
-	const named = [...names].map((name) => ({ name, pattern: new RegExp(`\\b${name.replace(/-/g, "[- ]?")}\\s+skills?\\b`, "g") }));
-	return { docs, idf, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names, pairIdf };
+	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern. Longest first,
+	// so "proton-pass skill" isn't read as "proton" followed by something else.
+	const one = [...names]
+		.sort((a, b) => b.length - a.length)
+		.map((name) => name.replace(/-/g, "[- ]?"))
+		.join("|");
+	const mention = new RegExp(`\\b((?:${one})(?:\\s*(?:,\\s*(?:and|or)\\b|,|\\band\\b|\\bor\\b)\\s*(?:${one}))*)\\s+(skills?)\\b`, "g");
+	const nameKeys = new Map([...names].map((name) => [name.replace(/-/g, ""), name]));
+	// Past REFERENCE_SKILLS, a word held by two skills (still evidence) gains weight as skills are
+	// added, so the bar grows with it from SINGLE_SCORE_LARGE: one such word clears it no more easily
+	// at 52 skills than at 32.
+	const single = n > REFERENCE_SKILLS ? SINGLE_SCORE_LARGE * Math.max(1, (idfOf(n, 2) * scale) / (idfOf(32, 2) * (idfOf(REFERENCE_SKILLS, 1) / idfOf(32, 1)))) : SINGLE_SCORE;
+	return { docs, idf, specific, single, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, mention, nameKeys, names, pairIdf };
 }
 
 function containsSequence(haystack: string[], needle: string[]): boolean {
@@ -320,6 +361,14 @@ const EXCLUDES = new RegExp(
 /** `tabkyra skill <subcommand>` is the Tabkyra CLI (read as "tabkyra cli"), not a mention of the tabkyra skill. */
 const CLI_SUBCOMMAND = /^\s+(?:install|list|print|lint|apply|revert|edit|eval|match|versions|rollback)\b/;
 
+/** "the osint skill", "this dorks skill": a determiner, and at most one word, right before the mention. */
+const POINTS_AT = /\b(?:the|this|that|these|those)\s+(?:[a-z0-9'-]+\s+)?$/;
+/**
+ * "improve my writing skill", "refine our chemistry skills": a verb that also means growing a
+ * person's ability, with no determiner pointing at a skill. On its own it isn't a skill edit.
+ */
+const GROWS = /\b(?:improv\w*|refin\w*)\s+(?:(?:to|of|on|for)\s+)?(?:(?:my|our|your)\s+)?(?:[a-z0-9'-]+\s+){0,2}$/;
+
 interface ReadTask {
 	/** A slash command naming a skill, as the task's first token. */
 	command?: string;
@@ -339,6 +388,10 @@ interface ReadTask {
  *   isn't followed by "/" or ".": "ls /fix" and "cat /bug/report.txt" are paths.
  * - Path-like words (starting with "/", "./", "../" or "~/") are data, not intent, and are
  *   dropped.
+ * - "<name> skill" (or a list of names before "skills") names a skill only when something points
+ *   at it: "the/this/that" before a singular or a list, a use, edit or negation verb, a slash
+ *   command or backticks. Otherwise ("my biology skill", "what chemistry skills do employers
+ *   want", "improve my writing skill") it is a subject and scores for no skill.
  * - "<name> skill" is the object of a change when an edit verb governs it ("fix the osint
  *   skill", "rewrite my old dorks skill", "the osint skill failed, repair it") or a slash
  *   command comes first: the name is dropped so it doesn't score for itself. An edit-like
@@ -351,8 +404,9 @@ interface ReadTask {
 function readTask(index: RouterIndex, task: string): ReadTask {
 	// Curly apostrophes and quotes (smart punctuation) read as straight ones: "don’t" is "don't".
 	let text = task.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
-	// Inline code around a skill name ("the `osint` skill") reads as the bare name.
-	text = text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (index.names.has(inner) ? inner : whole));
+	// Inline code around a skill name ("the `osint` skill", "`dorks` skill") reads as the bare name,
+	// and points at the skill: a name in code is never a person's ability.
+	text = text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (index.names.has(inner) ? `the ${inner}` : whole));
 	let command: string | undefined;
 	let changesSkill = false;
 	const lead = /^\s*\/([a-z0-9-]+)(?=$|[\s:,;!?])/.exec(text);
@@ -369,27 +423,39 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 	text = text.replace(/(^|\s)(~|\.{1,2})?\/\S*/g, "$1 ");
 	const invoked = new Set<string>();
 	const excluded = new Set<string>();
-	for (const n of index.named) {
-		text = text.replace(n.pattern, (whole: string, offset: number, all: string) => {
-			const after = all.slice(offset + whole.length);
-			if (n.name === "tabkyra" && CLI_SUBCOMMAND.test(after)) return "tabkyra cli";
-			const before = all.slice(0, offset);
-			if (EXCLUDES.test(before)) {
-				excluded.add(n.name);
-				return " ";
-			}
-			// "..., fix it" points back at the mention, unless a use-verb governs the mention: in
-			// "use the tabkyra skill to open the app and debug it", "it" is the app. Not limited to
-			// the clause: "The autoresearch skill gave a weak report. Fix it" is a fix request.
-			const backReference = !USE_GOVERNS.test(before) && POINTS_BACK.test(after);
-			if (command !== undefined || GOVERNS.test(before) || backReference) {
-				changesSkill = true;
-				return " skill ";
-			}
-			invoked.add(n.name);
-			return whole;
-		});
-	}
+	text = text.replace(index.mention, (whole: string, list: string, noun: string, offset: number, all: string) => {
+		const found = [...new Set(list.split(/\s*(?:,|\band\b|\bor\b)\s*/).map((t) => index.nameKeys.get(t.replace(/[- ]/g, ""))))];
+		const named = found.filter((name): name is string => name !== undefined);
+		const after = all.slice(offset + whole.length);
+		if (named.length === 1 && named[0] === "tabkyra" && CLI_SUBCOMMAND.test(after)) return "tabkyra cli";
+		const before = all.slice(0, offset);
+		if (EXCLUDES.test(before)) {
+			for (const name of named) excluded.add(name);
+			return " ";
+		}
+		// Several names are a list of skills; "the osint skill" points at one. A plural with one name
+		// ("my writing skills", "the chemistry skills employers want") is a person's abilities.
+		const pointsAt = POINTS_AT.test(before) && (noun === "skill" || named.length > 1);
+		const edits = GOVERNS.test(before) && (pointsAt || !GROWS.test(before));
+		const uses = USE_GOVERNS.test(before);
+		// Nothing points the mention at a skill: "my biology skill", "what chemistry skills do
+		// employers want", "improve my writing skill". It names a subject, so it scores for neither
+		// that skill nor the skills whose job is skills.
+		if (command === undefined && !pointsAt && !edits && !uses) {
+			// "a Tabkyra skill", "an osint skill": a kind of skill to make, so the word "skill" stays.
+			return /\ban?\s+$/.test(before) ? ` ${list} ${noun} ` : " abilities ";
+		}
+		// "..., fix it" points back at the mention, unless a use-verb governs the mention: in
+		// "use the tabkyra skill to open the app and debug it", "it" is the app. Not limited to
+		// the clause: "The autoresearch skill gave a weak report. Fix it" is a fix request.
+		const backReference = !uses && POINTS_BACK.test(after);
+		if (command !== undefined || edits || backReference) {
+			changesSkill = true;
+			return " skill ";
+		}
+		for (const name of named) invoked.add(name);
+		return whole;
+	});
 	for (const name of excluded) invoked.delete(name);
 	return { command, invoked, excluded, changesSkill, content: text };
 }
@@ -423,7 +489,7 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 			}
 			if (tf > 0) {
 				score += (idf * tf * (K1 + 1)) / (K1 + tf);
-				if (idf >= EVIDENCE_IDF) evidence++;
+				if (index.specific.has(t)) evidence++;
 			}
 		}
 		if (command === d.name || invoked.has(d.name)) {
@@ -451,19 +517,21 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 }
 
 /**
- * Whether a raw score counts as a match: two pieces of evidence, or one that reaches
- * SINGLE_SCORE. Common words alone never match, however many there are, and one ordinary
- * shared word ("fix the test", "a bug in my code") is a coincidence.
+ * Whether a raw score counts as a match: two pieces of evidence, or one that reaches the
+ * single-evidence bar of the index the score came from (`index.single`: SINGLE_SCORE, or
+ * SINGLE_SCORE_LARGE past 13 skills). The bar comes only from the index, so no caller can judge
+ * a 32-skill score by the 13-skill bar. Common words alone never match, however many there are,
+ * and one ordinary shared word ("fix the test", "a bug in my code") is a coincidence.
  */
-export function isMatch(s: RawScore): boolean {
-	return s.score >= MIN_SCORE && (s.evidence >= 2 || (s.evidence >= 1 && s.score >= SINGLE_SCORE));
+export function isMatch(index: RouterIndex, s: RawScore): boolean {
+	return s.score >= MIN_SCORE && (s.evidence >= 2 || (s.evidence >= 1 && s.score >= index.single));
 }
 
 /** Ranked matches for a task, best first; an empty list means no skill fits. */
 export function matchSkills(index: RouterIndex, task: string, top = 3): SkillMatch[] {
 	const byName = new Map(index.docs.map((d) => [d.name, d]));
 	return scoreSkills(index, task)
-		.filter(isMatch)
+		.filter((s) => isMatch(index, s))
 		.slice(0, Math.max(1, top))
 		.map((s) => ({ name: s.name, score: Math.round(s.score * 100) / 100, description: oneLine(byName.get(s.name)?.description ?? "") }));
 }
