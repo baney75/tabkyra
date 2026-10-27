@@ -141,10 +141,47 @@ test("on a bad extension frame the host answers waiting requests with a non-retr
 		const lost = responses.find((m) => m.id === 2);
 		assert.ok(lost?.error, `request 2 got an RPC error, not just a closed socket: ${JSON.stringify(responses)}`);
 		assert.match(lost.error.message, /may have run/);
+		assert.equal(lost.error.code, "interrupted");
 		// A request that reaches the host after that is never forwarded (it could only be lost).
 		late.write(encodeFrame({ type: "request", id: 3, method: "click", params: {} }));
 		await new Promise((r) => setTimeout(r, 300));
 		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 3).length, 0, "request 3 was forwarded");
+		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
+	} finally {
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("when the extension goes away, the host answers every waiting request as interrupted before it exits", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const exited = new Promise((r) => host.once("exit", (c) => r(c)));
+	const toExt = new FrameParser(64 * 1024 * 1024);
+	const forwarded = [];
+	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		const client = connect({ path: sock, allowHalfOpen: true });
+		const fromHost = new FrameParser(64 * 1024 * 1024);
+		const received = [];
+		client.on("data", (chunk) => received.push(...fromHost.push(chunk).messages));
+		client.on("error", () => undefined);
+		client.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } }));
+		client.write(encodeFrame({ type: "request", id: 1, method: "click", params: {} }));
+		for (let i = 0; i < 100 && !forwarded.some((m) => m.type === "request"); i++) await new Promise((r) => setTimeout(r, 20));
+		// The extension reloads: Chrome closes the port, so the host's stdin ends.
+		host.stdin.end();
+		for (let i = 0; i < 100 && !received.some((m) => m.id === 1); i++) await new Promise((r) => setTimeout(r, 20));
+		const answer = received.find((m) => m.type === "response" && m.id === 1);
+		assert.ok(answer?.error, `the click got an answer, not just a closed socket: ${JSON.stringify(received)}`);
+		assert.equal(answer.error.code, "interrupted");
+		assert.match(answer.error.message, /may have run: check the page \(read_page\) before repeating it/);
 		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
 	} finally {
 		host.kill();

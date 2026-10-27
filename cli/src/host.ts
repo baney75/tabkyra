@@ -9,7 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import type { ClientToHost, ExtToHost, HostToClient, HostToExt } from "../../src/bridge/protocol.ts";
-import { MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
+import { ERR, MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { socketDir, socketPath } from "./paths.ts";
 import { handleUpdateAction, noteHello, sendStatus, startUpdateTimer } from "./update-host.ts";
@@ -97,7 +97,7 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 		}
 		if (stopping) {
 			// Never forward now: the reply could not come back, and the client would retry it.
-			toClient(client.id, { type: "response", id: message.id, error: restartError("the bridge is restarting", false) });
+			toClient(client.id, { type: "response", id: message.id, error: restartError("the browser bridge is restarting", false) });
 			return;
 		}
 		if (toExtension({ type: "request", clientId: client.id, id: message.id, method: message.method, params: message.params }))
@@ -106,30 +106,27 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 }
 
 /**
- * The extension sent a frame we could not read, so one reply is lost and we can't tell whose.
- * Answer every unanswered request with an RPC error (clients never retry those, so nothing
- * runs twice), then restart: Chrome closes the port, the extension reconnects and spawns a
- * fresh host, and later calls dial the new socket.
+ * Answer every request the extension has not answered with an RPC error, so no client waits on
+ * a reply that can't come and none replays it blindly: `interrupted` says it may have run (a
+ * client repeats only reads on its own). Used when the host restarts after a bad frame and when
+ * the extension goes away (reload, worker restart). Chrome then spawns a fresh host and later
+ * calls dial the new socket.
  */
 function failOutstanding(reason: string): void {
 	for (const client of clients.values()) {
 		for (const id of client.outstanding) {
-			toClient(client.id, {
-				type: "response",
-				id,
-				error: restartError(`the browser's reply was lost (${reason}); the bridge is restarting`, true),
-			});
+			toClient(client.id, { type: "response", id, error: restartError(reason, true) });
 		}
 		client.outstanding.clear();
 	}
 }
 
-/** An RPC error, which clients never retry, so a request is not sent twice. */
+/** An RPC error naming whether the request may have run. */
 function restartError(what: string, mayHaveRun: boolean): { code: string; message: string } {
 	const next = mayHaveRun
-		? "The request may have run: check the page before repeating it."
-		: "The request was not sent; repeat it in a few seconds.";
-	return { code: "internal", message: `${what[0].toUpperCase()}${what.slice(1)}. ${next}` };
+		? "It may have run: check the page (read_page) before repeating it."
+		: "It was not sent; repeat it in a few seconds.";
+	return { code: mayHaveRun ? ERR.INTERRUPTED : ERR.NOT_SENT, message: `${what[0].toUpperCase()}${what.slice(1)}. ${next}` };
 }
 
 function sweepStaleSockets(dir: string): void {
@@ -193,7 +190,7 @@ export function runNativeHost(): void {
 		if (error) {
 			process.stderr.write(`[tabkyra-host] bad frame from extension, restarting: ${String(error)}\n`);
 			stopping = true;
-			failOutstanding(error.message);
+			failOutstanding(`the browser's reply was lost (${error.message}); the bridge is restarting`);
 			shutdown(1);
 		}
 	});
@@ -222,9 +219,20 @@ export function runNativeHost(): void {
 				}
 			});
 	};
-	process.stdin.on("end", () => shutdown());
-	process.on("SIGINT", () => shutdown());
-	process.on("SIGTERM", () => shutdown());
+	// The extension went away (reloaded, updated, worker restarted): what it had not answered
+	// never will be.
+	process.stdin.on("end", () => {
+		stopping = true;
+		failOutstanding("the browser connection dropped while this ran (the Tabkyra extension reloaded or restarted)");
+		shutdown();
+	});
+	const killed = () => {
+		stopping = true;
+		failOutstanding("the browser bridge was stopped while this ran");
+		shutdown();
+	};
+	process.on("SIGINT", killed);
+	process.on("SIGTERM", killed);
 
 	const ping = setInterval(() => toExtension({ type: "ping" }), 20000);
 	ping.unref();

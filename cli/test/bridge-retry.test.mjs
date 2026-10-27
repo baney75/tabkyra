@@ -1,0 +1,145 @@
+// What the MCP server does when the bridge drops under a call: a fake native host answers
+// some requests, drops the connection on others, or refuses them, and counts what arrived.
+// A read is resent; a click, fill or keypress cut off in flight is never replayed and the agent
+// is told it may have run; a request that was never sent is sent once the bridge is back.
+import assert from "node:assert/strict";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { after, before, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+const cli = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
+
+const frame = (m) => {
+	const body = Buffer.from(JSON.stringify(m));
+	const head = Buffer.alloc(4);
+	head.writeUInt32LE(body.length);
+	return Buffer.concat([head, body]);
+};
+
+const SNAP = { url: "https://example.com/", title: "Example", viewport: { width: 800, height: 600, scrollY: 0, pageHeight: 600 }, nodes: [], text: "hello" };
+
+let root;
+let server;
+let mcp;
+/** method -> how many times the host received it. */
+const seen = {};
+/**
+ * method -> what to do on each arrival, in order: "drop" closes the socket without a reply,
+ * "interrupted" or "not_sent" answers with that RPC error, anything else answers normally.
+ */
+const plan = {};
+
+before(async () => {
+	root = mkdtempSync(join(tmpdir(), "tabkyra-retry-"));
+	const dir = join(root, "sock");
+	mkdirSync(dir, { mode: 0o700 });
+	mkdirSync(join(root, "home"));
+	const path = join(dir, `${process.pid}.sock`);
+	server = createServer((socket) => {
+		let buffered = Buffer.alloc(0);
+		socket.on("data", (chunk) => {
+			buffered = Buffer.concat([buffered, chunk]);
+			while (buffered.length >= 4 && buffered.length >= 4 + buffered.readUInt32LE(0)) {
+				const msg = JSON.parse(buffered.subarray(4, 4 + buffered.readUInt32LE(0)).toString());
+				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
+				if (msg.type === "hello") {
+					socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: true }));
+					continue;
+				}
+				seen[msg.method] = (seen[msg.method] ?? 0) + 1;
+				const step = plan[msg.method]?.shift();
+				if (step === "drop") {
+					socket.destroy();
+					return;
+				}
+				if (step === "interrupted" || step === "not_sent")
+					socket.write(frame({ type: "response", id: msg.id, error: { code: step, message: `host says ${step}` } }));
+				else socket.write(frame({ type: "response", id: msg.id, result: msg.method === "snapshot" ? SNAP : { ok: msg.method } }));
+			}
+		});
+	});
+	await new Promise((r) => server.listen(path, r));
+	chmodSync(path, 0o600);
+	mcp = new Client({ name: "retry-test", version: "0.0.0" });
+	await mcp.connect(
+		new StdioClientTransport({
+			command: process.execPath,
+			args: [cli, "mcp"],
+			env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: dir, TABKYRA_SESSION: "retry" },
+			stderr: "ignore",
+		}),
+	);
+	// One answered call first: only a bridge that once worked is waited for after a drop.
+	assert.ok(!(await mcp.callTool({ name: "tabs_context", arguments: {} })).isError);
+});
+
+after(async () => {
+	await mcp?.close().catch(() => {});
+	server?.close();
+	rmSync(root, { recursive: true, force: true });
+});
+
+const text = (r) => r.content.map((c) => c.text).join("\n");
+
+test("a read cut off by a drop is resent and succeeds", async () => {
+	plan.snapshot = ["drop"];
+	const r = await mcp.callTool({ name: "read_page", arguments: {} });
+	assert.ok(!r.isError, text(r));
+	assert.match(text(r), /Page: Example/);
+	assert.equal(seen.snapshot, 2);
+});
+
+test("a click cut off by a drop is not replayed, and the agent is told it may have run", async () => {
+	plan.click = ["drop"];
+	const r = await mcp.callTool({ name: "click", arguments: { ref: "e1" } });
+	assert.equal(r.isError, true);
+	assert.match(text(r), /^interrupted: The browser connection dropped while click was running .* may have run\. The connection is back: check the page \(read_page\) before repeating it\./);
+	assert.equal(seen.click, 1, "the click reached the browser twice");
+	// The bridge is back: the next call works without the agent doing anything special.
+	assert.ok(!(await mcp.callTool({ name: "tabs_context", arguments: {} })).isError);
+});
+
+test("an interrupted answer from the host is final for input, resent for a read", async () => {
+	plan.fill = ["interrupted"];
+	const fill = await mcp.callTool({ name: "fill", arguments: { ref: "e1", value: "x" } });
+	assert.equal(fill.isError, true);
+	assert.match(text(fill), /may have run/);
+	assert.equal(seen.fill, 1);
+	plan.text = ["interrupted"];
+	const read = await mcp.callTool({ name: "get_page_text", arguments: {} });
+	assert.ok(!read.isError, text(read));
+	assert.equal(seen.text, 2);
+});
+
+test("a request the host refused as not sent is sent once the bridge is back", async () => {
+	plan.press = ["not_sent"];
+	const r = await mcp.callTool({ name: "press", arguments: { key: "Enter" } });
+	assert.ok(!r.isError, text(r));
+	assert.equal(seen.press, 2);
+});
+
+test("navigating to a URL is a read for this purpose; back is not", async () => {
+	plan.navigate = ["drop", "drop"];
+	const go = await mcp.callTool({ name: "navigate", arguments: { url: "https://example.com/" } });
+	assert.ok(!go.isError, text(go));
+	assert.equal(seen.navigate, 3, "two drops, then the third send is answered");
+	plan.navigate = ["drop"];
+	const back = await mcp.callTool({ name: "navigate", arguments: { url: "back" } });
+	assert.equal(back.isError, true);
+	assert.match(text(back), /may have run/);
+	assert.equal(seen.navigate, 4);
+});
+
+test("a read that keeps getting cut off is reported after three sends, not chased forever", async () => {
+	plan.html = ["drop", "drop", "drop", "drop"];
+	const r = await mcp.callTool({ name: "get_page_html", arguments: {} });
+	assert.equal(r.isError, true);
+	assert.match(text(r), /dropped 3 times in a row during get_page_html/);
+	assert.equal(seen.html, 3);
+	plan.html = [];
+});

@@ -7,7 +7,7 @@
 // directory, so it never touches an installed browser or a running bridge.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -41,6 +41,11 @@ const DIALOG_PAGE = `<!doctype html><title>Tabkyra dialog</title>
 <button id="del" onclick="document.getElementById('res').textContent = confirm('Really delete?') ? 'deleted' : 'kept'">Delete</button>
 <p id="res">untouched</p>`;
 
+const COUNTER_PAGE = `<!doctype html><title>Tabkyra counter</title>
+<button id="hit" onclick="fetch('/hit',{method:'POST'}).then(r=>r.text()).then(t=>document.getElementById('n').textContent=t)">Hit</button><p id="n">0</p>`;
+/** Clicks that reached the page's server: a replayed click shows up here twice. */
+let hits = 0;
+
 let home;
 let socketDir;
 let browser;
@@ -70,6 +75,77 @@ async function tool(name, args = {}) {
 	return text;
 }
 
+/** One CDP command over a target's websocket. */
+async function cdp(wsUrl, method, params = {}) {
+	const ws = new WebSocket(wsUrl);
+	await new Promise((resolve, reject) => {
+		ws.onopen = resolve;
+		ws.onerror = reject;
+	});
+	try {
+		const reply = await new Promise((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error(`${method} timed out`)), 15_000);
+			ws.onmessage = (m) => {
+				const msg = JSON.parse(m.data);
+				if (msg.id !== 1) return;
+				clearTimeout(timer);
+				resolve(msg);
+			};
+			ws.send(JSON.stringify({ id: 1, method, params }));
+		});
+		if (reply.error) throw new Error(`${method}: ${reply.error.message}`);
+		return reply.result;
+	} finally {
+		ws.close();
+	}
+}
+
+/** The live native host's pid (its socket is named after it). */
+function hostPid() {
+	for (const name of readdirSync(socketDir)) {
+		const pid = Number.parseInt(name, 10);
+		try {
+			process.kill(pid, 0);
+			return pid;
+		} catch {
+			/* stale */
+		}
+	}
+	return undefined;
+}
+
+/** Reload the extension the way `tabkyra reload` does, retrying while a fresh host waits for its hello. */
+async function reloadExtension() {
+	const old = hostPid();
+	await until(() => (execFileSync(process.execPath, [cli, "reload"], { env: env(), stdio: "ignore" }), true), 30_000, "the extension to take a reload");
+	return old;
+}
+
+async function gone(pid) {
+	await until(() => {
+		try {
+			process.kill(pid, 0);
+			return false;
+		} catch {
+			return true;
+		}
+	}, 10_000, `host ${pid} to exit`);
+}
+
+async function connected() {
+	await until(
+		() => {
+			try {
+				return JSON.parse(execFileSync(process.execPath, [cli, "status", "--json"], { env: env(), encoding: "utf8" })).connected;
+			} catch {
+				return false;
+			}
+		},
+		45_000,
+		"the extension to reconnect",
+	);
+}
+
 async function until(fn, ms, what) {
 	const end = Date.now() + ms;
 	let last;
@@ -96,7 +172,13 @@ before(async () => {
 	mkdirSync(profile, { recursive: true });
 
 	server = createServer((req, res) => {
+		if (req.method === "POST" && req.url === "/hit") {
+			hits++;
+			res.end(String(hits));
+			return;
+		}
 		res.writeHead(200, { "content-type": "text/html" });
+		if (req.url === "/counter") return res.end(COUNTER_PAGE);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
 	});
 	await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -130,6 +212,22 @@ before(async () => {
 		stderr += d;
 	});
 	devtools = await until(() => stderr.match(/DevTools listening on ws:\/\/([^/]+)\//)?.[1], 20_000, "Chromium to start");
+	// Developer mode, set the way the extensions page does: without it this Chromium disables an
+	// unpacked extension when it reloads, and the reload tests would unload Tabkyra for good.
+	const version = await (await fetch(`http://${devtools}/json/version`)).json();
+	const { targetId } = await cdp(version.webSocketDebuggerUrl, "Target.createTarget", { url: "chrome://extensions" });
+	const page = await until(
+		async () => (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.id === targetId && t.url.startsWith("chrome://extensions")),
+		10_000,
+		"chrome://extensions",
+	);
+	await until(
+		async () =>
+			(await cdp(page.webSocketDebuggerUrl, "Runtime.evaluate", { expression: "chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }).then(() => true)", awaitPromise: true, returnByValue: true })).result?.value,
+		10_000,
+		"developer mode",
+	);
+	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
 
 	mcp = new Client({ name: "tabkyra-e2e", version: "0.0.0" });
 	await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env: env(), stderr: "inherit" }));
@@ -255,4 +353,44 @@ test("a call that ran into a dialog sends no more input once it is answered", as
 	const value = await tool("run_js", { code: "document.getElementById('q').value + '|' + document.getElementById('sent').textContent" });
 	assert.match(value, /\|not sent/, `the old call kept typing or submitted: ${value}`);
 	assert.doesNotMatch(value, /ello world/, `the old call kept typing: ${value}`);
+});
+
+test("a click in flight when the extension reloads runs once, and the agent is told it may have run", async () => {
+	await tool("navigate", { url: `${pageUrl}counter` });
+	await connected();
+	const before = hits;
+	// The click runs first; the reload lands while the step after it is still going.
+	const pending = mcp.callTool({ name: "actions", arguments: { steps: [{ click: { selector: "#hit" } }, { wait: 3000 }] } }, undefined, { timeout: 120_000 });
+	await new Promise((r) => setTimeout(r, 800));
+	await reloadExtension();
+	const started = Date.now();
+	const result = await pending;
+	const message = result.content.map((c) => c.text).join("\n");
+	assert.equal(result.isError, true, message);
+	assert.match(message, /^interrupted: The browser connection dropped while actions was running .*may have run/);
+	assert.ok(Date.now() - started < 30_000, "the interrupted call must not wait out a timeout");
+	await connected();
+	await new Promise((r) => setTimeout(r, 1500));
+	assert.equal(hits - before, 1, "the click ran twice: a cut-off request was replayed");
+	// The session kept its tab across the reload.
+	assert.match(await tool("tabs_context"), /\/counter/);
+});
+
+test("a read sent while the extension is reloading waits for it and succeeds", async () => {
+	await tool("navigate", { url: `${pageUrl}counter` });
+	await connected();
+	await gone(await reloadExtension());
+	const started = Date.now();
+	const text = await tool("read_page", { filter: "interactive" });
+	assert.match(text, /Hit/);
+	assert.ok(Date.now() - started < 30_000, `took ${Date.now() - started} ms`);
+});
+
+test("a read after the native host is killed reconnects to the host the browser respawns", async () => {
+	await connected();
+	process.kill(hostPid(), "SIGKILL");
+	const started = Date.now();
+	const text = await tool("get_page_text");
+	assert.match(text, /Hit/);
+	assert.ok(Date.now() - started < 30_000, `took ${Date.now() - started} ms`);
 });

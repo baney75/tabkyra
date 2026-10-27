@@ -255,7 +255,43 @@ export const ERR = {
 	NO_EXTENSION: "no_extension",
 	/** An alert, confirm or prompt box is open; answer it with the `dialog` method. */
 	DIALOG_OPEN: "dialog_open",
+	/**
+	 * The bridge dropped while the request was out (extension reload, native host restart), so
+	 * it may have run. Clients repeat a read on their own; anything else goes to the agent, which
+	 * checks the page before repeating it (never replayed blindly).
+	 */
+	INTERRUPTED: "interrupted",
+	/** The request was refused before it reached the browser (the bridge is restarting); repeating it is safe. */
+	NOT_SENT: "not_sent",
 } as const;
+
+/**
+ * Methods with no side effect in the page or the tab strip: repeating one changes nothing, so a
+ * client may resend it after the bridge drops. Everything else is sent at most once.
+ */
+export const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
+	"status",
+	"tabs.context",
+	"tabs.select",
+	"snapshot",
+	"text",
+	"html",
+	"find",
+	"screenshot",
+	"wait",
+	"console.read",
+	"network.read",
+	"bridge.debug",
+	"bridge.bench",
+]);
+
+/** Whether a request may be resent after the bridge dropped with it in flight. */
+export function isIdempotent(method: string, params: Record<string, unknown> = {}): boolean {
+	if (IDEMPOTENT_METHODS.has(method)) return true;
+	// Loading the same URL again is a repeat of a GET; "back" and "forward" twice are not.
+	if (method === "navigate") return typeof params.url === "string" && params.url !== "back" && params.url !== "forward";
+	return false;
+}
 
 /** Methods the extension implements; the CLI maps MCP tools onto these. */
 export const BRIDGE_METHODS = [

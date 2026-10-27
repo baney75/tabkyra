@@ -7,7 +7,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import type { ClientToHost, HostToClient, RpcError } from "../../src/bridge/protocol.ts";
-import { MAX_FRAME_FROM_EXTENSION } from "../../src/bridge/protocol.ts";
+import { ERR, isIdempotent, MAX_FRAME_FROM_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { assertSecurePath, socketDir } from "./paths.ts";
 import { VERSION } from "./version.ts";
@@ -20,6 +20,30 @@ export class BridgeRpcError extends Error {
 	constructor(readonly rpc: RpcError) {
 		super(rpc.message);
 	}
+}
+
+/** A connection failure before the request was written: it never reached the browser. */
+class NotSentError extends Error {
+	constructor(readonly cause: unknown) {
+		super(cause instanceof Error ? cause.message : String(cause));
+		const code = (cause as { code?: string } | undefined)?.code;
+		if (code) (this as { code?: string }).code = code;
+	}
+}
+
+/** Sends of one request, counting the first, when it is safe to resend. */
+const MAX_ATTEMPTS = 3;
+
+/** Bridge methods under the MCP tool names agents know them by. */
+const TOOL_NAMES: Record<string, string> = { evaluate: "run_js", dialog: "handle_dialog", snapshot: "read_page", text: "get_page_text", html: "get_page_html" };
+
+/** What an agent is told when a side-effecting call was cut off: it may have run. */
+export function interruptedMessage(method: string, reconnected: boolean): string {
+	const tool = TOOL_NAMES[method] ?? method.replace(".", "_");
+	return (
+		`The browser connection dropped while ${tool} was running (the Tabkyra extension reloaded or restarted), so it may have run. ` +
+		(reconnected ? "The connection is back: check the page (read_page) before repeating it." : "Check the page once Tabkyra reconnects, before repeating it.")
+	);
 }
 
 export interface ClientOptions {
@@ -175,9 +199,11 @@ export class BridgeClient {
 	}
 
 	/**
-	 * Call with one transparent retry when the bridge itself dropped (extension reload,
-	 * service worker restart, host respawn). The session key is stable, so the retry
-	 * lands on the same tabs. RPC errors from the extension are never retried.
+	 * Call, surviving a dropped bridge (extension reload, service worker restart, host respawn).
+	 * The session key is stable, so a resent request lands on the same tabs. A request that never
+	 * left (no socket yet, or the host refused it as `not_sent`) is sent once the bridge is back.
+	 * A request cut off in flight may have run: a read (isIdempotent) is resent, anything else
+	 * fails with `interrupted` and is never replayed. Other RPC errors are never retried.
 	 */
 	async call<T = unknown>(
 		method: string,
@@ -185,29 +211,46 @@ export class BridgeClient {
 		timeoutMs?: number,
 		options: { retry?: boolean } = {},
 	): Promise<T> {
-		try {
-			return await this.callOnce<T>(method, params, timeoutMs);
-		} catch (err) {
-			if (err instanceof BridgeRpcError || !isConnectionError(err)) throw err;
-			// Status checks report a drop as it is instead of waiting for a reconnect.
-			if (options.retry === false) throw new Error(NOT_CONNECTED);
-			// Nothing was ever reachable: say so now instead of polling for 40 s.
-			if (!this.everConnected) throw new Error(NOT_CONNECTED);
-			this.close();
+		for (let attempt = 1; ; attempt++) {
 			try {
-				await this.reconnect(40000);
-			} catch {
-				// The drop outlasted the wait: report it, and don't wait again on the next call.
-				this.everConnected = false;
-				throw new Error(NOT_CONNECTED);
-			}
-			// A host came back but the extension didn't: a request now would only time out.
-			if (!this.extensionConnected) {
-				this.everConnected = false;
+				return await this.callOnce<T>(method, params, timeoutMs);
+			} catch (err) {
+				const notSent = err instanceof NotSentError || (err instanceof BridgeRpcError && err.rpc.code === ERR.NOT_SENT);
+				const interrupted = err instanceof BridgeRpcError && err.rpc.code === ERR.INTERRUPTED;
+				if (err instanceof BridgeRpcError && !notSent && !interrupted) throw err;
+				if (!notSent && !interrupted && !isConnectionError(err)) throw err;
+				const resend = notSent || isIdempotent(method, params);
+				const cutOff = () => new BridgeRpcError({ code: ERR.INTERRUPTED, message: interruptedMessage(method, false) });
+				// Status checks report a drop as it is instead of waiting for a reconnect.
+				if (options.retry === false) throw resend ? new Error(NOT_CONNECTED) : cutOff();
+				// Nothing was ever reachable: say so now instead of polling for 40 s.
+				if (!this.everConnected) throw resend ? new Error(NOT_CONNECTED) : cutOff();
 				this.close();
-				throw new Error(NOT_CONNECTED);
+				let back = true;
+				try {
+					await this.reconnect(40000);
+				} catch {
+					back = false;
+				}
+				// A host came back but the extension didn't: a request now would only time out.
+				if (back && !this.extensionConnected) {
+					this.close();
+					back = false;
+				}
+				if (!back) {
+					// The drop outlasted the wait: report it, and don't wait again on the next call.
+					this.everConnected = false;
+					if (resend) throw new Error(NOT_CONNECTED);
+					throw new BridgeRpcError({ code: ERR.INTERRUPTED, message: `${interruptedMessage(method, false)} ${NOT_CONNECTED}` });
+				}
+				if (!resend) throw new BridgeRpcError({ code: ERR.INTERRUPTED, message: interruptedMessage(method, true) });
+				// A bridge that keeps dropping is reported, not chased forever.
+				if (attempt >= MAX_ATTEMPTS)
+					throw new BridgeRpcError({
+						code: ERR.INTERRUPTED,
+						message: `The browser connection dropped ${attempt} times in a row during ${TOOL_NAMES[method] ?? method.replace(".", "_")}. Run \`tabkyra doctor\` or ask the user to check the browser, then try again.`,
+					});
 			}
-			return this.callOnce<T>(method, params, timeoutMs);
 		}
 	}
 
@@ -231,9 +274,15 @@ export class BridgeClient {
 	}
 
 	private async callOnce<T>(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<T> {
-		if (!this.connected) await this.connect();
+		if (!this.connected) {
+			try {
+				await this.connect();
+			} catch (err) {
+				throw isConnectionError(err) ? new NotSentError(err) : err;
+			}
+		}
 		const socket = this.socket;
-		if (!socket) throw new Error("Not connected");
+		if (!socket || socket.destroyed) throw new NotSentError(new Error("Not connected"));
 		const id = ++this.seq;
 		const timeout = timeoutMs ?? this.options.requestTimeoutMs ?? 120000;
 		return new Promise<T>((resolve, reject) => {

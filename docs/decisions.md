@@ -325,3 +325,24 @@ The owner asked to clean up the side panel chat, remove the in-chat Artifacts pi
 - **References that fail to resolve are frozen as unusable**, with a toast, so a chip never
   looks shared when nothing was.
 
+## D22. A dropped bridge: reads are resent, input is never replayed (Claude, 2026-10-27)
+
+Owner, 2026-10-27: a tool call during an extension reload or native host restart "retries
+safely or fails with a clear retryable error, never a hang". Defaults chosen:
+
+- **What counts as a read** is a fixed list in `src/bridge/protocol.ts` (`isIdempotent`):
+  status, tab listing and selection, snapshot, text, HTML, find, screenshot, wait, console
+  and network reads, and `navigate` to a URL (loading the same URL again repeats a GET).
+  Everything else, including `navigate` back or forward, `tabs.create` and `actions`, is
+  input and is sent at most once.
+- **The host answers for the extension.** When the extension goes away with requests out
+  (reload, update, worker restart, a bad frame), the native host answers each one with
+  `interrupted` before it exits, so no client waits on a reply that can't come. A request
+  that reaches a host that is shutting down gets `not_sent`.
+- **The client resends** a read cut off in flight and anything that never left (no socket, or
+  `not_sent`), after the bridge is back, up to three sends in all. A cut-off input request
+  fails with `interrupted`, telling the agent it may have run and to check the page before
+  repeating it. This replaces the one blind retry, which ran a click twice when a reload cut
+  off its reply.
+- **No new waits.** The reconnect budget stays 40 s, after which the call reports not
+  connected; nothing waits longer than before.
