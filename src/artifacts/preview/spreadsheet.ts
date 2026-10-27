@@ -14,20 +14,42 @@ const SKIP_PART =
  * anything itself. An archive that lists a name twice can't hand SheetJS the uncapped copy.
  */
 export async function cappedWorkbookZip(bytes: Uint8Array): Promise<Uint8Array> {
+	const shared = {
+		bytesLeft: PREVIEW_LIMITS.maxSpreadsheetTotalBytes,
+		iwaLeft: PREVIEW_LIMITS.maxSpreadsheetTotalBytes,
+	};
+	return rebuild(bytes, shared, 0);
+}
+
+/** Budgets one workbook shares with an archive nested inside it. */
+interface Shared {
+	bytesLeft: number;
+	iwaLeft: number;
+}
+
+async function rebuild(bytes: Uint8Array, shared: Shared, depth: number): Promise<Uint8Array> {
 	const zip = await SafeZip.open(bytes, {
 		maxEntryBytes: PREVIEW_LIMITS.maxSpreadsheetEntryBytes,
-		maxTotalBytes: PREVIEW_LIMITS.maxSpreadsheetTotalBytes,
+		maxTotalBytes: shared.bytesLeft,
 	});
 	const clean = new JSZip();
-	let iwaLeft = PREVIEW_LIMITS.maxSpreadsheetTotalBytes;
 	for (const path of zip.list()) {
 		if (SKIP_PART.test(path)) continue;
+		const isZip = /\.zip$/i.test(path);
+		// SheetJS reads an Apple Numbers "Index.zip" part as a workbook of its own; it goes
+		// through the same caps, one level deep. Other archives inside are never read.
+		if (isZip && (depth > 0 || !/(^|\/)index\.zip$/i.test(path))) continue;
 		const data = await zip.bytes(path);
 		if (!data) continue;
+		shared.bytesLeft -= data.length;
+		if (isZip) {
+			clean.file(path, await rebuild(data, shared, depth + 1), { compression: "STORE" });
+			continue;
+		}
 		// Apple Numbers keeps its tables in Snappy-compressed .iwa parts that SheetJS inflates
 		// itself, so their sizes are checked here before SheetJS sees them.
 		if (/\.iwa/i.test(path))
-			iwaLeft -= iwaUncompressedSize(data, Math.min(PREVIEW_LIMITS.maxSpreadsheetEntryBytes, iwaLeft));
+			shared.iwaLeft -= iwaUncompressedSize(data, Math.min(PREVIEW_LIMITS.maxSpreadsheetEntryBytes, shared.iwaLeft));
 		clean.file(path, data, { compression: "STORE" });
 	}
 	return clean.generateAsync({ type: "uint8array", compression: "STORE" });

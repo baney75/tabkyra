@@ -86,6 +86,27 @@ export function decodeBase64Content(content: string, maxBytes = PREVIEW_LIMITS.m
 }
 
 /**
+ * Decoded bytes of artifact content, decoded once per content value and shared by the preview
+ * and the download button. Undefined when the content is not base64.
+ */
+export class DecodedContent {
+	private last?: { content: string; bytes?: Uint8Array };
+
+	bytes(content: string): Uint8Array | undefined {
+		if (this.last?.content !== content) {
+			let bytes: Uint8Array | undefined;
+			try {
+				bytes = decodeBase64Content(content, Number.POSITIVE_INFINITY);
+			} catch {
+				bytes = undefined;
+			}
+			this.last = { content, bytes };
+		}
+		return this.last.bytes;
+	}
+}
+
+/**
  * Content of a text format (csv, rtf, ipynb). Agents usually store these as text, but a REPL
  * may store them as base64; `looksRight` decides which reading is the file. Content that is
  * nothing but base64 (or a data URL) is decoded first, if it decodes to valid UTF-8 text that

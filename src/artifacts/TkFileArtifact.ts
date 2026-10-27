@@ -3,6 +3,7 @@ import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
 import { ArtifactElement } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { DecodedContent } from "./preview/content.js";
 import { conversionHint, mimeTypeFor } from "./preview/file-types.js";
 
 @customElement("tk-file-artifact")
@@ -28,21 +29,11 @@ export class TkFileArtifact extends ArtifactElement {
 		this.style.height = "100%";
 	}
 
-	private decodeBase64(): Uint8Array {
-		let base64Data = this._content;
-		if (this._content.startsWith("data:")) {
-			const base64Match = this._content.match(/base64,(.+)/);
-			if (base64Match) {
-				base64Data = base64Match[1];
-			}
-		}
+	private decoded = new DecodedContent();
 
-		const binaryString = atob(base64Data);
-		const bytes = new Uint8Array(binaryString.length);
-		for (let i = 0; i < binaryString.length; i++) {
-			bytes[i] = binaryString.charCodeAt(i);
-		}
-		return bytes;
+	/** The file for download: decoded once per content, or the content as given if it isn't base64. */
+	private downloadContent(): Uint8Array | string {
+		return this.decoded.bytes(this._content) ?? this._content;
 	}
 
 	private getMimeType(): string {
@@ -53,7 +44,7 @@ export class TkFileArtifact extends ArtifactElement {
 		return html`
 			<div class="flex items-center gap-1">
 				${DownloadButton({
-					content: this.decodeBase64(),
+					content: this.downloadContent(),
 					filename: this.filename,
 					mimeType: this.getMimeType(),
 					title: i18n("Download"),

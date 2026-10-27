@@ -3,6 +3,7 @@ import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
 import { ArtifactElement } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { DecodedContent } from "./preview/content.js";
 import { mimeTypeFor } from "./preview/file-types.js";
 
 @customElement("tk-image-artifact")
@@ -41,40 +42,18 @@ export class TkImageArtifact extends ArtifactElement {
 		return `data:${this.getMimeType()};base64,${this._content}`;
 	}
 
-	private decodeBase64(): Uint8Array {
-		let base64Data: string;
+	private decoded = new DecodedContent();
 
-		// If content is a data URL, extract the base64 part
-		if (this._content.startsWith("data:")) {
-			const base64Match = this._content.match(/base64,(.+)/);
-			if (base64Match) {
-				base64Data = base64Match[1];
-			} else {
-				// Not a base64 data URL, return empty
-				return new Uint8Array(0);
-			}
-		} else {
-			// Otherwise use content as-is
-			base64Data = this._content;
-		}
-
-		// Decode base64 to binary string
-		const binaryString = atob(base64Data);
-
-		// Convert binary string to Uint8Array
-		const bytes = new Uint8Array(binaryString.length);
-		for (let i = 0; i < binaryString.length; i++) {
-			bytes[i] = binaryString.charCodeAt(i);
-		}
-
-		return bytes;
+	/** The file for download: decoded once per content, or the content as given if it isn't base64. */
+	private downloadContent(): Uint8Array | string {
+		return this.decoded.bytes(this._content) ?? this._content;
 	}
 
 	public getHeaderButtons() {
 		return html`
 			<div class="flex items-center gap-1">
 				${DownloadButton({
-					content: this.decodeBase64(),
+					content: this.downloadContent(),
 					filename: this.filename,
 					mimeType: this.getMimeType(),
 					title: i18n("Download"),

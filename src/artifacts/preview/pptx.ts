@@ -50,6 +50,8 @@ export interface TextRun {
 	style: RunStyle;
 	/** A line break (a:br) rather than text. */
 	br?: boolean;
+	/** A slide-number field: drawn as the number of the slide it appears on. */
+	slideNumber?: boolean;
 }
 
 export interface TextParagraph {
@@ -103,6 +105,22 @@ export interface PictureElement {
 	crop?: { l: number; t: number; r: number; b: number };
 	preset?: string;
 	line?: Line | null;
+}
+
+/**
+ * Keep a row's spans inside `width` columns: each span is clamped to what is left and cells past
+ * the edge are dropped, so spans can't widen the layout grid past the column limit.
+ */
+export function fitRow(cells: TableCell[], width: number): TableCell[] {
+	const out: TableCell[] = [];
+	let column = 0;
+	for (const cell of cells) {
+		if (column >= width) break;
+		const gridSpan = Math.min(cell.gridSpan, width - column);
+		column += cell.merged ? 1 : gridSpan;
+		out.push(gridSpan === cell.gridSpan ? cell : { ...cell, gridSpan });
+	}
+	return out;
 }
 
 export interface TableCell {
@@ -340,7 +358,8 @@ class PptxReader {
 		const limit = Math.min(slidePaths.length, PREVIEW_LIMITS.maxSlides);
 		for (let i = 0; i < limit; i++) {
 			// One budget for the whole deck: master and layout shapes count on every slide they draw on.
-			if (this.budget.elements <= 0 || this.budget.runs <= 0 || this.budget.chars <= 0) break;
+			const b = this.budget;
+			if (b.elements <= 0 || b.runs <= 0 || b.chars <= 0 || b.commands <= 0) break;
 			slides.push(await this.slide(slidePaths[i], i + 1));
 		}
 		return { width, height, slides, totalSlides: slidePaths.length, images: this.images };
@@ -358,31 +377,30 @@ class PptxReader {
 		const ctx: ColorContext = { theme: baseCtx.theme, clrMap: parseClrMap(override, baseCtx.clrMap) };
 
 		const slide: Slide = { number, hidden: attr(part.root, "show") === "0", elements: [] };
+		const bgKey = `${master?.part.path ?? ""}|${JSON.stringify(ctx.clrMap)}`;
 		slide.background =
 			(await this.background(part, ctx)) ??
-			(layout ? await this.background(layout.part, ctx) : undefined) ??
-			(master ? await this.background(master.part, ctx) : undefined);
+			(layout ? await this.templateBackground(layout.part, ctx, bgKey) : undefined) ??
+			(master ? await this.templateBackground(master.part, ctx, bgKey) : undefined);
 
 		const showMaster = attr(part.root, "showMasterSp") !== "0";
 		const tx = master?.txStyles;
+		const ctxKey = `${master?.part.path ?? ""}|${JSON.stringify(ctx.clrMap)}`;
+		const keyed = { ctx, ctxKey };
 		const scope: Scope = {
 			reader: this,
 			ctx,
-			defaultText: parseLevels(this.defaultTextXml, ctx),
-			titleStyle: parseLevels(child(tx, "titleStyle"), ctx),
-			bodyStyle: parseLevels(child(tx, "bodyStyle"), ctx),
-			otherStyle: parseLevels(child(tx, "otherStyle"), ctx),
-			slideNumber: number,
+			ctxKey,
+			defaultText: levelsOf(this.defaultTextXml, keyed),
+			titleStyle: levelsOf(child(tx, "titleStyle"), keyed),
+			bodyStyle: levelsOf(child(tx, "bodyStyle"), keyed),
+			otherStyle: levelsOf(child(tx, "otherStyle"), keyed),
 			master,
 			layout,
 			elements: slide.elements,
 		};
-		if (showMaster && master && layout?.showMasterShapes !== false) {
-			await this.walkTree(child(child(master.part.root, "cSld"), "spTree"), master.part, ctx, scope, IDENTITY, true);
-		}
-		if (showMaster && layout) {
-			await this.walkTree(child(child(layout.part.root, "cSld"), "spTree"), layout.part, ctx, scope, IDENTITY, true);
-		}
+		if (showMaster && master && layout?.showMasterShapes !== false) await this.templateShapes(master.part, scope);
+		if (showMaster && layout) await this.templateShapes(layout.part, scope);
 		await this.walkTree(child(child(part.root, "cSld"), "spTree"), part, ctx, scope, IDENTITY, false);
 		return slide;
 	}
@@ -394,6 +412,44 @@ class PptxReader {
 		if (layoutRel) return (await this.layout(layoutRel.target))?.master;
 		const masterRel = this.relOfType(part, "/slideMaster");
 		return masterRel ? this.master(masterRel.target) : undefined;
+	}
+
+	private templateCache = new Map<string, { elements: SlideElement[]; cost: Budget }>();
+
+	/**
+	 * A layout's or master's own shapes, read once per color map and reused on every slide. Each
+	 * reuse still spends what the first reading spent, because each slide draws them again.
+	 */
+	private async templateShapes(part: Part, scope: Scope): Promise<void> {
+		const key = `${part.path}|${scope.ctxKey}`;
+		let cached = this.templateCache.get(key);
+		if (!cached) {
+			const before = { ...this.budget };
+			const elements: SlideElement[] = [];
+			const tree = child(child(part.root, "cSld"), "spTree");
+			await this.walkTree(tree, part, scope.ctx, { ...scope, elements }, IDENTITY, true);
+			const cost: Budget = {
+				elements: before.elements - this.budget.elements,
+				runs: before.runs - this.budget.runs,
+				chars: before.chars - this.budget.chars,
+				commands: before.commands - this.budget.commands,
+			};
+			cached = { elements, cost };
+			this.templateCache.set(key, cached);
+			scope.elements.push(...elements);
+			return;
+		}
+		for (const k of ["elements", "runs", "chars", "commands"] as const) this.budget[k] -= cached.cost[k];
+		scope.elements.push(...cached.elements);
+	}
+
+	private backgroundCache = new Map<string, Fill | undefined>();
+
+	/** A layout's or master's background, resolved once per color map. */
+	private async templateBackground(part: Part, ctx: ColorContext, key: string): Promise<Fill | undefined> {
+		const k = `${part.path}|${key}`;
+		if (!this.backgroundCache.has(k)) this.backgroundCache.set(k, await this.background(part, ctx));
+		return this.backgroundCache.get(k);
 	}
 
 	private async background(part: Part, ctx: ColorContext): Promise<Fill | undefined> {
@@ -500,7 +556,8 @@ interface Scope {
 	titleStyle: LevelStyles;
 	bodyStyle: LevelStyles;
 	otherStyle: LevelStyles;
-	slideNumber: number;
+	/** Identifies the theme and color map, for caches of resolved colors. */
+	ctxKey: string;
 	master?: MasterTemplate;
 	layout?: Template;
 	elements: SlideElement[];
@@ -628,19 +685,82 @@ function inheritance(sp: XmlElement, scope: Scope, templateOnly: boolean): Inher
 		return { chain: [], levels };
 	}
 	const layoutSp = findPlaceholder(scope.layout?.placeholders, ph);
-	const layoutPh = layoutSp ? placeholderOf(layoutSp) : undefined;
+	const layoutPh = layoutSp ? tpl(layoutSp).ph : undefined;
 	// Master placeholders match by type only: their idx values are unrelated to the layout's.
 	const masterType = normalizeType((layoutPh ?? ph).type);
 	const masterSp = scope.master?.placeholders.find((p) => normalizeType(p.type) === masterType)?.sp;
 	const chain = [layoutSp, masterSp].filter((x): x is XmlElement => !!x);
 	let levels = textStyleFor(layoutPh?.type ?? ph.type, scope);
-	if (masterSp) levels = mergeLevels(levels, parseLevels(lstStyleOf(masterSp), scope.ctx));
-	if (layoutSp) levels = mergeLevels(levels, parseLevels(lstStyleOf(layoutSp), scope.ctx));
+	if (masterSp) levels = mergeLevels(levels, levelsOf(tpl(masterSp).lstStyle, scope));
+	if (layoutSp) levels = mergeLevels(levels, levelsOf(tpl(layoutSp).lstStyle, scope));
 	return { chain, levels };
 }
 
-function lstStyleOf(sp: XmlElement): XmlElement | undefined {
-	return child(child(sp, "txBody"), "lstStyle");
+/** A text body's bodyPr with its autofit choice found once. */
+interface BodyPr {
+	el?: XmlElement;
+	autofit?: XmlElement;
+}
+
+function bodyPrOf(txBody: XmlElement | undefined): BodyPr {
+	const el = child(txBody, "bodyPr");
+	return { el, autofit: child(el, "normAutofit") ?? child(el, "noAutofit") ?? child(el, "spAutoFit") };
+}
+
+/** What slides inherit from a layout or master shape, read from its XML once. */
+interface TemplateShape {
+	ph?: { type: string; idx?: string };
+	spPr?: XmlElement;
+	xfrm?: XmlElement;
+	/** The spPr, when it holds a preset or custom geometry. */
+	geomSpPr?: XmlElement;
+	bodyPr: BodyPr;
+	lstStyle?: XmlElement;
+	/** Fills and outlines resolved per color map. */
+	fills: Map<string, Fill | undefined>;
+	lines: Map<string, Line | null | undefined>;
+}
+
+const templateShapes = new WeakMap<XmlElement, TemplateShape>();
+
+function tpl(sp: XmlElement): TemplateShape {
+	let t = templateShapes.get(sp);
+	if (!t) {
+		const spPr = spPrOf(sp);
+		const txBody = child(sp, "txBody");
+		t = {
+			ph: placeholderOf(sp),
+			spPr,
+			xfrm: child(spPr, "xfrm"),
+			geomSpPr: child(spPr, "prstGeom") || child(spPr, "custGeom") ? spPr : undefined,
+			bodyPr: bodyPrOf(txBody),
+			lstStyle: child(txBody, "lstStyle"),
+			fills: new Map(),
+			lines: new Map(),
+		};
+		templateShapes.set(sp, t);
+	}
+	return t;
+}
+
+function memo<T>(cache: Map<string, T>, key: string, make: () => T): T {
+	if (cache.has(key)) return cache.get(key) as T;
+	const v = make();
+	cache.set(key, v);
+	return v;
+}
+
+const levelCache = new WeakMap<XmlElement, Map<string, LevelStyles>>();
+
+/** An lstStyle's levels, parsed once per element and color map. */
+function levelsOf(list: XmlElement | undefined, scope: Pick<Scope, "ctx" | "ctxKey">): LevelStyles {
+	if (!list) return emptyLevels();
+	let byKey = levelCache.get(list);
+	if (!byKey) {
+		byKey = new Map();
+		levelCache.set(list, byKey);
+	}
+	return memo(byKey, scope.ctxKey, () => parseLevels(list, scope.ctx));
 }
 
 // ---------------------------------------------------------------------------
@@ -660,12 +780,15 @@ function readShape(
 	templateOnly: boolean,
 ): ShapeElement | undefined {
 	const inh = inheritance(sp, scope, templateOnly);
+	// Layout and master shapes come through tpl(), read once per file however many slides use them.
+	const chain = inh.chain.map(tpl);
 	const spPr = spPrOf(sp);
-	const xfrm = child(spPr, "xfrm") ?? inh.chain.map((c) => child(spPrOf(c), "xfrm")).find((x) => !!x);
+	const xfrm = child(spPr, "xfrm") ?? chain.find((c) => c.xfrm)?.xfrm;
 	const box = boxFrom(xfrm, transform);
 	if (!box) return undefined;
 
-	const geomSource = [spPr, ...inh.chain.map(spPrOf)].find((p) => child(p, "prstGeom") || child(p, "custGeom"));
+	const ownGeom = child(spPr, "prstGeom") || child(spPr, "custGeom") ? spPr : undefined;
+	const geomSource = ownGeom ?? chain.find((c) => c.geomSpPr)?.geomSpPr;
 	const prst = child(geomSource, "prstGeom");
 	const cust = child(geomSource, "custGeom");
 	const adj: Record<string, number> = {};
@@ -679,8 +802,8 @@ function readShape(
 
 	let fill = fillIn(spPr, ctx, resolveImage);
 	if (!fill) {
-		for (const c of inh.chain) {
-			fill = fillIn(spPrOf(c), ctx);
+		for (const c of chain) {
+			fill = memo(c.fills, scope.ctxKey, () => fillIn(c.spPr, ctx));
 			if (fill) break;
 		}
 	}
@@ -691,8 +814,8 @@ function readShape(
 
 	let line = lineOf(child(spPr, "ln"), ctx);
 	if (line === undefined) {
-		for (const c of inh.chain) {
-			line = lineOf(child(spPrOf(c), "ln"), ctx);
+		for (const c of chain) {
+			line = memo(c.lines, scope.ctxKey, () => lineOf(child(c.spPr, "ln"), ctx));
 			if (line !== undefined) break;
 		}
 	}
@@ -729,8 +852,8 @@ function readShape(
 		const base: RunStyle = {};
 		if (fontColor) base.color = fontColor;
 		if (fontFace === "major" && ctx.theme.majorFont) base.font = ctx.theme.majorFont;
-		const bodyChain = [child(txBody, "bodyPr"), ...inh.chain.map((c) => child(child(c, "txBody"), "bodyPr"))];
-		const text = readTextBody(txBody, inh.levels, bodyChain, ctx, base, scope.slideNumber, scope.reader.budget);
+		const bodyChain = [bodyPrOf(txBody), ...chain.map((c) => c.bodyPr)];
+		const text = readTextBody(txBody, inh.levels, bodyChain, ctx, base, scope.reader.budget);
 		if (text.paragraphs.some((p) => p.runs.some((r) => r.text.trim().length > 0))) shape.text = text;
 	}
 	return shape;
@@ -862,15 +985,7 @@ function readTable(tbl: XmlElement, box: Box, ctx: ColorContext, scope: Scope): 
 				];
 				const txBody = child(tc, "txBody");
 				const text = txBody
-					? readTextBody(
-							txBody,
-							levels,
-							[child(txBody, "bodyPr")],
-							ctx,
-							base,
-							scope.slideNumber,
-							scope.reader.budget,
-						)
+					? readTextBody(txBody, levels, [bodyPrOf(txBody)], ctx, base, scope.reader.budget)
 					: undefined;
 				if (text) {
 					text.insets = insets;
@@ -894,7 +1009,7 @@ function readTable(tbl: XmlElement, box: Box, ctx: ColorContext, scope: Scope): 
 					borders: { l: border("lnL"), r: border("lnR"), t: border("lnT"), b: border("lnB") },
 				};
 			});
-			rows.push({ height: numAttr(tr, "h") ?? 0, cells });
+			rows.push({ height: numAttr(tr, "h") ?? 0, cells: fitRow(cells, PREVIEW_LIMITS.maxTableColumns) });
 		});
 	return { kind: "table", box, columns, rows };
 }
@@ -906,24 +1021,22 @@ function readTable(tbl: XmlElement, box: Box, ctx: ColorContext, scope: Scope): 
 function readTextBody(
 	txBody: XmlElement,
 	inheritedLevels: LevelStyles,
-	bodyPrChain: (XmlElement | undefined)[],
+	bodyPrChain: BodyPr[],
 	ctx: ColorContext,
 	base: RunStyle,
-	slideNumber: number,
 	budget: Budget,
 ): TextBody {
 	// Nearest bodyPr wins per attribute.
 	const bodyAttr = (name: string): string | undefined => {
 		for (const b of bodyPrChain) {
-			const v = attr(b, name);
+			const v = attr(b.el, name);
 			if (v !== undefined) return v;
 		}
 		return undefined;
 	};
 	const bodyChild = (name: string): XmlElement | undefined => {
 		for (const b of bodyPrChain) {
-			const autofit = child(b, "normAutofit") ?? child(b, "noAutofit") ?? child(b, "spAutoFit");
-			if (autofit) return autofit.local === name ? autofit : undefined;
+			if (b.autofit) return b.autofit.local === name ? b.autofit : undefined;
 		}
 		return undefined;
 	};
@@ -963,8 +1076,12 @@ function readTextBody(
 				if (text.length > MAX_RUN_CHARS) text = text.slice(0, MAX_RUN_CHARS);
 				budget.chars -= text.length;
 				if (budget.chars < 0) break;
-				if (r.local === "fld" && attr(r, "type") === "slidenum") text = String(slideNumber);
-				runs.push({ text, style: mergeRun(style.run, parseRunStyle(child(r, "rPr"), ctx)) });
+				const isSlideNumber = r.local === "fld" && attr(r, "type") === "slidenum";
+				runs.push({
+					text: isSlideNumber ? "#" : text,
+					style: mergeRun(style.run, parseRunStyle(child(r, "rPr"), ctx)),
+					...(isSlideNumber ? { slideNumber: true } : {}),
+				});
 			} else if (r.local === "br") {
 				runs.push({ text: "\n", br: true, style: mergeRun(style.run, parseRunStyle(child(r, "rPr"), ctx)) });
 			}

@@ -30,6 +30,8 @@ export const MAX_NOTEBOOK_OUTPUTS = 5_000;
 export const MAX_NOTEBOOK_CHARS = 20_000_000;
 /** Cell sources are highlighted or rendered as markdown, so they get a smaller budget of their own. */
 export const MAX_NOTEBOOK_SOURCE_CHARS = 5_000_000;
+/** Text that outputs put on the page (images count only toward MAX_NOTEBOOK_CHARS). */
+export const MAX_NOTEBOOK_TEXT_CHARS = 5_000_000;
 
 function outputSize(o: NotebookOutput): number {
 	switch (o.kind) {
@@ -143,6 +145,7 @@ export function parseNotebook(
 	let outputsLeft = maxOutputs;
 	let charsLeft = maxChars;
 	let sourceLeft = MAX_NOTEBOOK_SOURCE_CHARS;
+	let textLeft = MAX_NOTEBOOK_TEXT_CHARS;
 	let truncated = false;
 	for (const c of rawCells.slice(0, maxCells)) {
 		if (!isObject(c)) continue;
@@ -159,13 +162,14 @@ export function parseNotebook(
 		// One budget for the whole notebook; consecutive stream outputs merge, as in Jupyter.
 		const outputs: NotebookOutput[] = [];
 		for (const raw of Array.isArray(c.outputs) ? c.outputs : []) {
-			if (outputsLeft <= 0 || charsLeft <= 0) {
+			if (outputsLeft <= 0 || charsLeft <= 0 || textLeft <= 0) {
 				truncated = true;
 				break;
 			}
 			const o = readOutput(raw);
 			if (!o) continue;
 			charsLeft -= outputSize(o);
+			if (o.kind !== "image" && o.kind !== "svg") textLeft -= outputSize(o);
 			const last = outputs[outputs.length - 1];
 			if (o.kind === "stream" && last?.kind === "stream" && last.name === o.name) {
 				last.text += o.text;
@@ -174,7 +178,8 @@ export function parseNotebook(
 			outputsLeft--;
 			outputs.push(o);
 		}
-		const attachments: Record<string, string> = {};
+		// No prototype, so names such as "constructor" find nothing.
+		const attachments: Record<string, string> = Object.create(null);
 		if (isObject(c.attachments)) {
 			for (const [name, bundle] of Object.entries(c.attachments)) {
 				if (!isObject(bundle)) continue;
@@ -205,6 +210,13 @@ export function parseNotebook(
 	return { language, cells, totalCells: rawCells.length, truncated };
 }
 
+/** The data URL an `attachment:` reference names, if the cell has it as its own entry. */
+export function attachmentData(attachments: Record<string, string>, url: string): string | undefined {
+	const name = attachmentName(url);
+	const value = Object.hasOwn(attachments, name) ? attachments[name] : undefined;
+	return typeof value === "string" && /^data:image\/(png|jpeg|gif|webp);base64,/.test(value) ? value : undefined;
+}
+
 /** The attachment name in an `attachment:` URL, percent-decoded when the escape is valid. */
 export function attachmentName(url: string): string {
 	const name = url.slice("attachment:".length);
@@ -232,7 +244,7 @@ export function neutralizeRemoteImages(markdown: string, attachments: Record<str
 					// Attachment references stay as written; the viewer resolves them after sanitizing,
 					// so a large attachment is never copied into the text once per reference.
 					if (typeof url === "string" && url.startsWith("attachment:")) {
-						return attachments[attachmentName(url)] ? whole : `[Image: ${alt || url}]`;
+						return attachmentData(attachments, url) ? whole : `[Image: ${alt || url}]`;
 					}
 					if (typeof url === "string" && /^data:image\/(png|jpeg|gif|webp);base64,/i.test(url)) return whole;
 					return `[Image: ${alt || url}](${url})`;

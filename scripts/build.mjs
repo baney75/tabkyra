@@ -186,9 +186,10 @@ const buildOptions = {
 		"@mariozechner/pi-web-ui": join(packageRoot, "../pi-mono/packages/web-ui/src/index.ts"),
 		// The notebook preview (src/artifacts) and mini-lit's MarkdownBlock share one copy of marked.
 		marked: markedEntry(),
-		// src/artifacts uses the same SheetJS, JSZip and highlight.js copies as pi-web-ui, not a second set.
-		xlsx: join(packageRoot, "../pi-mono/node_modules/xlsx"),
-		jszip: join(packageRoot, "../pi-mono/node_modules/jszip"),
+		// One copy each of SheetJS and JSZip for pi-web-ui and src/artifacts: Tabkyra's own, the
+		// copies test/artifact-previews.test.mjs exercises. highlight.js stays on pi-web-ui's copy.
+		xlsx: join(packageRoot, "node_modules/xlsx"),
+		jszip: join(packageRoot, "node_modules/jszip"),
 		"highlight.js": join(packageRoot, "../pi-mono/node_modules/highlight.js"),
 		lit: join(packageRoot, "node_modules/lit"),
 		"lit/decorators.js": join(packageRoot, "node_modules/lit/decorators.js"),

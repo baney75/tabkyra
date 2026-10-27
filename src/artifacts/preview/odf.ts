@@ -6,16 +6,17 @@
  */
 import { browserImageMime, PREVIEW_LIMITS, SafeZip } from "./content.js";
 import { autoNumberLabel, type Fill, type Line, type ParaStyle, type RunStyle } from "./drawingml.js";
-import type {
-	Box,
-	Deck,
-	PictureElement,
-	ShapeElement,
-	Slide,
-	SlideElement,
-	TableElement,
-	TextBody,
-	TextParagraph,
+import {
+	type Box,
+	type Deck,
+	fitRow,
+	type PictureElement,
+	type ShapeElement,
+	type Slide,
+	type SlideElement,
+	type TableElement,
+	type TextBody,
+	type TextParagraph,
 } from "./pptx.js";
 import { attr, child, children, parseXml, type XmlElement, type XmlNode } from "./xml.js";
 
@@ -198,7 +199,8 @@ export class OdfStyles {
 	listStyleOf(family: string, name: string | undefined): string | undefined {
 		let cur = this.find(family, name);
 		const seen = new Set<string>();
-		while (cur && !seen.has(cur.name)) {
+		// At most 32 ancestors, as in resolve() and fontSize().
+		while (cur && !seen.has(cur.name) && seen.size < 32) {
 			seen.add(cur.name);
 			if (cur.listStyle) return cur.listStyle;
 			if (this.lists.has(`__graphic:${cur.name}`)) return `__graphic:${cur.name}`;
@@ -213,6 +215,11 @@ function sizeFrom(value: string | undefined, base: number): number {
 	const pct = /^([\d.]+)%$/.exec(value);
 	if (pct) return (base * Number(pct[1])) / 100;
 	return lengthToPt(value) ?? base;
+}
+
+/** A row or column span from the file, kept between 1 and `max`. */
+function clampSpan(v: string | undefined, max: number): number {
+	return Math.max(1, Math.min(Number(v ?? "1") || 1, max));
 }
 
 function colorValue(v: string | undefined): string | undefined {
@@ -592,8 +599,10 @@ class OdtReader {
 		}
 		const rows: OdtTable["rows"] = [];
 		let cellsLeft = PREVIEW_LIMITS.maxTableCells;
-		for (const r of rowEls.slice(0, PREVIEW_LIMITS.maxTableRows)) {
+		const shownRows = rowEls.slice(0, PREVIEW_LIMITS.maxTableRows);
+		for (const [rowIndex, r] of shownRows.entries()) {
 			const cells: OdtTable["rows"][number]["cells"] = [];
+			let column = 0;
 			for (const c of children(r)) {
 				if (c.name !== "table:table-cell") continue;
 				// Cells are bounded per row, per table and by the document's block count.
@@ -602,13 +611,16 @@ class OdtReader {
 					break;
 				}
 				const props = styles.resolve("table-cell", attr(c, "table:style-name"), "table-cell-properties");
+				if (column >= PREVIEW_LIMITS.maxTableColumns) break;
 				cells.push({
 					blocks: this.blocks(c, undefined, depth + 1),
-					colSpan: Math.max(1, Number(attr(c, "table:number-columns-spanned") ?? "1") || 1),
-					rowSpan: Math.max(1, Number(attr(c, "table:number-rows-spanned") ?? "1") || 1),
+					// Spans stay inside the table as drawn, so they can't widen the layout grid.
+					colSpan: clampSpan(attr(c, "table:number-columns-spanned"), PREVIEW_LIMITS.maxTableColumns - column),
+					rowSpan: clampSpan(attr(c, "table:number-rows-spanned"), shownRows.length - rowIndex),
 					background: colorValue(props["fo:background-color"]),
 					border: props["fo:border"] && props["fo:border"] !== "none" ? props["fo:border"] : undefined,
 				});
+				column += cells[cells.length - 1].colSpan;
 			}
 			rows.push({ cells });
 		}
@@ -951,35 +963,74 @@ class OdpReader {
 				) ?? 0;
 			rows.push({
 				height,
-				cells: children(r)
-					.filter((c) => c.name === "table:table-cell" || c.name === "table:covered-table-cell")
-					.slice(0, Math.max(0, Math.min(PREVIEW_LIMITS.maxTableColumns, cellsLeft, this.elementsLeft)))
-					.map((c) => {
-						// Each cell is drawn, so each costs an element of the deck budget.
-						cellsLeft--;
-						this.elementsLeft--;
-						const props = styles.resolve("graphic", attr(c, "table:style-name"), "graphic-properties");
-						const cellProps = styles.resolve("table-cell", attr(c, "table:style-name"), "table-cell-properties");
-						const fill =
-							graphicFill(props, styles) ??
-							(colorValue(cellProps["fo:background-color"])
-								? { type: "solid" as const, color: colorValue(cellProps["fo:background-color"]) as string }
-								: undefined);
-						const border = { color: "#999999", width: 9525 };
-						return {
-							text: this.textBody(c, "graphic", attr(c, "table:style-name"), props),
-							fill,
-							gridSpan: Math.max(1, Number(attr(c, "table:number-columns-spanned") ?? "1") || 1),
-							rowSpan: Math.max(1, Number(attr(c, "table:number-rows-spanned") ?? "1") || 1),
-							merged: c.name === "table:covered-table-cell",
-							borders: { l: border, r: border, t: border, b: border },
-						};
-					}),
+				cells: fitRow(
+					children(r)
+						.filter((c) => c.name === "table:table-cell" || c.name === "table:covered-table-cell")
+						.slice(0, Math.max(0, Math.min(PREVIEW_LIMITS.maxTableColumns, cellsLeft, this.elementsLeft)))
+						.map((c) => {
+							// Each cell is drawn, so each costs an element of the deck budget.
+							cellsLeft--;
+							this.elementsLeft--;
+							const props = styles.resolve("graphic", attr(c, "table:style-name"), "graphic-properties");
+							const cellProps = styles.resolve(
+								"table-cell",
+								attr(c, "table:style-name"),
+								"table-cell-properties",
+							);
+							const fill =
+								graphicFill(props, styles) ??
+								(colorValue(cellProps["fo:background-color"])
+									? { type: "solid" as const, color: colorValue(cellProps["fo:background-color"]) as string }
+									: undefined);
+							const border = { color: "#999999", width: 9525 };
+							return {
+								text: this.textBody(c, "graphic", attr(c, "table:style-name"), props),
+								fill,
+								gridSpan: clampSpan(attr(c, "table:number-columns-spanned"), PREVIEW_LIMITS.maxTableColumns),
+								rowSpan: clampSpan(attr(c, "table:number-rows-spanned"), 500),
+								merged: c.name === "table:covered-table-cell",
+								borders: { l: border, r: border, t: border, b: border },
+							};
+						}),
+					PREVIEW_LIMITS.maxTableColumns,
+				),
 			});
 		}
 		const total = cols.reduce((a, b) => a + b, 0);
 		const n = Math.max(1, ...rows.map((r) => r.cells.length));
 		return { kind: "table", box, columns: total > 0 ? cols : Array.from({ length: n }, () => box.w / n), rows };
+	}
+
+	private masterCache = new Map<
+		XmlElement,
+		{ elements: SlideElement[]; elementsCost: number; runsCost: number; charsCost: number }
+	>();
+
+	/**
+	 * A master page's shapes, read once and reused on every page that shows them. Each reuse
+	 * still spends what the first reading spent, because each page draws them again.
+	 */
+	masterElements(master: XmlElement, out: SlideElement[]) {
+		let cached = this.masterCache.get(master);
+		if (!cached) {
+			const before = { elements: this.elementsLeft, runs: this.budget.runs, chars: this.budget.chars };
+			const elements: SlideElement[] = [];
+			this.elements(master, true, elements);
+			cached = {
+				elements,
+				elementsCost: before.elements - this.elementsLeft,
+				runsCost: before.runs - this.budget.runs,
+				charsCost: before.chars - this.budget.chars,
+			};
+			this.masterCache.set(master, cached);
+			out.push(...elements);
+			return;
+		}
+		this.elementsLeft -= cached.elementsCost;
+		this.budget.runs -= cached.runsCost;
+		this.budget.chars -= cached.charsCost;
+		if (this.budget.runs <= 0 || this.budget.chars <= 0) this.budget.exhausted = true;
+		out.push(...cached.elements);
 	}
 
 	background(styleName: string | undefined): Fill | undefined {
@@ -1011,7 +1062,7 @@ export async function readOdp(bytes: Uint8Array): Promise<Deck> {
 		const elements: SlideElement[] = [];
 		const pageProps = styles.resolve("drawing-page", attr(page, "draw:style-name"), "drawing-page-properties");
 		if (master && pageProps["presentation:background-objects-visible"] !== "false")
-			reader.elements(master, true, elements);
+			reader.masterElements(master, elements);
 		reader.elements(page, false, elements);
 		const background =
 			(pageProps["presentation:background-visible"] !== "false"

@@ -2,6 +2,7 @@
 // readers behind the new viewers. The readers parse untrusted files, so the limits and the
 // no-network rules are tested here too. Drawing is checked live (see the PR's screenshots).
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
@@ -11,11 +12,11 @@ import { conversionHint, getArtifactFileType, mimeTypeFor } from "../src/artifac
 import { detectDelimiter, parseDelimited } from "../src/artifacts/preview/delimited.ts";
 import { parseXml, XmlError, textOf } from "../src/artifacts/preview/xml.ts";
 import { autoNumberLabel, presetPath, colorOf, emptyTheme } from "../src/artifacts/preview/drawingml.ts";
-import { readPptx } from "../src/artifacts/preview/pptx.ts";
+import { fitRow, readPptx } from "../src/artifacts/preview/pptx.ts";
 import { readOdt, readOdp } from "../src/artifacts/preview/odf.ts";
 import { parseRtf } from "../src/artifacts/preview/rtf.ts";
 import { cappedWorkbookZip, clampSheet, iwaUncompressedSize } from "../src/artifacts/preview/spreadsheet.ts";
-import { parseNotebook, neutralizeRemoteImages, stripAnsi } from "../src/artifacts/preview/notebook.ts";
+import { attachmentData, parseNotebook, neutralizeRemoteImages, stripAnsi } from "../src/artifacts/preview/notebook.ts";
 import { countZipEntries, decodeBase64Content, readTextContent, PreviewLimitError, PREVIEW_LIMITS } from "../src/artifacts/preview/content.ts";
 
 test("each file type gets its viewer", () => {
@@ -605,10 +606,15 @@ test("the XML reader refuses elements with thousands of attributes", () => {
 
 test("deck text has a character budget and a table grid is capped", async () => {
 	const longText = `<p:sp><p:nvSpPr><p:cNvPr id="91" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:p><a:r><a:t>${"x".repeat(200_000)}</a:t></a:r></a:p></p:txBody></p:sp>`;
-	const deck = await withLimits({ maxTextChars: 150_000 }, async () => readPptx(await deckWithMaster(longText)));
+	const bytes = await deckWithMaster(longText);
 	const longShape = (slide) => slide.elements.find((e) => e.kind === "shape" && e.box.w === 10);
+	const deck = await readPptx(bytes);
 	assert.equal(longShape(deck.slides[0]).text.paragraphs[0].runs[0].text.length, 100_000, "one run is clipped to 100,000 characters");
-	assert.equal(longShape(deck.slides[1]).text, undefined, "the master's text stops drawing once the deck's characters are spent");
+	const capped = await withLimits({ maxTextChars: 150_000 }, () => readPptx(bytes));
+	assert.equal(capped.slides.length, 2, "the second slide draws the cached master text and spends the rest");
+	const spent = await withLimits({ maxTextChars: 50_000 }, () => readPptx(bytes));
+	assert.equal(longShape(spent.slides[0]).text, undefined, "a run past the budget is not drawn");
+	assert.equal(spent.slides.length, 1);
 	const zip = await JSZip.loadAsync(await cookieDeck());
 	const slide = await zip.file("ppt/slides/slide1.xml").async("string");
 	zip.file("ppt/slides/slide1.xml", slide.replace("<a:tblGrid>", `<a:tblGrid>${'<a:gridCol w="1"/>'.repeat(2000)}`));
@@ -699,10 +705,30 @@ test("a Numbers stream whose declared and actual sizes disagree is refused", () 
 test("custom-shape commands come out of one deck-wide budget", async () => {
 	const path = `<a:moveTo><a:pt x="0" y="0"/></a:moveTo>${'<a:lnTo><a:pt x="1" y="1"/></a:lnTo>'.repeat(799)}`;
 	const shape = `<p:sp><p:nvSpPr><p:cNvPr id="92" name="c"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12" cy="12"/></a:xfrm><a:custGeom><a:pathLst><a:path w="10" h="10">${path}</a:path></a:pathLst></a:custGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr></p:sp>`;
-	const deck = await withLimits({ maxDeckCommands: 1000 }, async () => readPptx(await deckWithMaster(shape)));
+	const bytes = await deckWithMaster(shape);
 	const commands = (slide) => (slide.elements.find((e) => e.kind === "shape" && e.box.w === 12)?.paths?.[0]?.d.match(/[ML]/g) ?? []).length;
-	assert.equal(commands(deck.slides[0]), 800);
-	assert.equal(commands(deck.slides[1]), 200, "the second slide gets what is left");
+	const capped = await withLimits({ maxDeckCommands: 700 }, () => readPptx(bytes));
+	assert.equal(commands(capped.slides[0]), 700, "the shape gets what the budget has left");
+	assert.equal(capped.slides.length, 1, "no slide starts once the budget is spent");
+	const full = await withLimits({ maxDeckCommands: 1000 }, () => readPptx(bytes));
+	assert.equal(commands(full.slides[1]), 800, "the master's shape is read once and drawn again on the next slide");
+});
+
+test("master shapes are read once per file, and each slide shows its own slide number", async () => {
+	const junk = "<a:x/>".repeat(200_000);
+	const num = `<p:sp><p:nvSpPr><p:cNvPr id="93" name="n"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="13" cy="13"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:p><a:fld id="{1}" type="slidenum"><a:t>1</a:t></a:fld>${junk}</a:p></p:txBody></p:sp>`;
+	const zip = await JSZip.loadAsync(await deckWithMaster(num));
+	const pres = await zip.file("ppt/presentation.xml").async("string");
+	const rels = await zip.file("ppt/_rels/presentation.xml.rels").async("string");
+	const ids = Array.from({ length: 40 }, (_, i) => `<p:sldId id="${300 + i}" r:id="rX${i}"/>`).join("");
+	zip.file("ppt/presentation.xml", pres.replace("</p:sldIdLst>", `${ids}</p:sldIdLst>`));
+	zip.file("ppt/_rels/presentation.xml.rels", rels.replace("</Relationships>", `${Array.from({ length: 40 }, (_, i) => `<Relationship Id="rX${i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide2.xml"/>`).join("")}</Relationships>`));
+	const started = Date.now();
+	const deck = await readPptx(await zip.generateAsync({ type: "uint8array" }));
+	assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
+	assert.equal(deck.slides.length, 42);
+	const run = deck.slides[5].elements.find((e) => e.kind === "shape" && e.box.w === 13).text.paragraphs[0].runs[0];
+	assert.equal(run.slideNumber, true, "the number is filled in per slide when drawn");
 });
 
 test("a gradient keeps at most 64 stops", async () => {
@@ -748,4 +774,84 @@ test("an archive with too many entries is refused before JSZip reads it, even wi
 	await assert.rejects(readPptx(prepended), /too many entries/);
 	const deckBytes = await cookieDeck();
 	assert.equal(countZipEntries(deckBytes, 10_000), Object.keys((await JSZip.loadAsync(deckBytes)).files).length);
+});
+
+// ---------------------------------------------------------------------------
+// Series 2, round 2
+// ---------------------------------------------------------------------------
+
+test("the tests exercise the JSZip and SheetJS the bundle ships", async () => {
+	// scripts/build.mjs aliases both packages to Tabkyra's node_modules, which these tests import.
+	const build = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+	assert.match(build, /xlsx: join\(packageRoot, "node_modules\/xlsx"\)/);
+	assert.match(build, /jszip: join\(packageRoot, "node_modules\/jszip"\)/);
+	// SafeZip stops inflating at its cap through JSZip's internal stream; without it the cap would only apply after.
+	const zip = await JSZip.loadAsync(await new JSZip().file("a", "b").generateAsync({ type: "uint8array" }));
+	assert.equal(typeof zip.file("a").internalStream, "function");
+	const piMono = new URL("../../pi-mono/node_modules/", import.meta.url);
+	for (const pkg of ["xlsx", "jszip"]) {
+		const theirs = new URL(`${pkg}/package.json`, piMono);
+		if (!existsSync(theirs)) continue;
+		const ours = JSON.parse(readFileSync(new URL(`../node_modules/${pkg}/package.json`, import.meta.url), "utf8")).version;
+		assert.equal(ours, JSON.parse(readFileSync(theirs, "utf8")).version, `${pkg} versions match pi-web-ui's`);
+	}
+});
+
+test("a Numbers file's Index.zip goes through the same caps, and other nested archives are dropped", async () => {
+	const inner = new JSZip();
+	inner.file("Index/Document.iwa", iwaChunk(500 * 1024 * 1024, expandingTags(10)));
+	const outer = new JSZip();
+	outer.file("Index.zip", await inner.generateAsync({ type: "uint8array" }));
+	await assert.rejects(cappedWorkbookZip(await outer.generateAsync({ type: "uint8array" })), /Export it to XLSX/);
+	const honest = new JSZip();
+	honest.file("Index.zip", await new JSZip().file("Index/Document.iwa", iwaChunk(132, expandingTags(2))).generateAsync({ type: "uint8array" }));
+	honest.file("Data/other.zip", "PK");
+	const rebuilt = await JSZip.loadAsync(await cappedWorkbookZip(await honest.generateAsync({ type: "uint8array" })));
+	assert.deepEqual(Object.keys(rebuilt.files).filter((n) => !rebuilt.files[n].dir), ["Index.zip"]);
+});
+
+test("odt spans can't widen the table past its column limit", async () => {
+	const zip = new JSZip();
+	const row = '<table:table-row><table:table-cell table:number-columns-spanned="1000" table:number-rows-spanned="65000"/>'.concat("<table:table-cell/>".repeat(10), "</table:table-row>");
+	zip.file("content.xml", `<office:document-content ${ODF_NS}><office:body><office:text><table:table>${row.repeat(3)}</table:table></office:text></office:body></office:document-content>`);
+	const doc = await readOdt(await zip.generateAsync({ type: "uint8array" }));
+	const cells = doc.blocks[0].rows[0].cells;
+	assert.equal(cells[0].colSpan, 500);
+	assert.equal(cells.length, 1, "cells past the 500th column are dropped");
+	assert.equal(cells[0].rowSpan, 3, "a row span ends at the last row drawn");
+	assert.equal(doc.blocks[0].rows[2].cells[0].rowSpan, 1);
+});
+
+test("pptx table spans are fitted to the column limit", () => {
+	const cell = (gridSpan) => ({ gridSpan, rowSpan: 1, merged: false, borders: {} });
+	const row = fitRow([cell(400), cell(400), cell(1)], 500);
+	assert.deepEqual(row.map((c) => c.gridSpan), [400, 100]);
+});
+
+test("odp style chains are walked at most 32 deep", async () => {
+	const styles = Array.from({ length: 50_000 }, (_, i) => `<style:style style:name="s${i}" style:family="presentation"${i ? ` style:parent-style-name="s${i - 1}"` : ""}/>`).join("");
+	const frames = '<draw:frame presentation:style-name="s49999" svg:x="0cm" svg:y="0cm" svg:width="1cm" svg:height="1cm"><draw:text-box><text:p>x</text:p></draw:text-box></draw:frame>'.repeat(500);
+	const zip = new JSZip();
+	zip.file("content.xml", `<office:document-content ${ODF_NS}><office:automatic-styles>${styles}</office:automatic-styles><office:body><office:presentation><draw:page>${frames}</draw:page></office:presentation></office:body></office:document-content>`);
+	const started = Date.now();
+	const deck = await readOdp(await zip.generateAsync({ type: "uint8array" }));
+	assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
+	assert.equal(deck.slides[0].elements.length, 500);
+});
+
+test("notebook attachment names can't reach the object prototype", () => {
+	const nb = parseNotebook(JSON.stringify({ cells: [{ cell_type: "markdown", source: "", attachments: { "p.png": { "image/png": "AAAA" } } }] }));
+	const att = nb.cells[0].attachments;
+	assert.equal(attachmentData(att, "attachment:constructor"), undefined);
+	assert.equal(attachmentData(att, "attachment:__proto__"), undefined);
+	assert.equal(attachmentData(att, "attachment:p.png"), "data:image/png;base64,AAAA");
+	assert.match(neutralizeRemoteImages("![x](attachment:toString)", att), /\[Image: x\]/);
+});
+
+test("notebook text outputs have their own budget", () => {
+	const outputs = Array.from({ length: 20 }, () => ({ output_type: "stream", name: "stdout", text: "x".repeat(1_000_000) }));
+	const nb = parseNotebook(JSON.stringify({ cells: outputs.map((o) => ({ cell_type: "code", source: "", outputs: [o] })) }));
+	const shown = nb.cells.flatMap((c) => c.outputs).reduce((n, o) => n + o.text.length, 0);
+	assert.ok(shown <= 6_000_000, `${shown} characters`);
+	assert.equal(nb.truncated, true);
 });

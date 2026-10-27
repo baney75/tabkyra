@@ -199,7 +199,7 @@ function arrowMarker(doc: Document, svg: SVGSVGElement, color: string, width: nu
 	return `url(#${id})`;
 }
 
-function renderShape(doc: Document, el: ShapeElement, urls: Map<string, string>): HTMLElement {
+function renderShape(doc: Document, el: ShapeElement, urls: Map<string, string>, slideNumber: number): HTMLElement {
 	const wrap = doc.createElement("div");
 	place(wrap, el.box);
 	// A straight line can have zero width or height; give it one pixel so it still draws.
@@ -243,7 +243,7 @@ function renderShape(doc: Document, el: ShapeElement, urls: Map<string, string>)
 		}
 		wrap.appendChild(svg);
 	}
-	if (el.text) wrap.appendChild(renderTextBody(doc, el.text, true));
+	if (el.text) wrap.appendChild(renderTextBody(doc, el.text, true, slideNumber));
 	return wrap;
 }
 
@@ -294,7 +294,7 @@ function borderCss(line: Line | null | undefined): string {
 	return `${Math.max(1, px(line.width))}px ${line.dash ? "dashed" : "solid"} ${line.color}`;
 }
 
-function renderTable(doc: Document, el: TableElement, urls: Map<string, string>): HTMLElement {
+function renderTable(doc: Document, el: TableElement, urls: Map<string, string>, slideNumber: number): HTMLElement {
 	const wrap = doc.createElement("div");
 	place(wrap, el.box);
 	wrap.style.height = "auto";
@@ -325,7 +325,7 @@ function renderTable(doc: Document, el: TableElement, urls: Map<string, string>)
 			td.style.borderRight = borderCss(cell.borders.r);
 			td.style.borderTop = borderCss(cell.borders.t);
 			td.style.borderBottom = borderCss(cell.borders.b);
-			if (cell.text) td.appendChild(renderTextBody(doc, cell.text, false));
+			if (cell.text) td.appendChild(renderTextBody(doc, cell.text, false, slideNumber));
 			tr.appendChild(td);
 		}
 		table.appendChild(tr);
@@ -368,7 +368,7 @@ function runCss(span: HTMLElement, style: RunStyle, scale: number) {
 	if (style.highlight) span.style.background = style.highlight;
 }
 
-function renderParagraph(doc: Document, p: TextParagraph, body: TextBody): HTMLElement {
+function renderParagraph(doc: Document, p: TextParagraph, body: TextBody, slideNumber: number): HTMLElement {
 	const div = doc.createElement("div");
 	const s = p.style;
 	const scale = body.fontScale;
@@ -422,14 +422,14 @@ function renderParagraph(doc: Document, p: TextParagraph, body: TextBody): HTMLE
 		}
 		if (!r.text) continue;
 		const span = doc.createElement("span");
-		span.textContent = r.text;
+		span.textContent = r.slideNumber ? String(slideNumber) : r.text;
 		runCss(span, r.style, scale);
 		div.appendChild(span);
 	}
 	return div;
 }
 
-function renderTextBody(doc: Document, body: TextBody, absolute: boolean): HTMLElement {
+function renderTextBody(doc: Document, body: TextBody, absolute: boolean, slideNumber: number): HTMLElement {
 	const box = doc.createElement("div");
 	if (absolute) {
 		box.style.position = "absolute";
@@ -448,7 +448,7 @@ function renderTextBody(doc: Document, body: TextBody, absolute: boolean): HTMLE
 		box.style.writingMode = "vertical-rl";
 		if (body.vertical === "vert270") box.style.transform = "rotate(180deg)";
 	}
-	for (const p of body.paragraphs) box.appendChild(renderParagraph(doc, p, body));
+	for (const p of body.paragraphs) box.appendChild(renderParagraph(doc, p, body, slideNumber));
 	return box;
 }
 
@@ -470,13 +470,13 @@ export function renderSlide(
 	for (const el of slide.elements) {
 		switch (el.kind) {
 			case "shape":
-				root.appendChild(renderShape(doc, el, urls));
+				root.appendChild(renderShape(doc, el, urls, slide.number));
 				break;
 			case "picture":
 				root.appendChild(renderPicture(doc, el, urls));
 				break;
 			case "table":
-				root.appendChild(renderTable(doc, el, urls));
+				root.appendChild(renderTable(doc, el, urls, slide.number));
 				break;
 			case "placeholder":
 				root.appendChild(renderPlaceholder(doc, el));

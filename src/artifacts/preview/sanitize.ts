@@ -79,7 +79,9 @@ export function sanitizeHtml(
 				let value = a.value.trim();
 				if (tag === "img" && name === "src") {
 					const resolved = resolveImage?.(value);
-					if (resolved) value = resolved;
+					// A resolved image is still checked: its prefix here, its base64 body when it was parsed.
+					if (typeof resolved === "string" && /^data:image\/(png|jpeg|gif|webp);base64,/.test(resolved))
+						value = resolved;
 					else if (!SAFE_IMAGE.test(value)) continue;
 				}
 				if (tag === "a" && name === "href" && !SAFE_LINK.test(value)) continue;
