@@ -299,3 +299,27 @@ questions too" (2026-10-27). Defaults chosen:
   user stopping it) withdraws the question with `ask_user.cancel`, which names that call and
   only ever reaches the calling agent's own questions.
 
+## D21. Side panel transcript and composer menus (Claude, 2026-10-27)
+
+The owner asked to clean up the side panel chat, remove the in-chat Artifacts pill, and add a
+`/` menu that runs skills and an `@` menu that references tabs (2026-10-27). Defaults chosen:
+
+- **Reasoning under 40 characters gets no row.** It is still shown inside the step it led to.
+- **A step list longer than 8 rows shows its last 5** behind an "N earlier steps" row.
+- **Per-step usage is a tooltip and part of the expanded row**, not a line under each step;
+  the run total below the composer is unchanged.
+- **Artifact tool calls stay full cards**: the card is how the user opens what was made.
+- **The `/` menu order** is site skills matching the current page, then the library, then site
+  skills for other sites. A name shows once, in its first section.
+- **A library skill runs by loading its SKILL.md into the user message**, with a note that its
+  tool names are Tabkyra's MCP tools and the panel agent uses its own (navigate, repl).
+- **References resolve when the message first goes to the model** (prompt, queue and Send now
+  all pass through `convertToLlm`), once per message, and are frozen on it. Messages loaded
+  with a saved chat are never resolved again.
+- **A referenced tab owned by any other session stays with it**, not only a bridge agent's:
+  the reference is consent for this chat, not permission to take another agent's tab.
+- **Browser pages, private tabs, tabs without a readable URL and tabs in another window are
+  not referenceable.** The menu lists only the panel's window; a typed id elsewhere is refused.
+- **References that fail to resolve are frozen as unusable**, with a toast, so a chip never
+  looks shared when nothing was.
+

@@ -30,12 +30,13 @@ export const defaultSkills: Skill[] = [
 	},
 	{
 		name: "google-calendar-events",
-		domainPatterns: ["calendar.google.com", "mail.google.com"],
+		// Its library drives the Calendar page only; Gmail (mail.google.com) is not a match.
+		domainPatterns: ["calendar.google.com"],
 		shortDescription: "Create Google Calendar events with custom reminders",
 		description:
 			"Create calendar events with reminders. Pass normal Date objects or ISO strings - no manual formatting needed.\n\n**Features:**\n- Accepts Date objects or ISO date strings\n- Language-independent selectors\n- Custom reminder times\n- Automatic date formatting\n- Automatically saves event\n\n**Limitations:**\n- Sets first reminder only (not multiple)\n\n**Important:** After creating event, navigate to day view in REPL to confirm it was created.",
 		createdAt: "2025-10-20T21:16:59.664Z",
-		lastUpdated: "2025-10-20T21:16:59.664Z",
+		lastUpdated: "2026-10-27T00:00:00.000Z",
 		examples:
 			"// Complete workflow from REPL\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\ntomorrow.setHours(12, 0, 0, 0);\n\nconst start = new Date(tomorrow);\nconst end = new Date(tomorrow);\nend.setHours(13, 0, 0, 0);\n\nconst formatDate = (date) => {\n  const year = date.getFullYear();\n  const month = String(date.getMonth() + 1).padStart(2, '0');\n  const day = String(date.getDate()).padStart(2, '0');\n  const hours = String(date.getHours()).padStart(2, '0');\n  const minutes = String(date.getMinutes()).padStart(2, '0');\n  const seconds = String(date.getSeconds()).padStart(2, '0');\n  return `${year}${month}${day}T${hours}${minutes}${seconds}`;\n};\n\nconst startStr = formatDate(start);\nconst endStr = formatDate(end);\n\n// Navigate to event creation\nawait navigate({ \n  url: `https://calendar.google.com/calendar/render?action=TEMPLATE&text=lunch with hp&dates=${startStr}/${endStr}` \n});\n\nawait new Promise(resolve => setTimeout(resolve, 3000));\n\n// Save event\nawait browserjs(async () => {\n  await window.gcal.saveEvent();\n});\n\n// Navigate to day view to confirm\nconst year = start.getFullYear();\nconst month = String(start.getMonth() + 1).padStart(2, '0');\nconst day = String(start.getDate()).padStart(2, '0');\nawait navigate({ url: `https://calendar.google.com/calendar/u/0/r/day/${year}/${month}/${day}` });",
 		library:
@@ -95,3 +96,19 @@ export const defaultSkills: Skill[] = [
 			"Complete YouTube automation - video controls, info extraction, transcripts, comments, playlists, and more",
 	},
 ];
+
+/**
+ * Earlier shipped versions of a default skill, by their `lastUpdated`. A stored copy that still
+ * carries one of these was never edited by the user, so startup replaces it with the current
+ * default. A copy the user changed has a different stamp and is left alone.
+ */
+export const SUPERSEDED_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
+	// Matched mail.google.com too, so it showed on every Gmail page.
+	"google-calendar-events": ["2025-10-20T21:16:59.664Z"],
+};
+
+/** Should startup replace the stored copy of a default skill with the shipped one? */
+export function shouldReplaceDefault(stored: Pick<Skill, "name" | "lastUpdated">, shipped: Skill): boolean {
+	if (stored.name !== shipped.name || stored.lastUpdated === shipped.lastUpdated) return false;
+	return SUPERSEDED_DEFAULTS[shipped.name]?.includes(stored.lastUpdated) ?? false;
+}

@@ -2,6 +2,7 @@ import { icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
+import { LIBRARY_SKILLS } from "virtual:library-skills";
 import {
 	Agent,
 	type AgentEvent,
@@ -21,9 +22,10 @@ import {
 	setAppStorage,
 	setArtifactViewerFactory,
 	setShowJsonMode,
+	setTranscriptRenderer,
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
-import { Circle, Download, History, Link, Plus, Settings, Square } from "lucide";
+import { Circle, Download, FileCode2, History, Link, Plus, Settings, Square } from "lucide";
 import { isBlockedModel, purgeRemovedSignIns, RemovedSignInError, resolveApiKey } from "./auth/policy.js";
 import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
@@ -31,6 +33,18 @@ import { dispatchToSandbox, setCdpMessageHandler } from "./browser/inject.js";
 import { BrowserSession, listSessions, sessionIdForTab, sessionOwningTab } from "./browser/session.js";
 import { helmMark } from "./components/HelmMark.js";
 import { Toast } from "./components/Toast.js";
+import { composerChips, knownSkills, knownTabs } from "./composer/chips.js";
+import { skillMenuItems, tabMenuItems } from "./composer/menus.js";
+import {
+	type ComposerRefs,
+	displayText,
+	failedRefs,
+	hasRefTokens,
+	leadingSkill,
+	REFS_RESOLVED,
+	resolveRefs,
+	type SkillRun,
+} from "./composer/refs.js";
 import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyDialog } from "./dialogs/ApiKeyDialog.js";
 import { ApiKeysTab } from "./dialogs/ApiKeysTab.js";
@@ -58,6 +72,7 @@ import { assertPrivateProxy, PRIVATE_MODE_KEY, privateModel, TRUSTED_HOSTS_KEY }
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { Recorder } from "./recording/recorder.js";
 import { TabkyraAppStorage } from "./storage/app-storage.js";
+import type { Skill } from "./storage/stores/skills-store.js";
 import { DebuggerTool } from "./tools/debugger.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
@@ -73,11 +88,15 @@ import { createArtifactViewer } from "./artifacts/viewers.js";
 import "./utils/live-reload.js";
 import { bridgeQuestions, watchBridgeQuestions } from "./ask/bridge-panel.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
+import { tabkyraTranscript } from "./transcript/render.js";
 import { tutorials } from "./tutorials.js";
 import { BUSY_BEAT_PREFIX, reserveRun } from "./update/gate.js";
 
 // Previews for more file types in the artifacts panel (src/artifacts/)
 setArtifactViewerFactory(createArtifactViewer);
+
+// The transcript reads as a log: agent text in full, the work between texts as compact rows.
+setTranscriptRenderer(tabkyraTranscript);
 
 // Register custom message renderers
 registerNavigationRenderer();
@@ -267,36 +286,137 @@ async function shareActiveTab(): Promise<void> {
 	renderApp();
 }
 
+/** The URL of the page the agent is on (the session's current tab), if it has one. */
+async function currentPageUrl(): Promise<string | undefined> {
+	try {
+		return (await browserSession?.currentTab())?.url;
+	} catch {
+		return undefined;
+	}
+}
+
 /**
- * Slash-command provider for the chat input: lists skills (recordings included),
- * site-scoped first, and inserts an @skill:<id> reference the agent retrieves.
+ * "/" in the chat input: site skills for the current page, then the bundled library, then site
+ * skills for other sites. Choosing one inserts `/<name>`; on send the skill runs with the rest
+ * of the message as its task (src/composer/refs.ts).
  */
 function buildSkillSlashProvider() {
 	return async (query: string) => {
-		let url: string | undefined;
-		try {
-			url = (await browserSession?.currentTab())?.url;
-		} catch {
-			/* ignore */
-		}
+		const url = await currentPageUrl();
 		const all = await storage.skills.list();
-		const onSite = url ? await storage.skills.list(url) : [];
-		const onSiteNames = new Set(onSite.map((s) => s.name));
-		const ordered = [...onSite, ...all.filter((s) => !onSiteNames.has(s.name))];
-		const q = query.toLowerCase();
-		const filtered = q
-			? ordered.filter(
-					(s) => s.name.toLowerCase().includes(q) || (s.shortDescription || "").toLowerCase().includes(q),
-				)
-			: ordered;
-		return filtered.slice(0, 20).map((s) => ({
-			id: s.name,
-			title: s.name,
-			description: s.shortDescription,
-			hint: onSiteNames.has(s.name) ? "this site" : s.domainPatterns[0],
-			value: `@skill:${s.name}`,
-		}));
+		const onSite = new Set(url ? (await storage.skills.list(url)).map((s) => s.name) : []);
+		const items = skillMenuItems(query, all, onSite, LIBRARY_SKILLS);
+		for (const item of items) knownSkills.add(item.id);
+		return items;
 	};
+}
+
+/** "@" in the chat input: the open tabs in this window, this chat's own first. */
+function buildTabMentionProvider() {
+	return async (query: string) => {
+		const tabs = await chrome.tabs.query({ windowId: currentWindowId });
+		const otherOwners = new Map<number, string>();
+		for (const s of await listSessions()) {
+			if (s.id === browserSession?.id) continue;
+			for (const id of s.tabIds) otherOwners.set(id, s.id.startsWith("bridge-") ? `agent ${s.label}` : s.label);
+		}
+		const items = tabMenuItems(query, tabs, {
+			sessionTabIds: new Set(browserSession?.tabIds ?? []),
+			otherOwners,
+			isRestricted: isRestrictedUrl,
+		});
+		for (const t of tabs)
+			if (t.id !== undefined && !t.incognito)
+				knownTabs.set(t.id, { title: t.title ?? "", url: t.url ?? "", favIconUrl: t.favIconUrl });
+		return items;
+	};
+}
+
+function siteSkillRun(s: Skill): SkillRun {
+	return {
+		name: s.name,
+		source: "site",
+		instructions: `${s.description}
+
+Its library functions are available inside browserjs() on pages matching: ${s.domainPatterns.join(", ")}.
+
+## Examples
+\`\`\`javascript
+${s.examples}
+\`\`\``,
+	};
+}
+
+/** A skill chosen with "/": the current page's site skills first, then the library, then other site skills. */
+async function findSkill(name: string): Promise<SkillRun | undefined> {
+	const url = await currentPageUrl();
+	const onSite = url ? (await storage.skills.list(url)).find((s) => s.name === name) : undefined;
+	if (onSite) return siteSkillRun(onSite);
+	const lib = LIBRARY_SKILLS.find((s) => s.name === name);
+	if (lib) return { name, source: "library", instructions: lib.text };
+	const site = await storage.skills.get(name);
+	return site ? siteSkillRun(site) : undefined;
+}
+
+type RefMessage = AgentMessage & { tabkyraRefs?: ComposerRefs | null };
+
+/**
+ * Resolve the composer references of user messages sent from this panel, once each, the first
+ * time they go to the model (prompt, queue and Send now all pass through here). The result is
+ * frozen on the message so a reload sends the same thing. Messages loaded with a saved chat
+ * are never resolved again.
+ */
+async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Promise<void> {
+	for (const m of messages as RefMessage[]) {
+		if ((m.role !== "user" && m.role !== "user-with-attachments") || loaded.has(m) || m.tabkyraRefs !== undefined)
+			continue;
+		const text =
+			typeof m.content === "string"
+				? m.content
+				: m.content
+						.filter((c) => c.type === "text")
+						.map((c) => c.text)
+						.join("\n");
+		if (!hasRefTokens(text)) {
+			m.tabkyraRefs = null;
+			continue;
+		}
+		let refs = await resolveRefs(text, {
+			getTab: (id) => chrome.tabs.get(id).catch(() => undefined),
+			ownerOf: async (id) => {
+				const o = await sessionOwningTab(id);
+				return o ? { id: o.id, label: o.label } : undefined;
+			},
+			// The live session: the first save renames it while this runs.
+			sessionId: () => browserSession?.id ?? "",
+			windowId: currentWindowId,
+			adopt: async (id, makeCurrent) => {
+				if (!browserSession) throw new Error("No browser session");
+				return browserSession.adoptIfFree(id, makeCurrent);
+			},
+			isRestricted: isRestrictedUrl,
+			findSkill,
+			skillNames: async () => [
+				...(await storage.skills.list()).map((s) => s.name),
+				...LIBRARY_SKILLS.map((s) => s.name),
+			],
+		}).catch((err) => {
+			// Nothing was shared and no skill loaded; say so rather than show chips that look fine.
+			console.error("Resolving references failed:", err);
+			Toast.error("Couldn't share the referenced tabs or load the skill");
+			return failedRefs(text);
+		});
+		if (refs && !refs.skill && refs.tabs.length === 0) refs = undefined;
+		m.tabkyraRefs = refs ?? null;
+		for (const t of refs?.tabs ?? []) {
+			const name = `"${t.title || `Tab ${t.id}`}"`;
+			if (t.status === "other-agent") Toast.error(`${name} stays with ${t.owner}; it was not shared`);
+			else if (t.status === "unavailable") Toast.error(`${name} can't be shared with the agent`);
+			else if (t.status === "gone") Toast.error(`Tab ${t.id} was closed before the message was sent`);
+		}
+		// Sent messages already on screen redraw their chips with the outcome.
+		window.dispatchEvent(new Event(REFS_RESOLVED));
+	}
 }
 
 async function toggleRecording() {
@@ -485,7 +605,8 @@ const generateTitle = (messages: AgentMessage[]): string => {
 		text = textBlocks.map((c) => c.text || "").join(" ");
 	}
 
-	text = text.trim();
+	// A chosen skill or tab shows as a chip; the title reads the words, not the tokens.
+	text = displayText(text, leadingSkill(text, knownSkills)).trim() || text.trim();
 	if (!text) return "";
 
 	const sentenceEnd = text.search(/[.!?]/);
@@ -675,6 +796,8 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		defaultModel = getModel("anthropic", "claude-sonnet-4-6");
 	}
 
+	// Messages from a saved chat keep what they were sent with; only new ones get references resolved.
+	const loadedMessages = new WeakSet<object>(initialState?.messages ?? []);
 	agent = new Agent({
 		initialState: initialState
 			? { ...initialState, model: initialState.model ?? defaultModel }
@@ -685,7 +808,10 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 					messages: [],
 					tools: [],
 				},
-		convertToLlm: browserMessageTransformer,
+		convertToLlm: async (messages) => {
+			await freezeRefs(messages, loadedMessages);
+			return browserMessageTransformer(messages);
+		},
 		toolExecution: "sequential",
 		streamFn: uncappedStreamFn(
 			createStreamFn(async () => {
@@ -873,6 +999,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		chatPanel.agentInterface.enableThinkingSelector = false;
 		// "/" in the chat input lists skills (recordings included) for the site.
 		chatPanel.agentInterface.slashCommandProvider = buildSkillSlashProvider();
+		// "@" lists the window's tabs; a chosen one is shared with the agent on send.
+		chatPanel.agentInterface.mentionProvider = buildTabMentionProvider();
+		chatPanel.agentInterface.composerAccessory = composerChips;
 		// ArrowUp in an empty composer recalls the last prompt for editing or resending.
 		chatPanel.agentInterface.historyProvider = () => {
 			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
@@ -930,6 +1059,27 @@ const newSession = () => {
 // ============================================================================
 // RENDER
 // ============================================================================
+/** Header button for the session's artifacts, with their count; hidden until there is one. */
+function artifactsButton() {
+	const count = chatPanel?.artifactsCount ?? 0;
+	if (count === 0) return "";
+	const label = `Artifacts (${count})`;
+	return html`<button
+		type="button"
+		class="relative inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-secondary text-foreground"
+		title=${label}
+		aria-label=${label}
+		@click=${() => chatPanel?.openArtifacts()}
+	>
+		${icon(FileCode2, "sm")}
+		<span
+			class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 text-center tabular-nums"
+			aria-hidden="true"
+			>${count}</span
+		>
+	</button>`;
+}
+
 const renderApp = () => {
 	const appHtml = html`
 		<div class="w-full h-full flex flex-col bg-background text-foreground overflow-hidden">
@@ -1023,6 +1173,7 @@ const renderApp = () => {
 					}
 				</div>
 				<div class="flex items-center gap-1 px-2">
+					${artifactsButton()}
 					${Button({
 						variant: "ghost",
 						size: "sm",
@@ -1252,8 +1403,10 @@ async function initApp() {
 	// Proxy disabled — CORS is handled locally via declarativeNetRequest rules
 	await storage.settings.set("proxy.enabled", false);
 
-	// Create ChatPanel
+	// Create ChatPanel. Artifacts open from the header button and from their tool cards, not a pill over the chat.
 	chatPanel = new ChatPanel();
+	chatPanel.showArtifactsPill = false;
+	chatPanel.onArtifactsCountChange = () => renderApp();
 
 	// Handle test steps
 	if (await testSteps()) {

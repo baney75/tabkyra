@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Message } from "@mariozechner/pi-ai";
+import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
 import { noAnswer, outcomeText, validateAskParams } from "../ask/core.js";
+import { type ComposerRefs, refsForModel } from "../composer/refs.js";
 import type { NavigationMessage } from "./NavigationMessage.js";
 
 // Helper: Check if a message has toolCall blocks
@@ -85,7 +86,35 @@ export async function browserMessageTransformer(messages: AgentMessage[]): Promi
 		}
 
 		// Filter non-LLM messages
-		if (m.role !== "user" && m.role !== "assistant" && m.role !== "toolResult" && m.role !== "navigation") {
+		if (
+			m.role !== "user" &&
+			m.role !== "user-with-attachments" &&
+			m.role !== "assistant" &&
+			m.role !== "toolResult" &&
+			m.role !== "navigation"
+		) {
+			continue;
+		}
+
+		// Files and images sent with a message: the text, then each image and each document's text.
+		if (m.role === "user-with-attachments") {
+			const { tabkyraRefs, attachments, content, timestamp } = m as {
+				tabkyraRefs?: ComposerRefs;
+				attachments?: AttachmentLike[];
+				content: string | Array<{ type: string; text?: string }>;
+				timestamp: number;
+			};
+			const base = withRefs({ role: "user", content, timestamp } as Message & { role: "user" }, tabkyraRefs);
+			const parts: Array<TextContent | ImageContent> =
+				typeof base.content === "string"
+					? [{ type: "text", text: base.content }]
+					: [...(base.content as Array<TextContent | ImageContent>)];
+			for (const a of attachments ?? []) {
+				if (a.type === "image") parts.push({ type: "image", data: a.content, mimeType: a.mimeType });
+				else if (a.type === "document" && a.extractedText)
+					parts.push({ type: "text", text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}` });
+			}
+			transformed.push({ ...base, content: parts } as Message);
 			continue;
 		}
 
@@ -113,8 +142,8 @@ ${skillsInfo}
 </instructions>`,
 			} as Message);
 		} else if (m.role === "user") {
-			const { attachments, ...rest } = m as any;
-			transformed.push(rest as Message);
+			const { attachments, tabkyraRefs, ...rest } = m as any;
+			transformed.push(withRefs(rest as Message & { role: "user" }, tabkyraRefs as ComposerRefs | undefined));
 		} else {
 			transformed.push(m as Message);
 		}
@@ -157,4 +186,25 @@ function answerCutOffQuestions(messages: Message[]): Message[] {
 		}
 	}
 	return out;
+}
+
+/** The fields of pi-web-ui's Attachment the transformer reads. */
+interface AttachmentLike {
+	type: "image" | "document";
+	fileName: string;
+	mimeType: string;
+	content: string;
+	extractedText?: string;
+}
+
+/** A user message whose composer references were resolved: the model gets the expanded text. */
+function withRefs(m: Message & { role: "user" }, refs: ComposerRefs | undefined): Message {
+	if (!refs) return m;
+	if (typeof m.content === "string") return { ...m, content: refsForModel(m.content, refs) };
+	const text = m.content
+		.filter((c) => c.type === "text")
+		.map((c) => (c as { text: string }).text)
+		.join("\n");
+	const others = m.content.filter((c) => c.type !== "text");
+	return { ...m, content: [{ type: "text", text: refsForModel(text, refs) }, ...others] };
 }
