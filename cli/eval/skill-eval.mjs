@@ -23,7 +23,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cli, launchFixtureBrowser, repo, sleep } from "./fixture-browser.mjs";
+import { cli, HARNESS_SESSION_VARS, launchFixtureBrowser, repo, sleep } from "./fixture-browser.mjs";
 
 const skillText = readFileSync(join(repo, "skills", "tabkyra", "SKILL.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "");
 const arg = (name, fallback) => {
@@ -197,9 +197,28 @@ writeFileSync(
 	mcpConfig,
 	JSON.stringify({ mcpServers: { tabkyra: { command: process.execPath, args: [cli, "mcp"], env: { HOME: fx.home, TABKYRA_SOCKET_DIR: fx.socketDir, TABKYRA_AUTO_ALLOW: "1" } } } }),
 );
-// A project folder (a git repo) the agent works in, like a real harness session.
-const workdir = mkdtempSync(join(tmpdir(), "tk-eval-cwd-"));
-execFileSync("git", ["init", "-q", workdir]);
+// A project folder (a git repo) the agent works in, like a real harness session. Each row gets a
+// fresh one, so a session one row leaves behind is never resumed by the next.
+let workdir;
+const workdirs = [];
+function newWorkdir() {
+	workdir = mkdtempSync(join(tmpdir(), "tk-eval-cwd-"));
+	workdirs.push(workdir);
+	execFileSync("git", ["init", "-q", workdir]);
+}
+
+// The browser, the fixture server and the temp folders go away however the run ends.
+async function cleanup() {
+	server.close();
+	await fx.close().catch(() => {});
+	for (const dir of workdirs) rmSync(dir, { recursive: true, force: true });
+}
+for (const event of ["uncaughtException", "unhandledRejection"])
+	process.on(event, async (err) => {
+		console.error(err);
+		await cleanup();
+		process.exit(1);
+	});
 
 function runClaude(prompt, withSkill) {
 	const args = [
@@ -229,7 +248,7 @@ function runClaude(prompt, withSkill) {
 		const env = { ...process.env };
 		for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"]) delete env[k];
 		// The eval may itself run inside a harness; its session variables must not leak into the model's.
-		for (const k of ["TABKYRA_SESSION", "TABKYRA_CLIENT_NAME", "CLAUDE_SESSION_ID", "CODEX_THREAD_ID"]) delete env[k];
+		for (const k of HARNESS_SESSION_VARS) delete env[k];
 		const child = spawn("claude", args, { cwd: workdir, env, stdio: ["ignore", "pipe", "pipe"] });
 		let out = "";
 		child.stdout.on("data", (d) => {
@@ -401,6 +420,7 @@ for (let rep = 1; rep <= REPS; rep++) {
 	for (const task of TASKS) {
 		for (const arm of ARMS) {
 			reset();
+			newWorkdir();
 			await closeSiteTabs();
 			await fx.waitConnected();
 			const run = await task.run(arm === "skill");
@@ -451,7 +471,5 @@ for (const task of [...TASKS.map((t) => t.id), "all"]) {
 }
 console.log(`\nRaw results: ${OUT}`);
 
-server.close();
-await fx.close();
-rmSync(workdir, { recursive: true, force: true });
+await cleanup();
 process.exit(0);

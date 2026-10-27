@@ -31,7 +31,7 @@ export const COMMANDS: CommandSpec[] = [
 	{ name: "setup", selfParsed: true, args: "[--yes]", what: "Build, register, load, connect and add to your agents", group: "Get started", flags: ["--yes", "--no-wait", "--timeout"] },
 	{ name: "status", args: "[--json]", what: "Is the extension connected? Which sites are allowed?", group: "Get started", flags: ["--json"] },
 	{ name: "mcp", args: "", what: "MCP server on stdio (what Claude Code, Codex, OpenCode run)", group: "Agents" },
-	{ name: "pi-extension", positional: 1, args: "", what: "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts", group: "Agents" },
+	{ name: "pi-extension", positional: 1, args: "[dir]", what: "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts", group: "Agents" },
 	{
 		name: "skill",
 		selfParsed: true,
@@ -183,7 +183,12 @@ export function argsProblem(command: string, args: string[]): string | undefined
 	const positional = args.filter((a, i) => !a.startsWith("-") && !(VALUE_FLAGS.has(args[i - 1] ?? "") && !args[i - 1].includes("=")));
 	let flags = spec.flags ?? [];
 	let max = spec.positional ?? 0;
-	let usage = `Usage: tabkyra ${spec.name === "version" ? "version" : spec.name}${flags.map((f) => ` [${f}]`).join("")}${spec.args && !spec.args.startsWith("[") ? ` ${spec.args}` : ""}`;
+	// The usage line: the flags, then the arguments the help shows (anything that isn't a flag).
+	const argWords = spec.args
+		.split(" ")
+		.filter((w) => w && !/^\[?--/.test(w))
+		.join(" ");
+	let usage = `Usage: tabkyra ${spec.name}${flags.map((f) => ` [${f}]`).join("")}${argWords ? ` ${argWords}` : ""}`;
 	if (spec.subcommands) {
 		const sub = spec.subcommands.find((x) => x.name === positional[0]);
 		// An unknown or missing subcommand is the command's own usage error, with its list.
@@ -255,6 +260,8 @@ export function completionScript(shell: string): string | undefined {
 			"    compadd -- $flags",
 			"  fi",
 			"}",
+			"# compdef exists once compinit has run; load it if the user's zshrc hasn't.",
+			"if (( ! $+functions[compdef] )); then autoload -Uz compinit && compinit; fi",
 			"compdef _tabkyra tabkyra",
 			"",
 		);

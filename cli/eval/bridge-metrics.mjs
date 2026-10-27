@@ -80,12 +80,13 @@ async function call(client, name, args = {}) {
 	]);
 	clearTimeout(timer);
 	const ms = Math.round(performance.now() - t0);
-	if (res.hang) return { outcome: "hang", ms, text: "" };
+	if (res.hang) return { outcome: "hang", ms, text: "", full: "" };
 	const text = (res.content ?? [])
 		.filter((c) => c.type === "text")
 		.map((c) => c.text)
 		.join("\n");
-	return { outcome: res.isError ? "error" : "ok", ms, text: text.slice(0, 300) };
+	// Score on `full`; `text` is the short form printed and stored in the report.
+	return { outcome: res.isError ? "error" : "ok", ms, text: text.slice(0, 300), full: text };
 }
 
 /** Does an error tell the agent what to do next (retry, or check first)? */
@@ -286,7 +287,7 @@ if (ONLY.has("reload")) {
 
 		// After it all: does the session still have its tab?
 		const after = await call(client, "tabs_context");
-		row.keptTab = /\/counter/.test(after.text);
+		row.keptTab = /\/counter/.test(after.full);
 		cycles.push(row);
 		console.log(
 			`reload cycle ${i + 1}: ${["readWhileDown", "clickWhileDown", "clickInFlight", "readInFlight", "readAfterHostKill"]
@@ -329,8 +330,8 @@ if (ONLY.has("multi")) {
 	const tabs = await fx.tabsWithGroups();
 	const mine = agents.map((a, i) => ({
 		id: a.id,
-		seesOwn: contexts[i].text.includes(`agent=${a.id}`),
-		seesOthers: agents.filter((b) => b.id !== a.id).some((b) => contexts[i].text.includes(`agent=${b.id}`)),
+		seesOwn: contexts[i].full.includes(`agent=${a.id}`),
+		seesOthers: agents.filter((b) => b.id !== a.id).some((b) => contexts[i].full.includes(`agent=${b.id}`)),
 		group: tabs.find((t) => t.url.includes(`agent=${a.id}`))?.group ?? null,
 	}));
 	const groups = new Set(mine.map((m) => m.group));
@@ -365,12 +366,24 @@ if (ONLY.has("groups")) {
 		console.log(`groups ${pass ? "PASS" : "FAIL"} ${id}: ${detail}`);
 	};
 	const projectName = project.split("/").pop();
-	// One scenario that throws (say, no session record to read) fails itself, not the other twelve.
+	// Every check, declared up front: the score is always out of these thirteen. A scenario that
+	// throws fails the checks it hadn't reached, not the others.
+	const ALL = {
+		identity: ["identity", "stable-after-reload", "resume-same-project", "resume-keeps-color"],
+		colors: ["distinct-colors"],
+		close: ["close-group-ends-session"],
+		"drag-out": ["drag-out-hands-to-user", "drag-out-agent-told"],
+		"drag-in": ["drag-in-gives-to-agent"],
+		collapse: ["collapse-respected"],
+		ungroup: ["ungroup-releases"],
+		cap: ["tab-cap"],
+		window: ["window-close-survives"],
+	};
 	const scenario = async (label, fn) => {
 		try {
 			await fn();
 		} catch (err) {
-			check(`${label} (threw)`, false, err.message.slice(0, 160));
+			for (const id of ALL[label]) if (!checks[id]) check(id, false, `threw: ${err.message.slice(0, 160)}`);
 		}
 	};
 	const agent = async (session, extra = {}) =>
@@ -394,7 +407,7 @@ if (ONLY.has("groups")) {
 		c = (await mcpClient(env, { cwd: project })).client;
 		const ctx = await call(c, "tabs_context");
 		const resumedColor = await fx.swEval(`chrome.tabs.get(${tab.id}).then((t) => t.groupId === -1 ? null : chrome.tabGroups.get(t.groupId)).then((g) => g && g.color)`);
-		const resumed = ctx.text.includes("agent=identity");
+		const resumed = ctx.full.includes("agent=identity");
 		check("resume-same-project", resumed, "a new harness process in the same project sees the old tab");
 		check("resume-keeps-color", resumed && resumedColor === color, `resumed ${resumed}; color ${color} -> ${resumedColor}`);
 		await c.close();
@@ -434,9 +447,11 @@ if (ONLY.has("groups")) {
 		await sleep(1000);
 		const ctx = await call(c, "tabs_context");
 		const now = (await pageTabs("agent=out2"))[0];
-		check("drag-out-hands-to-user", !ctx.text.includes("agent=out2") && now?.group === null, `agent still lists it: ${ctx.text.includes("agent=out2")}; tab group now ${JSON.stringify(now?.group)}`);
-		const told = /out2|handed|released|user took|no longer/i.test(ctx.text);
-		check("drag-out-agent-told", told && !ctx.text.includes(`"url":"${site}/page?agent=out2"`), `tabs_context: ${ctx.text.slice(0, 160)}`);
+		const listed = ctx.full.includes("agent=out2");
+		check("drag-out-hands-to-user", !listed && now?.group === null, `agent still lists it: ${listed}; tab group now ${JSON.stringify(now?.group)}`);
+		// Told: a message about the move, and the tab no longer among the agent's tabs.
+		const told = /(took|handed|released|moved|dragged)[^\n]*out of your group|theirs now/i.test(ctx.full);
+		check("drag-out-agent-told", told && !listed, `tabs_context: ${ctx.text.slice(0, 160)}`);
 		await c.close();
 	});
 
@@ -450,7 +465,7 @@ if (ONLY.has("groups")) {
 		await fx.swEval(`chrome.tabs.group({ tabIds: [${userTab}], groupId: ${session.groupId} })`);
 		await sleep(1000);
 		const ctx = await call(c, "tabs_context");
-		check("drag-in-gives-to-agent", ctx.text.includes("agent=user-in"), `agent lists the dragged-in tab: ${ctx.text.includes("agent=user-in")}`);
+		check("drag-in-gives-to-agent", ctx.full.includes("agent=user-in"), `agent lists the dragged-in tab: ${ctx.full.includes("agent=user-in")}`);
 		await c.close();
 	});
 
@@ -477,7 +492,7 @@ if (ONLY.has("groups")) {
 		await sleep(1000);
 		const ctx = await call(c, "tabs_context");
 		const tabs = await pageTabs("agent=ug");
-		check("ungroup-releases", !/agent=ug/.test(ctx.text) && tabs.every((t) => t.group === null), `agent lists ${(/agent=ug1/.test(ctx.text) ? 1 : 0) + (/agent=ug2/.test(ctx.text) ? 1 : 0)} of 2; groups now ${tabs.map((t) => t.group).join(",")}`);
+		check("ungroup-releases", !/agent=ug/.test(ctx.full) && tabs.every((t) => t.group === null), `agent lists ${(/agent=ug1/.test(ctx.full) ? 1 : 0) + (/agent=ug2/.test(ctx.full) ? 1 : 0)} of 2; groups now ${tabs.map((t) => t.group).join(",")}`);
 		await c.close();
 	});
 
@@ -516,7 +531,8 @@ if (ONLY.has("groups")) {
 		await c.close();
 	});
 
-	results.groups = { checks, passed: Object.values(checks).filter((c) => c.pass).length, total: Object.keys(checks).length };
+	const total = Object.values(ALL).flat().length;
+	results.groups = { checks, passed: Object.values(checks).filter((c) => c.pass).length, total };
 	console.log(`groups: ${results.groups.passed}/${results.groups.total} behaviors as specified`);
 }
 

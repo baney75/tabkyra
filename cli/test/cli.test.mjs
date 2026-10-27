@@ -89,6 +89,7 @@ test("options are checked per subcommand, and a value option needs its value", (
 		assert.match(r.err, /Unknown option|needs a value|Usage/);
 	}
 	assert.match(run("serve", "--port").err, /--port needs a value/);
+	assert.match(run("pi-extension", "a", "b").err, /Usage: tabkyra pi-extension \[dir\]/);
 	// The value of a value option isn't counted as an extra argument.
 	assert.equal(run("token", "list", "--json").code, 0);
 });
@@ -111,6 +112,13 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.equal(complete("tabkyra doctor --j"), "--json");
 	if (spawnSync("zsh", ["--version"]).status === 0) assert.equal(spawnSync("zsh", ["-n"], { input: zsh.out }).status, 0, "zsh script has a syntax error");
 	else t.diagnostic("zsh is not installed here: the zsh script's syntax was not checked");
+	// Loaded from a zshrc that never ran compinit, it must not fail with "command not found: compdef".
+	if (spawnSync("zsh", ["--version"]).status === 0) {
+		const plain = spawnSync("zsh", ["-f", "-c", `eval "$(cat)"; whence -w _tabkyra`], { input: zsh.out, encoding: "utf8", env: { ...process.env, HOME: home } });
+		assert.equal(plain.status, 0, plain.stderr);
+		assert.doesNotMatch(plain.stderr, /compdef/);
+		assert.match(plain.stdout, /_tabkyra: function/);
+	}
 	// Hidden aliases stay out.
 	assert.doesNotMatch(bash, /\byolo\b/);
 	const bad = run("completion", "powershell");

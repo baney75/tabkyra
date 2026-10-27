@@ -19,6 +19,9 @@ export const repo = join(here, "..", "..");
 export const cli = join(repo, "cli", "dist", "index.js");
 export const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
 
+/** Variables that pick a harness session; the evals clear them so an outer harness can't. */
+export const HARNESS_SESSION_VARS = ["TABKYRA_SESSION", "TABKYRA_CLIENT_NAME", "CLAUDE_SESSION_ID", "CODEX_THREAD_ID", "OMP_SESSION_ID", "PI_SESSION_ID"];
+
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function until(fn, ms, what = "a condition") {
@@ -70,7 +73,7 @@ export async function launchFixtureBrowser({ extraEnv = {} } = {}) {
 	const env = { ...process.env, HOME: home, TABKYRA_SOCKET_DIR: socketDir, TABKYRA_AUTO_ALLOW: "1", ...extraEnv };
 	// The eval may itself run inside a harness: its session variables must not decide which
 	// session the measured clients share.
-	for (const k of ["TABKYRA_SESSION", "TABKYRA_CLIENT_NAME", "CLAUDE_SESSION_ID", "CODEX_THREAD_ID", "OMP_SESSION_ID", "PI_SESSION_ID"]) if (!(k in extraEnv)) delete env[k];
+	for (const k of HARNESS_SESSION_VARS) if (!(k in extraEnv)) delete env[k];
 	execFileSync(process.execPath, [cli, "install"], { env, stdio: "ignore" });
 	const ext = join(repo, "dist-chrome");
 	const browser = spawn(

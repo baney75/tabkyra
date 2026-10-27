@@ -79,7 +79,7 @@ tabkyra completion fish > ~/.config/fish/completions/tabkyra.fish
 ```
 
 The launcher `tabkyra install` writes (`~/.config/tabkyra/tabkyra`, what harness configs run)
-sets `NODE_COMPILE_CACHE`, which cuts a start of `tabkyra mcp` from about 115 ms to 103 ms
+sets `NODE_COMPILE_CACHE`, which cuts a start of `tabkyra mcp` from about 119 ms to 106 ms
 on Node 22.1+ (median of 7, Apple M-series).
 
 ## Harness setup

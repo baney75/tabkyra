@@ -8,7 +8,7 @@
 - `cli/eval/bridge-metrics.mjs` (tools/list size and real token cost, cold start, calls across forced extension reloads and host kills, three clients at once, thirteen tab group behaviors) and a `sessions` suite in `cli/eval/skill-eval.mjs` (multitab, resume, parallel, handover, reload), on a shared throwaway browser (`cli/eval/fixture-browser.mjs`). Baseline in `docs/benchmarks.md`.
 
 ### Changed
-- The launcher harnesses run (`~/.config/tabkyra/tabkyra`) sets `NODE_COMPILE_CACHE`: `tabkyra mcp` starts in about 103 ms instead of 115 ms.
+- The launcher harnesses run (`~/.config/tabkyra/tabkyra`) sets `NODE_COMPILE_CACHE`: `tabkyra mcp` starts in about 106 ms instead of 119 ms (`bridge-metrics.mjs --only launcher`, one run, median of 7 each).
 
 ### Fixed
 - `tabkyra --version` said 0.1.0 while the extension was 1.1.9. The CLI now takes its version from `static/manifest.chrome.json`, the one place a release sets it.
