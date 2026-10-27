@@ -257,8 +257,12 @@ function runClaude(prompt, withSkill) {
 		env.MCP_TOOL_TIMEOUT = "30000";
 		const child = spawn("claude", args, { cwd: workdir, env, stdio: ["ignore", "pipe", "pipe"] });
 		let out = "";
+		let err = "";
 		child.stdout.on("data", (d) => {
 			out += d;
+		});
+		child.stderr.on("data", (d) => {
+			err = (err + d).slice(-4000);
 		});
 		const timer = setTimeout(() => child.kill("SIGTERM"), RUN_TIMEOUT_MS);
 		child.on("close", (code) => {
@@ -290,7 +294,10 @@ function runClaude(prompt, withSkill) {
 				}
 			}
 			const result = events.find((e) => e.type === "result");
-			resolve({ code, ms: Date.now() - t0, calls, errors, toolText, answer: result?.result ?? "", usage: result?.usage, cost: result?.total_cost_usd });
+			// A run that failed or was killed keeps its last stream events and stderr, so a stall can
+			// be told apart: model API, the claude CLI, or a tool call that never returned.
+			const tail = code === 0 ? undefined : { events: events.slice(-6).map((e) => JSON.stringify(e).slice(0, 400)), stderr: err.slice(-1500) };
+			resolve({ code, ms: Date.now() - t0, calls, errors, toolText, answer: result?.result ?? "", usage: result?.usage, cost: result?.total_cost_usd, tail });
 		});
 	});
 }
@@ -303,6 +310,7 @@ function combine(runs) {
 		calls: runs.flatMap((r) => r.calls),
 		errors: runs.flatMap((r) => r.errors),
 		answer: runs.map((r) => r.answer).join("\n---\n"),
+		tail: runs.find((r) => r.tail)?.tail,
 	};
 }
 
@@ -450,6 +458,7 @@ for (let rep = 1; rep <= REPS; rep++) {
 				seconds: Math.round(run.ms / 1000),
 				exit: run.code,
 				answer: run.answer.slice(0, 400),
+				...(run.tail ? { tail: run.tail } : {}),
 				calls: run.calls.map((c) => c.name),
 			};
 			results.push(row);
