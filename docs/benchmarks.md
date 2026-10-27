@@ -63,3 +63,65 @@ SITEGEIST_SESSION=demo claude -p "Open https://news.ycombinator.com and list the
   --allowedTools "mcp__sitegeist__*"
 sitegeist debug     # timings for what just happened
 ```
+
+# Sessions, resilience and tab groups, 2026-10-27
+
+Two scripts measure what an agent goes through when it works in sessions, so every change to
+the MCP server, the bridge or the session model is compared with the same numbers.
+
+- `cli/eval/skill-eval.mjs --suite sessions` runs scripted tasks through `claude -p` with
+  Haiku (a small model, so tool ergonomics show) against a local fixture site in a headless
+  throwaway Chromium. Scores come from the fixture server and the browser's own tabs and
+  groups. Tasks: **multitab** (compare two price lists open at once, close the tabs),
+  **resume** (one harness process types a draft, the extension reloads, a second process in
+  the same project must finish it in the same tab), **parallel** (two agents in one project at
+  once, no cross-talk), **handover** (give the cart tab to the user, out of the agent's group),
+  **reload** (the extension reloads right after the first item lands in the cart).
+- `cli/eval/bridge-metrics.mjs` needs no model: the tools/list and instructions payload
+  (bytes, and with `--claude` the real input-token cost of a turn with the server attached),
+  cold start to the first tool result, calls sent while the extension reloads or the native
+  host is killed (with a click in flight, which must never run twice), three clients at once,
+  and thirteen tab group behaviors (identity, colors, and what closing, dragging out,
+  dragging in, collapsing and ungrouping do, reloads, a tab cap, a closed window).
+
+Both use `cli/eval/fixture-browser.mjs`, which turns on developer mode in the throwaway
+profile: without it this Chromium disables an unpacked extension the moment it reloads, so a
+forced reload would unload Tabkyra for good.
+
+```bash
+npm run build && (cd cli && npm run build)
+node cli/eval/bridge-metrics.mjs --cycles 3 --claude
+node cli/eval/skill-eval.mjs --suite sessions --reps 2
+node cli/eval/skill-eval.mjs --suite skill --reps 2
+```
+
+## Baseline (main at 9e37df3, v1.1.9)
+
+| Measure | Baseline |
+| --- | --- |
+| Tools listed | 30 |
+| tools/list + instructions | 23,976 + 2,444 bytes |
+| Input tokens the server adds to every turn (`claude -p`, Haiku) | 10,473 |
+| Cold start: initialize / first tool result (median of 5) | 130 ms / 141 ms |
+| Calls across forced reloads and host kills (3 cycles, 15 calls) | 15 answered, 0 hangs |
+| Cycles where a click in flight during a reload ran twice | **3 of 3** |
+| Three clients at once: separate groups / cross-talk / labels naming the project | yes / 0 / 0 of 3 |
+| Tab group behaviors as specified | 5 of 13 |
+
+Session tasks, Haiku, 2 reps, MCP server only:
+
+| Task | Success | Mean tool calls | Mean tool errors | Mean seconds |
+| --- | --- | --- | --- | --- |
+| multitab | 2/2 | 8.0 | 0.0 | 11.5 |
+| resume | 0/2 | 11.5 | 0.0 | 13.0 |
+| parallel | 1/2 | 26.0 | 2.5 | 17.0 |
+| handover | 0/2 | 13.0 | 0.0 | 17.0 |
+| reload | 2/2 | 18.5 | 0.5 | 19.5 |
+| all | 5/10 | 15.4 | 0.6 | 15.6 |
+
+What failed: a new harness process gets a new session, so **resume** can't find the tab it
+left; there is no way to give a tab to the user, so **handover** leaves it in the agent's
+group; the client replays a request whose reply a reload cut off, so a click runs twice.
+Group titles say "claude 2", "claude 3" and never the project; closing a group leaves its
+session behind; a tab the user drags out or ungroups is pulled back into the group; and
+nothing caps the tabs in a group.

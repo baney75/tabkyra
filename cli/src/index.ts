@@ -16,6 +16,8 @@ import { banner, c, sym } from "./ui.ts";
 import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
 import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
 import { type HostRunAction, runHostAction } from "./update-run.ts";
+import { BUILD } from "../../src/update/build.ts";
+import { completionScript, EXIT_CODES, VISIBLE_COMMANDS } from "./commands.ts";
 import { VERSION } from "./version.ts";
 
 /** One help row. Padding counts visible characters, so color codes don't shift the column. */
@@ -24,56 +26,33 @@ const cmd = (name: string, args: string, what: string) => {
 	return `  ${c.bold(`tabkyra ${name}`)}${args ? ` ${args}` : ""}${" ".repeat(Math.max(2, 54 - usage.length))}${what}`;
 };
 
+/** Grouped from the one command table (commands.ts), so help can't drift from the CLI. */
 function help(): string {
 	const section = (title: string) => `\n${c.brass(title)}`;
+	const groups = [...new Set(VISIBLE_COMMANDS.map((x) => x.group))];
+	const rows: string[] = [];
+	for (const group of groups) {
+		rows.push(section(group));
+		for (const spec of VISIBLE_COMMANDS.filter((x) => x.group === group)) {
+			rows.push(cmd(spec.name, spec.args, spec.what));
+			for (const more of spec.more ?? []) rows.push(cmd(spec.name, more.args, more.what));
+		}
+		if (group === "Agents") {
+			rows.push(
+				`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
+				`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
+				`  ${c.dim("(tabkyra setup adds these for you; tabkyra doctor checks them.)")}`,
+			);
+		}
+	}
 	return [
 		`${banner(VERSION)}`,
 		c.dim("A browser your coding agents can drive, in its own tab group, under your command."),
-		section("Get started"),
-		cmd("setup", "[--yes]", "Build, register, load, connect and add to your agents"),
-		cmd("status", "[--json]", "Is the extension connected? Which sites are allowed?"),
-		section("Agents"),
-		cmd("mcp", "", "MCP server on stdio (what Claude Code, Codex, OpenCode run)"),
-		cmd("pi-extension", "", "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts"),
-		cmd("skill install", "[name...] [--all] [--force]", "Install the bundled skills into Claude Code, Codex and OpenCode"),
-		cmd("skill list", "[--json]", "The skills in use, what each is for, its version and source"),
-		cmd("skill print", "[name] [--raw]", "A skill as text for AGENTS.md; --raw is the exact SKILL.md"),
-		cmd("skill lint", "[path...]", "Check skills for hidden text, injection and missing structure"),
-		cmd("skill apply", "<folder> [--yes]", "Check and show an edited skill; --yes backs up and installs it (/rsi)"),
-		cmd("skill revert", "<name>", "Drop your edit and go back to the bundled skill"),
-		cmd("skill match", '"<task>" [--json] [--top N]', "Which skill fits a task, best first, or none"),
-		cmd("skill eval", "[--json] [--update-baseline]", "Run the router's regression and held-out cases and gates"),
-		cmd("skill versions", "<name> [--json]", "Bundled, local and backed-up versions of a skill"),
-		cmd("skill rollback", "<name> --to <version> [--yes]", "Restore a backed-up version, with apply's checks"),
-		cmd("skill edit", "<name> [--yes] [--draft-only]", "Draft an edit in $EDITOR, show the diff, apply on yes"),
-		`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
-		`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
-		`  ${c.dim("(tabkyra setup adds these for you.)")}`,
-		section("Remote"),
-		cmd("serve", "[--port 8787]", "MCP over HTTP on loopback, for tunnels; every request needs a token"),
-		cmd("token create", "<name> --scope a,b", "A scoped, revocable token (tabkyra token scopes lists them)"),
-		cmd("token list|revoke|scopes", "", "See tokens, end one, or list the scopes"),
-		cmd("tunnel tailscale", "[--public] [--off]", "Reach serve from your tailnet over HTTPS (--port N)"),
-		cmd("tunnel cloudflare", "[--port N] [--off]", "A free cloudflared quick tunnel"),
-		section("Library"),
-		cmd("library add", "<doi|arxiv>", "Save a source, verified against its registry, OpenAlex and retractions"),
-		cmd("library search|list|cite", "", "Find sources and format a reference (apa, mla, chicago, ieee, ...)"),
-		cmd("library export", "--format bibtex|ris|csl", "For Zotero, Word and LaTeX"),
-		cmd("library obsidian", "<vault>", "One note per source in <vault>/Sources"),
-		cmd("library verify", "[key...]", "Re-run the registry and retraction checks"),
-		cmd("library remove", "<key>", "Drop a source from the library"),
-		section("Sites"),
-		cmd("allow", "<host>", "Let agents open a site (subdomains included)"),
-		cmd("ask", "", "Agents ask before opening a site not yet allowed (default)"),
-		cmd("allow-all", "", "Agents may open any site without asking"),
-		section("Troubleshoot"),
-		cmd("doctor", "[--json]", "Check everything; one fix per problem"),
-		cmd("update", "[--check] [--rollback]", "Install the latest signed release (--channel stable|nightly)"),
-		cmd("install", "[--force]", "Re-register the native host with every browser"),
-		cmd("reload", "", "Reload the extension after rebuilding dist-chrome"),
-		cmd("debug", "", "Bridge state, request timings and a benchmark"),
+		...rows,
 		"",
-		`${c.dim("Flags:")} --help, --version. ${c.dim("Docs:")} https://github.com/baney75/tabkyra`,
+		`${c.dim("Flags:")} --help, --version. --json on every read command prints JSON for scripts.`,
+		c.dim(EXIT_CODES),
+		`${c.dim("Docs:")} https://github.com/baney75/tabkyra`,
 		"",
 	].join("\n");
 }
@@ -255,11 +234,16 @@ const ACCEPTS: Record<string, { flags: string[]; positional: number }> = {
 	debug: { flags: [], positional: 0 },
 	mcp: { flags: [], positional: 0 },
 	"pi-extension": { flags: [], positional: 1 },
+	completion: { flags: [], positional: 1 },
+	serve: { flags: ["--port"], positional: 0 },
+	token: { flags: ["--scope", "--json"], positional: 2 },
+	tunnel: { flags: ["--port", "--public", "--off"], positional: 1 },
+	version: { flags: ["--json"], positional: 0 },
 	skill: { flags: ["--force", "--all", "--raw", "--yes", "--json", "--top", "--to", "--cases", "--base", "--router", "--update-baseline", "--draft-only"], positional: 64 },
 };
 
 /** Options that take a value (`--top 3` or `--top=3`); the value isn't a positional argument. */
-const VALUE_FLAGS = new Set(["--top", "--to", "--cases", "--base", "--router"]);
+const VALUE_FLAGS = new Set(["--top", "--to", "--cases", "--base", "--router", "--port", "--scope"]);
 
 function checkArgs(command: string, args: string[]): void {
 	const accepts = ACCEPTS[command];
@@ -468,6 +452,11 @@ async function main(): Promise<void> {
 			}
 			if (sub === "list") {
 				const usage = loadUsage();
+				if (flag("--json")) {
+					// The token is never stored; its hash stays out of the output too.
+					console.log(JSON.stringify(loadTokens().map(({ sha256: _hash, ...t }) => ({ ...t, lastUsed: usage[t.id] ?? null })), null, 2));
+					return;
+				}
 				for (const t of loadTokens()) console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : "active "}  ${t.scopes.join(",")}  ${c.dim(usage[t.id] ? `last used ${usage[t.id]}` : "never used")}`);
 				return;
 			}
@@ -479,6 +468,10 @@ async function main(): Promise<void> {
 				return;
 			}
 			if (sub === "scopes") {
+				if (flag("--json")) {
+					console.log(JSON.stringify(SCOPES, null, 2));
+					return;
+				}
 				for (const [scope, { what, tools }] of Object.entries(SCOPES)) console.log(`${c.bold(scope.padEnd(18))} ${what}\n${"".padEnd(19)}${c.dim(tools.join(", "))}`);
 				return;
 			}
@@ -503,10 +496,17 @@ async function main(): Promise<void> {
 		case "pi-extension":
 			console.log(`${sym.ok} Wrote ${writePiExtension(argv[1])}`);
 			return;
+		case "completion": {
+			const script = completionScript(argv[1] ?? "");
+			if (!script) throw new UsageError("Usage: tabkyra completion zsh|bash|fish. For zsh: eval \"$(tabkyra completion zsh)\" in ~/.zshrc");
+			process.stdout.write(script);
+			return;
+		}
 		case "--version":
 		case "-v":
 		case "version":
-			console.log(VERSION);
+			if (flag("--json")) console.log(JSON.stringify({ version: VERSION, commit: BUILD?.commit ?? "", builtAt: BUILD?.builtAt ?? "" }));
+			else console.log(VERSION);
 			return;
 		case undefined:
 		case "--help":

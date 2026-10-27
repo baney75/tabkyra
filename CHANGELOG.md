@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+- `tabkyra completion zsh|bash|fish`: completions for every command, subcommand and flag. Help and the completions come from one command table (`cli/src/commands.ts`), so neither can list a command the CLI lacks.
+- `tabkyra version [--json]`; `--json` on `token list`, `token scopes` and `library search`. Exit codes are documented in `--help` and `cli/README.md`: 0 success, 1 failed or not connected, 2 usage error.
+- `cli/eval/bridge-metrics.mjs` (tools/list size and real token cost, cold start, calls across forced extension reloads and host kills, three clients at once, thirteen tab group behaviors) and a `sessions` suite in `cli/eval/skill-eval.mjs` (multitab, resume, parallel, handover, reload), on a shared throwaway browser (`cli/eval/fixture-browser.mjs`). Baseline in `docs/benchmarks.md`.
+
+### Changed
+- The launcher harnesses run (`~/.config/tabkyra/tabkyra`) sets `NODE_COMPILE_CACHE`: `tabkyra mcp` starts in about 103 ms instead of 115 ms.
+
+### Fixed
+- `tabkyra --version` said 0.1.0 while the extension was 1.1.9. The CLI now takes its version from `static/manifest.chrome.json`, the one place a release sets it.
+- `tabkyra serve`, `token` and `tunnel` ignored unknown options (`serve --bogus` started serving); they are usage errors now, like every other command.
+
 ## [1.1.9] - 2026-10-27
 
 ### Added

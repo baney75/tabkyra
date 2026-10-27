@@ -90,7 +90,10 @@ function writeScript(path: string, args: string): void {
 	if (process.platform === "win32") {
 		writeFileSync(path, `@echo off\r\n"${node}" "${script}" ${args} %*\r\n`);
 	} else {
-		writeFileSync(path, `#!/bin/sh\nexec "${node}" "${script}" ${args}"$@"\n`);
+		// Node's compile cache (Node 22.1+; older versions ignore it) cuts about a third off each
+		// start, which every harness pays when it launches `tabkyra mcp`.
+		const cache = join(homedir(), ".cache", "tabkyra", "node-compile-cache");
+		writeFileSync(path, `#!/bin/sh\n: "\${NODE_COMPILE_CACHE:=${cache}}"\nexport NODE_COMPILE_CACHE\nexec "${node}" "${script}" ${args}"$@"\n`);
 		chmodSync(path, 0o755);
 	}
 }
