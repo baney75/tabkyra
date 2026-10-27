@@ -1,0 +1,394 @@
+// Artifact previews (pi-web-ui, patches/pi-mono.patch): which viewer a file gets, and the
+// readers behind the new viewers. The readers parse untrusted files, so the limits and the
+// no-network rules are tested here too. Drawing is checked live (see the PR's screenshots).
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import JSZip from "jszip";
+
+const base = "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview";
+const { conversionHint, getArtifactFileType, mimeTypeFor } = await import(`${base}/file-types.js`);
+const { detectDelimiter, parseDelimited } = await import(`${base}/delimited.js`);
+const { parseXml, XmlError, textOf } = await import(`${base}/xml.js`);
+const { autoNumberLabel, presetPath, colorOf, emptyTheme } = await import(`${base}/drawingml.js`);
+const { readPptx } = await import(`${base}/pptx.js`);
+const { readOdt, readOdp } = await import(`${base}/odf.js`);
+const { parseRtf } = await import(`${base}/rtf.js`);
+const { parseNotebook, neutralizeRemoteImages, stripAnsi } = await import(`${base}/notebook.js`);
+const { decodeBase64Content, readTextContent, PreviewLimitError } = await import(`${base}/content.js`);
+
+test("each file type gets its viewer", () => {
+	const cases = {
+		"deck.pptx": "pptx",
+		"COOKIE-RECIPES.PPTX": "pptx",
+		"show.ppsx": "pptx",
+		"book.xlsx": "excel",
+		"old.xls": "excel",
+		"macro.xlsm": "excel",
+		"binary.xlsb": "excel",
+		"calc.ods": "excel",
+		"apple.numbers": "excel",
+		"data.csv": "delimited",
+		"data.tsv": "delimited",
+		"song.mp3": "audio",
+		"a.wav": "audio",
+		"a.ogg": "audio",
+		"a.m4a": "audio",
+		"a.flac": "audio",
+		"clip.mp4": "video",
+		"clip.webm": "video",
+		"clip.mov": "video",
+		"photo.avif": "image",
+		"photo.jpeg": "image",
+		"nb.ipynb": "notebook",
+		"letter.odt": "odt",
+		"slides.odp": "odp",
+		"memo.rtf": "rtf",
+		"report.docx": "docx",
+		"page.html": "html",
+		"main.rs": "text",
+		"Dockerfile": "text",
+		"legacy.doc": "generic",
+		"legacy.ppt": "generic",
+		"talk.key": "generic",
+		"essay.pages": "generic",
+		"archive.zip": "generic",
+	};
+	for (const [name, type] of Object.entries(cases)) assert.equal(getArtifactFileType(name), type, name);
+});
+
+test("formats without a preview say how to convert them", () => {
+	assert.match(conversionHint("a.ppt").saveAs, /PPTX/);
+	assert.match(conversionHint("a.doc").saveAs, /DOCX/);
+	assert.match(conversionHint("a.key").name, /Keynote/);
+	assert.match(conversionHint("a.pages").saveAs, /DOCX/);
+	assert.equal(conversionHint("a.zip"), undefined);
+	assert.equal(mimeTypeFor("x.pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+	assert.equal(mimeTypeFor("x.unknown"), "application/octet-stream");
+});
+
+test("CSV parsing handles quotes, embedded newlines, CRLF and a BOM", () => {
+	const text = '﻿name,note\r\n"Smith, J","said ""hi""\nthen left"\r\nlast,\r\n';
+	const { rows, truncated } = parseDelimited(text, ",");
+	assert.deepEqual(rows, [
+		["name", "note"],
+		["Smith, J", 'said "hi"\nthen left'],
+		["last", ""],
+	]);
+	assert.equal(truncated, false);
+});
+
+test("CSV parsing stops at the row limit and says so", () => {
+	const text = Array.from({ length: 50 }, (_, i) => `${i},x`).join("\n");
+	const { rows, truncated } = parseDelimited(text, ",", 10);
+	assert.equal(rows.length, 10);
+	assert.equal(truncated, true);
+});
+
+test("the delimiter is detected", () => {
+	assert.equal(detectDelimiter("a\tb\n1\t2", "x.tsv"), "\t");
+	assert.equal(detectDelimiter("a;b;c\n1;2;3\n4;5;6"), ";");
+	assert.equal(detectDelimiter("a,b\n1,2"), ",");
+	assert.equal(detectDelimiter('"x;y",b\n"1;2",3'), ",");
+});
+
+test("the XML reader never expands DTD entities", () => {
+	const xml = '<!DOCTYPE r [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;">]><r>&b; &lt;ok&gt; &#x41;<![CDATA[<raw>]]></r>';
+	assert.equal(textOf(parseXml(xml)), "&b; <ok> A<raw>");
+});
+
+test("the XML reader refuses deep nesting and oversized parts", () => {
+	assert.throws(() => parseXml(`${"<a>".repeat(500)}${"</a>".repeat(500)}`), XmlError);
+	assert.throws(() => parseXml("<a/>", { maxChars: 2, maxDepth: 10, maxNodes: 10 }), XmlError);
+});
+
+test("auto numbers, preset shapes and theme colors", () => {
+	assert.equal(autoNumberLabel("arabicPeriod", 3), "3.");
+	assert.equal(autoNumberLabel("alphaLcParenR", 2), "b)");
+	assert.equal(autoNumberLabel("romanUcPeriod", 4), "IV.");
+	assert.equal(autoNumberLabel("arabicParenBoth", 12), "(12)");
+	assert.match(presetPath("ellipse", 100, 50), /^M0 25 A50 25/);
+	assert.equal(presetPath("someFuturePreset", 10, 10), undefined);
+	const ctx = { theme: emptyTheme(), clrMap: { tx1: "dk1", bg1: "lt1" } };
+	// PowerPoint draws tx1 with a 75% tint as #898989: the tint is applied in linear light.
+	const tinted = parseXml('<a:schemeClr val="tx1"><a:tint val="75000"/></a:schemeClr>');
+	assert.equal(colorOf(tinted, ctx), "#898989");
+	assert.equal(colorOf(parseXml('<a:srgbClr val="FF0000"><a:alpha val="50000"/></a:srgbClr>'), ctx), "rgba(255, 0, 0, 0.5)");
+});
+
+// ---------------------------------------------------------------------------
+// pptx
+// ---------------------------------------------------------------------------
+
+const NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
+const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const rels = (list) =>
+	`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${list
+		.map(([id, type, target, external]) => `<Relationship Id="${id}" Type="${REL}/${type}" Target="${target}"${external ? ' TargetMode="External"' : ""}/>`)
+		.join("")}</Relationships>`;
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+
+async function cookieDeck() {
+	const zip = new JSZip();
+	zip.file(
+		"ppt/presentation.xml",
+		`<p:presentation ${NS}><p:sldMasterIdLst><p:sldMasterId id="1" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst><p:sldId id="256" r:id="rId2"/><p:sldId id="257" r:id="rId3"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/></p:presentation>`,
+	);
+	zip.file("ppt/_rels/presentation.xml.rels", rels([["rId1", "slideMaster", "slideMasters/slideMaster1.xml"], ["rId2", "slide", "slides/slide1.xml"], ["rId3", "slide", "slides/slide2.xml"]]));
+	zip.file(
+		"ppt/slideMasters/slideMaster1.xml",
+		`<p:sldMaster ${NS}><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="FFF5E1"/></a:solidFill></p:bgPr></p:bg><p:spTree>
+		<p:sp><p:nvSpPr><p:cNvPr id="2" name="T"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="457200" y="274638"/><a:ext cx="8229600" cy="1143000"/></a:xfrm></p:spPr></p:sp>
+		<p:sp><p:nvSpPr><p:cNvPr id="3" name="B"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="457200" y="1600200"/><a:ext cx="8229600" cy="4525963"/></a:xfrm></p:spPr></p:sp>
+		<p:sp><p:nvSpPr><p:cNvPr id="4" name="N"/><p:cNvSpPr/><p:nvPr><p:ph type="sldNum" idx="4"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="6553200" y="6356350"/><a:ext cx="2133600" cy="365125"/></a:xfrm></p:spPr><p:txBody><a:bodyPr anchor="b"/><a:lstStyle><a:lvl1pPr algn="r"/></a:lstStyle><a:p/></p:txBody></p:sp>
+		</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
+		<p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4400"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill></a:defRPr></a:lvl1pPr></p:titleStyle>
+		<p:bodyStyle><a:lvl1pPr marL="342900" indent="-342900"><a:buChar char="&#8226;"/><a:defRPr sz="3200"/></a:lvl1pPr><a:lvl2pPr marL="742950" indent="-285750"><a:buChar char="&#8211;"/><a:defRPr sz="2800"/></a:lvl2pPr></p:bodyStyle><p:otherStyle/></p:txStyles></p:sldMaster>`,
+	);
+	zip.file("ppt/slideMasters/_rels/slideMaster1.xml.rels", rels([["rId1", "theme", "../theme/theme1.xml"]]));
+	zip.file("ppt/theme/theme1.xml", `<a:theme ${NS}><a:themeElements><a:clrScheme name="x"><a:dk1><a:srgbClr val="111111"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:accent1><a:srgbClr val="C0504D"/></a:accent1></a:clrScheme><a:fontScheme name="f"><a:majorFont><a:latin typeface="Georgia"/></a:majorFont><a:minorFont><a:latin typeface="Verdana"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>`);
+	// The layout's content placeholder has idx 4, like the master's slide number; it must not inherit from it.
+	zip.file(
+		"ppt/slideLayouts/slideLayout1.xml",
+		`<p:sldLayout ${NS}><p:cSld><p:spTree>
+		<p:sp><p:nvSpPr><p:cNvPr id="2" name="T"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>
+		<p:sp><p:nvSpPr><p:cNvPr id="3" name="C"/><p:cNvSpPr/><p:nvPr><p:ph sz="half" idx="4"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="4645025" y="2174875"/><a:ext cx="4041775" cy="3951288"/></a:xfrm></p:spPr></p:sp>
+		<p:sp><p:nvSpPr><p:cNvPr id="9" name="Deco"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="rect"/><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></p:spPr></p:sp>
+		</p:spTree></p:cSld></p:sldLayout>`,
+	);
+	zip.file("ppt/slideLayouts/_rels/slideLayout1.xml.rels", rels([["rId1", "slideMaster", "../slideMasters/slideMaster1.xml"]]));
+	zip.file(
+		"ppt/slides/slide1.xml",
+		`<p:sld ${NS}><p:cSld><p:spTree>
+		<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:rPr b="1"/><a:t>Cookie Recipes</a:t></a:r></a:p></p:txBody></p:sp>
+		<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body"/><p:cNvSpPr/><p:nvPr><p:ph idx="4"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Flour</a:t></a:r></a:p><a:p><a:pPr lvl="1"/><a:r><a:t>sifted</a:t></a:r></a:p></p:txBody></p:sp>
+		<p:pic><p:nvPicPr><p:cNvPr id="4" name="P"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/></p:blipFill><p:spPr><a:xfrm><a:off x="100" y="200"/><a:ext cx="300" cy="400"/></a:xfrm></p:spPr></p:pic>
+		<p:pic><p:nvPicPr><p:cNvPr id="5" name="Remote"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:link="rId3" r:embed="rId3"/></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></a:xfrm></p:spPr></p:pic>
+		<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="Tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="1000" y="2000"/><a:ext cx="6000" cy="2000"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1" bandRow="1"><a:tableStyleId>{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}</a:tableStyleId></a:tblPr><a:tblGrid><a:gridCol w="3000"/><a:gridCol w="3000"/></a:tblGrid>
+		<a:tr h="1000"><a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>Cookie</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>Minutes</a:t></a:r></a:p></a:txBody></a:tc></a:tr>
+		<a:tr h="1000"><a:tc gridSpan="2"><a:txBody><a:bodyPr/><a:p><a:r><a:t>Chocolate chip</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge="1"><a:txBody><a:bodyPr/><a:p/></a:txBody></a:tc></a:tr>
+		</a:tbl></a:graphicData></a:graphic></p:graphicFrame>
+		</p:spTree></p:cSld></p:sld>`,
+	);
+	zip.file("ppt/slides/_rels/slide1.xml.rels", rels([["rId1", "slideLayout", "../slideLayouts/slideLayout1.xml"], ["rId2", "image", "../media/image1.png"], ["rId3", "image", "https://example.com/track.png", true]]));
+	zip.file("ppt/slides/slide2.xml", `<p:sld ${NS} show="0"><p:cSld><p:spTree/></p:cSld></p:sld>`);
+	zip.file("ppt/slides/_rels/slide2.xml.rels", rels([["rId1", "slideLayout", "../slideLayouts/slideLayout1.xml"]]));
+	zip.file("ppt/media/image1.png", PNG);
+	return zip.generateAsync({ type: "uint8array" });
+}
+
+test("a pptx reads into positioned, styled slides", async () => {
+	const deck = await readPptx(await cookieDeck());
+	assert.equal(deck.width, 12192000);
+	assert.equal(deck.totalSlides, 2);
+	assert.equal(deck.slides[1].hidden, true);
+	const [slide] = deck.slides;
+	assert.deepEqual(slide.background, { type: "solid", color: "#fff5e1" });
+	const shapes = slide.elements.filter((e) => e.kind === "shape");
+	// The layout's own decoration draws first, in the theme's accent color.
+	assert.deepEqual(shapes[0].fill, { type: "solid", color: "#c0504d" });
+	const title = shapes.find((s) => s.text?.paragraphs[0].runs[0].text === "Cookie Recipes");
+	assert.equal(title.box.x, 457200, "title position comes from the master");
+	assert.equal(title.text.paragraphs[0].style.align, "ctr");
+	assert.equal(title.text.paragraphs[0].runs[0].style.size, 44);
+	assert.equal(title.text.paragraphs[0].runs[0].style.bold, true);
+	assert.equal(title.text.paragraphs[0].runs[0].style.color, "#111111");
+	const body = shapes.find((s) => s.text?.paragraphs[0].runs[0].text === "Flour");
+	assert.equal(body.box.x, 4645025, "body position comes from the layout");
+	assert.equal(body.text.anchor, "t", "an idx shared with the master's slide number does not inherit from it");
+	assert.equal(body.text.paragraphs[0].bullet.text, "•");
+	assert.equal(body.text.paragraphs[1].bullet.text, "–");
+	assert.equal(body.text.paragraphs[1].runs[0].style.size, 28);
+	assert.equal(body.text.paragraphs[0].runs[0].style.font, "Verdana");
+	const pics = slide.elements.filter((e) => e.kind === "picture");
+	assert.equal(pics[0].image, "ppt/media/image1.png");
+	assert.equal(pics[1].image, undefined, "an external image is never fetched");
+	assert.deepEqual([...deck.images.keys()], ["ppt/media/image1.png"]);
+	const table = slide.elements.find((e) => e.kind === "table");
+	assert.deepEqual(table.columns, [3000, 3000]);
+	assert.equal(table.rows[0].cells[0].text.paragraphs[0].runs[0].style.bold, true);
+	assert.equal(table.rows[1].cells[0].gridSpan, 2);
+	assert.equal(table.rows[1].cells[1].merged, true);
+});
+
+test("a zip bomb in a pptx fails fast with a limit error", async () => {
+	const zip = new JSZip();
+	zip.file("ppt/presentation.xml", "a".repeat(40 * 1024 * 1024), { compression: "DEFLATE" });
+	const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+	assert.ok(bytes.length < 1024 * 1024);
+	await assert.rejects(readPptx(bytes), PreviewLimitError);
+});
+
+test("a file that is not a presentation says so", async () => {
+	const zip = new JSZip();
+	zip.file("word/document.xml", "<w/>");
+	await assert.rejects(readPptx(await zip.generateAsync({ type: "uint8array" })), /Not a PowerPoint file/);
+});
+
+// ---------------------------------------------------------------------------
+// OpenDocument
+// ---------------------------------------------------------------------------
+
+const ODF_NS = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"';
+
+test("an odt reads into headings, styled runs, lists, tables and package images", async () => {
+	const zip = new JSZip();
+	zip.file(
+		"content.xml",
+		`<office:document-content ${ODF_NS}><office:automatic-styles><style:style style:name="B" style:family="text"><style:text-properties fo:font-weight="bold" fo:color="#aa0000"/></style:style><text:list-style style:name="N"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."/></text:list-style></office:automatic-styles>
+		<office:body><office:text>
+		<text:h text:outline-level="2">Cookie   Recipes</text:h>
+		<text:p>A <text:span text:style-name="B">bold</text:span> claim<text:s text:c="2"/>here<text:line-break/>next <text:a xlink:href="javascript:alert(1)">bad</text:a> <text:a xlink:href="https://example.com/">good</text:a></text:p>
+		<text:list text:style-name="N"><text:list-item><text:p>One</text:p></text:list-item><text:list-item><text:p>Two</text:p></text:list-item></text:list>
+		<table:table><table:table-column table:number-columns-repeated="2"/><table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>Cell</text:p></table:table-cell><table:covered-table-cell/></table:table-row></table:table>
+		<text:p><draw:frame svg:width="2cm" svg:height="1cm"><draw:image xlink:href="Pictures/a.png"/></draw:frame><draw:frame><draw:image xlink:href="https://example.com/x.png"/></draw:frame></text:p>
+		</office:text></office:body></office:document-content>`,
+	);
+	zip.file("Pictures/a.png", PNG);
+	const doc = await readOdt(await zip.generateAsync({ type: "uint8array" }));
+	const [h, p, list, table, imgs] = doc.blocks;
+	assert.equal(h.heading, 2);
+	assert.equal(h.runs[0].text, "Cookie Recipes", "whitespace collapses");
+	const bold = p.runs.find((r) => r.text === "bold");
+	assert.equal(bold.style.bold, true);
+	assert.equal(bold.style.color, "#aa0000");
+	assert.ok(p.runs.some((r) => r.text === "  "), "text:s keeps its spaces");
+	assert.ok(p.runs.some((r) => r.br));
+	assert.equal(p.runs.find((r) => r.text === "bad").href, undefined, "only http(s) and mailto links survive");
+	assert.equal(p.runs.find((r) => r.text === "good").href, "https://example.com/");
+	assert.equal(list.kind, "list");
+	assert.equal(list.ordered, true);
+	assert.equal(list.items.length, 2);
+	assert.equal(table.rows[0].cells[0].colSpan, 2);
+	assert.equal(imgs.runs.length, 1, "a remote image is dropped");
+	assert.equal(imgs.runs[0].image, "Pictures/a.png");
+	assert.ok(doc.images.has("Pictures/a.png"));
+});
+
+test("an odp reads into the slide model", async () => {
+	const zip = new JSZip();
+	zip.file(
+		"styles.xml",
+		`<office:document-styles ${ODF_NS}><office:automatic-styles><style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="28cm" fo:page-height="15.75cm"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="M" style:page-layout-name="PM1"/></office:master-styles></office:document-styles>`,
+	);
+	zip.file(
+		"content.xml",
+		`<office:document-content ${ODF_NS}><office:automatic-styles><style:style style:name="dp1" style:family="drawing-page"><style:drawing-page-properties draw:fill="solid" draw:fill-color="#1f2a44"/></style:style><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#27ae60" draw:stroke="none"/></style:style></office:automatic-styles>
+		<office:body><office:presentation><draw:page draw:style-name="dp1" draw:master-page-name="M">
+		<draw:frame presentation:class="title" svg:x="1cm" svg:y="1cm" svg:width="20cm" svg:height="3cm"><draw:text-box><text:p>Cookie Recipes</text:p></draw:text-box></draw:frame>
+		<draw:custom-shape draw:style-name="gr1" svg:x="2cm" svg:y="5cm" svg:width="4cm" svg:height="2cm"><text:p>Oval</text:p><draw:enhanced-geometry draw:type="ellipse"/></draw:custom-shape>
+		</draw:page></office:presentation></office:body></office:document-content>`,
+	);
+	const deck = await readOdp(await zip.generateAsync({ type: "uint8array" }));
+	assert.equal(deck.width, 28 * 360000);
+	assert.equal(deck.slides.length, 1);
+	assert.deepEqual(deck.slides[0].background, { type: "solid", color: "#1f2a44" });
+	const [title, oval] = deck.slides[0].elements;
+	assert.equal(title.box.x, 360000);
+	assert.equal(title.text.paragraphs[0].runs[0].text, "Cookie Recipes");
+	assert.equal(oval.preset, "ellipse");
+	assert.deepEqual(oval.fill, { type: "solid", color: "#27ae60" });
+	assert.equal(oval.line, null);
+});
+
+// ---------------------------------------------------------------------------
+// RTF
+// ---------------------------------------------------------------------------
+
+test("RTF reads formatting, unicode, code pages, tables and pictures, and skips the rest", () => {
+	const png = PNG.toString("hex");
+	const rtf = `{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0 Helvetica;}{\\f1 Courier New;}}{\\colortbl;\\red255\\green0\\blue0;}
+{\\header Page header}{\\*\\generator Writer;}{\\info{\\title Secret}}
+\\pard\\qc\\fs48\\b Title\\b0\\par
+\\pard\\li720\\fi-360 Plain {\\i italic} {\\cf1 red} {\\f1 mono} caf\\'e9 \\u8364? \\u-3913?\\line next\\par
+{\\field{\\*\\fldinst HYPERLINK "https://x"}{\\fldrslt link text}}\\par
+\\trowd\\cellx1000\\cellx2000\\intbl A\\cell B\\cell\\row
+\\pard after{\\pict\\pngblip\\picwgoal1440\\pichgoal1440 ${png}}\\par}`;
+	const doc = parseRtf(rtf);
+	const text = (b) => b.runs.map((r) => r.text ?? (r.br ? "\n" : "")).join("");
+	const [title, body, field, table, after] = doc.blocks;
+	assert.equal(text(title), "Title");
+	assert.equal(title.align, "center");
+	assert.equal(title.runs[0].style.size, 24);
+	assert.equal(title.runs[0].style.bold, true);
+	assert.equal(title.runs[0].style.font, "Helvetica");
+	assert.equal(text(body), "Plain italic red mono café € \nnext");
+	assert.equal(body.indentLeft, 36);
+	assert.equal(body.firstLine, -18);
+	assert.equal(body.runs.find((r) => r.text === "italic").style.italic, true);
+	assert.equal(body.runs.find((r) => r.text === "red").style.color, "#ff0000");
+	assert.equal(body.runs.find((r) => r.text === "mono").style.font, "Courier New");
+	assert.equal(text(field), "link text");
+	assert.equal(table.kind, "table");
+	assert.deepEqual(
+		table.rows.map((r) => r.map((c) => c.map(text).join(""))),
+		[["A", "B"]],
+	);
+	assert.equal(text(after), "after");
+	assert.match(after.runs[1].image, /^data:image\/png;base64,iVBOR/);
+	assert.equal(after.runs[1].width, 72);
+	const all = JSON.stringify(doc);
+	assert.ok(!all.includes("Page header") && !all.includes("Secret") && !all.includes("Writer") && !all.includes("HYPERLINK"));
+});
+
+test("RTF refuses a file that is not RTF", () => {
+	assert.throws(() => parseRtf("hello"), /Not an RTF file/);
+});
+
+// ---------------------------------------------------------------------------
+// Notebooks
+// ---------------------------------------------------------------------------
+
+test("a notebook reads cells and picks the richest safe output", () => {
+	const nb = parseNotebook(
+		JSON.stringify({
+			nbformat: 4,
+			metadata: { language_info: { name: "python" } },
+			cells: [
+				{ cell_type: "markdown", source: ["# Hi\n", "there"], metadata: {} },
+				{
+					cell_type: "code",
+					execution_count: 3,
+					source: "1/0",
+					outputs: [
+						{ output_type: "stream", name: "stderr", text: ["warn\n"] },
+						{ output_type: "display_data", data: { "image/png": "iVBORw0K\n", "text/plain": "<Figure>" } },
+						{ output_type: "execute_result", data: { "text/html": "<b>x</b>", "text/plain": "x" } },
+						{ output_type: "error", ename: "ZeroDivisionError", evalue: "division by zero", traceback: ["\u001b[0;31mZeroDivisionError\u001b[0m: division by zero"] },
+					],
+				},
+			],
+		}),
+	);
+	assert.equal(nb.language, "python");
+	assert.equal(nb.cells[0].source, "# Hi\nthere");
+	const outs = nb.cells[1].outputs;
+	assert.equal(nb.cells[1].executionCount, 3);
+	assert.deepEqual(outs.map((o) => o.kind), ["stream", "image", "html", "error"]);
+	assert.equal(outs[1].data, "iVBORw0K");
+	assert.equal(outs[3].text, "ZeroDivisionError: division by zero");
+	assert.equal(stripAnsi("\u001b[1;32mok\u001b[0m"), "ok");
+	assert.throws(() => parseNotebook("not json"), /not valid JSON/);
+});
+
+test("notebook markdown never loads a remote image", () => {
+	const md = "![logo](https://example.com/a.png) ![ref][r] ![att](attachment:p.png) `![code](https://x/y.png)`";
+	const out = neutralizeRemoteImages(md, { "p.png": "data:image/png;base64,AAAA" });
+	assert.ok(!/!\[[^\]]*\]\(https?:/.test(out.replace("`![code](https://x/y.png)`", "")));
+	assert.match(out, /\[Image: logo\]\(https:\/\/example.com\/a.png\)/);
+	assert.match(out, /\[Image: ref\]/);
+	assert.match(out, /!\[att\]\(data:image\/png;base64,AAAA\)/);
+	assert.match(out, /`!\[code\]\(https:\/\/x\/y.png\)`/, "code spans are left alone");
+});
+
+// ---------------------------------------------------------------------------
+// Content decoding
+// ---------------------------------------------------------------------------
+
+test("content decodes from base64 or data URLs and enforces the size limit", () => {
+	assert.deepEqual([...decodeBase64Content("data:application/x;base64,AQID")], [1, 2, 3]);
+	assert.deepEqual([...decodeBase64Content("AQ ID\n")], [1, 2, 3]);
+	assert.throws(() => decodeBase64Content("A".repeat(400), 10), PreviewLimitError);
+	assert.throws(() => decodeBase64Content("not base64!"), /not base64/);
+	assert.equal(readTextContent("a,b\n1,2", (t) => t.includes(",")), "a,b\n1,2");
+	assert.equal(readTextContent(Buffer.from("{\\rtf1 hi}").toString("base64"), (t) => t.startsWith("{\\rtf")), "{\\rtf1 hi}");
+});
