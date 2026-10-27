@@ -64,6 +64,8 @@ interface ClientState {
 	/** Only one request at a time per client; the CLI serialises anyway. */
 	queue: Promise<void>;
 	inFlight?: { method: string; since: number };
+	/** Stops the running request from sending more input (a dialog opened, or the host went away). */
+	abort?: () => void;
 	/** When a request last started or ended; the update idle gate reads it. */
 	lastActivityAt: number;
 	lastError?: string;
@@ -306,6 +308,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
 		const t0 = performance.now();
 		let aborted = false;
+		state.abort = () => {
+			aborted = true;
+		};
 		const session = await withTimeout(getSession(state), 15000, "session open");
 		const tSession = Math.round(performance.now() - t0);
 		const ctx: HandlerContext = {
@@ -349,6 +354,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		else if (err instanceof NoTabError) reply(undefined, new BridgeError(ERR.NO_TAB, err.message));
 		else reply(undefined, new BridgeError(ERR.INTERNAL, err instanceof Error ? err.message : String(err)));
 	} finally {
+		state.abort = undefined;
 		state.inFlight = undefined;
 		state.lastActivityAt = Date.now();
 	}
@@ -662,6 +668,9 @@ function connect(): void {
 		// "Specified native messaging host not found" means the CLI installer has not run yet.
 		console.debug("[Bridge] native host disconnected:", reason);
 		if (port === next) port = undefined;
+		// The host answered these "interrupted: it may have run" and the agent may repeat them
+		// after checking the page: the running handlers must send no more input.
+		for (const state of clients.values()) state.abort?.();
 		for (const state of clients.values()) void state.session?.suspend();
 		clients.clear();
 		cancelQuestionsFor(undefined);

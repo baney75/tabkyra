@@ -345,5 +345,10 @@ safely or fails with a clear retryable error, never a hang". Defaults chosen:
   fails with `interrupted` at once, without waiting for the bridge, telling the agent it may
   have run and to check the page before repeating it; the next call reconnects. This replaces
   the one blind retry, which ran a click twice when a reload cut off its reply.
-- **No new waits.** One call waits at most 40 s in all for the bridge, however many times it
-  drops; concurrent calls share one reconnect, and a client never holds more than one socket.
+- **No new waits.** From its first drop, one call waits at most 40 s in all for the bridge,
+  however many times it drops (time the request itself ran isn't charged); concurrent calls
+  share one reconnect and one connect, a socket is used only once it is welcomed and chosen,
+  and a client never holds more than one.
+- **Cut off means stopped.** When the native host goes away while the extension lives (a host
+  crash or restart), the extension stops the running request from sending more input, so the
+  agent's "check the page, then repeat" can't race a handler still typing.

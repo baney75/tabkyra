@@ -33,8 +33,8 @@ class NotSentError extends Error {
 
 /** Sends of one request, counting the first, when it is safe to resend. */
 const MAX_ATTEMPTS = 3;
-/** How long one call waits, in all, for a dropped bridge to come back. */
-const RECONNECT_BUDGET_MS = 40000;
+/** How long one call waits, in all, for a dropped bridge to come back (tests shorten it). */
+const RECONNECT_BUDGET_MS = Number(process.env.TABKYRA_RECONNECT_BUDGET_MS) || 40000;
 
 /** Bridge methods under the MCP tool names agents know them by. */
 const TOOL_NAMES: Record<string, string> = { evaluate: "run_js", dialog: "handle_dialog", snapshot: "read_page", text: "get_page_text", html: "get_page_html" };
@@ -89,6 +89,13 @@ export function isConnectionError(err: unknown): boolean {
 	);
 }
 
+/** A welcomed socket, before the client takes it. */
+interface Dialed {
+	socket: Socket;
+	clientId: string;
+	extensionConnected: boolean;
+}
+
 export class BridgeClient {
 	private socket?: Socket;
 	private seq = 0;
@@ -96,6 +103,8 @@ export class BridgeClient {
 	private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; socket: Socket }>();
 	/** One reconnect at a time: concurrent calls that lost the bridge wait on the same one. */
 	private reconnecting?: Promise<void>;
+	/** One connect at a time: a call that finds no socket waits on a dial already under way. */
+	private connecting?: Promise<void>;
 	clientId?: string;
 	extensionConnected = false;
 	/** Set once the extension has been connected; only a bridge that once worked is worth waiting for. */
@@ -107,37 +116,56 @@ export class BridgeClient {
 		return this.socket !== undefined && !this.socket.destroyed;
 	}
 
-	/** Dial the host and wait for its welcome; gives up after `timeoutMs` (a wedged host). */
-	async connect(path?: string, timeoutMs = 5000): Promise<void> {
-		if (path) return this.dial(path, timeoutMs);
+	/**
+	 * Dial the host and wait for its welcome; gives up after `timeoutMs` (a wedged host). The
+	 * socket becomes the client's only once it is welcomed and chosen, so no call writes to a
+	 * socket that is about to be dropped. Concurrent connects share one attempt.
+	 */
+	connect(path?: string, timeoutMs = 5000): Promise<void> {
+		this.connecting ??= this.connectNow(path, timeoutMs).finally(() => {
+			this.connecting = undefined;
+		});
+		return this.connecting;
+	}
+
+	private async connectNow(path: string | undefined, timeoutMs: number): Promise<void> {
+		if (path) return this.adopt(await this.dial(path, timeoutMs));
 		// Several hosts can be alive (two browsers, a stale one): use the newest whose
 		// extension is connected, the same socket `tabkyra doctor` and `setup` report on.
 		const sockets = listSockets();
-		if (sockets.length === 0) {
-			throw new Error(NOT_CONNECTED);
-		}
-		let fallback: string | undefined;
+		if (sockets.length === 0) throw new Error(NOT_CONNECTED);
+		let fallback: Dialed | undefined;
 		let lastError: unknown;
-		for (const socket of sockets) {
+		for (const target of sockets) {
 			try {
-				await this.dial(socket, timeoutMs);
-				if (this.extensionConnected) return;
-				fallback ??= socket;
-				this.close();
+				const dialed = await this.dial(target, timeoutMs);
+				if (dialed.extensionConnected) {
+					fallback?.socket.destroy();
+					return this.adopt(dialed);
+				}
+				// A host whose extension hasn't said hello yet: keep the first such, drop the rest.
+				if (fallback) dialed.socket.destroy();
+				else fallback = dialed;
 			} catch (err) {
 				lastError = err;
 			}
 		}
-		if (fallback) return this.dial(fallback, timeoutMs);
+		if (fallback) return this.adopt(fallback);
 		throw lastError instanceof Error ? lastError : new Error(String(lastError));
 	}
 
-	private async dial(target: string, timeoutMs: number): Promise<void> {
+	/** Make a welcomed socket the client's one socket, closing the one before it. */
+	private adopt(dialed: Dialed): void {
+		if (this.socket && this.socket !== dialed.socket) this.socket.destroy();
+		this.socket = dialed.socket;
+		this.clientId = dialed.clientId;
+		this.extensionConnected = dialed.extensionConnected;
+		if (dialed.extensionConnected) this.everConnected = true;
+	}
+
+	private async dial(target: string, timeoutMs: number): Promise<Dialed> {
 		if (process.platform !== "win32") assertSecurePath(target, "socket");
-		// One live socket per client: a redial replaces the old one instead of leaking it (the
-		// host would keep announcing it to the extension as another client).
-		this.close();
-		await new Promise<void>((resolve, reject) => {
+		return new Promise<Dialed>((resolve, reject) => {
 			const socket = connect(target);
 			const parser = new FrameParser(MAX_FRAME_FROM_EXTENSION);
 			let welcomed = false;
@@ -157,11 +185,8 @@ export class BridgeClient {
 					if (msg.type === "welcome") {
 						welcomed = true;
 						clearTimeout(timer);
-						this.clientId = msg.clientId;
-						this.extensionConnected = msg.extensionConnected;
-						if (msg.extensionConnected) this.everConnected = true;
-						resolve();
-					} else this.onMessage(msg);
+						resolve({ socket, clientId: msg.clientId, extensionConnected: msg.extensionConnected });
+					} else this.onMessage(msg, socket);
 				}
 				// The good frames are delivered first; a bad one still ends this connection.
 				if (error) socket.destroy(error);
@@ -179,7 +204,6 @@ export class BridgeClient {
 				}
 				if (this.socket === socket) this.socket = undefined;
 			});
-			this.socket = socket;
 			const hello: ClientToHost = {
 				type: "hello",
 				client: { name: this.options.name, session: this.options.session, version: VERSION },
@@ -188,7 +212,7 @@ export class BridgeClient {
 		});
 	}
 
-	private onMessage(msg: HostToClient): void {
+	private onMessage(msg: HostToClient, from: Socket): void {
 		if (msg.type === "response") {
 			const p = this.pending.get(msg.id);
 			if (!p) return;
@@ -199,6 +223,8 @@ export class BridgeClient {
 		} else if (msg.type === "event") {
 			this.options.onEvent?.(msg.event, msg.data);
 		} else if (msg.type === "extension_status") {
+			// Only the client's own host speaks for the extension.
+			if (from !== this.socket) return;
 			this.extensionConnected = msg.connected;
 			if (msg.connected) this.everConnected = true;
 			this.options.onExtensionStatus?.(msg.connected);
@@ -218,8 +244,9 @@ export class BridgeClient {
 		timeoutMs?: number,
 		options: { retry?: boolean } = {},
 	): Promise<T> {
-		// One budget for the whole call, however many times the bridge drops under it.
-		const deadline = Date.now() + RECONNECT_BUDGET_MS;
+		// One budget for the call's waits, however many times the bridge drops under it. It starts
+		// at the first drop: the time the request itself ran (a long wait) isn't charged to it.
+		let deadline: number | undefined;
 		for (let attempt = 1; ; attempt++) {
 			const sent: { socket?: Socket } = {};
 			try {
@@ -245,6 +272,7 @@ export class BridgeClient {
 					});
 				// Drop the socket this request used, unless another call already replaced it.
 				if (!sent.socket || this.socket === sent.socket) this.close();
+				deadline ??= Date.now() + RECONNECT_BUDGET_MS;
 				const back = await this.reconnect(deadline - Date.now()).then(
 					() => this.extensionConnected,
 					() => false,
@@ -265,10 +293,15 @@ export class BridgeClient {
 	 */
 	private reconnect(budgetMs: number): Promise<void> {
 		if (this.connected && this.extensionConnected) return Promise.resolve();
-		this.reconnecting ??= this.reconnectOnce(budgetMs).finally(() => {
+		// The shared attempt runs on its own full budget; each caller waits only as long as its own.
+		this.reconnecting ??= this.reconnectOnce(RECONNECT_BUDGET_MS).finally(() => {
 			this.reconnecting = undefined;
 		});
-		return this.reconnecting;
+		let timer: NodeJS.Timeout | undefined;
+		const mine = new Promise<void>((_, reject) => {
+			timer = setTimeout(() => reject(new Error("Bridge unavailable")), Math.max(0, budgetMs));
+		});
+		return Promise.race([this.reconnecting, mine]).finally(() => clearTimeout(timer));
 	}
 
 	private async reconnectOnce(budgetMs: number): Promise<void> {

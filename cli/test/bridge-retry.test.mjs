@@ -37,6 +37,12 @@ const seen = {};
 const plan = {};
 /** When set, the host goes away for good right after its next drop. */
 let vanishOnDrop = false;
+/** ms the host waits before welcoming a client. */
+let welcomeDelay = 0;
+/** Welcome new clients with the extension not connected yet, and say it is 300 ms later. */
+let extensionLate = false;
+/** hello frames received: one per connection a client opens. */
+let hellos = 0;
 
 before(async () => {
 	root = mkdtempSync(join(tmpdir(), "tabkyra-retry-"));
@@ -54,11 +60,19 @@ before(async () => {
 				const msg = JSON.parse(buffered.subarray(4, 4 + buffered.readUInt32LE(0)).toString());
 				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
 				if (msg.type === "hello") {
-					socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: true }));
+					hellos++;
+					const late = extensionLate;
+					setTimeout(() => socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: !late })), welcomeDelay);
+					if (late) setTimeout(() => !socket.destroyed && socket.write(frame({ type: "extension_status", connected: true })), welcomeDelay + 300);
 					continue;
 				}
 				seen[msg.method] = (seen[msg.method] ?? 0) + 1;
 				const step = plan[msg.method]?.shift();
+				if (step === "slowdrop") {
+					// Runs a while, then the bridge drops under it.
+					setTimeout(() => socket.destroy(), 1500);
+					return;
+				}
 				if (step === "drop") {
 					socket.destroy();
 					if (vanishOnDrop) {
@@ -80,7 +94,7 @@ before(async () => {
 		new StdioClientTransport({
 			command: process.execPath,
 			args: [cli, "mcp"],
-			env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: dir, TABKYRA_SESSION: "retry" },
+			env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: dir, TABKYRA_SESSION: "retry", TABKYRA_RECONNECT_BUDGET_MS: "1000" },
 			stderr: "ignore",
 		}),
 	);
@@ -165,6 +179,43 @@ test("reads cut off together share one reconnect, and the client never holds two
 	assert.ok(seen.text <= 2, `get_page_text went ${seen.text} times`);
 	await new Promise((r) => setTimeout(r, 200));
 	assert.equal(open.size, 1, `the client holds ${open.size} sockets to the host`);
+});
+
+test("a read that ran longer than the reconnect budget before the drop still gets the whole budget to reconnect", async () => {
+	// The budget here is 1 s; the read runs 1.5 s before the bridge drops under it.
+	plan.html = ["slowdrop"];
+	seen.html = 0;
+	const r = await mcp.callTool({ name: "get_page_html", arguments: {} });
+	assert.ok(!r.isError, text(r));
+	assert.equal(seen.html, 2);
+});
+
+test("calls made while the client is still connecting share that one connection", async () => {
+	// A fresh MCP server whose host welcomes slowly, before its extension has said hello: three
+	// calls at once use one socket, which is kept, not dropped and redialed under them.
+	welcomeDelay = 400;
+	extensionLate = true;
+	const before = hellos;
+	const fresh = new Client({ name: "retry-fresh", version: "0.0.0" });
+	await fresh.connect(
+		new StdioClientTransport({
+			command: process.execPath,
+			args: [cli, "mcp"],
+			env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: join(root, "sock"), TABKYRA_SESSION: "retry2" },
+			stderr: "ignore",
+		}),
+	);
+	try {
+		const results = await Promise.all([0, 1, 2].map(() => fresh.callTool({ name: "get_page_text", arguments: {} })));
+		for (const r of results) assert.ok(!r.isError, text(r));
+		// Past the late welcome and the extension's status: no redial happened under the calls.
+		await new Promise((r) => setTimeout(r, 1000));
+		assert.equal(hellos - before, 1, `${hellos - before} connections for one client`);
+	} finally {
+		welcomeDelay = 0;
+		extensionLate = false;
+		await fresh.close();
+	}
 });
 
 test("input cut off while no host comes back fails at once, without waiting out the reconnect budget", async () => {
