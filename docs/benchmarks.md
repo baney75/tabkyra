@@ -102,9 +102,9 @@ node cli/eval/skill-eval.mjs --suite skill --reps 2
 | Tools listed | 30 |
 | tools/list + instructions | 23,976 + 2,444 bytes |
 | Input tokens the server adds to every turn (`claude -p`, Haiku) | 10,473 |
-| Cold start: initialize / first tool result (median of 5) | 114 ms / 122 ms |
-| `tabkyra mcp` start through the launcher (median of 7) | 117 ms |
-| Calls across forced reloads and host kills (3 cycles, 15 calls) | 15 answered, 0 hangs, slowest 4.7 s |
+| Cold start: initialize / first tool result (median of 5) | 115 ms / 125 ms |
+| `tabkyra mcp` start through the launcher, no compile cache (median of 7) | 119 ms |
+| Calls across forced reloads and host kills (3 cycles, 15 calls) | 15 answered, 0 hangs, slowest 4.8 s |
 | Cycles where a click in flight during a reload ran twice | **3 of 3** |
 | Three clients at once: separate groups / cross-talk / labels naming the project | yes / 0 / 0 of 3 |
 | Tab group behaviors as specified | 5 of 13 |
@@ -113,14 +113,14 @@ Session tasks, Haiku, 2 reps, MCP server only:
 
 | Task | Success | Mean tool calls | Mean tool errors | Mean seconds |
 | --- | --- | --- | --- | --- |
-| multitab | 2/2 | 7.5 | 0.0 | 7.0 |
-| resume | 0/2 | 11.5 | 0.0 | 13.0 |
-| parallel | 2/2 | 23.0 | 2.0 | 18.5 |
-| handover | 0/2 | 11.5 | 0.0 | 16.0 |
-| reload | 2/2 | 15.5 | 0.5 | 20.5 |
-| all | 6/10 | 13.8 | 0.5 | 15.0 |
+| multitab | 2/2 | 8.0 | 0.0 | 7.5 |
+| resume | 0/2 | 12.5 | 0.5 | 13.0 |
+| parallel | 2/2 | 29.0 | 3.5 | 18.0 |
+| handover | 0/2 | 13.5 | 0.0 | 14.5 |
+| reload | 2/2 | 15.0 | 0.5 | 19.0 |
+| all | 6/10 | 15.6 | 0.9 | 14.4 |
 
-multitab is scored from the model's closing `ANSWER: Store <letter> $<price>` line, and
+Each row runs in a fresh project folder. multitab is scored from the model's closing `ANSWER: Store <letter> $<price>` line, and
 parallel counts cross-talk only when one agent's tool results show the other's fixture pages.
 
 What failed: a new harness process gets a new session, so **resume** can't find the tab it
