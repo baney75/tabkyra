@@ -848,16 +848,62 @@ test("the catalog script refuses a skill folder named none", () => {
 	assert.equal(existsSync(join(scratch, "cli", "src", "skills-catalog.ts")), false);
 });
 
-test("'<name> skills' about a person's abilities names no skill; a list of skill names still does", () => {
+test("'<name> skill(s)' about a person's abilities names no skill; lists, negations and pointed mentions still do", () => {
 	const top = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "3", task]).stdout).map((m) => m.name);
 	for (const task of [
 		"How can I improve my writing skills?",
+		"How can I improve my writing skill?",
 		"Recommend a course to build my video editing skills",
 		"What chemistry skills do employers want?",
-		"I want to sharpen my biology skills before the exam",
+		"What chemistry skill is most useful for a lab job?",
+		"I want to sharpen my biology skill before the exam",
+		"I want to sharpen my chemistry and biology skills before the exam",
+		"How can I improve my writing and video editing skills?",
+		"Don't use the osint skills; do a background check on this landlord",
+		"Don't use the `osint` skill; do a background check on this landlord.",
 	]) {
 		assert.deepEqual(top(task), ["none"], task);
 	}
+	// A negated list rules out every name in it.
+	const ruledOut = top("Don't use the osint and dorks skills; search the news for the landlord");
+	assert.ok(!ruledOut.includes("osint") && !ruledOut.includes("dorks"), ruledOut.join(","));
+	// A list of names, spaced or hyphenated, with "and", "or" or commas, invokes every name.
 	assert.deepEqual(top("Use the osint and dorks skills on this landlord").sort(), ["dorks", "osint"]);
+	assert.deepEqual(top("Use the video editing and biology skills.").sort(), ["biology", "video-editing"]);
+	assert.deepEqual(top("Use the video editing and osint skills on this clip of the landlord").sort(), ["osint", "video-editing"]);
+	assert.deepEqual(top("Use the maps, osint or dorks skills for this").sort(), ["dorks", "maps", "osint"]);
+	// A determiner points at a skill: use, edit and back-reference still work.
 	assert.equal(top("use the video-editing skill to trim talk.mp4")[0], "video-editing");
+	assert.equal(top("Improve the osint skill so a small model follows it")[0], "kyraskillmaker");
+	assert.equal(top("The autoresearch skill gave a weak report on my 8B model. Fix it")[0], "fix");
+	// "a Tabkyra skill" is a kind of skill to make, not a request for the tabkyra skill.
+	assert.ok(!top("Port my Cursor rule into a Tabkyra skill that passes lint").includes("tabkyra"));
+});
+
+test("past 32 skills the single-evidence bar grows with a two-skill word's weight", async () => {
+	const { build } = await import("esbuild");
+	const out = join(mkdtempSync(join(root, "router-unit-")), "router.mjs");
+	await build({ entryPoints: [join(here, "..", "src", "skill-router.ts")], bundle: true, platform: "node", format: "esm", outfile: out, logLevel: "silent" });
+	const r = await import(out);
+	const skill = (name, body) => ({
+		name,
+		text: `---\nname: ${name}\ndescription: ${body}. Use when the user asks about ${body}.\n---\n# ${name}\n\n## When to use\n\n- ${body}.\n`,
+	});
+	// Two skills hold "quillwort", so it is evidence; the rest are filler.
+	const index = (n) =>
+		r.buildRouterIndex([
+			skill("target-a", "quillwort plants"),
+			skill("target-b", "quillwort ferns"),
+			...Array.from({ length: n - 2 }, (_, i) => skill(`filler-${i}`, `zz${i}q records`)),
+		]);
+	const ratio = (n) => {
+		const ix = index(n);
+		const key = [...ix.idf.keys()].find((k) => k.startsWith("quillwort"));
+		return { single: ix.single, ratio: ix.idf.get(key) / ix.single };
+	};
+	assert.equal(ratio(20).single, 4.8);
+	assert.equal(ratio(32).single, 4.8);
+	assert.ok(ratio(52).single > 4.8);
+	// The word's weight relative to the bar is the same at 52 skills as at 32.
+	assert.ok(Math.abs(ratio(52).ratio - ratio(32).ratio) < 1e-9, `${ratio(32).ratio} vs ${ratio(52).ratio}`);
 });

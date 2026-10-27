@@ -53,11 +53,16 @@ export interface RouterIndex {
 	idf: Map<string, number>;
 	/** Words held by few enough skills to count as evidence. */
 	specific: ReadonlySet<string>;
-	/** The score one piece of evidence needs: SINGLE_SCORE, or SINGLE_SCORE_LARGE past REFERENCE_SKILLS. */
+	/** The score one piece of evidence needs: SINGLE_SCORE, or SINGLE_SCORE_LARGE past REFERENCE_SKILLS (growing past 32 skills). */
 	single: number;
 	avg: Record<Field, number>;
-	/** Per skill, the pattern for "<name> skill" (or "<name> skills"), hyphen or space. */
-	named: Array<{ name: string; pattern: RegExp }>;
+	/**
+	 * A mention: one skill name, or a list of them ("osint and dorks", "maps, osint or dorks"),
+	 * then "skill" or "skills". Hyphenated names also match with a space or nothing between parts.
+	 */
+	mention: RegExp;
+	/** Each name with its hyphens removed, to read a matched name back: "video editing" is video-editing. */
+	nameKeys: ReadonlyMap<string, string>;
 	names: ReadonlySet<string>;
 	/** Inverse document frequency of each word pair, as for words. */
 	pairIdf: Map<string, number>;
@@ -308,10 +313,19 @@ export function buildRouterIndex(skills: RouterSkill[]): RouterIndex {
 	for (const d of docs) for (const p of d.pairs) pairDf.set(p, (pairDf.get(p) ?? 0) + 1);
 	const pairIdf = new Map([...pairDf].map(([p, k]) => [p, idfOf(ref, k)]));
 	const mean = (f: Field) => (n ? docs.reduce((s, d) => s + d.len[f], 0) / n : 1) || 1;
-	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern.
-	const named = [...names].map((name) => ({ name, pattern: new RegExp(`\\b${name.replace(/-/g, "[- ]?")}\\s+skills?\\b`, "g") }));
-	const single = n > REFERENCE_SKILLS ? SINGLE_SCORE_LARGE : SINGLE_SCORE;
-	return { docs, idf, specific, single, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, named, names, pairIdf };
+	// Names are lowercase-kebab-case (assertName), so they're safe inside a pattern. Longest first,
+	// so "proton-pass skill" isn't read as "proton" followed by something else.
+	const one = [...names]
+		.sort((a, b) => b.length - a.length)
+		.map((name) => name.replace(/-/g, "[- ]?"))
+		.join("|");
+	const mention = new RegExp(`\\b((?:${one})(?:\\s*(?:,\\s*(?:and|or)\\b|,|\\band\\b|\\bor\\b)\\s*(?:${one}))*)\\s+(skills?)\\b`, "g");
+	const nameKeys = new Map([...names].map((name) => [name.replace(/-/g, ""), name]));
+	// Past REFERENCE_SKILLS, a word held by two skills (still evidence) gains weight as skills are
+	// added, so the bar grows with it from SINGLE_SCORE_LARGE: one such word clears it no more easily
+	// at 52 skills than at 32.
+	const single = n > REFERENCE_SKILLS ? SINGLE_SCORE_LARGE * Math.max(1, (idfOf(n, 2) * scale) / (idfOf(32, 2) * (idfOf(REFERENCE_SKILLS, 1) / idfOf(32, 1)))) : SINGLE_SCORE;
+	return { docs, idf, specific, single, avg: { name: mean("name"), what: mean("what"), when: mean("when") }, mention, nameKeys, names, pairIdf };
 }
 
 function containsSequence(haystack: string[], needle: string[]): boolean {
@@ -347,11 +361,13 @@ const EXCLUDES = new RegExp(
 /** `tabkyra skill <subcommand>` is the Tabkyra CLI (read as "tabkyra cli"), not a mention of the tabkyra skill. */
 const CLI_SUBCOMMAND = /^\s+(?:install|list|print|lint|apply|revert|edit|eval|match|versions|rollback)\b/;
 
-/** Whether the text right before a plural mention ends with another skill name and "and", "or" or a comma. */
-function listsSkills(index: RouterIndex, before: string): boolean {
-	const m = /([a-z0-9-]+)\s*(?:,|\band\b|\bor\b)\s*$/.exec(before);
-	return m !== null && index.names.has(m[1]);
-}
+/** "the osint skill", "this dorks skill": a determiner, and at most one word, right before the mention. */
+const POINTS_AT = /\b(?:the|this|that|these|those)\s+(?:[a-z0-9'-]+\s+)?$/;
+/**
+ * "improve my writing skill", "refine our chemistry skills": a verb that also means growing a
+ * person's ability, with no determiner pointing at a skill. On its own it isn't a skill edit.
+ */
+const GROWS = /\b(?:improv\w*|refin\w*)\s+(?:(?:to|of|on|for)\s+)?(?:(?:my|our|your)\s+)?(?:[a-z0-9'-]+\s+){0,2}$/;
 
 interface ReadTask {
 	/** A slash command naming a skill, as the task's first token. */
@@ -372,6 +388,10 @@ interface ReadTask {
  *   isn't followed by "/" or ".": "ls /fix" and "cat /bug/report.txt" are paths.
  * - Path-like words (starting with "/", "./", "../" or "~/") are data, not intent, and are
  *   dropped.
+ * - "<name> skill" (or a list of names before "skills") names a skill only when something points
+ *   at it: "the/this/that" before a singular or a list, a use, edit or negation verb, a slash
+ *   command or backticks. Otherwise ("my biology skill", "what chemistry skills do employers
+ *   want", "improve my writing skill") it is a subject and scores for no skill.
  * - "<name> skill" is the object of a change when an edit verb governs it ("fix the osint
  *   skill", "rewrite my old dorks skill", "the osint skill failed, repair it") or a slash
  *   command comes first: the name is dropped so it doesn't score for itself. An edit-like
@@ -384,8 +404,9 @@ interface ReadTask {
 function readTask(index: RouterIndex, task: string): ReadTask {
 	// Curly apostrophes and quotes (smart punctuation) read as straight ones: "don’t" is "don't".
 	let text = task.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
-	// Inline code around a skill name ("the `osint` skill") reads as the bare name.
-	text = text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (index.names.has(inner) ? inner : whole));
+	// Inline code around a skill name ("the `osint` skill", "`dorks` skill") reads as the bare name,
+	// and points at the skill: a name in code is never a person's ability.
+	text = text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (index.names.has(inner) ? `the ${inner}` : whole));
 	let command: string | undefined;
 	let changesSkill = false;
 	const lead = /^\s*\/([a-z0-9-]+)(?=$|[\s:,;!?])/.exec(text);
@@ -402,32 +423,39 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 	text = text.replace(/(^|\s)(~|\.{1,2})?\/\S*/g, "$1 ");
 	const invoked = new Set<string>();
 	const excluded = new Set<string>();
-	for (const n of index.named) {
-		text = text.replace(n.pattern, (whole: string, offset: number, all: string) => {
-			const after = all.slice(offset + whole.length);
-			if (n.name === "tabkyra" && CLI_SUBCOMMAND.test(after)) return "tabkyra cli";
-			const before = all.slice(0, offset);
-			// "my writing skills", "what chemistry skills do employers want": a plural is a
-			// person's abilities, unless it closes a list of skill names ("the osint and dorks skills").
-			// The phrase names a subject, not a skill: it scores for neither that skill nor the skills
-			// whose job is skills.
-			if (/skills$/.test(whole) && !listsSkills(index, before)) return " abilities ";
-			if (EXCLUDES.test(before)) {
-				excluded.add(n.name);
-				return " ";
-			}
-			// "..., fix it" points back at the mention, unless a use-verb governs the mention: in
-			// "use the tabkyra skill to open the app and debug it", "it" is the app. Not limited to
-			// the clause: "The autoresearch skill gave a weak report. Fix it" is a fix request.
-			const backReference = !USE_GOVERNS.test(before) && POINTS_BACK.test(after);
-			if (command !== undefined || GOVERNS.test(before) || backReference) {
-				changesSkill = true;
-				return " skill ";
-			}
-			invoked.add(n.name);
-			return whole;
-		});
-	}
+	text = text.replace(index.mention, (whole: string, list: string, noun: string, offset: number, all: string) => {
+		const found = [...new Set(list.split(/\s*(?:,|\band\b|\bor\b)\s*/).map((t) => index.nameKeys.get(t.replace(/[- ]/g, ""))))];
+		const named = found.filter((name): name is string => name !== undefined);
+		const after = all.slice(offset + whole.length);
+		if (named.length === 1 && named[0] === "tabkyra" && CLI_SUBCOMMAND.test(after)) return "tabkyra cli";
+		const before = all.slice(0, offset);
+		if (EXCLUDES.test(before)) {
+			for (const name of named) excluded.add(name);
+			return " ";
+		}
+		// Several names are a list of skills; "the osint skill" points at one. A plural with one name
+		// ("my writing skills", "the chemistry skills employers want") is a person's abilities.
+		const pointsAt = POINTS_AT.test(before) && (noun === "skill" || named.length > 1);
+		const edits = GOVERNS.test(before) && (pointsAt || !GROWS.test(before));
+		const uses = USE_GOVERNS.test(before);
+		// Nothing points the mention at a skill: "my biology skill", "what chemistry skills do
+		// employers want", "improve my writing skill". It names a subject, so it scores for neither
+		// that skill nor the skills whose job is skills.
+		if (command === undefined && !pointsAt && !edits && !uses) {
+			// "a Tabkyra skill", "an osint skill": a kind of skill to make, so the word "skill" stays.
+			return /\ban?\s+$/.test(before) ? ` ${list} ${noun} ` : " abilities ";
+		}
+		// "..., fix it" points back at the mention, unless a use-verb governs the mention: in
+		// "use the tabkyra skill to open the app and debug it", "it" is the app. Not limited to
+		// the clause: "The autoresearch skill gave a weak report. Fix it" is a fix request.
+		const backReference = !uses && POINTS_BACK.test(after);
+		if (command !== undefined || edits || backReference) {
+			changesSkill = true;
+			return " skill ";
+		}
+		for (const name of named) invoked.add(name);
+		return whole;
+	});
 	for (const name of excluded) invoked.delete(name);
 	return { command, invoked, excluded, changesSkill, content: text };
 }
