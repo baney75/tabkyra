@@ -46,7 +46,8 @@ const panelPathCache = new Map<number, string | undefined>();
  * reconcile in that moment disabled (closed) the panel the user had just opened.
  */
 const pendingOpen = new Map<number, ReturnType<typeof setTimeout>>();
-const PENDING_OPEN_MS = 10_000;
+/** How long a fresh open waits for its task to name the tab (tests shorten it). */
+const PENDING_OPEN_MS = (globalThis as { __TABKYRA_PENDING_OPEN_MS?: number }).__TABKYRA_PENDING_OPEN_MS ?? 10_000;
 
 function clearPendingOpen(tabId: number): void {
 	const timer = pendingOpen.get(tabId);
@@ -152,6 +153,8 @@ async function reconcileActiveTab(windowId: number, tabId: number): Promise<void
 	// before a running task's claim: a fresh task's own tab shows its own panel.
 	if (pendingOpen.has(tabId)) return;
 	const runningHome = openSidepanels.has(windowId) ? await busyHomeTab(windowId) : undefined;
+	// The user may have opened a fresh task here while busyHomeTab was read.
+	if (pendingOpen.has(tabId)) return;
 	if (runningHome !== undefined) {
 		await applyTab(tabId, `${PANEL_PATH}?tabId=${runningHome}`);
 		return;

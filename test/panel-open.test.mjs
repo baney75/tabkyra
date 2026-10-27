@@ -118,3 +118,21 @@ test("a fresh task's own tab isn't pointed at another task left marked busy", as
 	assert.ok(!setOptions.some((o) => o.tabId === tab && o.path === `sidepanel.html?tabId=${otherHome}`), "not re-pointed at the other task");
 	assert.ok(!setOptions.some((o) => o.tabId === tab && o.enabled === false), "and not closed");
 });
+
+test("a panel whose task never names its tab is closed after the pending-open window", async () => {
+	const { fake, setOptions } = setup();
+	const tab = fake.addTab({ active: true });
+	globalThis.__TABKYRA_PENDING_OPEN_MS = 200;
+	try {
+		await import(`../src/background.ts?ctx=worker-timeout-${Math.random()}`);
+		await settle(50);
+		for (const fn of chrome.action.onClicked.listeners) fn({ id: tab, windowId: 1 });
+		// The panel never writes a session naming the tab (it failed to start).
+		await settle(100);
+		assert.ok(!setOptions.some((o) => o.tabId === tab && o.enabled === false), "kept open during the window");
+		await settle(400);
+		assert.ok(setOptions.some((o) => o.tabId === tab && o.enabled === false), "closed once the window passed");
+	} finally {
+		delete globalThis.__TABKYRA_PENDING_OPEN_MS;
+	}
+});
