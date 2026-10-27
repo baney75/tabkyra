@@ -60,7 +60,7 @@ import { Recorder } from "./recording/recorder.js";
 import { TabkyraAppStorage } from "./storage/app-storage.js";
 import { DebuggerTool } from "./tools/debugger.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
-import { AskUserWhichElementTool, skillTool } from "./tools/index.js";
+import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
 import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
 import { createReplTool } from "./tools/repl/repl.js";
@@ -71,6 +71,7 @@ import * as port from "./utils/port.js";
 import "./utils/i18n-extension.js";
 import { createArtifactViewer } from "./artifacts/viewers.js";
 import "./utils/live-reload.js";
+import { bridgeQuestions, watchBridgeQuestions } from "./ask/bridge-panel.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tutorials } from "./tutorials.js";
 import { BUSY_BEAT_PREFIX, reserveRun } from "./update/gate.js";
@@ -846,6 +847,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const tools: AgentTool<any, any>[] = [
 				navigateTool,
 				selectElementTool,
+				new AskUserTool(),
 				replTool,
 				skillTool,
 				extractDocumentTool,
@@ -1066,6 +1068,7 @@ const renderApp = () => {
 			</div>
 
 			${updateNotice()}
+			${bridgeQuestions()}
 
 			<!-- Chat Panel -->
 			${chatPanel}
@@ -1104,7 +1107,9 @@ window.addEventListener(
 	(e) => {
 		// Escape key to abort streaming - works globally in sidepanel
 		// Use capturing phase to intercept before MessageEditor handles it
-		if (e.key === "Escape" && agent?.state.isStreaming) {
+		// Escape in an external agent's question card is not a Stop for this panel's agent.
+		const inBridgeQuestion = e.target instanceof Element && e.target.closest('[data-testid="bridge-questions"]');
+		if (e.key === "Escape" && agent?.state.isStreaming && !inBridgeQuestion) {
 			e.preventDefault();
 			e.stopPropagation();
 			agent.abort();
@@ -1296,6 +1301,7 @@ async function initApp() {
 			});
 
 			renderApp();
+			void watchBridgeQuestions(renderApp).catch(() => {});
 			return;
 		} else {
 			// Session doesn't exist, redirect to new session
@@ -1317,6 +1323,8 @@ async function initApp() {
 
 	renderApp();
 	void watchUpdateStatus(renderApp).catch(() => {});
+	// External agents' questions (ask_user over the bridge) show above the chat.
+	void watchBridgeQuestions(renderApp).catch(() => {});
 
 	// If no API keys configured, show welcome dialog, open settings, then auto-select model
 	if (!(await hasAnyApiKey())) {
