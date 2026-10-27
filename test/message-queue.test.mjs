@@ -27,7 +27,7 @@ function setup({ result = () => "started", context } = {}) {
 	);
 	function start() { agent.state.isStreaming = true; idle = new Promise((r) => (finish = r)); queue.onAgentStart(); }
 	function stop(stopReason) { agent.state.isStreaming = false; queue.onAgentEnd(end(stopReason)); finish(); }
-	return { agent, sent, queue, start, stop };
+	return { agent, sent, queue, start, stop, finish: () => finish() };
 }
 
 test("messages sent while the agent runs go out in order, one per finished run", async () => {
@@ -254,4 +254,70 @@ test("unpicked Send now items go out in the order they were pressed", async () =
 	stop();
 	await settle();
 	assert.deepEqual(sent, ["b", "a"]);
+});
+
+test("a Stop with nothing queued doesn't pause what is queued later", async () => {
+	const { sent, queue, start, stop } = setup();
+	start();
+	stop("aborted"); // the user stops a run with an empty queue
+	assert.equal(queue.paused, false);
+	start(); // later run
+	queue.add("follow-up");
+	stop();
+	await settle();
+	assert.deepEqual(sent, ["follow-up"]);
+	// an error with an empty queue doesn't pause either
+	start();
+	stop("error");
+	assert.equal(queue.paused, false);
+});
+
+test("Send now items promoted while the run ended keep press order", async () => {
+	const releases = [];
+	const { sent, queue, start, stop } = setup({ context: () => new Promise((r) => releases.push(() => r([]))) });
+	start();
+	queue.add("a");
+	queue.add("b");
+	queue.add("c");
+	const pressA = queue.sendNow(queue.items[0].id);
+	const pressB = queue.sendNow(queue.items[1].id); // contextSent is still false: both look up
+	stop();
+	releases[0]?.();
+	await pressA;
+	releases[1]?.();
+	await pressB;
+	await settle();
+	assert.deepEqual(sent, ["a"], "a was pressed first");
+	stop();
+	await settle();
+	assert.deepEqual(sent, ["a", "b"]);
+});
+
+test("an item removed while its Send now context was built doesn't stall the rest", async () => {
+	let release;
+	const { sent, queue, start, stop } = setup({ context: () => new Promise((r) => (release = () => r([]))) });
+	start();
+	queue.add("x");
+	queue.add("y");
+	const pressed = queue.sendNow(queue.items[0].id);
+	stop(); // drain stands down for the pending Send now
+	queue.remove(queue.items[0].id);
+	release();
+	await pressed;
+	await settle();
+	assert.deepEqual(sent, ["y"]);
+});
+
+test("sync after missed events recovers a queue that thought a run was still going", async () => {
+	const { agent, sent, queue, start, finish } = setup();
+	start();
+	queue.add("waiting");
+	await queue.sendNow(queue.items[0].id); // steered into the run
+	// The panel was disconnected; the run ended without the queue hearing agent_end.
+	agent.state.isStreaming = false;
+	finish();
+	queue.sync();
+	await settle();
+	assert.deepEqual(agent.steered, []);
+	assert.deepEqual(sent, ["waiting"]);
 });
