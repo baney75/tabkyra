@@ -166,6 +166,8 @@ const buildOptions = {
 		"@mariozechner/pi-ai": join(packageRoot, "../pi-mono/packages/ai/src/index.ts"),
 		"@mariozechner/pi-agent-core": join(packageRoot, "../pi-mono/packages/agent/src/index.ts"),
 		"@mariozechner/pi-web-ui": join(packageRoot, "../pi-mono/packages/web-ui/src/index.ts"),
+		// pi-web-ui's notebook preview and mini-lit's MarkdownBlock share one copy of marked.
+		marked: join(packageRoot, "node_modules/@mariozechner/mini-lit/node_modules/marked/lib/marked.esm.js"),
 		lit: join(packageRoot, "node_modules/lit"),
 		"lit/decorators.js": join(packageRoot, "node_modules/lit/decorators.js"),
 		"lit/directives/class-map.js": join(packageRoot, "node_modules/lit/directives/class-map.js"),

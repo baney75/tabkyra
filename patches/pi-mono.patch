@@ -1,3 +1,15 @@
+diff --git a/package-lock.json b/package-lock.json
+index 9faf9769d..286a0a067 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -8807,6 +8807,7 @@
+ 				"docx-preview": "^0.3.7",
+ 				"jszip": "^3.10.1",
+ 				"lucide": "^0.544.0",
++				"marked": "^15.0.12",
+ 				"ollama": "^0.6.0",
+ 				"pdfjs-dist": "5.4.394",
+ 				"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
 diff --git a/packages/ai/src/models.ts b/packages/ai/src/models.ts
 index 101c83f2c..12cd0c2e3 100644
 --- a/packages/ai/src/models.ts
@@ -28,6 +40,18 @@ index 101c83f2c..12cd0c2e3 100644
 +	const generated = (MODELS as Record<string, Record<string, Model<Api>>>)[provider];
 +	return generated ? Object.values(generated) : [];
 +}
+diff --git a/packages/web-ui/package.json b/packages/web-ui/package.json
+index bcec466b7..af60e4c07 100644
+--- a/packages/web-ui/package.json
++++ b/packages/web-ui/package.json
+@@ -23,6 +23,7 @@
+ 		"docx-preview": "^0.3.7",
+ 		"jszip": "^3.10.1",
+ 		"lucide": "^0.544.0",
++		"marked": "^15.0.12",
+ 		"ollama": "^0.6.0",
+ 		"pdfjs-dist": "5.4.394",
+ 		"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
 diff --git a/packages/web-ui/src/ChatPanel.ts b/packages/web-ui/src/ChatPanel.ts
 index 2c76c391d..b2e1df6d5 100644
 --- a/packages/web-ui/src/ChatPanel.ts
@@ -680,10 +704,10 @@ index 48284c742..9eb3d1873 100644
  export { SessionListDialog } from "./dialogs/SessionListDialog.js";
 diff --git a/packages/web-ui/src/tools/artifacts/DelimitedArtifact.ts b/packages/web-ui/src/tools/artifacts/DelimitedArtifact.ts
 new file mode 100644
-index 000000000..c7fddeefd
+index 000000000..747cb2625
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/DelimitedArtifact.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,124 @@
 +import { CopyButton } from "@mariozechner/mini-lit/dist/CopyButton.js";
 +import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
 +import { PreviewCodeToggle } from "@mariozechner/mini-lit/dist/PreviewCodeToggle.js";
@@ -746,16 +770,28 @@ index 000000000..c7fddeefd
 +		this.text = text;
 +		const doc = container.ownerDocument;
 +		const delimiter = detectDelimiter(text, this.filename);
-+		const table = parseDelimited(text, delimiter, PREVIEW_LIMITS.maxTableRows + 1);
-+		const shown = table.rows.slice(0, PREVIEW_LIMITS.maxTableRows);
-+		const truncated = table.truncated || table.rows.length > PREVIEW_LIMITS.maxTableRows;
++		const table = parseDelimited(text, delimiter, PREVIEW_LIMITS.maxTableRows + 1, PREVIEW_LIMITS.maxTableColumns);
++		const width = table.rows.reduce((m, r) => Math.max(m, r.length), 0);
++		// Rows and cells are both bounded, so a very wide file can't flood the panel.
++		const rowLimit = Math.min(
++			PREVIEW_LIMITS.maxTableRows,
++			Math.max(1, Math.floor(PREVIEW_LIMITS.maxTableCells / Math.max(1, width))),
++		);
++		const shown = table.rows.slice(0, rowLimit);
++		const truncated = table.truncated || table.rows.length > rowLimit;
 +
 +		const tableView = doc.createElement("div");
 +		tableView.className = "h-full overflow-auto";
 +		const info = doc.createElement("div");
 +		info.className = "px-3 py-1 text-xs text-muted-foreground";
-+		const width = shown.reduce((m, r) => Math.max(m, r.length), 0);
-+		info.textContent = `${i18n("{rows} rows").replace("{rows}", String(Math.max(0, shown.length - 1)))} · ${i18n("{cols} columns").replace("{cols}", String(width))}${truncated ? ` · ${i18n("showing the first {count}").replace("{count}", String(PREVIEW_LIMITS.maxTableRows))}` : ""}`;
++		const parts = [
++			i18n("{rows} rows").replace("{rows}", String(Math.max(0, shown.length - 1))),
++			i18n("{cols} columns").replace("{cols}", String(width)),
++		];
++		if (truncated) parts.push(i18n("showing the first {count}").replace("{count}", String(rowLimit)));
++		if (table.wide)
++			parts.push(i18n("columns after {count} not shown").replace("{count}", String(PREVIEW_LIMITS.maxTableColumns)));
++		info.textContent = parts.join(" · ");
 +		tableView.appendChild(info);
 +		const el = doc.createElement("table");
 +		el.className = "border-collapse text-sm text-foreground";
@@ -797,18 +833,62 @@ index 000000000..c7fddeefd
 +	}
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts b/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
-index dd6d41d7b..3c9c7db20 100644
+index dd6d41d7b..e7b501d10 100644
 --- a/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
 +++ b/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
-@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
+@@ -4,6 +4,26 @@ import { customElement, property, state } from "lit/decorators.js";
  import * as XLSX from "xlsx";
  import { i18n } from "../../utils/i18n.js";
  import { ArtifactElement } from "./ArtifactElement.js";
++import { decodeBase64Content, PREVIEW_LIMITS, SafeZip } from "./preview/content.js";
 +import { mimeTypeFor } from "./preview/file-types.js";
++
++const MAX_SHEETS = 50;
++
++/** Shrink a sheet's range to the column and cell limits so sheet_to_html stays bounded. */
++function clampSheet(ws: XLSX.WorkSheet) {
++	const ref = ws["!ref"];
++	if (!ref) return;
++	const range = XLSX.utils.decode_range(ref);
++	const cols = Math.min(range.e.c - range.s.c + 1, PREVIEW_LIMITS.maxTableColumns);
++	const rows = Math.min(
++		range.e.r - range.s.r + 1,
++		PREVIEW_LIMITS.maxTableRows,
++		Math.max(1, Math.floor(PREVIEW_LIMITS.maxTableCells / Math.max(1, cols))),
++	);
++	range.e.c = range.s.c + cols - 1;
++	range.e.r = range.s.r + rows - 1;
++	ws["!ref"] = XLSX.utils.encode_range(range);
++}
  
  @customElement("excel-artifact")
  export class ExcelArtifact extends ArtifactElement {
-@@ -66,9 +67,7 @@ export class ExcelArtifact extends ArtifactElement {
+@@ -30,24 +50,6 @@ export class ExcelArtifact extends ArtifactElement {
+ 		this.style.height = "100%";
+ 	}
+ 
+-	private base64ToArrayBuffer(base64: string): ArrayBuffer {
+-		// Remove data URL prefix if present
+-		let base64Data = base64;
+-		if (base64.startsWith("data:")) {
+-			const base64Match = base64.match(/base64,(.+)/);
+-			if (base64Match) {
+-				base64Data = base64Match[1];
+-			}
+-		}
+-
+-		const binaryString = atob(base64Data);
+-		const bytes = new Uint8Array(binaryString.length);
+-		for (let i = 0; i < binaryString.length; i++) {
+-			bytes[i] = binaryString.charCodeAt(i);
+-		}
+-		return bytes.buffer;
+-	}
+-
+ 	private decodeBase64(): Uint8Array {
+ 		let base64Data = this._content;
+ 		if (this._content.startsWith("data:")) {
+@@ -66,9 +68,7 @@ export class ExcelArtifact extends ArtifactElement {
  	}
  
  	private getMimeType(): string {
@@ -819,6 +899,32 @@ index dd6d41d7b..3c9c7db20 100644
  	}
  
  	public getHeaderButtons() {
+@@ -97,8 +97,15 @@ export class ExcelArtifact extends ArtifactElement {
+ 		if (!container || !this._content) return;
+ 
+ 		try {
+-			const arrayBuffer = this.base64ToArrayBuffer(this._content);
+-			const workbook = XLSX.read(arrayBuffer, { type: "array" });
++			// Bounded like the other previews: the file size, then every zip entry through the
++			// streaming caps before SheetJS inflates it, then rows, columns and cells per sheet.
++			const bytes = decodeBase64Content(this._content);
++			if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
++				const zip = await SafeZip.open(bytes);
++				for (const path of zip.list()) await zip.bytes(path);
++			}
++			const workbook = XLSX.read(bytes, { type: "array", sheetRows: PREVIEW_LIMITS.maxTableRows });
++			workbook.SheetNames = workbook.SheetNames.slice(0, MAX_SHEETS);
+ 
+ 			container.innerHTML = "";
+ 			const wrapper = document.createElement("div");
+@@ -165,6 +172,7 @@ export class ExcelArtifact extends ArtifactElement {
+ 
+ 	private renderExcelSheet(worksheet: any, sheetName: string): HTMLElement {
+ 		const sheetDiv = document.createElement("div");
++		clampSheet(worksheet);
+ 
+ 		// Generate HTML table
+ 		const htmlTable = XLSX.utils.sheet_to_html(worksheet, { id: `sheet-${sheetName}` });
 diff --git a/packages/web-ui/src/tools/artifacts/GenericArtifact.ts b/packages/web-ui/src/tools/artifacts/GenericArtifact.ts
 index 597615e51..cca4fa3f4 100644
 --- a/packages/web-ui/src/tools/artifacts/GenericArtifact.ts
@@ -924,10 +1030,10 @@ index cc7b5f520..0731eca30 100644
  	private getImageUrl(): string {
 diff --git a/packages/web-ui/src/tools/artifacts/MediaArtifact.ts b/packages/web-ui/src/tools/artifacts/MediaArtifact.ts
 new file mode 100644
-index 000000000..823c6db33
+index 000000000..3b11e8f24
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/MediaArtifact.ts
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,73 @@
 +import { customElement } from "lit/decorators.js";
 +import { i18n } from "../../utils/i18n.js";
 +import { decodeBase64Content, PREVIEW_LIMITS } from "./preview/content.js";
@@ -937,6 +1043,13 @@ index 000000000..823c6db33
 +/** Audio and video with the browser's own player. The file plays from a local blob URL. */
 +@customElement("media-artifact")
 +export class MediaArtifact extends PreviewArtifact {
++	private media?: HTMLMediaElement;
++
++	override disconnectedCallback(): void {
++		super.disconnectedCallback();
++		this.media?.pause();
++	}
++
 +	protected override get errorTitle(): string {
 +		return i18n("Error loading media");
 +	}
@@ -972,7 +1085,15 @@ index 000000000..823c6db33
 +		});
 +		wrap.append(media, name);
 +		container.appendChild(wrap);
++		this.media = media;
++		// Hidden tabs stay in the DOM with display: none; stop playback when this one is hidden.
++		const observer = new IntersectionObserver((entries) => {
++			if (entries.some((e) => !e.isIntersecting)) media.pause();
++		});
++		observer.observe(media);
 +		return () => {
++			observer.disconnect();
++			this.media = undefined;
 +			media.pause();
 +			media.removeAttribute("src");
 +			media.load();
@@ -988,13 +1109,13 @@ index 000000000..823c6db33
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/NotebookArtifact.ts b/packages/web-ui/src/tools/artifacts/NotebookArtifact.ts
 new file mode 100644
-index 000000000..689ff72ca
+index 000000000..41d9aecca
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/NotebookArtifact.ts
-@@ -0,0 +1,146 @@
-+import { MarkdownBlock } from "@mariozechner/mini-lit/dist/MarkdownBlock.js";
+@@ -0,0 +1,164 @@
 +import hljs from "highlight.js";
 +import { customElement } from "lit/decorators.js";
++import { marked } from "marked";
 +import { i18n } from "../../utils/i18n.js";
 +import { PREVIEW_LIMITS, PreviewLimitError, readTextContent } from "./preview/content.js";
 +import { looksLikeNotebook, type NotebookOutput, neutralizeRemoteImages, parseNotebook } from "./preview/notebook.js";
@@ -1002,6 +1123,20 @@ index 000000000..689ff72ca
 +import { sanitizeHtml } from "./preview/sanitize.js";
 +
 +const MAX_OUTPUT_CHARS = 200_000;
++
++/**
++ * Notebook markdown is untrusted: render it with marked to a string, then rebuild it through the
++ * allow-list sanitizer, which keeps only inline data: images and drops raw HTML that could load
++ * anything. Safety never depends on predicting how marked tokenizes code spans.
++ */
++function renderMarkdown(doc: Document, source: string, attachments: Record<string, string>): HTMLElement {
++	const div = doc.createElement("div");
++	div.className =
++		"markdown-content text-foreground break-words [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-2 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-2 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:my-1 [&_p]:my-1 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_pre]:p-2 [&_pre]:bg-muted/50 [&_pre]:rounded [&_pre]:overflow-x-auto [&_code]:font-mono [&_code]:text-xs [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_table]:border-collapse [&_td]:border [&_td]:px-2 [&_th]:border [&_th]:px-2 [&_img]:max-w-full";
++	const html = marked.parse(clip(neutralizeRemoteImages(source, attachments)), { async: false, gfm: true }) as string;
++	div.appendChild(sanitizeHtml(html, doc));
++	return div;
++}
 +
 +function clip(text: string): string {
 +	return text.length > MAX_OUTPUT_CHARS
@@ -1031,6 +1166,12 @@ index 000000000..689ff72ca
 +		const urls: string[] = [];
 +		const root = doc.createElement("div");
 +		root.className = "h-full overflow-auto p-3 flex flex-col gap-3 text-sm";
++		if (nb.truncated) {
++			const note = doc.createElement("div");
++			note.className = "text-xs text-muted-foreground";
++			note.textContent = i18n("Truncated for display");
++			root.appendChild(note);
++		}
 +		if (nb.cells.length < nb.totalCells) {
 +			const note = doc.createElement("div");
 +			note.className = "text-xs text-muted-foreground";
@@ -1041,8 +1182,7 @@ index 000000000..689ff72ca
 +			const cellEl = doc.createElement("div");
 +			cellEl.className = "flex flex-col gap-1 min-w-0";
 +			if (cell.type === "markdown") {
-+				const md = new MarkdownBlock();
-+				md.content = neutralizeRemoteImages(cell.source, cell.attachments);
++				const md = renderMarkdown(doc, cell.source, cell.attachments);
 +				cellEl.appendChild(md);
 +			} else if (cell.type === "code") {
 +				const label = doc.createElement("div");
@@ -1123,8 +1263,7 @@ index 000000000..689ff72ca
 +				break;
 +			}
 +			case "markdown": {
-+				const md = new MarkdownBlock();
-+				md.content = neutralizeRemoteImages(out.text, {});
++				const md = renderMarkdown(doc, out.text, {});
 +				box.appendChild(md);
 +				break;
 +			}
@@ -1545,17 +1684,17 @@ index 0a5474a7a..0a0312c4e 100644
  			} else {
 diff --git a/packages/web-ui/src/tools/artifacts/preview/PreviewArtifact.ts b/packages/web-ui/src/tools/artifacts/preview/PreviewArtifact.ts
 new file mode 100644
-index 000000000..ea8c48ad4
+index 000000000..6be3d605c
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/PreviewArtifact.ts
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,138 @@
 +import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
 +import { html, type TemplateResult } from "lit";
 +import { state } from "lit/decorators.js";
 +import { createRef, type Ref, ref } from "lit/directives/ref.js";
 +import { i18n } from "../../../utils/i18n.js";
 +import { ArtifactElement } from "../ArtifactElement.js";
-+import { decodeBase64Content, PREVIEW_LIMITS } from "./content.js";
++import { decodeBase64Content } from "./content.js";
 +import { mimeTypeFor } from "./file-types.js";
 +
 +/**
@@ -1640,10 +1779,16 @@ index 000000000..ea8c48ad4
 +		}
 +	}
 +
++	private downloadCache?: { content: string; bytes: Uint8Array };
++
++	/** The file as saved. Not size-limited: download is the way out for files too large to preview. */
 +	protected downloadBytes(): Uint8Array | string {
 +		if (!this.isBinary) return this._content;
++		if (this.downloadCache?.content === this._content) return this.downloadCache.bytes;
 +		try {
-+			return decodeBase64Content(this._content, PREVIEW_LIMITS.maxMediaBytes);
++			const bytes = decodeBase64Content(this._content, Number.POSITIVE_INFINITY);
++			this.downloadCache = { content: this._content, bytes };
++			return bytes;
 +		} catch {
 +			return this._content;
 +		}
@@ -1683,10 +1828,10 @@ index 000000000..ea8c48ad4
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/content.ts b/packages/web-ui/src/tools/artifacts/preview/content.ts
 new file mode 100644
-index 000000000..0d0cf68b3
+index 000000000..fb3797609
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/content.ts
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,223 @@
 +import JSZip from "jszip";
 +
 +/** Limits shared by the document previews. A file over a limit shows a message instead of a preview. */
@@ -1703,8 +1848,20 @@ index 000000000..0d0cf68b3
 +	maxZipEntries: 10_000,
 +	/** Most slides or pages rendered. */
 +	maxSlides: 300,
-+	/** Most table rows rendered for CSV and TSV. */
++	/** Most table rows rendered for CSV, TSV and spreadsheets. */
 +	maxTableRows: 5_000,
++	/** Most table columns rendered. */
++	maxTableColumns: 500,
++	/** Most table cells rendered in one table. */
++	maxTableCells: 200_000,
++	/** Most elements drawn across all slides of a deck. */
++	maxDeckElements: 50_000,
++	/** Most text runs in one document or deck. */
++	maxTextRuns: 200_000,
++	/** Most characters of text in one document. */
++	maxTextChars: 5_000_000,
++	/** Most notebook outputs rendered. */
++	maxOutputs: 5_000,
 +	/** Most notebook cells rendered. */
 +	maxCells: 2_000,
 +};
@@ -1802,6 +1959,11 @@ index 000000000..0d0cf68b3
 +		if (!file || file.dir) return undefined;
 +		const remaining = PREVIEW_LIMITS.maxZipTotalBytes - this.used;
 +		const cap = Math.min(PREVIEW_LIMITS.maxZipEntryBytes, remaining);
++		// Fail fast on the size the archive declares; the capped stream below still guards
++		// against an archive that understates it.
++		const declared = declaredSize(file);
++		if (declared !== undefined && declared > cap)
++			throw new PreviewLimitError("A part of this file is too large to preview");
 +		const data = await readCapped(file, cap);
 +		this.used += data.length;
 +		return data;
@@ -1811,6 +1973,12 @@ index 000000000..0d0cf68b3
 +		const data = await this.bytes(path);
 +		return data ? new TextDecoder("utf-8").decode(data) : undefined;
 +	}
++}
++
++/** Uncompressed size from the zip directory. JSZip keeps it on a private field. */
++function declaredSize(file: JSZip.JSZipObject): number | undefined {
++	const size = (file as unknown as { _data?: { uncompressedSize?: unknown } })._data?.uncompressedSize;
++	return typeof size === "number" && size >= 0 ? size : undefined;
 +}
 +
 +function readCapped(file: JSZip.JSZipObject, cap: number): Promise<Uint8Array> {
@@ -1976,16 +2144,18 @@ index 000000000..56f163ab4
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/delimited.ts b/packages/web-ui/src/tools/artifacts/preview/delimited.ts
 new file mode 100644
-index 000000000..7bb18d35d
+index 000000000..42a30c7b7
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/delimited.ts
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,121 @@
 +/** RFC 4180 style CSV and TSV parsing for the table preview. */
 +
 +export interface DelimitedTable {
 +	rows: string[][];
 +	/** Rows left out because of the row limit. */
 +	truncated: boolean;
++	/** Some rows had more fields than the column limit. */
++	wide: boolean;
 +	delimiter: string;
 +}
 +
@@ -2025,7 +2195,12 @@ index 000000000..7bb18d35d
 +	return n;
 +}
 +
-+export function parseDelimited(text: string, delimiter: string, maxRows = Number.POSITIVE_INFINITY): DelimitedTable {
++export function parseDelimited(
++	text: string,
++	delimiter: string,
++	maxRows = Number.POSITIVE_INFINITY,
++	maxColumns = Number.POSITIVE_INFINITY,
++): DelimitedTable {
 +	const rows: string[][] = [];
 +	let row: string[] = [];
 +	let field = "";
@@ -2033,8 +2208,13 @@ index 000000000..7bb18d35d
 +	let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
 +	const n = text.length;
 +	let truncated = false;
++	let wide = false;
++	const pushField = () => {
++		if (row.length < maxColumns) row.push(field);
++		else wide = true;
++	};
 +	const endRow = () => {
-+		row.push(field);
++		pushField();
 +		field = "";
 +		rows.push(row);
 +		row = [];
@@ -2062,7 +2242,7 @@ index 000000000..7bb18d35d
 +			continue;
 +		}
 +		if (ch === delimiter) {
-+			row.push(field);
++			pushField();
 +			field = "";
 +			i++;
 +			continue;
@@ -2073,7 +2253,7 @@ index 000000000..7bb18d35d
 +			i++;
 +			if (rows.length >= maxRows) {
 +				truncated = i < n;
-+				return { rows, truncated, delimiter };
++				return { rows, truncated, wide, delimiter };
 +			}
 +			continue;
 +		}
@@ -2081,7 +2261,7 @@ index 000000000..7bb18d35d
 +		i++;
 +	}
 +	if (field.length > 0 || row.length > 0) endRow();
-+	return { rows, truncated, delimiter };
++	return { rows, truncated, wide, delimiter };
 +}
 +
 +/** Heuristic for content stored as text rather than base64: a delimited file has a delimiter or newline in its first line. */
@@ -3343,10 +3523,10 @@ index 000000000..1cc968e60
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/notebook.ts b/packages/web-ui/src/tools/artifacts/preview/notebook.ts
 new file mode 100644
-index 000000000..3a4746ad3
+index 000000000..7b440fd92
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/notebook.ts
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,217 @@
 +/** Jupyter notebook (.ipynb, nbformat 4 and 3) reading for the preview. Pure: no DOM. */
 +
 +export type NotebookOutput =
@@ -3371,6 +3551,24 @@ index 000000000..3a4746ad3
 +	language: string;
 +	cells: NotebookCell[];
 +	totalCells: number;
++	/** Outputs or text were left out to stay within the limits. */
++	truncated: boolean;
++}
++
++export const MAX_NOTEBOOK_OUTPUTS = 5_000;
++export const MAX_NOTEBOOK_CHARS = 20_000_000;
++
++function outputSize(o: NotebookOutput): number {
++	switch (o.kind) {
++		case "image":
++			return o.data.length;
++		case "svg":
++			return o.svg.length;
++		case "html":
++			return o.html.length;
++		default:
++			return o.text.length;
++	}
 +}
 +
 +type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -3439,7 +3637,12 @@ index 000000000..3a4746ad3
 +	return head.startsWith("{") && /"cells"|"worksheets"|"nbformat"/.test(head.slice(0, 200_000));
 +}
 +
-+export function parseNotebook(text: string, maxCells = Number.POSITIVE_INFINITY): Notebook {
++export function parseNotebook(
++	text: string,
++	maxCells = Number.POSITIVE_INFINITY,
++	maxOutputs = MAX_NOTEBOOK_OUTPUTS,
++	maxChars = MAX_NOTEBOOK_CHARS,
++): Notebook {
 +	let raw: Json;
 +	try {
 +		raw = JSON.parse(text) as Json;
@@ -3464,6 +3667,9 @@ index 000000000..3a4746ad3
 +	}
 +
 +	const cells: NotebookCell[] = [];
++	let outputsLeft = maxOutputs;
++	let charsLeft = maxChars;
++	let truncated = false;
 +	for (const c of rawCells.slice(0, maxCells)) {
 +		if (!isObject(c)) continue;
 +		const t = c.cell_type;
@@ -3471,7 +3677,24 @@ index 000000000..3a4746ad3
 +		let source = joinSource(c.source ?? c.input);
 +		if (t === "heading" && typeof c.level === "number")
 +			source = `${"#".repeat(Math.min(6, Math.max(1, c.level)))} ${source}`;
-+		const outputs = Array.isArray(c.outputs) ? c.outputs.map(readOutput).filter((o): o is NotebookOutput => !!o) : [];
++		// One budget for the whole notebook; consecutive stream outputs merge, as in Jupyter.
++		const outputs: NotebookOutput[] = [];
++		for (const raw of Array.isArray(c.outputs) ? c.outputs : []) {
++			if (outputsLeft <= 0 || charsLeft <= 0) {
++				truncated = true;
++				break;
++			}
++			const o = readOutput(raw);
++			if (!o) continue;
++			charsLeft -= outputSize(o);
++			const last = outputs[outputs.length - 1];
++			if (o.kind === "stream" && last?.kind === "stream" && last.name === o.name) {
++				last.text += o.text;
++				continue;
++			}
++			outputsLeft--;
++			outputs.push(o);
++		}
 +		const attachments: Record<string, string> = {};
 +		if (isObject(c.attachments)) {
 +			for (const [name, bundle] of Object.entries(c.attachments)) {
@@ -3494,7 +3717,7 @@ index 000000000..3a4746ad3
 +			attachments,
 +		});
 +	}
-+	return { language, cells, totalCells: rawCells.length };
++	return { language, cells, totalCells: rawCells.length, truncated };
 +}
 +
 +/**
@@ -3523,10 +3746,10 @@ index 000000000..3a4746ad3
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/odf.ts b/packages/web-ui/src/tools/artifacts/preview/odf.ts
 new file mode 100644
-index 000000000..70e7b8872
+index 000000000..126ef7c36
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/odf.ts
-@@ -0,0 +1,1014 @@
+@@ -0,0 +1,1042 @@
 +/**
 + * OpenDocument reading for the preview. Text documents (.odt) become a flow of paragraphs,
 + * lists, tables and images; presentations (.odp) become the same slide model the pptx
@@ -3818,6 +4041,29 @@ index 000000000..70e7b8872
 +	styles: OdfStyles;
 +	images: Set<string>;
 +	zip: SafeZip;
++	budget: TextBudget;
++}
++
++/** Runs and characters a whole document may still produce. */
++interface TextBudget {
++	runs: number;
++	chars: number;
++	exhausted: boolean;
++}
++
++function newBudget(): TextBudget {
++	return { runs: PREVIEW_LIMITS.maxTextRuns, chars: PREVIEW_LIMITS.maxTextChars, exhausted: false };
++}
++
++function pushRun(ctx: InlineContext, out: OdfRun[], run: OdfRun) {
++	const b = ctx.budget;
++	if (b.runs <= 0 || b.chars <= 0) {
++		b.exhausted = true;
++		return;
++	}
++	b.runs--;
++	if ("text" in run) b.chars -= run.text.length;
++	out.push(run);
 +}
 +
 +/** Collapse ODF whitespace: runs of spaces, tabs and newlines in text become one space. */
@@ -3835,9 +4081,10 @@ index 000000000..70e7b8872
 +	href?: string,
 +) {
 +	for (const n of nodes) {
++		if (ctx.budget.exhausted) return;
 +		if (typeof n === "string") {
 +			const t = collapse(n);
-+			if (t) out.push({ text: t, style: base, href });
++			if (t) pushRun(ctx, out, { text: t, style: base, href });
 +			continue;
 +		}
 +		switch (n.name) {
@@ -3865,19 +4112,19 @@ index 000000000..70e7b8872
 +				break;
 +			}
 +			case "text:s": {
-+				const c = Math.min(1000, Number(attr(n, "text:c") ?? "1") || 1);
-+				out.push({ text: " ".repeat(c), style: base, href });
++				const c = Math.min(100, Number(attr(n, "text:c") ?? "1") || 1);
++				pushRun(ctx, out, { text: " ".repeat(c), style: base, href });
 +				break;
 +			}
 +			case "text:tab":
-+				out.push({ text: "\t", style: base, href });
++				pushRun(ctx, out, { text: "\t", style: base, href });
 +				break;
 +			case "text:line-break":
-+				out.push({ br: true });
++				pushRun(ctx, out, { br: true });
 +				break;
 +			case "draw:frame": {
 +				const img = frameImage(n, ctx);
-+				if (img) out.push(img);
++				if (img) pushRun(ctx, out, img);
 +				else {
 +					const box = child(n, "draw:text-box");
 +					if (box) for (const p of children(box)) readInline(p.children, family, styleName, base, ctx, out, href);
@@ -3886,7 +4133,7 @@ index 000000000..70e7b8872
 +			}
 +			case "text:note": {
 +				const cite = child(n, "text:note-citation");
-+				if (cite) out.push({ text: collapse(textContent(cite)), style: { ...base, baseline: 30 } });
++				if (cite) pushRun(ctx, out, { text: collapse(textContent(cite)), style: { ...base, baseline: 30 } });
 +				break;
 +			}
 +			case "office:annotation":
@@ -4003,7 +4250,7 @@ index 000000000..70e7b8872
 +		const out: OdtBlock[] = [];
 +		if (!container || depth > 40) return out;
 +		for (const el of children(container)) {
-+			if (this.count >= MAX_BLOCKS) {
++			if (this.count >= MAX_BLOCKS || this.ctx.budget.exhausted) {
 +				this.truncated = true;
 +				break;
 +			}
@@ -4129,12 +4376,12 @@ index 000000000..70e7b8872
 +
 +export async function readOdt(bytes: Uint8Array): Promise<OdtDocument> {
 +	const { zip, styles, content } = await openOdf(bytes);
-+	const ctx: InlineContext = { styles, images: new Set(), zip };
++	const ctx: InlineContext = { styles, images: new Set(), zip, budget: newBudget() };
 +	const reader = new OdtReader(ctx);
 +	const body = child(child(content, "office:body"), "office:text");
 +	if (!body) throw new Error("Not an OpenDocument text file");
 +	const blocks = reader.blocks(body);
-+	return { blocks, images: await loadImages(zip, ctx.images), truncated: reader.truncated };
++	return { blocks, images: await loadImages(zip, ctx.images), truncated: reader.truncated || ctx.budget.exhausted };
 +}
 +
 +// ---------------------------------------------------------------------------
@@ -4198,13 +4445,15 @@ index 000000000..70e7b8872
 +
 +class OdpReader {
 +	images = new Set<string>();
++	budget = newBudget();
++	elementsLeft = PREVIEW_LIMITS.maxDeckElements;
 +	constructor(
 +		private readonly styles: OdfStyles,
 +		private readonly zip: SafeZip,
 +	) {}
 +
 +	private ctx(): InlineContext {
-+		return { styles: this.styles, images: this.images, zip: this.zip };
++		return { styles: this.styles, images: this.images, zip: this.zip, budget: this.budget };
 +	}
 +
 +	private textBody(
@@ -4339,7 +4588,8 @@ index 000000000..70e7b8872
 +	elements(container: XmlElement | undefined, onMaster: boolean, out: SlideElement[], depth = 0) {
 +		if (!container || depth > 30) return;
 +		for (const el of children(container)) {
-+			if (out.length > 4000) return;
++			if (out.length > 4000 || this.elementsLeft <= 0) return;
++			this.elementsLeft--;
 +			if (el.name === "draw:g") {
 +				this.elements(el, onMaster, out, depth + 1);
 +				continue;
@@ -4527,6 +4777,7 @@ index 000000000..70e7b8872
 +	}
 +	const slides: Slide[] = [];
 +	for (const [i, page] of pages.slice(0, PREVIEW_LIMITS.maxSlides).entries()) {
++		if (reader.elementsLeft <= 0 || reader.budget.exhausted) break;
 +		const master = styles.masters.get(attr(page, "draw:master-page-name") ?? "");
 +		const elements: SlideElement[] = [];
 +		const pageProps = styles.resolve("drawing-page", attr(page, "draw:style-name"), "drawing-page-properties");
@@ -4568,10 +4819,10 @@ index 000000000..423bf3a3c
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/pptx.ts b/packages/web-ui/src/tools/artifacts/preview/pptx.ts
 new file mode 100644
-index 000000000..f77b2dcb2
+index 000000000..03775a63f
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/pptx.ts
-@@ -0,0 +1,943 @@
+@@ -0,0 +1,965 @@
 +/**
 + * Reads a .pptx into a plain slide model the panel can draw: positioned text boxes with basic
 + * formatting, shapes with fills and outlines, pictures, tables and slide backgrounds. Layout and
@@ -4722,6 +4973,12 @@ index 000000000..f77b2dcb2
 +
 +const MAX_ELEMENTS_PER_SLIDE = 4000;
 +
++/** What a deck may still draw; shared by every slide. */
++export interface Budget {
++	elements: number;
++	runs: number;
++}
++
 +interface Rel {
 +	target: string;
 +	type: string;
@@ -4771,6 +5028,7 @@ index 000000000..f77b2dcb2
 +	private themes = new Map<string, Theme>();
 +	readonly images = new Map<string, { mime: string; data: Uint8Array }>();
 +	private defaultTextXml?: XmlElement;
++	readonly budget: Budget = { elements: PREVIEW_LIMITS.maxDeckElements, runs: PREVIEW_LIMITS.maxTextRuns };
 +
 +	constructor(private readonly zip: SafeZip) {}
 +
@@ -4887,6 +5145,8 @@ index 000000000..f77b2dcb2
 +		const slides: Slide[] = [];
 +		const limit = Math.min(slidePaths.length, PREVIEW_LIMITS.maxSlides);
 +		for (let i = 0; i < limit; i++) {
++			// One budget for the whole deck: master and layout shapes count on every slide they draw on.
++			if (this.budget.elements <= 0 || this.budget.runs <= 0) break;
 +			slides.push(await this.slide(slidePaths[i], i + 1));
 +		}
 +		return { width, height, slides, totalSlides: slidePaths.length, images: this.images };
@@ -5002,7 +5262,7 @@ index 000000000..f77b2dcb2
 +		templateOnly: boolean,
 +	): Promise<void> {
 +		for (const raw of children(tree)) {
-+			if (scope.elements.length >= MAX_ELEMENTS_PER_SLIDE) return;
++			if (scope.elements.length >= MAX_ELEMENTS_PER_SLIDE || this.budget.elements <= 0) return;
 +			const el = raw.local === "AlternateContent" ? alternateContent(raw) : [raw];
 +			for (const node of el) {
 +				switch (node.local) {
@@ -5011,18 +5271,27 @@ index 000000000..f77b2dcb2
 +						// Placeholders on layouts and masters only show through the slide's own copies.
 +						if (templateOnly && placeholderOf(node)) continue;
 +						const shape = readShape(node, part, ctx, scope, transform, templateOnly);
-+						if (shape) scope.elements.push(shape);
++						if (shape) {
++							scope.elements.push(shape);
++							this.budget.elements--;
++						}
 +						break;
 +					}
 +					case "pic": {
 +						if (templateOnly && placeholderOf(node)) continue;
 +						const pic = readPicture(node, part, ctx, scope, transform);
-+						if (pic) scope.elements.push(pic);
++						if (pic) {
++							scope.elements.push(pic);
++							this.budget.elements--;
++						}
 +						break;
 +					}
 +					case "graphicFrame": {
 +						const frame = readGraphicFrame(node, part, ctx, scope, transform);
-+						if (frame) scope.elements.push(frame);
++						if (frame) {
++							scope.elements.push(frame);
++							this.budget.elements--;
++						}
 +						break;
 +					}
 +					case "grpSp": {
@@ -5262,7 +5531,7 @@ index 000000000..f77b2dcb2
 +		if (fontColor) base.color = fontColor;
 +		if (fontFace === "major" && ctx.theme.majorFont) base.font = ctx.theme.majorFont;
 +		const bodyChain = [child(txBody, "bodyPr"), ...inh.chain.map((c) => child(child(c, "txBody"), "bodyPr"))];
-+		const text = readTextBody(txBody, inh.levels, bodyChain, ctx, base, scope.slideNumber);
++		const text = readTextBody(txBody, inh.levels, bodyChain, ctx, base, scope.slideNumber, scope.reader.budget);
 +		if (text.paragraphs.some((p) => p.runs.some((r) => r.text.trim().length > 0))) shape.text = text;
 +	}
 +	return shape;
@@ -5382,7 +5651,7 @@ index 000000000..f77b2dcb2
 +			];
 +			const txBody = child(tc, "txBody");
 +			const text = txBody
-+				? readTextBody(txBody, levels, [child(txBody, "bodyPr")], ctx, base, scope.slideNumber)
++				? readTextBody(txBody, levels, [child(txBody, "bodyPr")], ctx, base, scope.slideNumber, scope.reader.budget)
 +				: undefined;
 +			if (text) {
 +				text.insets = insets;
@@ -5422,6 +5691,7 @@ index 000000000..f77b2dcb2
 +	ctx: ColorContext,
 +	base: RunStyle,
 +	slideNumber: number,
++	budget: Budget,
 +): TextBody {
 +	// Nearest bodyPr wins per attribute.
 +	const bodyAttr = (name: string): string | undefined => {
@@ -5456,6 +5726,7 @@ index 000000000..f77b2dcb2
 +	const paragraphs: TextParagraph[] = [];
 +	const counters: number[] = [];
 +	for (const p of children(txBody, "p")) {
++		if (budget.runs <= 0) break;
 +		const pPr = child(p, "pPr");
 +		const level = Math.min(8, Math.max(0, numAttr(pPr, "lvl") ?? 0));
 +		let style = levels[level] ?? { run: {} };
@@ -5464,6 +5735,8 @@ index 000000000..f77b2dcb2
 +		style = mergePara(style, parseParaStyle(pPr, ctx));
 +		const runs: TextRun[] = [];
 +		for (const r of children(p)) {
++			if (budget.runs <= 0) break;
++			if (r.local === "r" || r.local === "br" || r.local === "fld") budget.runs--;
 +			if (r.local === "r" || r.local === "fld") {
 +				let text = textOf(child(r, "t"));
 +				if (r.local === "fld" && attr(r, "type") === "slidenum") text = String(slideNumber);
@@ -5517,10 +5790,10 @@ index 000000000..f77b2dcb2
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/rtf.ts b/packages/web-ui/src/tools/artifacts/preview/rtf.ts
 new file mode 100644
-index 000000000..4592d57d3
+index 000000000..e1579f715
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/rtf.ts
-@@ -0,0 +1,650 @@
+@@ -0,0 +1,665 @@
 +/**
 + * RTF reading for the preview: paragraphs with basic character and paragraph formatting,
 + * simple tables and embedded PNG/JPEG pictures. Fields show their result, objects show their
@@ -5572,6 +5845,8 @@ index 000000000..4592d57d3
 +}
 +
 +export const MAX_RTF_BLOCKS = 20_000;
++export const MAX_RTF_RUNS = 200_000;
++export const MAX_RTF_CHARS = 5_000_000;
 +
 +export function looksLikeRtf(text: string): boolean {
 +	return text.trimStart().startsWith("{\\rtf");
@@ -5724,7 +5999,12 @@ index 000000000..4592d57d3
 +	return btoa(binary);
 +}
 +
-+export function parseRtf(source: string, maxBlocks = MAX_RTF_BLOCKS): RtfDocument {
++export function parseRtf(
++	source: string,
++	maxBlocks = MAX_RTF_BLOCKS,
++	maxRuns = MAX_RTF_RUNS,
++	maxChars = MAX_RTF_CHARS,
++): RtfDocument {
 +	if (!looksLikeRtf(source)) throw new Error("Not an RTF file");
 +	const fonts = new Map<number, string>();
 +	const colors: (string | undefined)[] = [];
@@ -5750,6 +6030,8 @@ index 000000000..4592d57d3
 +	// Picture assembly
 +	let pict: { type?: string; hex: string; w?: number; h?: number; sx: number; sy: number } | undefined;
 +	let skipChars = 0;
++	let runCount = 0;
++	let charCount = 0;
 +	let defaultFont: number | undefined;
 +
 +	const flushBytes = () => {
@@ -5776,7 +6058,12 @@ index 000000000..4592d57d3
 +	const flushText = () => {
 +		flushBytes();
 +		if (text) {
-+			if (st.dest === "body" && !st.char.hidden) runs.push({ text, style: runStyle ?? charStyle() });
++			if (st.dest === "body" && !st.char.hidden) {
++				runs.push({ text, style: runStyle ?? charStyle() });
++				runCount++;
++				charCount += text.length;
++				if (runCount >= maxRuns || charCount >= maxChars) truncated = true;
++			}
 +			text = "";
 +		}
 +		runStyle = undefined;
@@ -5842,7 +6129,7 @@ index 000000000..4592d57d3
 +	const n = source.length;
 +	let i = 0;
 +	let depth = 0;
-+	while (i < n) {
++	while (i < n && !truncated) {
 +		const ch = source[i];
 +		if (ch === "{") {
 +			flushText();
@@ -5899,7 +6186,8 @@ index 000000000..4592d57d3
 +					// The following control word is an ignorable destination unless we know it.
 +					const m = /^\\([a-zA-Z]+)/.exec(source.slice(i, i + 40));
 +					const word = m?.[1];
-+					if (word !== "shppict" && word !== "fldinst") st.dest = st.dest === "pict" ? "pict" : "skip";
++					// Inside a picture this also skips \blipuid and \picprop, so only image bytes are read.
++					if (word !== "shppict" && word !== "fldinst") st.dest = "skip";
 +					continue;
 +				}
 +				if (next === "~") addText(" ");
@@ -7092,10 +7380,10 @@ index 000000000..fec523833
 +	return out;
 +}
 diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
-index 1f50a7d08..9afbbd787 100644
+index 1f50a7d08..0ece5bb26 100644
 --- a/packages/web-ui/src/utils/i18n.ts
 +++ b/packages/web-ui/src/utils/i18n.ts
-@@ -45,6 +45,23 @@ declare module "@mariozechner/mini-lit" {
+@@ -45,6 +45,24 @@ declare module "@mariozechner/mini-lit" {
  		"Error loading document": string;
  		"Error loading spreadsheet": string;
  		"Preview not available for this file type.": string;
@@ -7116,10 +7404,11 @@ index 1f50a7d08..9afbbd787 100644
 +		"{count} slides": string;
 +		"1 slide": string;
 +		"{rows} rows": string;
++		"columns after {count} not shown": string;
  		"Click the download button above to view it on your computer.": string;
  		"No content available": string;
  		"Failed to display text content": string;
-@@ -61,6 +78,13 @@ declare module "@mariozechner/mini-lit" {
+@@ -61,6 +79,13 @@ declare module "@mariozechner/mini-lit" {
  		"Call was aborted; no result.": string;
  		"No session available": string;
  		"No session set": string;
@@ -7133,7 +7422,7 @@ index 1f50a7d08..9afbbd787 100644
  		"Preparing tool parameters...": string;
  		"(no output)": string;
  		Input: string;
-@@ -254,6 +278,25 @@ export const translations = {
+@@ -254,6 +279,26 @@ export const translations = {
  		"Error loading document": "Error loading document",
  		"Error loading spreadsheet": "Error loading spreadsheet",
  		"Preview not available for this file type.": "Preview not available for this file type.",
@@ -7156,10 +7445,11 @@ index 1f50a7d08..9afbbd787 100644
 +		"{count} slides": "{count} slides",
 +		"1 slide": "1 slide",
 +		"{rows} rows": "{rows} rows",
++		"columns after {count} not shown": "columns after {count} not shown",
  		"Click the download button above to view it on your computer.":
  			"Click the download button above to view it on your computer.",
  		"No content available": "No content available",
-@@ -272,6 +315,13 @@ export const translations = {
+@@ -272,6 +317,13 @@ export const translations = {
  		"Call was aborted; no result.": "Call was aborted; no result.",
  		"No session available": "No session available",
  		"No session set": "No session set",
@@ -7173,7 +7463,7 @@ index 1f50a7d08..9afbbd787 100644
  		"Preparing tool parameters...": "Preparing tool parameters...",
  		"(no output)": "(no output)",
  		Input: "Input",
-@@ -473,6 +523,25 @@ export const translations = {
+@@ -473,6 +525,26 @@ export const translations = {
  		"Error loading document": "Fehler beim Laden des Dokuments",
  		"Error loading spreadsheet": "Fehler beim Laden der Tabelle",
  		"Preview not available for this file type.": "Vorschau für diesen Dateityp nicht verfügbar.",
@@ -7196,10 +7486,11 @@ index 1f50a7d08..9afbbd787 100644
 +		"{count} slides": "{count} Folien",
 +		"1 slide": "1 Folie",
 +		"{rows} rows": "{rows} Zeilen",
++		"columns after {count} not shown": "Spalten nach {count} nicht angezeigt",
  		"Click the download button above to view it on your computer.":
  			"Klicken Sie oben auf die Download-Schaltfläche, um die Datei auf Ihrem Computer anzuzeigen.",
  		"No content available": "Kein Inhalt verfügbar",
-@@ -491,6 +560,14 @@ export const translations = {
+@@ -491,6 +563,14 @@ export const translations = {
  		"Call was aborted; no result.": "Aufruf wurde abgebrochen; kein Ergebnis.",
  		"No session available": "Keine Sitzung verfügbar",
  		"No session set": "Keine Sitzung gesetzt",

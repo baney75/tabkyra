@@ -13,7 +13,7 @@ import { readPptx } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/art
 import { readOdt, readOdp } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/odf.js";
 import { parseRtf } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/rtf.js";
 import { parseNotebook, neutralizeRemoteImages, stripAnsi } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/notebook.js";
-import { decodeBase64Content, readTextContent, PreviewLimitError } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/content.js";
+import { decodeBase64Content, readTextContent, PreviewLimitError, PREVIEW_LIMITS } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/content.js";
 
 test("each file type gets its viewer", () => {
 	const cases = {
@@ -390,4 +390,87 @@ test("content decodes from base64 or data URLs and enforces the size limit", () 
 	assert.throws(() => decodeBase64Content("not base64!"), /not base64/);
 	assert.equal(readTextContent("a,b\n1,2", (t) => t.includes(",")), "a,b\n1,2");
 	assert.equal(readTextContent(Buffer.from("{\\rtf1 hi}").toString("base64"), (t) => t.startsWith("{\\rtf")), "{\\rtf1 hi}");
+});
+
+// ---------------------------------------------------------------------------
+// Limits found in review: every reader stays bounded by the whole file, not per part.
+// ---------------------------------------------------------------------------
+
+/** Run `fn` with some PREVIEW_LIMITS lowered, then restore them. */
+async function withLimits(over, fn) {
+	const saved = { ...PREVIEW_LIMITS };
+	Object.assign(PREVIEW_LIMITS, over);
+	try {
+		return await fn();
+	} finally {
+		Object.assign(PREVIEW_LIMITS, saved);
+	}
+}
+
+test("CSV parsing drops fields past the column limit and says so", () => {
+	const { rows, wide } = parseDelimited(`${",".repeat(1000)}\na,b`, ",", 10, 500);
+	assert.equal(rows[0].length, 500);
+	assert.equal(wide, true);
+	assert.deepEqual(rows[1], ["a", "b"]);
+});
+
+test("a deck shares one element budget across slides, master shapes included", async () => {
+	const deck = await withLimits({ maxDeckElements: 5 }, async () => readPptx(await cookieDeck()));
+	// The first slide spends the budget (layout decoration plus its own shapes); the second is left out.
+	assert.equal(deck.slides.length, 1);
+	assert.equal(deck.totalSlides, 2);
+	assert.ok(deck.slides[0].elements.length <= 5);
+});
+
+test("an odt stops at the run budget and caps repeated spaces", async () => {
+	const zip = new JSZip();
+	const many = Array.from({ length: 50 }, (_, i) => `<text:p>p${i}<text:s text:c="100000"/></text:p>`).join("");
+	zip.file("content.xml", `<office:document-content ${ODF_NS}><office:body><office:text>${many}</office:text></office:body></office:document-content>`);
+	const bytes = await zip.generateAsync({ type: "uint8array" });
+	const doc = await withLimits({ maxTextRuns: 20 }, () => readOdt(bytes));
+	assert.equal(doc.truncated, true);
+	const runs = doc.blocks.flatMap((b) => b.runs ?? []);
+	assert.ok(runs.length <= 20);
+	assert.ok(runs.every((r) => !r.text || r.text.length <= 100), "text:s repeats at most 100 spaces");
+});
+
+test("RTF stops at the run limit and skips \\blipuid inside a picture", () => {
+	const many = `{\\rtf1 ${"{\\b x}{\\i y}".repeat(100)}\\par}`;
+	const capped = parseRtf(many, 1000, 10);
+	assert.equal(capped.truncated, true);
+	assert.ok(capped.blocks.flatMap((b) => b.runs).length <= 10);
+	const png = PNG.toString("hex");
+	const word = `{\\rtf1 {\\pict{\\*\\picprop{\\sp{\\sn x}{\\sv 1}}}\\pngblip{\\*\\blipuid 7a3c00112233445566778899aabbccdd}${png}}\\par}`;
+	const img = parseRtf(word).blocks[0].runs[0].image;
+	assert.equal(img, `data:image/png;base64,${PNG.toString("base64")}`);
+});
+
+test("a notebook has one output budget and merges consecutive streams", () => {
+	const outputs = [
+		...Array.from({ length: 3 }, () => ({ output_type: "stream", name: "stdout", text: "a" })),
+		{ output_type: "stream", name: "stderr", text: "e" },
+		...Array.from({ length: 50 }, () => ({ output_type: "display_data", data: { "text/plain": "x" } })),
+	];
+	const nb = parseNotebook(JSON.stringify({ cells: [{ cell_type: "code", source: "", outputs }] }), 10, 5);
+	const outs = nb.cells[0].outputs;
+	assert.equal(outs[0].text, "aaa");
+	assert.equal(outs[1].name, "stderr");
+	assert.equal(outs.length, 5);
+	assert.equal(nb.truncated, true);
+});
+
+test("an archive that understates an entry's size still stops at the streaming cap", async () => {
+	const zip = new JSZip();
+	zip.file("ppt/presentation.xml", "a".repeat(40 * 1024 * 1024), { compression: "DEFLATE" });
+	const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+	// Rewrite the uncompressed size in the local header (offset 22) and the central directory (offset 24).
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	view.setUint32(22, 100, true);
+	for (let i = bytes.length - 22; i >= 0; i--) {
+		if (view.getUint32(i, true) === 0x02014b50) {
+			view.setUint32(i + 24, 100, true);
+			break;
+		}
+	}
+	await assert.rejects(readPptx(bytes), PreviewLimitError);
 });
