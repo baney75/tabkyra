@@ -127,7 +127,11 @@ builds it in. The secret half exists in two places only:
 Every job that reads the key waits for an approval: the environment has baney75 as its
 required reviewer (self-review allowed), so a run starts signing only after he approves it, in
 the Actions run page or with
-`gh api -X POST repos/baney75/tabkyra/actions/runs/<run id>/pending_deployments -f state=approved -F 'environment_ids[]=<id>' -f comment=ok`.
+`gh api -X POST repos/baney75/tabkyra/actions/runs/<run id>/pending_deployments -f state=approved -F 'environment_ids[]=<id>' -f comment=ok`,
+where `<id>` comes from `gh api repos/baney75/tabkyra/environments/release --jq .id`. Before
+approving, check that no workflow changed since the last run you approved, for example
+`git log <last v* tag>..<run's commit> -- .github/workflows`; the approval prompt doesn't show
+workflow changes, and an unexpected change or an unexpected request gets rejected.
 That holds whoever changed main, so a collaborator who merges a workflow that prints the key
 still can't run it without that approval. Only `main` and `v*` tags can deploy to the
 environment at all, so a workflow on any other branch (even one dispatched by hand) can't
@@ -142,7 +146,8 @@ To cut a release, run `./release.sh patch` on a clean, up-to-date main, then app
 with the CLI, `tabkyra update --check` exits 100 and `tabkyra update` installs it.
 
 Before the first tag after any change to the secret or the public key, prove they are a pair
-with the real minisign: `gh workflow run release-key-check.yml --repo baney75/tabkyra`. It
+with the real minisign: `gh workflow run release-key-check.yml --repo baney75/tabkyra`, then
+approve its `release` deployment. It
 signs a scratch file and verifies it against `keys/tabkyra-release.pub`, and publishes nothing.
 
 ### Rotating the key (not supported yet)
@@ -164,7 +169,13 @@ nothing more:
 `gh secret delete MINISIGN_SECRET_KEY --repo baney75/tabkyra --env release`, plus a
 repository-level copy if one ever appears (`gh secret delete MINISIGN_SECRET_KEY --repo
 baney75/tabkyra`). Confirm with `gh secret list --repo baney75/tabkyra` and
-`gh secret list --repo baney75/tabkyra --env release` that neither lists it. That doesn't revoke it. Every installed CLI keeps trusting the leaked key, and
+`gh secret list --repo baney75/tabkyra --env release` that neither lists it.
+
+Then close every other way to publish a release, because a key holder still needs one to reach
+installed CLIs (the rulesets protect `v*` tags, not release assets): remove any collaborator
+other than baney75 (`gh api repos/baney75/tabkyra/collaborators`), deploy keys with write
+access (`gh api repos/baney75/tabkyra/keys`), and GitHub Apps or tokens with `contents: write`
+on this repository. Check that no workflow outside `release.yml` grants `contents: write`. That doesn't revoke it. Every installed CLI keeps trusting the leaked key, and
 whoever holds it can sign a release those CLIs accept. Tell users to reinstall from a trusted
 channel with a CLI that carries a new key. There is no revocation or expiry yet.
 
@@ -182,7 +193,9 @@ and its own procedure: add the new key beside the old one in a release signed by
    and rename it to "Tabkyra release signing key (minisign <new key ID>)". Then set the secret
    from the file on stdin, never as an argument:
    `gh secret set MINISIGN_SECRET_KEY --repo baney75/tabkyra --env release < tabkyra-release.key`.
-4. Run `gh workflow run release-key-check.yml --repo baney75/tabkyra` and wait for it to pass.
+4. Run `gh workflow run release-key-check.yml --repo baney75/tabkyra`, approve its `release`
+   deployment (the run page, or the `pending_deployments` call above), and wait for it to pass.
+   A check that seems to hang is waiting for that approval.
    Push no `v*` tag between step 2 and this passing check: a release in that window would be
    signed with the wrong key for the committed public key.
 5. Delete `tabkyra-release.key`. On an SSD with FileVault, deleting is all you can do; the Pass
