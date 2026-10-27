@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
+import XLSX_ZAHL from "xlsx/dist/xlsx.zahl.mjs";
 
 import { conversionHint, getArtifactFileType, mimeTypeFor } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/file-types.js";
 import { detectDelimiter, parseDelimited } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/delimited.js";
@@ -13,7 +14,7 @@ import { autoNumberLabel, presetPath, colorOf, emptyTheme } from "../node_module
 import { readPptx } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/pptx.js";
 import { readOdt, readOdp } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/odf.js";
 import { parseRtf } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/rtf.js";
-import { cappedWorkbookZip, clampSheet } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/spreadsheet.js";
+import { cappedWorkbookZip, clampSheet, iwaUncompressedSize } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/spreadsheet.js";
 import { parseNotebook, neutralizeRemoteImages, stripAnsi } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/notebook.js";
 import { decodeBase64Content, readTextContent, PreviewLimitError, PREVIEW_LIMITS } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/content.js";
 
@@ -630,4 +631,63 @@ test("RTF applies the character cap to one long unstyled run", () => {
 	const doc = parseRtf(`{\\rtf1 ${"a".repeat(2000)}\\par}`, 1000, 1000, 500);
 	assert.equal(doc.truncated, true);
 	assert.ok(doc.blocks.flatMap((b) => b.runs).reduce((n, r) => n + (r.text?.length ?? 0), 0) <= 600);
+});
+
+// ---------------------------------------------------------------------------
+// Apple Numbers: SheetJS inflates .iwa Snappy streams itself, so their sizes are checked first.
+// ---------------------------------------------------------------------------
+
+/** One framed Snappy chunk: type 0, 3-byte length, varint declared size, then tags. */
+function iwaChunk(declared, tags) {
+	const varint = [];
+	let v = declared;
+	do {
+		varint.push((v & 0x7f) | (v >= 0x80 ? 0x80 : 0));
+		v = Math.floor(v / 0x80);
+	} while (v > 0);
+	const payload = Buffer.concat([Buffer.from(varint), tags]);
+	const head = Buffer.from([0, payload.length & 255, (payload.length >> 8) & 255, (payload.length >> 16) & 255]);
+	return Buffer.concat([head, payload]);
+}
+/** A 4-byte literal followed by `copies` copy tags of 64 bytes each (3 bytes per tag). */
+function expandingTags(copies) {
+	const literal = Buffer.from([(4 - 1) << 2, 1, 2, 3, 4]);
+	const copy = Buffer.alloc(copies * 3);
+	for (let i = 0; i < copies; i++) copy.set([((64 - 1) << 2) | 2, 4, 0], i * 3);
+	return Buffer.concat([literal, copy]);
+}
+
+async function numbersWith(extraIwa) {
+	const wb = XLSX.utils.book_new();
+	XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Cookie", "Minutes"], ["Chocolate chip", 10]]), "Cookies");
+	const raw = XLSX.write(wb, { type: "array", bookType: "numbers", numbers: XLSX_ZAHL });
+	const zip = await JSZip.loadAsync(raw);
+	if (extraIwa) zip.file("Index/Evil.iwa", extraIwa);
+	return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+}
+
+test("an honest Numbers file passes the stream check and still reads", async () => {
+	const capped = await cappedWorkbookZip(await numbersWith());
+	const wb = XLSX.read(capped, { type: "array" });
+	assert.equal(XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]).split("\n")[1], "Chocolate chip,10");
+});
+
+test("a Numbers stream that declares more than the cap is refused before SheetJS", async () => {
+	const evil = iwaChunk(500 * 1024 * 1024, expandingTags(10));
+	assert.throws(() => iwaUncompressedSize(evil, 120 * 1024 * 1024), PreviewLimitError);
+	await assert.rejects(cappedWorkbookZip(await numbersWith(evil)), /Export it to XLSX/);
+});
+
+test("a Numbers stream that inflates past the cap is refused without inflating it", async () => {
+	// 30,000 copy tags expand about 21x: 1.9 MB out of 90 KB in.
+	const evil = iwaChunk(1000, expandingTags(30_000));
+	assert.throws(() => iwaUncompressedSize(evil, 1024 * 1024), PreviewLimitError);
+	const bytes = await numbersWith(evil);
+	await withLimits({ maxSpreadsheetEntryBytes: 1024 * 1024 }, () => assert.rejects(cappedWorkbookZip(bytes), PreviewLimitError));
+});
+
+test("a Numbers stream whose declared and actual sizes disagree is refused", () => {
+	assert.throws(() => iwaUncompressedSize(iwaChunk(10, expandingTags(2)), 1e9), /Malformed/);
+	assert.equal(iwaUncompressedSize(iwaChunk(4 + 2 * 64, expandingTags(2)), 1e9), 132);
+	assert.throws(() => iwaUncompressedSize(Buffer.from([0, 200, 0, 0, 1]), 1e9), /Malformed/);
 });
