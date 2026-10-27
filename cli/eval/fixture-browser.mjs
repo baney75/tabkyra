@@ -190,11 +190,30 @@ export async function launchFixtureBrowser({ extraEnv = {} } = {}) {
 		// so a refused reload is retried, but only while the same host lives: a reload whose
 		// reply was lost has already happened and must not be sent again.
 		const before = hostPid();
+		const gone = () => {
+			if (before === undefined) return false;
+			try {
+				process.kill(before, 0);
+				return false;
+			} catch {
+				return true;
+			}
+		};
 		await until(
 			async () => {
-				if (before !== undefined && hostPid() !== before) return true;
+				if (gone()) return true;
 				reloadsSent++;
-				await tabkyraAsync(["reload"]);
+				try {
+					await tabkyraAsync(["reload"]);
+				} catch (err) {
+					// The connection closed under the reply: the reload went out. Wait for the old
+					// host to exit rather than send another.
+					if (/connection closed|ECONNRESET|EPIPE/i.test(`${err.stderr ?? ""}${err.message}`)) return true;
+					// Refused before it reached a ready extension: wait for the old host to go, or retry.
+					for (let i = 0; i < 8 && !gone(); i++) await sleep(250);
+					if (gone()) return true;
+					throw err;
+				}
 				return true;
 			},
 			30000,

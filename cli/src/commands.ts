@@ -210,6 +210,9 @@ export function argsProblem(command: string, args: string[]): string | undefined
 		const a = args[i];
 		if (!a.startsWith("-")) continue;
 		if (!flags.includes(name(a))) return `Unknown option "${name(a)}". ${usage}`;
+		// A switch takes no value: "--off=1" must not pass here and then go unseen (the dispatcher
+		// matches switches exactly).
+		if (a.includes("=") && !VALUE_FLAGS.has(name(a))) return `${name(a)} takes no value. ${usage}`;
 		if (VALUE_FLAGS.has(name(a))) {
 			const value = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[i + 1];
 			if (value === undefined || value === "" || (!a.includes("=") && value.startsWith("-"))) return `${name(a)} needs a value. ${usage}`;
@@ -269,9 +272,18 @@ export function completionScript(shell: string): string | undefined {
 			"    compadd -- $flags",
 			"  fi",
 			"}",
-			"# compdef exists once compinit has run; load it if the user's zshrc hasn't.",
-			"if (( ! $+functions[compdef] )); then autoload -Uz compinit && compinit; fi",
-			"compdef _tabkyra tabkyra",
+			"# compdef exists once compinit has run. If the zshrc runs it later (oh-my-zsh, zinit,",
+			"# prezto), register at the first prompt instead of running compinit a second time.",
+			"if (( $+functions[compdef] )); then",
+			"  compdef _tabkyra tabkyra",
+			"else",
+			"  autoload -Uz add-zsh-hook",
+			"  _tabkyra_register() {",
+			"    (( $+functions[compdef] )) && compdef _tabkyra tabkyra",
+			"    add-zsh-hook -d precmd _tabkyra_register",
+			"  }",
+			"  add-zsh-hook precmd _tabkyra_register",
+			"fi",
 			"",
 		);
 		return lines.join("\n");

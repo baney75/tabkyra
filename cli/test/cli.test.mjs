@@ -90,6 +90,12 @@ test("options are checked per subcommand, and a value option needs its value", (
 		assert.match(r.err, /Unknown option|needs a value|Usage/);
 	}
 	assert.match(run("serve", "--port").err, /--port needs a value/);
+	// A switch with a value is refused, not ignored: --off=1 used to run the tunnel instead.
+	for (const args of [["tunnel", "tailscale", "--off=1"], ["status", "--json=1"], ["install", "--force=yes"], ["version", "--json=true"]]) {
+		const r = run(...args);
+		assert.equal(r.code, 2, `tabkyra ${args.join(" ")} exited ${r.code}`);
+		assert.match(r.err, /takes no value/);
+	}
 	assert.match(run("pi-extension", "a", "b").err, /Usage: tabkyra pi-extension \[dir\]/);
 	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port\]$/m);
 	assert.match(run("token", "create", "x", "--bogus").err, /Usage: tabkyra token create <name> \[--scope\]$/m);
@@ -118,10 +124,15 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	else t.diagnostic("zsh is not installed here: the zsh script's syntax was not checked");
 	// Loaded from a zshrc that never ran compinit, it must not fail with "command not found: compdef".
 	if (spawnSync("zsh", ["--version"]).status === 0) {
-		const plain = spawnSync("zsh", ["-f", "-c", `eval "$(cat)"; whence -w _tabkyra`], { input: zsh.out, encoding: "utf8", env: { ...process.env, HOME: home } });
-		assert.equal(plain.status, 0, plain.stderr);
-		assert.doesNotMatch(plain.stderr, /compdef/);
+		const plain = spawnSync("zsh", ["-f", "-c", `eval "$(cat)"; whence -w _tabkyra; whence -w compinit compdef`], { input: zsh.out, encoding: "utf8", env: { ...process.env, HOME: home } });
+		assert.equal(plain.status === 0 || plain.status === 1, true, plain.stderr);
+		assert.doesNotMatch(plain.stderr, /compdef|insecure/);
 		assert.match(plain.stdout, /_tabkyra: function/);
+		// It never runs compinit itself: that is the zshrc's job, and a second run can prompt.
+		assert.match(plain.stdout, /compdef: none/);
+		// With compinit already run, it registers at once.
+		const ready = spawnSync("zsh", ["-f", "-c", `autoload -Uz compinit && compinit -u; eval "$(cat)"; echo \${_comps[tabkyra]}`], { input: zsh.out, encoding: "utf8", env: { ...process.env, HOME: home } });
+		assert.equal(ready.stdout.trim(), "_tabkyra", ready.stderr);
 	}
 	// Hidden aliases stay out.
 	assert.doesNotMatch(bash, /\byolo\b/);
