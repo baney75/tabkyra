@@ -118,3 +118,57 @@ test("a fresh task's own tab isn't pointed at another task left marked busy", as
 	assert.ok(!setOptions.some((o) => o.tabId === tab && o.path === `sidepanel.html?tabId=${otherHome}`), "not re-pointed at the other task");
 	assert.ok(!setOptions.some((o) => o.tabId === tab && o.enabled === false), "and not closed");
 });
+
+test("a panel whose task never names its tab is closed after the pending-open window", async () => {
+	const { fake, setOptions } = setup();
+	const tab = fake.addTab({ active: true });
+	globalThis.__TABKYRA_PENDING_OPEN_MS = 200;
+	try {
+		await import(`../src/background.ts?ctx=worker-timeout-${Math.random()}`);
+		await settle(50);
+		for (const fn of chrome.action.onClicked.listeners) fn({ id: tab, windowId: 1 });
+		// The panel never writes a session naming the tab (it failed to start). A reconcile inside
+		// the window (here the tab is re-activated) must leave the panel open.
+		await settle(50);
+		for (const fn of chrome.tabs.onActivated.listeners) fn({ tabId: tab, windowId: 1 });
+		await settle(50);
+		assert.ok(!setOptions.some((o) => o.tabId === tab && o.enabled === false), "kept open during the window");
+		await settle(400);
+		assert.ok(setOptions.some((o) => o.tabId === tab && o.enabled === false), "closed once the window passed");
+	} finally {
+		delete globalThis.__TABKYRA_PENDING_OPEN_MS;
+	}
+});
+
+test("a reconcile already reading the busy marker when the user opens a fresh task leaves that panel alone", async () => {
+	const { fake, setOptions } = setup();
+	const otherHome = fake.addTab({ active: false });
+	const tab = fake.addTab({ active: true });
+	await chrome.storage.session.set({ sidepanel_busy_1: otherHome });
+	// Hold the busy-marker read open so the click lands while a reconcile waits on it.
+	const realGet = chrome.storage.session.get.bind(chrome.storage.session);
+	let release;
+	let holding = false;
+	chrome.storage.session.get = async (keys) => {
+		if (holding && keys === "sidepanel_busy_1") {
+			await new Promise((r) => (release = r));
+			holding = false;
+		}
+		return realGet(keys);
+	};
+	await import(`../src/background.ts?ctx=worker-race-${Math.random()}`);
+	await settle(50);
+	// A panel is open in the window, so the busy claim is consulted.
+	const port = { name: "sidepanel:1", onDisconnect: event(), onMessage: event(), postMessage() {}, disconnect() {} };
+	for (const fn of chrome.runtime.onConnect.listeners) fn(port);
+	await settle(50);
+	holding = true;
+	for (const fn of chrome.tabs.onActivated.listeners) fn({ tabId: tab, windowId: 1 });
+	await settle(30); // the reconcile is now waiting on the busy read
+	for (const fn of chrome.action.onClicked.listeners) fn({ id: tab, windowId: 1 });
+	await settle(10);
+	release();
+	await settle(100);
+	assert.ok(!setOptions.some((o) => o.tabId === tab && o.path === `sidepanel.html?tabId=${otherHome}`), "not re-pointed at the other task");
+	assert.ok(!setOptions.some((o) => o.tabId === tab && o.enabled === false), "and not closed");
+});
