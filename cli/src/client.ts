@@ -106,8 +106,8 @@ export class BridgeClient {
 	private seq = 0;
 	/** Requests waiting for a reply, each with the socket it went out on. */
 	private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; socket: Socket }>();
-	/** One reconnect at a time: concurrent calls that lost the bridge wait on the same one. */
-	private reconnecting?: Promise<void>;
+	/** Shared reconnect attempts, one per browser wanted ("" for any): concurrent callers join. */
+	private reconnecting = new Map<string, Promise<void>>();
 	/** One connect at a time: a call that finds no socket waits on a dial already under way. */
 	private connecting?: Promise<void>;
 	/**
@@ -116,11 +116,13 @@ export class BridgeClient {
 	 */
 	private socketExtension = new WeakMap<Socket, boolean>();
 	private socketBrowser = new WeakMap<Socket, string>();
+	/** The browser behind each socket file, as last seen: a rescan skips other browsers' hosts. */
+	private pathBrowser = new Map<string, string>();
 	/**
-	 * The browser this client works in, once known. Resends and reconnects stay with it: with
-	 * two browsers running Tabkyra, a request is never resent to the other one.
+	 * The browser the client last worked in. A call whose socket was already gone resends there;
+	 * it is forgotten when a call's budget runs out, so a later call takes whatever browser is up.
 	 */
-	private browserId?: string;
+	private lastBrowser?: string;
 	clientId?: string;
 	extensionConnected = false;
 	/** Set once the extension has been connected; only a bridge that once worked is worth waiting for. */
@@ -133,11 +135,13 @@ export class BridgeClient {
 		return this.socket !== undefined && !this.socket.destroyed && this.socket.writable;
 	}
 
-	/** Whether a socket's host reached an extension in this client's browser. */
-	private ready(socket: Socket): boolean {
+	/**
+	 * Whether a socket's host reached an extension, in browser `want` when given. A resend names
+	 * the browser it started in, and only that exact browser will do (not a host without an id).
+	 */
+	private ready(socket: Socket, want?: string): boolean {
 		if (!this.socketExtension.get(socket)) return false;
-		const browser = this.socketBrowser.get(socket);
-		return !this.browserId || !browser || browser === this.browserId;
+		return want === undefined || this.socketBrowser.get(socket) === want;
 	}
 
 	/**
@@ -146,37 +150,52 @@ export class BridgeClient {
 	 * socket that is about to be dropped. Concurrent connects share one attempt.
 	 */
 	connect(path?: string, timeoutMs = 5000): Promise<void> {
-		this.connecting ??= this.connectNow(path, timeoutMs).finally(() => {
+		this.connecting ??= this.connectNow({ path, timeoutMs }).finally(() => {
 			this.connecting = undefined;
 		});
 		return this.connecting;
 	}
 
-	private async connectNow(path: string | undefined, timeoutMs: number): Promise<void> {
-		if (path) return this.adopt(await this.dial(path, timeoutMs));
-		// Several hosts can be alive (two browsers, a stale one): use the newest whose extension
-		// is connected (in this client's browser, once it has one), the same socket `tabkyra
-		// doctor` and `setup` report on.
-		const sockets = listSockets();
-		if (sockets.length === 0) throw new Error(NOT_CONNECTED);
+	/**
+	 * Find a host and adopt it: the newest whose extension is connected (in browser `want` when
+	 * given). Without one, the first host whose extension hasn't said hello yet is kept, unless
+	 * `rescan` is set: then the client keeps its current socket and redials nothing it knows.
+	 */
+	private async connectNow(o: { path?: string; timeoutMs?: number; want?: string; rescan?: boolean }): Promise<void> {
+		const timeoutMs = o.timeoutMs ?? 5000;
+		if (o.path) return this.adopt(await this.dial(o.path, timeoutMs));
+		// Several hosts can be alive (two browsers, a stale one): use the newest ready one, the same
+		// socket `tabkyra doctor` and `setup` report on.
+		const sockets = listSockets().filter((p) => {
+			if (o.rescan && p === this.socketPath) return false;
+			// A host known to serve another browser isn't dialed for a resend in this one.
+			const known = this.pathBrowser.get(p);
+			return !(o.want !== undefined && known !== undefined && known !== o.want);
+		});
+		if (sockets.length === 0) {
+			if (o.rescan) return;
+			throw new Error(NOT_CONNECTED);
+		}
 		let fallback: Dialed | undefined;
 		let lastError: unknown;
 		for (const target of sockets) {
 			try {
 				const dialed = await this.dial(target, timeoutMs);
-				if (this.ready(dialed.socket)) {
-					if (fallback && fallback.socket !== this.socket) fallback.socket.destroy();
+				if (this.ready(dialed.socket, o.want)) {
+					fallback?.socket.destroy();
 					return this.adopt(dialed);
 				}
 				const browser = this.socketBrowser.get(dialed.socket);
-				// Another browser's host is never a fallback; one whose extension hasn't said hello
-				// yet may be ours.
-				if (fallback || (this.browserId && browser && browser !== this.browserId)) dialed.socket.destroy();
+				const others = o.want !== undefined && browser !== undefined && browser !== o.want;
+				// Another browser's host is never a fallback; one whose extension hasn't said which
+				// browser it is yet may be the one wanted.
+				if (fallback || others || o.rescan) dialed.socket.destroy();
 				else fallback = dialed;
 			} catch (err) {
 				lastError = err;
 			}
 		}
+		if (o.rescan) return;
 		if (fallback) return this.adopt(fallback);
 		throw lastError instanceof Error ? lastError : new Error(String(lastError ?? NOT_CONNECTED));
 	}
@@ -190,7 +209,7 @@ export class BridgeClient {
 		this.extensionConnected = this.ready(dialed.socket);
 		if (this.extensionConnected) {
 			this.everConnected = true;
-			this.browserId ??= this.socketBrowser.get(dialed.socket);
+			this.lastBrowser = this.socketBrowser.get(dialed.socket) ?? this.lastBrowser;
 		}
 	}
 
@@ -228,9 +247,9 @@ export class BridgeClient {
 						welcomed = true;
 						clearTimeout(timer);
 						this.socketExtension.set(socket, msg.extensionConnected);
-						if (msg.browserId) this.socketBrowser.set(socket, msg.browserId);
+						this.noteBrowser(socket, target, msg.browserId);
 						resolve({ socket, path: target, clientId: msg.clientId });
-					} else this.onMessage(msg, socket);
+					} else this.onMessage(msg, socket, target);
 				}
 				// The good frames are delivered first; a bad one still ends this connection.
 				if (error) socket.destroy(error);
@@ -256,7 +275,13 @@ export class BridgeClient {
 		});
 	}
 
-	private onMessage(msg: HostToClient, from: Socket): void {
+	private noteBrowser(socket: Socket, path: string, browserId: string | undefined): void {
+		if (!browserId) return;
+		this.socketBrowser.set(socket, browserId);
+		this.pathBrowser.set(path, browserId);
+	}
+
+	private onMessage(msg: HostToClient, from: Socket, path: string): void {
 		if (msg.type === "response") {
 			const p = this.pending.get(msg.id);
 			if (!p) return;
@@ -268,14 +293,14 @@ export class BridgeClient {
 			this.options.onEvent?.(msg.event, msg.data);
 		} else if (msg.type === "extension_status") {
 			this.socketExtension.set(from, msg.connected);
-			if (msg.browserId) this.socketBrowser.set(from, msg.browserId);
+			this.noteBrowser(from, path, msg.browserId);
 			// Only the client's own host speaks for the extension; another socket's status waits
 			// in socketExtension until (and unless) that socket is adopted.
 			if (from !== this.socket) return;
 			this.extensionConnected = this.ready(from);
 			if (this.extensionConnected) {
 				this.everConnected = true;
-				this.browserId ??= this.socketBrowser.get(from);
+				this.lastBrowser = this.socketBrowser.get(from) ?? this.lastBrowser;
 			}
 			this.options.onExtensionStatus?.(msg.connected);
 		}
@@ -283,11 +308,11 @@ export class BridgeClient {
 
 	/**
 	 * Call, surviving a dropped bridge (extension reload, service worker restart, host respawn).
-	 * The session key is stable, so a resent request lands on the same tabs, in the same browser.
-	 * A request that never ran is sent again: one that never left (no writable socket) once the
-	 * bridge is back, one a live host refused as `not_sent` after a short backoff. A request cut
-	 * off in flight may have run: a read (isIdempotent) is resent, anything else fails with
-	 * `interrupted` at once and is never replayed. Other RPC errors are never retried.
+	 * The session key is stable, so a resent request lands on the same tabs, in the browser the
+	 * call started in. A request that never ran is sent again: one that never left (no writable,
+	 * ready socket) once the bridge is back, one a live host refused as `not_sent` after a short
+	 * backoff. A request cut off in flight may have run: a read (isIdempotent) is resent, anything
+	 * else fails with `interrupted` at once and is never replayed. Other RPC errors aren't retried.
 	 */
 	async call<T = unknown>(
 		method: string,
@@ -298,6 +323,8 @@ export class BridgeClient {
 		// One budget for the call's waits, however many times the bridge drops or refuses. It starts
 		// at the first trouble: the time the request itself ran (a long wait) isn't charged to it.
 		let deadline: number | undefined;
+		/** The browser this call started in, once known: its resends go there and nowhere else. */
+		let want: string | undefined;
 		let drops = 0;
 		let refusals = 0;
 		for (;;) {
@@ -317,6 +344,7 @@ export class BridgeClient {
 				// Status checks report trouble as it is instead of waiting.
 				if (options.retry === false) throw refused ? err : new Error(NOT_CONNECTED);
 				deadline ??= Date.now() + RECONNECT_BUDGET_MS;
+				want ??= (sent.socket && this.socketBrowser.get(sent.socket)) || this.lastBrowser;
 				if (refused) {
 					// The host is up and said the request didn't run (an update is installing, or the
 					// host is stopping): wait a little and send it again, on whatever socket is live then.
@@ -338,14 +366,10 @@ export class BridgeClient {
 					// Stop using the socket this request went out on (unless another call already moved on).
 					if (sent.socket && this.socket === sent.socket) this.retire(sent.socket);
 				}
-				const back = await this.reconnect(deadline - Date.now()).then(
-					() => this.extensionConnected,
-					() => false,
-				);
-				if (!back) {
-					// The drop outlasted the budget: report it, and don't wait again on the next call.
-					if (this.socket) this.retire(this.socket);
+				if (!(await this.reconnect(want, deadline))) {
+					// The drop outlasted the budget: report it. A later call starts afresh (any browser).
 					this.everConnected = false;
+					this.lastBrowser = undefined;
 					throw new Error(NOT_CONNECTED);
 				}
 			}
@@ -353,41 +377,42 @@ export class BridgeClient {
 	}
 
 	/**
-	 * Wait for a live host whose extension (in this client's browser) is connected and dial it.
-	 * Concurrent callers share one attempt; each waits only as long as its own budget.
+	 * Wait until the client has a ready socket (in browser `want` when given), or `deadline`.
+	 * Callers wanting the same browser share each attempt; each keeps trying until its own
+	 * deadline, so an earlier caller's budget never cuts a later one short.
 	 */
-	private reconnect(budgetMs: number): Promise<void> {
-		if (this.connected && this.extensionConnected) return Promise.resolve();
-		this.reconnecting ??= this.reconnectOnce(RECONNECT_BUDGET_MS).finally(() => {
-			this.reconnecting = undefined;
-		});
-		let timer: NodeJS.Timeout | undefined;
-		const mine = new Promise<void>((_, reject) => {
-			timer = setTimeout(() => reject(new Error("Bridge unavailable")), Math.max(0, budgetMs));
-		});
-		return Promise.race([this.reconnecting, mine]).finally(() => clearTimeout(timer));
+	private async reconnect(want: string | undefined, deadline: number): Promise<boolean> {
+		const key = want ?? "";
+		while (Date.now() < deadline) {
+			if (this.connected && this.socket && this.ready(this.socket, want)) return true;
+			let attempt = this.reconnecting.get(key);
+			if (!attempt) {
+				attempt = this.reconnectOnce(want, Math.min(2000, deadline - Date.now())).finally(() => this.reconnecting.delete(key));
+				this.reconnecting.set(key, attempt);
+			}
+			await attempt.catch(() => undefined);
+		}
+		return Boolean(this.connected && this.socket && this.ready(this.socket, want));
 	}
 
-	private async reconnectOnce(budgetMs: number): Promise<void> {
+	/** One stretch of trying to reach a ready host (in browser `want`), at most `budgetMs`. */
+	private async reconnectOnce(want: string | undefined, budgetMs: number): Promise<void> {
 		const deadline = Date.now() + Math.max(0, budgetMs);
-		let lastError: unknown;
 		while (Date.now() < deadline) {
 			try {
-				if (!this.connected) await this.connect();
-				else if (!this.extensionConnected && listSockets().some((p) => p !== this.socketPath)) {
-					// Still on a host whose extension never said hello (a stale one) while another host
-					// is up: look again, rather than wait on the stale one for the whole budget.
-					await this.connectNow(undefined, 5000);
+				if (!this.connected) await this.connectNow({ want });
+				else if (!this.socket || !this.ready(this.socket, want)) {
+					// On a host that isn't ready (a stale one, or another browser's): look at the others,
+					// without redialing this one or hosts known to serve another browser.
+					await this.connectNow({ want, rescan: true });
 				}
-				if (this.connected && this.extensionConnected) return;
-			} catch (err) {
-				lastError = err;
+				if (this.connected && this.socket && this.ready(this.socket, want)) return;
+			} catch {
+				/* no host yet */
 			}
-			// Host is up but the extension has not said hello yet, or no host yet: give it a moment.
-			await new Promise((r) => setTimeout(r, 500));
-			if (this.connected && this.extensionConnected) return;
+			await new Promise((r) => setTimeout(r, 250));
 		}
-		throw lastError instanceof Error ? lastError : new Error("Bridge unavailable");
+		throw new Error("Bridge unavailable");
 	}
 
 	private async callOnce<T>(method: string, params: Record<string, unknown>, timeoutMs?: number, sent: { socket?: Socket } = {}): Promise<T> {
@@ -399,8 +424,10 @@ export class BridgeClient {
 			}
 		}
 		const socket = this.socket;
-		// A half-closed socket (the host ended it) can't take a request: it was never sent.
+		// A half-closed socket (the host ended it) can't take a request: it was never sent. Nor
+		// can a host whose extension isn't there once one has been: it couldn't run it.
 		if (!socket || socket.destroyed || !socket.writable) throw new NotSentError(new Error("Not connected"));
+		if (this.everConnected && !this.extensionConnected) throw new NotSentError(new Error("Not connected"));
 		sent.socket = socket;
 		const id = ++this.seq;
 		const timeout = timeoutMs ?? this.options.requestTimeoutMs ?? 120000;

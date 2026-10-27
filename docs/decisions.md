@@ -350,9 +350,12 @@ safely or fails with a clear retryable error, never a hang". Defaults chosen:
   installing, a host stopping) is resent after 250 ms, 500 ms, 1 s, 2 s... within the budget.
   A half-closed socket takes no request; one an answer showed is retiring is no longer used
   but not cut under the requests still waiting on it.
-- **Same browser.** Each profile keeps a random id (`tabkyra.browserId`) that the host passes
-  on; a client resends and reconnects only to the browser it started in, and a reconnect stuck
-  on a host whose extension never answers keeps looking for another.
+- **Same browser, for a resend.** Each profile keeps a random id (`tabkyra.browserId`) that
+  the host passes on. A call's resends go only to the browser it started in, never to another
+  browser or to a host that hasn't said which it is; when that browser doesn't come back within
+  the budget the call fails, and the next call takes whatever browser is up. A reconnect on a
+  host whose extension never answers keeps looking, without redialing its own host; nothing is
+  written to a host whose extension isn't there.
 - **No new waits.** From its first drop, one call waits at most 40 s in all for the bridge,
   however many times it drops (time the request itself ran isn't charged); concurrent calls
   share one reconnect and one connect, a socket is used only once it is welcomed and chosen,
