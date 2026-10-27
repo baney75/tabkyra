@@ -43,7 +43,8 @@ export class AskCard extends LitElement {
 	@state() private busy = false;
 	@state() private error = "";
 	@state() private now = Date.now();
-	private draftsFor?: AskQuestion[];
+	/** The questions the drafts belong to, by content: a re-render with an equal copy keeps them. */
+	private draftsFor?: string;
 	private ticker?: ReturnType<typeof setInterval>;
 
 	protected override createRenderRoot(): HTMLElement {
@@ -64,8 +65,9 @@ export class AskCard extends LitElement {
 	}
 
 	private draft(i: number): Draft {
-		if (this.draftsFor !== this.questions) {
-			this.draftsFor = this.questions;
+		const key = JSON.stringify(this.questions);
+		if (this.draftsFor !== key) {
+			this.draftsFor = key;
 			this.drafts = this.questions.map(() => ({ selected: new Set(), otherOn: false, otherText: "" }));
 		}
 		return this.drafts[i];

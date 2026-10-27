@@ -133,7 +133,9 @@ function answerCutOffQuestions(messages: Message[]): Message[] {
 	const out: Message[] = [];
 	for (const m of messages) {
 		out.push(m);
-		if (m.role !== "assistant") continue;
+		// pi-ai drops an aborted or failed assistant message with its tool calls before the provider
+		// sees it, so a result for one of its calls would be an orphan.
+		if (m.role !== "assistant" || m.stopReason === "aborted" || m.stopReason === "error") continue;
 		for (const block of m.content) {
 			if (block.type !== "toolCall" || block.name !== "ask_user" || answered.has(block.id)) continue;
 			let questions: ReturnType<typeof validateAskParams>["questions"] = [];
@@ -142,7 +144,7 @@ function answerCutOffQuestions(messages: Message[]): Message[] {
 			} catch {
 				// The text doesn't depend on the questions.
 			}
-			const outcome = noAnswer(questions, m.stopReason === "aborted" ? "aborted" : "closed");
+			const outcome = noAnswer(questions, "closed");
 			out.push({
 				role: "toolResult",
 				toolCallId: block.id,

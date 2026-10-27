@@ -36,6 +36,9 @@ export const askUserInputSchema = {
 		.describe("1 to 4 questions, shown together on one card"),
 };
 
+/** How often a waiting call reports progress (tests shorten it). */
+const PROGRESS_EVERY_MS = Number(process.env.TABKYRA_ASK_PROGRESS_MS) || 15_000;
+
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
 /** Turn the bridge's reply (or failure) into what the model reads. Exported for tests. */
@@ -68,7 +71,7 @@ export function registerAskUser(server: McpServer, client: BridgeClient): void {
 				'Example: {"questions":[{"header":"Format","question":"Which format should the report use?","options":[{"label":"PDF (Recommended)","description":"One file that prints cleanly"},{"label":"Markdown","description":"Plain text you can edit"}]}]}',
 			inputSchema: askUserInputSchema,
 		},
-		async (args): Promise<ToolResult> => {
+		async (args, extra): Promise<ToolResult> => {
 			let questions: AskOutcome["questions"];
 			try {
 				questions = validateAskParams(args).questions;
@@ -76,6 +79,23 @@ export function registerAskUser(server: McpServer, client: BridgeClient): void {
 				return { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };
 			}
 			let sent = false;
+			// Waiting minutes is normal here. Clients that reset their timeout on progress keep waiting.
+			const token = extra._meta?.progressToken;
+			let ticks = 0;
+			const progress =
+				token === undefined
+					? undefined
+					: setInterval(() => {
+							extra
+								.sendNotification({
+									method: "notifications/progress",
+									params: { progressToken: token, progress: ++ticks, message: "Waiting for the user's answer in the Tabkyra side panel" },
+								})
+								.catch(() => undefined);
+						}, PROGRESS_EVERY_MS);
+			// The agent gave up on the call: take the question off the user's screen.
+			const onAbort = () => void client.call("ask_user.cancel", {}, 5000, { retry: false }).catch(() => undefined);
+			extra.signal.addEventListener("abort", onAbort, { once: true });
 			try {
 				if (!client.connected) await client.connect();
 				// A host with no extension behind it has no panel to show the question in.
@@ -86,6 +106,9 @@ export function registerAskUser(server: McpServer, client: BridgeClient): void {
 				return askResultText(questions, reply);
 			} catch (err) {
 				return askResultText(questions, sent ? "asked" : undefined, err);
+			} finally {
+				clearInterval(progress);
+				extra.signal.removeEventListener("abort", onAbort);
 			}
 		},
 	);

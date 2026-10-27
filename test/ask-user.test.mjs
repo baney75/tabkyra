@@ -158,6 +158,14 @@ test("a question the panel closed on gets a no-answer result for the model", asy
 	assert.equal(out[2].toolCallId, "t1");
 	assert.match(out[2].content[0].text, /^No answer: the side panel was closed/);
 	// An answered call is left alone.
+	// A call in a message the user stopped mid-stream is dropped by pi-ai with its message; a result
+	// for it would be an orphan.
+	const stoppedMidStream = await browserMessageTransformer([
+		messages[0],
+		{ ...messages[1], stopReason: "aborted" },
+		messages[2],
+	]);
+	assert.equal(stoppedMidStream.filter((m) => m.role === "toolResult").length, 0);
 	const answered = await browserMessageTransformer([
 		...messages.slice(0, 2),
 		{ role: "toolResult", toolCallId: "t1", toolName: "ask_user", content: [{ type: "text", text: "ok" }], isError: false, timestamp: 3 },
@@ -278,4 +286,26 @@ test("a bridge question times out with a no-answer result", async () => {
 	assert.equal(out.result.reason, "timeout");
 	assert.match(out.result.text, /timed out/);
 	await b.until(() => b.pendingList().length === 0, "cleared after timeout");
+});
+
+test("a waiting question doesn't hold up its client's other calls, and a client cancels only its own", async () => {
+	const b = await startBridge();
+	b.connect("c1", "claude", "s1");
+	b.connect("c2", "codex", "s2");
+	const ask = b.send("c1", "ask_user", { questions: [q()] });
+	await b.until(() => b.pendingList().length === 1, "pending");
+	const ctx = await b.reply("c1", b.send("c1", "tabs.context"));
+	assert.equal(ctx.error, undefined, "a browser call goes on while the question waits");
+	assert.equal(b.replies("c1", ask).length, 0);
+
+	const other = await b.reply("c2", b.send("c2", "ask_user.cancel"));
+	assert.equal(other.result.cancelled, 0, "c2 has no question of its own to cancel");
+	await b.settle();
+	assert.equal(b.replies("c1", ask).length, 0, "c1's question is untouched");
+
+	const own = await b.reply("c1", b.send("c1", "ask_user.cancel"));
+	assert.equal(own.result.cancelled, 1);
+	const r = await b.reply("c1", ask);
+	assert.equal(r.result.reason, "aborted");
+	await b.until(() => b.pendingList().length === 0, "cleared after cancel");
 });

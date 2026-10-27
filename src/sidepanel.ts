@@ -1107,7 +1107,9 @@ window.addEventListener(
 	(e) => {
 		// Escape key to abort streaming - works globally in sidepanel
 		// Use capturing phase to intercept before MessageEditor handles it
-		if (e.key === "Escape" && agent?.state.isStreaming) {
+		// Escape in an external agent's question card is not a Stop for this panel's agent.
+		const inBridgeQuestion = e.target instanceof Element && e.target.closest('[data-testid="bridge-questions"]');
+		if (e.key === "Escape" && agent?.state.isStreaming && !inBridgeQuestion) {
 			e.preventDefault();
 			e.stopPropagation();
 			agent.abort();

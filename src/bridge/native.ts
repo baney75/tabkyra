@@ -302,18 +302,6 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Bridge.");
 		}
 
-		// ask_user (src/ask/bridge-worker.ts): waits for the user in the side panel. It needs no tabs
-		// and has its own timeout, so it skips the session and the handler timeout.
-		if (req.method === "ask_user") {
-			send({
-				type: "response",
-				clientId: req.clientId,
-				id: req.id,
-				...(await handleBridgeAsk(state, req.params ?? {})),
-			});
-			return;
-		}
-
 		const handler = handlers[req.method];
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
 		const t0 = performance.now();
@@ -364,6 +352,28 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		state.inFlight = undefined;
 		state.lastActivityAt = Date.now();
 	}
+}
+
+/** ask_user and ask_user.cancel (src/ask/bridge-worker.ts). A client cancels only its own questions. */
+async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<void> {
+	const respond = (r: { result?: unknown; error?: { code: string; message: string } }) =>
+		send({ type: "response", clientId: req.clientId, id: req.id, ...r });
+	await gateReady;
+	if (installGate())
+		return respond({
+			error: {
+				code: ERR.INTERNAL,
+				message:
+					"Tabkyra is installing an update and reloads in a few seconds. Ask again once the bridge reconnects.",
+			},
+		});
+	if (!(await isBridgeEnabled()))
+		return respond({
+			error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Bridge." },
+		});
+	if (req.method === "ask_user.cancel")
+		return respond({ result: { cancelled: cancelQuestionsFor(state.clientId, "aborted") } });
+	respond(await handleBridgeAsk(state, req.params ?? {}));
 }
 
 /**
@@ -598,6 +608,13 @@ function onHostMessage(message: HostToExt): void {
 					lastActivityAt: 0,
 				};
 				clients.set(message.clientId, state);
+			}
+			if (message.method === "ask_user" || message.method === "ask_user.cancel") {
+				// ask_user (src/ask/bridge-worker.ts) waits minutes for the user, so it runs beside the
+				// client's queue: its browser calls go on meanwhile. It isn't activity for the update idle
+				// gate; a reload ends the question, and the agent hears there was no answer.
+				void runAsk(state, message);
+				return;
 			}
 			const current = state;
 			current.queue = current.queue.then(() => runRequest(current, message)).catch(() => undefined);

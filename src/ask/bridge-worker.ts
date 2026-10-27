@@ -139,11 +139,19 @@ export function receivePanelReply(requestId: string, reply: unknown): boolean {
 	}
 }
 
-/** The client hung up (or the host went away): its open questions end with no answer. */
-export function cancelQuestionsFor(clientId: string | undefined, reason: NoAnswerReason = "disconnected"): void {
+/**
+ * End a client's open questions with no answer: it hung up, the host went away (undefined: every
+ * client), or it cancelled its own call. Returns how many ended.
+ */
+export function cancelQuestionsFor(clientId: string | undefined, reason: NoAnswerReason = "disconnected"): number {
+	let n = 0;
 	for (const w of [...waiting.values()]) {
-		if (clientId === undefined || w.clientId === clientId) w.settle(noAnswer(w.questions, reason));
+		if (clientId === undefined || w.clientId === clientId) {
+			w.settle(noAnswer(w.questions, reason));
+			n++;
+		}
 	}
+	return n;
 }
 
 /** Wire answers in. Questions a previous worker left behind have nobody waiting; drop them. */
