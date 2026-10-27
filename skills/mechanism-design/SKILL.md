@@ -62,7 +62,8 @@ for ideas only. Verify kinematics by calculation or in CAD.
      degrees over the whole turn.
    - Rocker swing: at the two dead centres, cos phi = (c^2 + d^2 - (b + a)^2) / (2 c d) and
      cos phi = (c^2 + d^2 - (b - a)^2) / (2 c d); the swing is the difference of the two phi.
-   - Slider-crank: stroke = 2 x crank; connecting rod at least 3 x crank.
+   - Slider-crank, slider axis through the crank pivot: stroke = 2 x crank, rod at least
+     3 x crank. Offset e: stroke = sqrt((b + a)^2 - e^2) - sqrt((b - a)^2 - e^2).
    - Cam: pressure angle 30 degrees or less for a translating follower; grow the base
      circle until it is. Cycloidal motion for high speed.
    - Gears: ratio = driven teeth / driver teeth; mating gears share a module; center
@@ -73,10 +74,10 @@ for ideas only. Verify kinematics by calculation or in CAD.
      Shape the tooth face so its normal at the contact point passes between the pawl pivot
      and the wheel center; then load pulls the pawl in. Check it on the sketch, and add a
      spring that holds the pawl engaged.
-7. **Check the motion by calculation.** For a four-bar, sweep t from 0 to 359 degrees in a
-   short script: at each step compute the diagonal z^2 = a^2 + d^2 - 2 a d cos t and
-   cos mu from step 6. If the absolute value of cos mu exceeds 1, the linkage does not
-   assemble there. Report Grashof, mu min and max, and the output swing.
+7. **Check the motion by calculation.** Sweep the input range actually used (a full turn
+   for a motor crank, the servo or lever travel otherwise) in 1-degree steps in a short
+   script: z^2 = a^2 + d^2 - 2 a d cos t, then cos mu from step 6. If the absolute value of
+   cos mu exceeds 1, it does not assemble there. Report Grashof, mu range and output swing.
 8. **Check it in CAD.** FreeCAD: dimensions in a Spreadsheet, parts from sketches, joints
    in the Assembly workbench, then drag or drive the input through a full turn. OpenSCAD:
    lengths as variables at the top, animate with `$t`. Look for collisions, a dead point
@@ -92,7 +93,7 @@ for ideas only. Verify kinematics by calculation or in CAD.
 ## Done when
 
 - M = 1 (or the count the user asked for), shown with n, j1 and j2.
-- A four-bar has a Grashof result and mu stays within 40-140 degrees over the full input range.
+- A four-bar has a Grashof result, and mu stays within 40-140 degrees over the input range used.
 - The motion was checked by a script or a CAD drive, and the report says which.
 - Every reference is linked and credited; no dataset images are copied.
 
@@ -101,7 +102,7 @@ for ideas only. Verify kinematics by calculation or in CAD.
 | Symptom | Fix |
 | --- | --- |
 | mu drops below 40 degrees | Shorten the crank or lengthen the coupler, then sweep again |
-| Linkage does not assemble at some angle | The lengths fail Grashof or the triangle inequality; redo step 6 |
+| Does not assemble inside the used range | Change lengths and redo step 6 |
 | Gear teeth undercut | Use more teeth or a profile shift |
 | Printed joint binds | Add clearance; print pins separately and lay them flat |
 | Only an image exists | Treat it as an idea; rebuild it from step 4 |

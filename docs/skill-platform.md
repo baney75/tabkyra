@@ -149,8 +149,8 @@ Matching takes about 0.2 ms at p95 and the index build about 20 ms on the CI run
 0.1 ms and under 10 ms on an Apple-silicon Mac).
 
 Measured on 2026-10-26 (15 skills, after `visual-explainer` and `mechanism-design`): tuned
-set of 324 cases, top-1 93.2% (246 of 264) and false invokes 0% (0 of 60); 62 held-out
-cases, top-1 93.9% (46 of 49) and false invokes 7.7% (1 of 13). Adding skills raises every
+set of 326 cases, top-1 93.2% (246 of 264) and false invokes 0% (0 of 62); 62 held-out
+cases, top-1 91.8% (45 of 49) and false invokes 7.7% (1 of 13). Adding skills raises every
 word's IDF, so a word held by three skills becomes evidence and a word held by one scores
 higher: the new skills' descriptions were worded so the existing none cases stay none.
 
