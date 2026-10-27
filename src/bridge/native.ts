@@ -7,6 +7,7 @@
  * backoff and on a 30 s alarm, which also keeps the worker alive.
  */
 
+import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
 import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, NoTabError, pruneSessions } from "../browser/session.js";
@@ -161,6 +162,8 @@ async function onClientDisconnected(clientId: string): Promise<void> {
 	const state = clients.get(clientId);
 	clients.delete(clientId);
 	await stopScreencastsOwnedBy(clientId).catch(() => undefined);
+	// ask_user: a question from a client that left has nobody to answer to.
+	cancelQuestionsFor(clientId);
 	// A restarted harness (same session key) can connect before its old socket closes; the
 	// session is still in use then, so leave it alone.
 	const successors = state ? [...clients.values()].filter((c) => c.sessionKey === state.sessionKey) : [];
@@ -348,6 +351,35 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	} finally {
 		state.inFlight = undefined;
 		state.lastActivityAt = Date.now();
+	}
+}
+
+/** ask_user and ask_user.cancel (src/ask/bridge-worker.ts). A client cancels only its own questions. */
+async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<void> {
+	const respond = (r: { result?: unknown; error?: { code: string; message: string } }) =>
+		send({ type: "response", clientId: req.clientId, id: req.id, ...r });
+	try {
+		// Withdrawing a question is always safe: no gate, no enabled check.
+		if (req.method === "ask_user.cancel")
+			return respond({ result: { cancelled: cancelQuestion(state.clientId, req.params?.askId) } });
+		await gateReady;
+		if (installGate())
+			return respond({
+				error: {
+					code: ERR.INTERNAL,
+					message:
+						"Tabkyra is installing an update and reloads in a few seconds. Ask again once the bridge reconnects.",
+				},
+			});
+		if (!(await isBridgeEnabled()))
+			return respond({
+				error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Bridge." },
+			});
+		// The client may have hung up during the awaits; its question would have nobody to answer to.
+		if (clients.get(state.clientId) !== state) return;
+		respond(await handleBridgeAsk(state, req.params ?? {}));
+	} catch (err) {
+		respond({ error: { code: ERR.INTERNAL, message: err instanceof Error ? err.message : String(err) } });
 	}
 }
 
@@ -584,6 +616,13 @@ function onHostMessage(message: HostToExt): void {
 				};
 				clients.set(message.clientId, state);
 			}
+			if (message.method === "ask_user" || message.method === "ask_user.cancel") {
+				// ask_user (src/ask/bridge-worker.ts) waits minutes for the user, so it runs beside the
+				// client's queue: its browser calls go on meanwhile. It isn't activity for the update idle
+				// gate; a reload ends the question, and the agent hears there was no answer.
+				void runAsk(state, message);
+				return;
+			}
 			const current = state;
 			current.queue = current.queue.then(() => runRequest(current, message)).catch(() => undefined);
 			return;
@@ -625,6 +664,7 @@ function connect(): void {
 		if (port === next) port = undefined;
 		for (const state of clients.values()) void state.session?.suspend();
 		clients.clear();
+		cancelQuestionsFor(undefined);
 		void stopScreencastsOwnedBy(undefined).catch(() => undefined);
 		scheduleReconnect();
 	});
@@ -741,6 +781,7 @@ export function startBridge(): void {
 	setTimeout(() => void prune("startup").catch(() => undefined), 20000);
 	// Injected code has no runtime providers in the worker; echo so callers can probe the shim.
 	setCdpMessageHandler(async (message) => ({ echo: message }));
+	startAskBridge();
 	chrome.alarms.create(ALARM_NAME, { periodInMinutes: 0.5 });
 	chrome.alarms.onAlarm.addListener((alarm) => {
 		if (alarm.name === ALARM_NAME) {

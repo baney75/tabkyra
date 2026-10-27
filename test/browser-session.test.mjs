@@ -326,3 +326,39 @@ test("caches keep following writes after extension storage is cleared", async ()
 	await new Promise((r) => setTimeout(r, 20));
 	assert.ok(p.tabIds.includes(tab), `panel cache stopped following after the wipe: ${p.tabIds}`);
 });
+
+test("adoptIfFree: a tab another session took first stays with it, even when both race", async () => {
+	let taken = 0;
+	for (let run = 0; run < 20; run++) {
+		const fake = installFakeChrome();
+		const panel = await load("panel");
+		const worker = await load("worker");
+		const tab = fake.addTab({ active: false });
+		const chat = await panel.BrowserSession.open("chat-1", "chat", 1);
+		const agent = await worker.BrowserSession.open("bridge-claude", "Claude Code", 1);
+		// The bridge agent claims the tab while the panel resolves a reference to it.
+		const [, owner] = await Promise.all([agent.adopt(tab, true), chat.adoptIfFree(tab, true)]);
+		const t = fake.table();
+		const chatHas = t["chat-1"].tabIds.includes(tab);
+		const agentHas = t["bridge-claude"].tabIds.includes(tab);
+		// Whichever lands first, the agent ends up with the tab: its adopt takes it from the chat,
+		// and the chat's adoptIfFree never takes it from the agent. (Plain adopt would, when second.)
+		if (!agentHas || chatHas) taken++;
+		if (owner !== undefined && owner.id !== "bridge-claude") taken++;
+	}
+	assert.equal(taken, 0, `${taken}/20 runs: the tab was shared twice, lost, or taken from the agent`);
+});
+
+test("adoptIfFree takes an unowned tab and makes it current", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("panel");
+	const tab = fake.addTab({ active: false });
+	const chat = await BrowserSession.open("chat-2", "chat", 1);
+	assert.equal(await chat.adoptIfFree(tab, true), undefined);
+	assert.deepEqual(fake.table()["chat-2"].tabIds, [tab]);
+	assert.equal(fake.table()["chat-2"].currentTabId, tab);
+	const other = await BrowserSession.open("chat-3", "other", 1);
+	assert.deepEqual(await other.adoptIfFree(tab, true), { id: "chat-2", label: "chat" });
+	assert.deepEqual(fake.table()["chat-2"].tabIds, [tab], "the first chat keeps it");
+	assert.deepEqual(fake.table()["chat-3"].tabIds, []);
+});

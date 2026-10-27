@@ -271,3 +271,55 @@ Settings > Updates and an automatic choice defaulting to "Tell me". Defaults cho
   swap. Anything else is reported, never overwritten.
 - **What's new is plain text.** Release notes come from GitHub and are rendered as text, never
   HTML; links must be https.
+
+## D20. ask_user: agents ask the user questions (Claude, 2026-10-27)
+
+The owner asked, after watching Claude Code's AskUserQuestion tool, to "make it so it can ask
+questions too" (2026-10-27). Defaults chosen:
+
+- **One shape everywhere.** The side panel tool and the MCP tool take the same arguments
+  (1 to 4 questions; header, question, 2 to 4 options with label and description,
+  multiSelect), checked by one function (`src/ask/core.ts`). "Other" free text is always
+  offered, so an option can't be named Other.
+- **No answer is an answer.** Skip, Stop, a closed or reloaded panel, the timeout and a
+  disconnected agent all return a result that says there was no answer and tells the model
+  not to assume one. A question cut off by a panel reload gets that result on the next turn
+  (`src/messages/message-transformer.ts`).
+- **External agents' questions go to the panel, not the harness.** They wait in
+  `chrome.storage.session` like site-permission prompts, show above the chat in every open
+  panel with the agent's name, badge the toolbar icon, and give up after 5 minutes. The panel
+  answers by request id; the request id carries the client id and a random UUID, and only the
+  waiting request with that id takes it, so an answer goes back only to the agent that asked.
+  No bridge method answers a question, so a harness can't answer its own or another's.
+  `chrome.storage.session` is closed to content scripts, so a page can't either.
+- **Remote sessions need their own scope**, `user.ask`, never implied by the others: a remote
+  agent that can ask questions can put text in front of the user.
+- **Two open questions per agent at most.** One call already carries up to four, and a cap keeps
+  one agent from filling the panel. An agent that gives up on its call (its tool timeout, or the
+  user stopping it) withdraws the question with `ask_user.cancel`, which names that call and
+  only ever reaches the calling agent's own questions.
+
+## D21. Side panel transcript and composer menus (Claude, 2026-10-27)
+
+The owner asked to clean up the side panel chat, remove the in-chat Artifacts pill, and add a
+`/` menu that runs skills and an `@` menu that references tabs (2026-10-27). Defaults chosen:
+
+- **Reasoning under 40 characters gets no row.** It is still shown inside the step it led to.
+- **A step list longer than 8 rows shows its last 5** behind an "N earlier steps" row.
+- **Per-step usage is a tooltip and part of the expanded row**, not a line under each step;
+  the run total below the composer is unchanged.
+- **Artifact tool calls stay full cards**: the card is how the user opens what was made.
+- **The `/` menu order** is site skills matching the current page, then the library, then site
+  skills for other sites. A name shows once, in its first section.
+- **A library skill runs by loading its SKILL.md into the user message**, with a note that its
+  tool names are Tabkyra's MCP tools and the panel agent uses its own (navigate, repl).
+- **References resolve when the message first goes to the model** (prompt, queue and Send now
+  all pass through `convertToLlm`), once per message, and are frozen on it. Messages loaded
+  with a saved chat are never resolved again.
+- **A referenced tab owned by any other session stays with it**, not only a bridge agent's:
+  the reference is consent for this chat, not permission to take another agent's tab.
+- **Browser pages, private tabs, tabs without a readable URL and tabs in another window are
+  not referenceable.** The menu lists only the panel's window; a typed id elsewhere is refused.
+- **References that fail to resolve are frozen as unusable**, with a toast, so a chip never
+  looks shared when nothing was.
+

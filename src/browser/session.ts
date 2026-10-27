@@ -731,6 +731,27 @@ export class BrowserSession {
 		await this.groupTab(tabId);
 	}
 
+	/**
+	 * Take a tab the user handed over by reference, unless another session owns it: the check
+	 * and the claim happen under one lock, so an agent that takes the tab meanwhile keeps it.
+	 * Returns that other session when it owns the tab (nothing changes then).
+	 */
+	async adoptIfFree(tabId: number, makeCurrent = true): Promise<{ id: string; label: string } | undefined> {
+		let owner: { id: string; label: string } | undefined;
+		await this.update((s, table) => {
+			const other = Object.values(table).find((o) => o.id !== s.id && o.tabIds.includes(tabId));
+			if (other) {
+				owner = { id: other.id, label: other.label };
+				return false;
+			}
+			if (!s.tabIds.includes(tabId)) s.tabIds.push(tabId);
+			if (makeCurrent) s.currentTabId = tabId;
+			if (s.released) delete s.released[tabId];
+		});
+		if (!owner) await this.groupTab(tabId);
+		return owner;
+	}
+
 	/** Release a tab without closing it. */
 	async release(tabId: number): Promise<void> {
 		await this.update((s) => {
