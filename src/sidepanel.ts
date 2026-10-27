@@ -410,7 +410,10 @@ async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Pr
 		m.tabkyraRefs = refs ?? null;
 		for (const t of refs?.tabs ?? []) {
 			const name = `"${t.title || `Tab ${t.id}`}"`;
-			if (t.status === "other-agent") Toast.error(`${name} stays with ${t.owner}; it was not shared`);
+			if (t.status === "other-agent")
+				Toast.error(
+					`${name} stays with ${t.owner}; it was not shared. To hand it over, open that tab and press Share tab (the link button).`,
+				);
 			else if (t.status === "unavailable") Toast.error(`${name} can't be shared with the agent`);
 			else if (t.status === "gone") Toast.error(`Tab ${t.id} was closed before the message was sent`);
 		}

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { matchesDomainPatterns, siteOf } from "../src/storage/stores/domain-match.ts";
 import { defaultSkills, SUPERSEDED_DEFAULTS, shouldReplaceDefault } from "../src/tools/default-skills.ts";
-import { FULL_CARD_TOOLS, groupTranscript, NEAR_EMPTY_THINKING, stepLabel, usageText, visibleSteps } from "../src/transcript/group.ts";
+import { FULL_CARD_TOOLS, groupTranscript, NEAR_EMPTY_THINKING, stepLabel, usageText, stepRows } from "../src/transcript/group.ts";
 
 const calendar = defaultSkills.find((s) => s.name === "google-calendar-events");
 
@@ -182,16 +182,19 @@ test("cards the user acts on never fold into a row: artifacts and ask_user", () 
 	assert.ok(FULL_CARD_TOOLS.has("ask_user"), "an ask_user question folded into a row could not be answered");
 });
 
-test("a long list shows its last 5 rows, and an early artifact card never hides", () => {
-	const msgs = [assistant([call("art", "artifacts", { command: "create", filename: "r.md" })])];
-	for (let i = 0; i < 9; i++) msgs.push(assistant([call(`r${i}`, "repl", { title: `step ${i}`, code: "" })]));
+test("a long list shows its last 5 rows; an early artifact card keeps its place in time", () => {
+	const msgs = [
+		assistant([call("r0", "repl", { title: "before", code: "" })]),
+		assistant([call("art", "artifacts", { command: "create", filename: "r.md" })]),
+	];
+	for (let i = 1; i < 10; i++) msgs.push(assistant([call(`r${i}`, "repl", { title: `step ${i}`, code: "" })]));
 	const { blocks } = groupTranscript(msgs);
-	const { shown, hidden } = visibleSteps(blocks[0].steps, false);
+	const rows = stepRows(blocks[0].steps, false);
 	assert.deepEqual(
-		shown.map((s) => s.call.id),
-		["art", "r4", "r5", "r6", "r7", "r8"],
+		rows.map((r) => (r.kind === "step" ? r.step.call.id : `+${r.count}`)),
+		["+1", "art", "+4", "r5", "r6", "r7", "r8", "r9"],
 	);
-	assert.equal(hidden, 4);
-	assert.equal(visibleSteps(blocks[0].steps, true).shown.length, 10);
-	assert.equal(visibleSteps(blocks[0].steps.slice(0, 8), false).hidden, 0, "8 rows or fewer all show");
+	assert.equal(new Set(rows.map((r) => (r.kind === "step" ? r.step.key : r.key))).size, rows.length, "keys unique");
+	assert.equal(stepRows(blocks[0].steps, true).length, 11);
+	assert.ok(stepRows(blocks[0].steps.slice(0, 8), false).every((r) => r.kind === "step"), "8 rows or fewer all show");
 });

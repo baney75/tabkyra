@@ -21,11 +21,11 @@ import {
 	groupTranscript,
 	type Step,
 	stepLabel,
+	stepRows,
 	stepState,
 	type TMessage,
 	type TToolCall,
 	usageText,
-	visibleSteps,
 } from "./group.js";
 
 /** The page's own favicon from the tab; no third-party favicon service ever sees the host. */
@@ -76,6 +76,12 @@ export class StepList extends LitElement {
 	@property({ attribute: false }) tools: AgentTool[] = [];
 	@property({ attribute: false }) pending?: Set<string>;
 	@property({ type: Boolean }) running = false;
+	/**
+	 * The list belongs to the message still streaming. A call with no result that isn't running
+	 * yet is still arriving (or about to run) while the agent runs: its card shows as streaming,
+	 * never as cut off.
+	 */
+	@property({ type: Boolean }) streaming = false;
 	@state() private open = new Set<string>();
 	@state() private showAll = false;
 
@@ -137,7 +143,7 @@ export class StepList extends LitElement {
 			.result=${step.result as ToolResultMessage | undefined}
 			.pending=${this.pending?.has(step.call.id) ?? false}
 			.aborted=${aborted}
-			.isStreaming=${false}
+			.isStreaming=${(this.streaming || this.running) && !step.result && !(this.pending?.has(step.call.id) ?? false)}
 		></tool-message>`;
 	}
 
@@ -207,28 +213,25 @@ export class StepList extends LitElement {
 	}
 
 	override render() {
-		const { shown, hidden } = visibleSteps(this.steps, this.showAll);
 		return html`
 			<ul class="mx-4 flex flex-col border-l border-border pl-1.5" aria-label="Agent steps">
-				${
-					hidden
-						? html`<li>
-								<button
-									type="button"
-									class="w-full text-left rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-									@click=${() => {
-										this.showAll = true;
-									}}
-								>
-									${hidden} earlier ${hidden === 1 ? "step" : "steps"}
-								</button>
-							</li>`
-						: nothing
-				}
 				${repeat(
-					shown,
-					(s) => s.key,
-					(s) => this.renderStep(s),
+					stepRows(this.steps, this.showAll),
+					(r) => (r.kind === "step" ? r.step.key : r.key),
+					(r) =>
+						r.kind === "step"
+							? this.renderStep(r.step)
+							: html`<li>
+									<button
+										type="button"
+										class="w-full text-left rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+										@click=${() => {
+											this.showAll = true;
+										}}
+									>
+										${r.count} earlier ${r.count === 1 ? "step" : "steps"}
+									</button>
+								</li>`,
 				)}
 			</ul>
 		`;
@@ -251,7 +254,7 @@ function textBlock(text: string, usage?: string): TemplateResult {
 	</div>`;
 }
 
-function renderBlock(block: Block, ctx: TranscriptContext): TemplateResult | undefined {
+function renderBlock(block: Block, ctx: TranscriptContext, live = false): TemplateResult | undefined {
 	switch (block.kind) {
 		case "message": {
 			const m = block.message as AgentMessage;
@@ -269,6 +272,7 @@ function renderBlock(block: Block, ctx: TranscriptContext): TemplateResult | und
 				.tools=${ctx.tools}
 				.pending=${ctx.pendingToolCalls}
 				.running=${ctx.isStreaming}
+				.streaming=${live}
 			></tk-steps>`;
 		case "status":
 			return block.status === "error"
@@ -307,8 +311,8 @@ export const tabkyraTranscript: TranscriptRenderer = {
 			.filter((b) => b.kind !== "status")
 			.map((b) =>
 				b.kind === "steps"
-					? renderBlock({ ...b, steps: b.steps.filter((s) => s.kind !== "thought") }, ctx)
-					: renderBlock(b, ctx),
+					? renderBlock({ ...b, steps: b.steps.filter((s) => s.kind !== "thought") }, ctx, true)
+					: renderBlock(b, ctx, true),
 			);
 		return html`<div class="flex flex-col gap-3 mb-3">
 			${parts}

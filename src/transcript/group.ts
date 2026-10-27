@@ -254,12 +254,24 @@ export function usageText(u: TUsage | undefined): string {
 export const VISIBLE_TAIL = 5;
 export const COLLAPSE_OVER = 8;
 
+export type StepRow = { kind: "step"; step: Step } | { kind: "more"; key: string; count: number };
+
 /**
- * The rows a step list shows. Past COLLAPSE_OVER rows only the last VISIBLE_TAIL show, plus
- * every full card (artifacts, ask_user), which never hides; `hidden` counts the rest.
+ * The rows a step list shows, in time order. Past COLLAPSE_OVER rows only the last VISIBLE_TAIL
+ * show, plus every full card (artifacts, ask_user), which never hides. Each run of hidden rows
+ * becomes one "N earlier steps" row in its own place, so a pinned card keeps its position.
  */
-export function visibleSteps(steps: readonly Step[], showAll: boolean): { shown: Step[]; hidden: number } {
+export function stepRows(steps: readonly Step[], showAll: boolean): StepRow[] {
 	const cut = !showAll && steps.length > COLLAPSE_OVER ? steps.length - VISIBLE_TAIL : 0;
-	const shown = steps.filter((s, i) => i >= cut || (s.kind === "tool" && FULL_CARD_TOOLS.has(s.call.name)));
-	return { shown, hidden: steps.length - shown.length };
+	const rows: StepRow[] = [];
+	steps.forEach((step, i) => {
+		if (i >= cut || (step.kind === "tool" && FULL_CARD_TOOLS.has(step.call.name))) {
+			rows.push({ kind: "step", step });
+			return;
+		}
+		const last = rows.at(-1);
+		if (last?.kind === "more") last.count++;
+		else rows.push({ kind: "more", key: `more:${step.key}`, count: 1 });
+	});
+	return rows;
 }
