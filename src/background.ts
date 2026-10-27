@@ -10,12 +10,8 @@ setGuardLogger(trace);
 cleanupOrphanGroups().catch(() => undefined);
 
 // Prerendered / instant pages commit into a new tab id; keep the owning session pointed at it.
-chrome.webNavigation.onTabReplaced.addListener(async ({ replacedTabId, tabId }) => {
-	for (const s of await listSessions()) {
-		if (!s.tabIds.includes(replacedTabId) && s.homeTabId !== replacedTabId) continue;
-		const session = await BrowserSession.open(s.id, s.label, s.windowId);
-		await session.replaceTabId(replacedTabId, tabId);
-	}
+chrome.webNavigation.onTabReplaced.addListener(({ replacedTabId, tabId }) => {
+	BrowserSession.replaceTab(replacedTabId, tabId).catch(() => undefined);
 });
 
 // External harnesses (omp, pi, Claude Code, Codex) drive the browser through the

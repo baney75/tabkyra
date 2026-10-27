@@ -122,13 +122,7 @@ export class BridgeClient {
 				if (!welcomed) reject(err);
 			});
 			socket.on("data", (chunk) => {
-				let messages: unknown[];
-				try {
-					messages = parser.push(chunk);
-				} catch (err) {
-					socket.destroy(err as Error);
-					return;
-				}
+				const { messages, error } = parser.push(chunk);
 				for (const m of messages) {
 					const msg = m as HostToClient;
 					if (msg.type === "welcome") {
@@ -140,6 +134,8 @@ export class BridgeClient {
 						resolve();
 					} else this.onMessage(msg);
 				}
+				// The good frames are delivered first; a bad one still ends this connection.
+				if (error) socket.destroy(error);
 			});
 			socket.on("close", () => {
 				clearTimeout(timer);

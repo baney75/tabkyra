@@ -156,6 +156,12 @@ let browserSession: BrowserSession | undefined;
 // The tab this panel is bound to (Claude-style per-tab binding), from ?tabId= in the URL.
 let homeTabId: number | undefined;
 
+/** First-save relabel and rename run one after the other, in the order they were asked for. */
+let browserSessionOps: Promise<unknown> = Promise.resolve();
+function queueBrowserSessionOp(op: () => Promise<unknown> | undefined): void {
+	browserSessionOps = browserSessionOps.then(op).catch((err) => console.error("Browser session update failed:", err));
+}
+
 /** Browser-session id for an unsaved chat: stable per home tab so reopening the tab restores it. */
 function unsavedSessionId(): string {
 	return homeTabId !== undefined ? `tab-${homeTabId}` : `temp-${crypto.randomUUID()}`;
@@ -204,8 +210,8 @@ async function adoptActiveTab(notify: boolean): Promise<void> {
 async function pruneEmptyUnsavedSessions(): Promise<void> {
 	for (const s of await listSessions()) {
 		if ((s.id.startsWith("temp-") || s.id.startsWith("tab-")) && s.tabIds.length === 0) {
-			const session = await BrowserSession.open(s.id, s.label, s.windowId);
-			await session.close();
+			// The foreground guard may have adopted a tab into it meanwhile; then it stays.
+			await BrowserSession.dropIfEmpty(s.id);
 		}
 	}
 }
@@ -646,18 +652,23 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 			if (!currentTitle && shouldSaveSession(messages)) {
 				currentTitle = generateTitle(messages);
-				browserSession?.setLabel(sessionLabel()).catch(() => {});
+				const session = browserSession;
+				const label = sessionLabel();
+				queueBrowserSessionOp(() => session?.setLabel(label));
 			}
 
 			if (!currentSessionId && shouldSaveSession(messages)) {
 				currentSessionId = crypto.randomUUID();
 				// Rename the unsaved browser session (id "tab-<homeTab>") to the saved id, keeping
 				// its home-tab binding and tab group, so the panel stays bound to the same tab.
-				const unsavedId = unsavedSessionId();
+				// Queued after the relabel above so the two never interleave.
+				// The live id, not a recomputed one: a panel without a home tab has a random temp- id.
+				const unsavedId = browserSession?.id;
 				const savedId = currentSessionId;
-				BrowserSession.rename(unsavedId, savedId)
-					.then(() => openBrowserSession(savedId))
-					.catch((err) => console.error("Failed to rename browser session:", err));
+				queueBrowserSessionOp(async () => {
+					if (unsavedId) await BrowserSession.rename(unsavedId, savedId);
+					await openBrowserSession(savedId);
+				});
 				updateUrl(savedId);
 			}
 
