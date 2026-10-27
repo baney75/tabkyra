@@ -118,8 +118,8 @@ test("a staged update is activated only when no side panel run is going, then re
 });
 
 test("a failed install drops the gate and nothing reloads", async () => {
-	// The stub reload didn't end the worker: after the grace period it lets go of the gate.
-	await sleep(3500);
+	// The stub reload didn't end the worker: it tries once more, then lets go of the gate.
+	await sleep(7000);
 	assert.equal(await gateHeld(), false, "a reload that didn't happen releases the gate");
 	assert.equal((await progressNow()).phase, "failed");
 	await busy(false);
@@ -145,7 +145,7 @@ test("a busy flag without a fresh heartbeat (its panel crashed) doesn't hold the
 	await sleep(600);
 	assert.equal(ctx.reloads(), before + 1);
 	await chrome.storage.session.set({ sidepanel_busy_7: false });
-	await sleep(3500);
+	await sleep(7000);
 });
 
 test("Roll back waits for idle in the worker before the host swaps anything", async () => {
@@ -175,7 +175,7 @@ test("a result a new host replays is matched, not shown", async () => {
 test("an install that failed after it may have changed files still reloads", async () => {
 	await chrome.storage.local.remove("tabkyra.updatePending");
 	await busy(false);
-	await sleep(3500);
+	await sleep(7000);
 	const before = ctx.reloads();
 	await ctx.ask({ type: "tabkyra-update", action: "rollback" }, panelUrl);
 	await sleep(400);

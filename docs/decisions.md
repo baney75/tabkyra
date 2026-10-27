@@ -225,7 +225,7 @@ Settings > Updates and an automatic choice defaulting to "Tell me". Defaults cho
 - **Build first, swap when idle.** Downloading, verifying, pulling and building run while
   agents work; the swap of live files (activation, rollback) and the reload wait for idle and
   follow each other at once, so the browser doesn't run old and new files side by side.
-- **"Idle"** means no side panel run (counted only while that panel's port is connected) and
+- **"Idle"** means no side panel run (counted while its heartbeat is under 3 minutes old) and
   no bridge request in flight; a harness also counts as running for 30 seconds after a
   browser call. Automatic updates wait for 3 quiet minutes.
 - **A checkout trusts its origin** as a manual `git pull` and build would; there is no

@@ -141,7 +141,8 @@ let isRecording = false;
 // (and its document destroyed) on other tabs while work is in progress.
 let lastPublishedBusy: boolean | undefined;
 function publishBusyState(): void {
-	const busy = agent?.state.isStreaming === true;
+	// A send that holds a reservation counts as busy until it has started its run or given up.
+	const busy = agent?.state.isStreaming === true || sendReserving;
 	// Agent events beat too: a hidden panel's timers can be throttled to once a minute.
 	if (busy && Date.now() - lastBeatAt > 10000) beatBusy();
 	if (busy === lastPublishedBusy) return;
@@ -172,7 +173,9 @@ function beatBusy(): void {
  * Mark this panel busy before a run starts (under the install gate, see onBeforeSend), through
  * the same state publishBusyState keeps, so it clears the flag again if no run starts.
  */
+let sendReserving = false;
 async function markBusyForSend(): Promise<void> {
+	sendReserving = true;
 	lastPublishedBusy = true;
 	lastBeatAt = Date.now();
 	await chrome.storage.session.set({
@@ -781,14 +784,20 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		onBeforeSend: async () => {
 			// Tabkyra may be swapping in an update and about to reload; a run started then would be cut
 			// off. Marking the panel busy under the gate makes the update wait for this run instead.
+			// Everything that waits comes first, so nothing async lies between the reservation and
+			// the run starting (AgentInterface calls prompt() right after this hook, synchronously).
+			const note = await pageChangeNote();
 			const reserved = await reserveRun(markBusyForSend);
-			// A send that ends up queued or refused starts no run: drop the mark again.
-			if (reserved) setTimeout(publishBusyState, 5000);
 			if (!reserved) {
 				throw new Error("Tabkyra is installing an update and reloads in a moment. Send it again after the reload.");
 			}
-			const note = await pageChangeNote();
 			if (note && agent) agent.appendMessage(note);
+			// After this hook the send either starts its run (streaming) or queues; either way the
+			// reservation ends there, and publishBusyState keeps or clears the busy mark.
+			setTimeout(() => {
+				sendReserving = false;
+				publishBusyState();
+			}, 0);
 		},
 		// "Send now" mid-run: the same note, delivered with the message.
 		steerContext: async () => {

@@ -49,9 +49,19 @@ export async function reserveRun(markBusy: () => Promise<void>): Promise<boolean
 		await markBusy();
 		return true;
 	}
-	return navigator.locks.request(INSTALL_GATE_LOCK, { mode: "shared", ifAvailable: true }, async (lock) => {
+	const take = (lock: Lock | null) => async () => {
 		if (!lock || (await fenced())) return false;
 		await markBusy();
 		return true;
-	});
+	};
+	const now = await navigator.locks.request(INSTALL_GATE_LOCK, { mode: "shared", ifAvailable: true }, (lock) =>
+		take(lock)(),
+	);
+	if (now) return true;
+	// Not free right now: refuse only if the worker holds it or a fence stands. Otherwise the
+	// worker's request is merely queued behind another panel; wait our turn.
+	const state = await navigator.locks.query();
+	if (state.held?.some((l) => l.name === INSTALL_GATE_LOCK && l.mode === "exclusive") || (await fenced()))
+		return false;
+	return navigator.locks.request(INSTALL_GATE_LOCK, { mode: "shared" }, (lock) => take(lock)());
 }

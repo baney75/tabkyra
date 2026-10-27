@@ -53,7 +53,13 @@ const RELOAD_GRACE_MS = 3000;
 /** How long to wait for the host to answer an action before saying it didn't. */
 const NO_REPLY_MS = 30000;
 /** How long a sent action may take before the worker stops waiting for it. */
-const SENT_LIMIT_MS: Record<string, number> = { update: 45 * 60 * 1000, reinstall: 45 * 60 * 1000 };
+const SENT_LIMIT_MS: Record<string, number> = {
+	update: 45 * 60 * 1000,
+	reinstall: 45 * 60 * 1000,
+	// Swap, skill refresh (60 s cap) and host registration (60 s cap) take well under this.
+	activate: 10 * 60 * 1000,
+	rollback: 10 * 60 * 1000,
+};
 const SENT_LIMIT_DEFAULT_MS = 3 * 60 * 1000;
 /** Nothing is known about activity before the worker started; automatic updates count from here. */
 const WORKER_STARTED_AT = Date.now();
@@ -71,6 +77,8 @@ interface Pending {
 	extensionBuild?: string;
 	/** Set right before chrome.runtime.reload(): the build that asked for it. */
 	reloadedFrom?: string;
+	/** A failed install or rollback that reloads anyway: shown after the reload instead of "done". */
+	failure?: string;
 	at: number;
 }
 
@@ -172,8 +180,16 @@ function later(): void {
 	waitTimer = setTimeout(() => void advance(), WAIT_POLL_MS);
 }
 
+let advancing: Promise<void> = Promise.resolve();
+
+/** One advance at a time: each reads the pending step only after the one before it finished. */
+function advance(): Promise<void> {
+	advancing = advancing.then(advanceOnce, advanceOnce);
+	return advancing;
+}
+
 /** Take the next pending step if nothing runs; otherwise say what it waits for and look again. */
-async function advance(): Promise<void> {
+async function advanceOnce(): Promise<void> {
 	waitTimer = undefined;
 	const pending = await getPending();
 	if (!pending || pending.step === "sent" || pending.reloadedFrom) return;
@@ -200,13 +216,17 @@ async function advance(): Promise<void> {
 	if (!verdict.idle) return wait(verdict.reason);
 	if (pending.step === "run") {
 		await setFence(pending.action);
+		// Recorded as sent before it goes out: a worker restart then waits for its result instead
+		// of sending it a second time.
+		const sent: Pending = { ...pending, step: "sent", at: Date.now() };
+		await setPending(sent);
 		if (!sendUpdateAction(pending.action as UpdateAction)) {
+			await chrome.storage.local.set({ [PENDING_KEY]: pending });
 			await release();
 			await setProgress(pending.action, "waiting", "Waiting for the Tabkyra native host to connect.");
 			later();
 			return;
 		}
-		await setPending({ ...pending, step: "sent", at: Date.now() });
 		await setProgress(pending.action, "installing", pending.action === "rollback" ? "Rolling back" : "Installing");
 		return;
 	}
@@ -216,9 +236,16 @@ async function advance(): Promise<void> {
 	// A reload ends this worker at once. Still here a few seconds later means it didn't happen:
 	// let runs start again and say so, rather than hold everything back.
 	const timer = setTimeout(() => {
-		void release();
-		void chrome.storage.local.remove(PENDING_KEY);
-		void setProgress(pending.action, "failed", "Tabkyra didn't reload. Reload it on chrome://extensions.");
+		// Try once more. A second miss is reported and runs may start again: holding everything
+		// back for a reload that doesn't come helps nobody.
+		void setProgress(pending.action, "waiting", "Tabkyra hasn't reloaded yet; trying again.");
+		chrome.runtime.reload();
+		const again = setTimeout(() => {
+			void release();
+			void chrome.storage.local.remove(PENDING_KEY);
+			void setProgress(pending.action, "failed", "Tabkyra didn't reload. Reload it on chrome://extensions.");
+		}, RELOAD_GRACE_MS);
+		(again as { unref?: () => void }).unref?.();
 	}, RELOAD_GRACE_MS);
 	(timer as { unref?: () => void }).unref?.();
 }
@@ -262,12 +289,29 @@ async function resume(): Promise<void> {
 	const pending = await getPending();
 	if (!pending) return;
 	if (pending.reloadedFrom) {
+		const fence = (await chrome.storage.session.get(INSTALL_FENCE_KEY))[INSTALL_FENCE_KEY];
+		if (BUILD?.id === pending.reloadedFrom && fenceHeld(fence)) {
+			// Session storage survives only when the extension did not reload: the worker merely
+			// restarted. The reload is still owed; do it now (the gate was taken back in startUpdateWorker).
+			await setPending({ ...pending, reloadedFrom: undefined });
+			await advance();
+			return;
+		}
 		await chrome.storage.local.remove(PENDING_KEY);
+		await release();
 		if (pending.extensionBuild && BUILD?.id !== pending.extensionBuild && BUILD?.id === pending.reloadedFrom) {
 			await setProgress(
 				pending.action,
 				"failed",
 				"Tabkyra reloaded but still runs the old build, so the browser loads it from another folder. Check the folder on chrome://extensions.",
+			);
+			return;
+		}
+		if (pending.failure) {
+			await setProgress(
+				pending.action,
+				"failed",
+				`${pending.failure} Tabkyra reloaded and runs ${describeBuild(BUILD)}.`,
 			);
 			return;
 		}
@@ -318,7 +362,14 @@ async function onProgress(progress: HostUpdateProgress): Promise<void> {
 	if (progress.phase === "done" && progress.staged) return queue("run", "activate", { auto: pending?.auto });
 	// A failed install or rollback that may have changed files also says reload.
 	if (progress.reload) {
-		return queue("reload", progress.action, { extensionBuild: progress.extensionBuild, auto: pending?.auto });
+		return queue("reload", progress.action, {
+			extensionBuild: progress.extensionBuild,
+			auto: pending?.auto,
+			failure:
+				progress.phase === "failed"
+					? progress.message.replace(/ Reloading Tabkyra to run what is installed\.$/, "")
+					: undefined,
+		});
 	}
 	// A failure reported before the swap: nothing changed (after the swap the updater reports done).
 	await chrome.storage.local.remove(PENDING_KEY);

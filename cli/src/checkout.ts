@@ -89,6 +89,8 @@ export function toolEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 	const path = [dirname(process.execPath), ...(env.PATH ?? "").split(delimiter), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
 	env.PATH = [...new Set(path.filter(Boolean))].join(delimiter);
 	env.GIT_TERMINAL_PROMPT = "0";
+	// Read-only git calls run next to the user's own git; don't take the index lock for them.
+	env.GIT_OPTIONAL_LOCKS = "0";
 	env.NO_COLOR = "1";
 	return { ...env, ...extra };
 }
@@ -224,16 +226,19 @@ export function blockedReason(info: Pick<CheckoutInfo, "root" | "branch" | "dirt
 	if (info.branch !== "main") {
 		return `The checkout at ${info.root} is on ${info.branch ? `branch ${info.branch}` : "a detached HEAD"}, not main. Switch it to main to update from here.`;
 	}
-	if (info.dirty.length > 0) {
-		const files = info.dirty.slice(0, 3).map((l) => l.slice(3));
-		const more = info.dirty.length > 3 ? ` and ${info.dirty.length - 3} more` : "";
-		return `The checkout at ${info.root} has local changes (${files.join(", ")}${more}). Commit or remove them, then update.`;
-	}
+	if (info.dirty.length > 0) return dirtyReason(info);
 	if (!info.origin) return `The checkout at ${info.root} has no origin/main to update from.`;
 	if (info.behind > 0 && info.ahead > 0) {
 		return `main and origin/main have diverged (${info.ahead} local, ${info.behind} new on origin), so the pull would not be a fast-forward. Rebase or reset main yourself.`;
 	}
 	return undefined;
+}
+
+/** Tracked files with local changes, in words. */
+function dirtyReason(info: Pick<CheckoutInfo, "root" | "dirty">): string {
+	const files = info.dirty.slice(0, 3).map((l) => l.slice(3));
+	const more = info.dirty.length > 3 ? ` and ${info.dirty.length - 3} more` : "";
+	return `The checkout at ${info.root} has local changes (${files.join(", ")}${more}). Commit or remove them, then update.`;
 }
 
 /** The live build is not HEAD's (a failed build after a pull, or a rollback). */
@@ -535,7 +540,10 @@ export async function updateCheckout(root: string, emit: Emit, options: { pull: 
 		emit("checking", options.pull ? `Fetching origin/main for ${root}` : `Checking ${root}`);
 		const info = await inspectCheckout(root, { fetch: options.pull });
 		if (info.fetchError) throw new UpdateError(info.fetchError);
-		if (info.blocked) throw new UpdateError(info.blocked);
+		// Pulling needs main and a fast-forward. Rebuilding HEAD (the mismatch fix) only needs no
+		// local changes, so the build matches the commit it says it is from.
+		if (options.pull && info.blocked) throw new UpdateError(info.blocked);
+		if (!options.pull && info.dirty.length) throw new UpdateError(dirtyReason(info));
 		if (options.pull && info.behind > 0) {
 			emit("pulling", `Pulling ${info.behind} new commit${info.behind === 1 ? "" : "s"} (git pull --ff-only)`);
 			const pull = await git(root, ["pull", "--ff-only", "--quiet", "origin", "main"]);

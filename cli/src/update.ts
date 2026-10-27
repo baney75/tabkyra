@@ -517,7 +517,7 @@ export function swapIn(staged: string): void {
 export function reinstallHost(log: (line: string) => void): boolean {
 	const cli = join(appDir(), "cli", "dist", "index.js");
 	try {
-		const out = execFileSync(process.execPath, [cli, "install"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
+		const out = execFileSync(process.execPath, [cli, "install"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" }, timeout: 60000 });
 		const wrote = out.split("\n").filter((l) => l.includes("Wrote")).length;
 		log(`${sym.ok} Native host ${wrote > 0 ? "re-registered" : "already current"} ${c.dim(`(${cli})`)}`);
 		return true;

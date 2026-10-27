@@ -171,7 +171,11 @@ chrome.tabs.onRemoved.addListener((tabId) => panelPathCache.delete(tabId));
 
 chrome.storage.onChanged.addListener((changes, area) => {
 	if (area === "local" && "browser_sessions" in changes) void onSessionsChanged();
-	if (area === "session" && Object.keys(changes).some((k) => k.startsWith(PANEL_BUSY_PREFIX)))
+	// Heartbeats share the prefix but say nothing about which tab shows the panel.
+	if (
+		area === "session" &&
+		Object.keys(changes).some((k) => k.startsWith(PANEL_BUSY_PREFIX) && !k.startsWith(`${PANEL_BUSY_PREFIX}beat_`))
+	)
 		void onActiveTabsChanged();
 });
 

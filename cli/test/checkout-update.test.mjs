@@ -600,3 +600,31 @@ test("a skills record that can't be written doesn't stop the install", async () 
 	assert.equal(a.last.reload, true);
 	assert.equal(extBuild(c).commit, git(c.checkout, "rev-parse", "HEAD"));
 });
+
+test("the mismatch fix rebuilds HEAD on any branch, but not with local changes", async () => {
+	const c = makeCheckout();
+	git(c.checkout, "checkout", "-q", "-b", "feature");
+	git(c.checkout, "commit", "-q", "--allow-empty", "-m", "Feature work");
+	const r = await runHost(c.cli, "--reinstall");
+	assert.equal(r.last.staged, true, r.last.message);
+	assert.equal((await runHost(c.cli, "--activate")).last.reload, true);
+	assert.equal(extBuild(c).commit, git(c.checkout, "rev-parse", "HEAD"));
+	writeFileSync(join(c.checkout, "build.mjs"), `${BUILD_EXT}\n// edit\n`);
+	const dirty = await runHost(c.cli, "--reinstall");
+	assert.equal(dirty.last.phase, "failed");
+	assert.match(dirty.last.message, /local changes/);
+});
+
+test("an install whose updater died is reported with a reload, after repairing the swap", async (t) => {
+	const c = makeCheckout();
+	const disk = extBuild(c);
+	mkdirSync(join(home, ".config", "tabkyra"), { recursive: true });
+	writeFileSync(join(home, ".config", "tabkyra", "update-progress.json"), JSON.stringify({ pid: 999999, action: "activate", phase: "installing", message: "Swapping", at: Date.now() }));
+	const h = startHost(c.cli);
+	t.after(() => h.host.kill());
+	h.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
+	const failed = await h.waitFor((m) => m.type === "update_progress" && m.action === "activate" && m.phase === "failed", "the dead install reported");
+	assert.equal(failed.reload, true, "files may have changed: reload into what is installed");
+	assert.equal(failed.extensionBuild, disk.id);
+	rmSync(join(home, ".config", "tabkyra", "update-progress.json"), { force: true });
+});

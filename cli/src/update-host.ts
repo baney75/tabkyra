@@ -115,7 +115,7 @@ function startUp(send: Send): void {
 		const message = "The updater stopped before it finished. An interrupted swap is repaired; run it again.";
 		// Once: the record says failed from now on.
 		writeProgressRecord({ ...record, phase: "failed", message, at: Date.now() });
-		progress(send, record.action, "failed", message);
+		failed(send, record.action, message);
 		return;
 	}
 	const state: { action: HostRunAction; last?: HostUpdateProgress } = { action: record.action };
@@ -135,12 +135,33 @@ function startUp(send: Send): void {
 			if (!over) {
 				const message = "The updater stopped before it finished; run it again.";
 				if (r) writeProgressRecord({ ...r, phase: "failed", message, at: Date.now() });
-				progress(send, record.action, "failed", message);
+				failed(send, record.action, message);
 			}
 			void sendStatus(send);
 		}
 	}, 1000);
 	poll.unref();
+}
+
+/**
+ * A failure the host reports itself (the updater died or exited without a result). For an
+ * install or rollback, files may have changed: repair an interrupted swap, then ask for a reload
+ * into whatever is installed, as the updater does.
+ */
+function failed(send: Send, action: HostRunAction, message: string): void {
+	if (action !== "activate" && action !== "rollback") {
+		progress(send, action, "failed", message);
+		return;
+	}
+	const { mode, root } = detectMode();
+	try {
+		if (mode === "checkout") recoverCheckoutQuietly(root);
+		else if (mode === "release") withLock(recover);
+	} catch {
+		/* held by a live updater: it finishes on its own */
+	}
+	const extensionBuild = readBuildInfo(join(root, "dist-chrome"))?.id;
+	progress(send, action, "failed", `${message} Reloading Tabkyra to run what is installed.`, { reload: true, extensionBuild });
 }
 
 let helloSeen = false;
@@ -208,6 +229,24 @@ async function checkoutCheck(force: boolean, root: string, checks: boolean): Pro
 export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 	// While an updater works on the checkout, don't run git next to it: report the last status.
 	if (running && lastStatus) return { ...lastStatus, updating: true };
+	if (running) {
+		// Adopted at start, before any status was computed: what the cached check says, no git.
+		const cached = readStatus();
+		const settings = readSettings();
+		const { mode, root } = detectMode();
+		return {
+			type: "update_status",
+			available: false,
+			current: cached?.current ?? "unknown",
+			channel: cached?.channel ?? settings.channel,
+			checkedAt: cached?.checkedAt ?? 0,
+			mode,
+			policy: settings.policy,
+			root,
+			updating: true,
+			location: extension.location,
+		};
+	}
 	const settings = readSettings();
 	const { mode, root } = detectMode();
 	const checks = settings.policy !== "off" || force;
@@ -373,7 +412,7 @@ function runChild(action: HostRunAction, send: Send): void {
 		if (buffer) onLine(buffer);
 		if (!finished) {
 			const reason = error?.message || stderr.trim().split("\n").slice(-3).join("\n") || `exit code ${code}`;
-			progress(send, action, "failed", `The updater stopped: ${reason}`);
+			failed(send, action, `The updater stopped: ${reason}.`);
 		}
 		void sendStatus(send);
 	};
