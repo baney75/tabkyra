@@ -49,6 +49,9 @@ test("notes: the rename helper leaves external URLs alone and takes titles liter
 	const near = join(vault, "School", "Near.md");
 	writeFileSync(rel, "[[../School/Bio]] [[chool/Bio]] `[[Bio]]`\n```\n[[Bio]] [x](School/Bio.md)\n```\n");
 	writeFileSync(near, "[[./Bio|here]]\n");
+	const forms = join(vault, "Forms.md");
+	const kept = "~~~\n[[Bio]]\n~~~\n\n    [[Bio]] in indented code\n";
+	writeFileSync(forms, `See [lesson][bio].\n\n[bio]: School/Bio.md "notes"\n[ab]: <School/Bio.md>\n\n- list\n    - nested [[Bio]]\n\n    - loose nested [[Bio]]\n\n${kept}`);
 	for (const bad of ["Bio #2", "Plan | v2", "a/b", "x:y"]) assert.equal(py("check", vault, "School/Bio.md", bad).status, 1, bad);
 	assert.equal(py("check", vault, "School/Bio.md", "Biology 101").status, 0);
 	renameSync(join(vault, "School", "Bio.md"), join(vault, "School", "Biology 101.md"));
@@ -70,6 +73,14 @@ test("notes: the rename helper leaves external URLs alone and takes titles liter
 	rmSync(join(vault, "Left.md"));
 	assert.equal(readFileSync(rel, "utf8"), "[[../School/Biology 101]] [[chool/Bio]] `[[Bio]]`\n```\n[[Bio]] [x](School/Bio.md)\n```\n", "relative link relinked; suffix and code untouched");
 	assert.equal(readFileSync(near, "utf8"), "[[./Biology 101|here]]\n");
+	assert.equal(
+		readFileSync(forms, "utf8"),
+		`See [lesson][bio].\n\n[bio]: School/Biology%20101.md "notes"\n[ab]: <School/Biology 101.md>\n\n- list\n    - nested [[Biology 101]]\n\n    - loose nested [[Biology 101]]\n\n${kept}`,
+		"reference definitions and nested list items relinked; tilde-fenced and indented code kept byte for byte",
+	);
+	writeFileSync(join(vault, "Left.md"), "[x][b]\n\n[b]: School/Bio.md\n");
+	assert.equal(py("verify", vault, "School/Bio.md", "Biology 101").status, 1, "verify sees a reference definition");
+	rmSync(join(vault, "Left.md"));
 	for (const left of ["[[../School/Bio]]", "[[./Bio]]"]) {
 		writeFileSync(join(vault, "Other", "Left.md"), `${left}\n`);
 		writeFileSync(join(vault, "School", "Left.md"), `${left}\n`);
@@ -193,4 +204,9 @@ test("proton: a username in a Pass result row is list text; navigate and wait ar
 test("skill-platform doc states the evidence rule at min(catalog size, 13) skills", () => {
 	const doc = readFileSync(join(repo, "docs", "skill-platform.md"), "utf8");
 	assert.match(doc, /min\(catalog size, 13\)/);
+	// The measured figures name the case file as it is: total cases and none cases.
+	const cases = readFileSync(join(repo, "skills-eval", "router-cases.jsonl"), "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+	const none = cases.filter((c) => c.skill === "none").length;
+	assert.match(doc, new RegExp(`tuned set of\\s+${cases.length} cases,`), `${cases.length} cases`);
+	assert.match(doc, new RegExp(`false invokes 0% \\(0 of ${none}\\)`), `${none} none cases`);
 });
