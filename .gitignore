@@ -15,3 +15,5 @@ cli/dist
 
 # The demo video and its poster are published assets.
 !media/demo.mp4
+!media/hero.mp4
+!media/hero-vertical.mp4

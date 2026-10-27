@@ -380,8 +380,10 @@ async function browserBeats(work, capture) {
 		capture.browser.boxes.siteAccess = await panel.box(findText("Site access"));
 		capture.browser.boxes.requestCard = await panel.box(surface(findTextIn("wants to open")));
 		capture.browser.boxes.firstAllowedRow = await panel.box(`${findText("127.0.0.1")}.parentElement`);
-		answerPrompt({ action: "accept", content: { decision: "allow_host" } });
-		capture.browser.permissionAnswer = "allow_host";
+		// One value: the answer sent is the answer recorded (the hero's checkmark is placed from it).
+		const answer = { decision: "allow_host" };
+		answerPrompt({ action: "accept", content: answer });
+		capture.browser.permissionAnswer = answer.decision;
 		await pending;
 		await until(
 			() =>
