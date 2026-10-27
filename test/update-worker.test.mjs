@@ -152,3 +152,12 @@ test("Roll back waits for idle in the worker before the host swaps anything", as
 	const bad = await ctx.ask({ type: "tabkyra-update", action: "activate" }, panelUrl);
 	assert.equal(bad.ok, false);
 });
+
+test("a result a new host replays is matched, not shown", async () => {
+	const shown = await progressNow();
+	const waiting = await pendingNow();
+	ctx.port.deliver({ type: "update_progress", action: "activate", phase: "done", message: "Installed 9.9.9", at: Date.now() - 60000, reload: true, replay: true });
+	await sleep(300);
+	assert.deepEqual(await progressNow(), shown, "the panel's progress line is unchanged");
+	assert.deepEqual(await pendingNow(), waiting, "an older result for another step moves nothing");
+});

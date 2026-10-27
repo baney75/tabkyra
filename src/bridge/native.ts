@@ -382,7 +382,8 @@ function onHostMessage(message: HostToExt): void {
 			updateHandlers.status?.(message);
 			return;
 		case "update_progress":
-			void chrome.storage.local.set({ [UPDATE_PROGRESS_KEY]: message });
+			// A replay is for the worker to match against what it waits for, not news for the panel.
+			if (!message.replay) void chrome.storage.local.set({ [UPDATE_PROGRESS_KEY]: message });
 			updateHandlers.progress?.(message);
 			return;
 		case "request": {

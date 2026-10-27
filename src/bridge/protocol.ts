@@ -225,6 +225,8 @@ export interface HostUpdateProgress {
 	reload?: boolean;
 	/** The extension build now on disk, so the reload can tell it worked. */
 	extensionBuild?: string;
+	/** A result a new host sends again in case the extension missed it; not shown, only matched. */
+	replay?: boolean;
 }
 
 /** chrome.storage.local key where the extension keeps the last HostUpdateProgress. */

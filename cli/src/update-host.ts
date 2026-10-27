@@ -98,7 +98,7 @@ function startUp(send: Send): void {
 		// A result the extension may have missed while no host ran: send it once more with its own
 		// time. The worker acts on it only if it is the result of the step it is waiting for.
 		if (Date.now() - record.at < 10 * 60 * 1000) {
-			const frame = forward(send, record.action, record, record.at);
+			const frame = forward(send, record.action, record, record.at, true);
 			if (!frame) return;
 		}
 		return;
@@ -301,6 +301,7 @@ function forward(
 	action: UpdateAction,
 	event: Partial<ProgressEvent> | { phase?: unknown; message?: unknown; staged?: unknown; reload?: unknown; extensionBuild?: unknown },
 	at?: number,
+	replay?: boolean,
 ): HostUpdateProgress | undefined {
 	if (typeof event.phase !== "string" || !PHASES.includes(event.phase as UpdatePhase)) return undefined;
 	return progress(send, action, event.phase as UpdatePhase, String(event.message ?? "").slice(0, 2000), {
@@ -308,6 +309,7 @@ function forward(
 		reload: event.reload === true ? true : undefined,
 		extensionBuild: typeof event.extensionBuild === "string" ? event.extensionBuild : undefined,
 		...(at ? { at } : {}),
+		...(replay ? { replay: true } : {}),
 	});
 }
 
