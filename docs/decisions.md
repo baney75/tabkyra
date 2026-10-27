@@ -178,3 +178,31 @@ No user should risk a ban for using Tabkyra.
   another app is what got the old Sitegeist sign-ins removed (docs/auth-policy.md).
 - `/fix` and `adversarial-review` run a stronger model by calling the user's own CLI
   (`claude -p`, `codex exec`) on their machine, the same way the user would.
+
+## D17. Adapted third-party skills and the mechanism dataset (Claude, 2026-10-26)
+
+The owner asked for a `visual-explainer` skill adapted from nicobailon/visual-explainer
+(MIT) and a `mechanism-design` skill informed by arXiv 2409.03763. Defaults chosen:
+
+- **Adapt, don't vendor.** A skill folder holds `SKILL.md` and a license only, under the
+  D12 budget, so upstream's `references/` files, its CSS/JS kit, its renderer and its
+  slide and video tooling are not copied. Their rules (figure choice, grid layout, shape
+  meanings, captions, motion restraint) are rewritten into one `SKILL.md`. The MIT notice
+  with Nico Bailon's copyright is at the end of that `SKILL.md`, because `tabkyra skill
+  install` copies only `SKILL.md`, and also in `skills/visual-explainer/LICENSE`. The skill
+  is MIT; the rest of Tabkyra stays AGPL-3.0.
+- **Inline SVG, not Mermaid.** Upstream loads Mermaid, Chart.js and three.js from a CDN.
+  The `artifacts` rules forbid outside scripts, and inlining Mermaid would add megabytes of
+  layout code to every page for diagrams a model can draw by hand. Upstream itself makes
+  hand-drawn SVG the default and Mermaid opt-in. A user's Mermaid source is redrawn as SVG
+  and kept as text in the page.
+- **Upstream's checks are replaced by Tabkyra's**: serve the page's own folder,
+  `navigate`, start `read_console` and `read_network` and reload, `screenshot`, and
+  `run_js` checks for captions, SVG labels, the script count and 375px overflow. The page's
+  Content-Security-Policy (first in head: `default-src 'none'`, `script-src 'none'` or the
+  SHA-256 of its one script, `form-action 'none'`, `base-uri 'none'`) is the control that
+  blocks injected script and form posts; a check confirms it word for word.
+- **Link the mechanism dataset, never bundle it.** Its images were scraped from a YouTube
+  channel, DMG-lib and Artobolevsky's book, partly under copyright, and its code repository
+  states no license. `mechanism-design` cites the paper and points to the repository as a
+  catalogue of mechanism names only.

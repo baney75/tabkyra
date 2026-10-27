@@ -28,8 +28,37 @@ index 101c83f2c..12cd0c2e3 100644
 +	const generated = (MODELS as Record<string, Record<string, Model<Api>>>)[provider];
 +	return generated ? Object.values(generated) : [];
 +}
+diff --git a/packages/web-ui/src/ChatPanel.ts b/packages/web-ui/src/ChatPanel.ts
+index 2c76c391d..b2e1df6d5 100644
+--- a/packages/web-ui/src/ChatPanel.ts
++++ b/packages/web-ui/src/ChatPanel.ts
+@@ -2,7 +2,7 @@ import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
+ import { html, LitElement } from "lit";
+ import { customElement, state } from "lit/decorators.js";
+ import "./components/AgentInterface.js";
+-import type { Agent, AgentTool } from "@mariozechner/pi-agent-core";
++import type { Agent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
+ import type { AgentInterface } from "./components/AgentInterface.js";
+ import { ArtifactsRuntimeProvider } from "./components/sandbox/ArtifactsRuntimeProvider.js";
+ import { AttachmentsRuntimeProvider } from "./components/sandbox/AttachmentsRuntimeProvider.js";
+@@ -58,6 +58,7 @@ export class ChatPanel extends LitElement {
+ 		config?: {
+ 			onApiKeyRequired?: (provider: string) => Promise<boolean>;
+ 			onBeforeSend?: () => void | Promise<void>;
++			steerContext?: () => Promise<AgentMessage[]>;
+ 			onCostClick?: () => void;
+ 			onModelSelect?: () => void;
+ 			sandboxUrlProvider?: () => string;
+@@ -81,6 +82,7 @@ export class ChatPanel extends LitElement {
+ 		this.agentInterface.onApiKeyRequired = config?.onApiKeyRequired;
+ 		this.agentInterface.onModelSelect = config?.onModelSelect;
+ 		this.agentInterface.onBeforeSend = config?.onBeforeSend;
++		this.agentInterface.steerContext = config?.steerContext;
+ 		this.agentInterface.onCostClick = config?.onCostClick;
+ 
+ 		// Set up artifacts panel
 diff --git a/packages/web-ui/src/components/AgentInterface.ts b/packages/web-ui/src/components/AgentInterface.ts
-index b8f6550ec..7b32533ed 100644
+index b8f6550ec..14b3a292d 100644
 --- a/packages/web-ui/src/components/AgentInterface.ts
 +++ b/packages/web-ui/src/components/AgentInterface.ts
 @@ -1,3 +1,4 @@
@@ -37,7 +66,28 @@ index b8f6550ec..7b32533ed 100644
  import { streamSimple, type ToolResultMessage, type Usage } from "@mariozechner/pi-ai";
  import { html, LitElement } from "lit";
  import { customElement, property, query } from "lit/decorators.js";
-@@ -34,6 +35,10 @@ export class AgentInterface extends LitElement {
+@@ -8,10 +9,11 @@ import "./MessageList.js";
+ import "./Messages.js"; // Import for side effects to register the custom elements
+ import { getAppStorage } from "../storage/app-storage.js";
+ import "./StreamingMessageContainer.js";
+-import type { Agent, AgentEvent } from "@mariozechner/pi-agent-core";
++import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+ import type { Attachment } from "../utils/attachment-utils.js";
+ import { formatUsage } from "../utils/format.js";
+ import { i18n } from "../utils/i18n.js";
++import { MessageQueue, type SendResult } from "../utils/message-queue.js";
+ import { createStreamFn } from "../utils/proxy-utils.js";
+ import type { UserMessageWithAttachments } from "./Messages.js";
+ import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
+@@ -28,12 +30,18 @@ export class AgentInterface extends LitElement {
+ 	@property({ attribute: false }) onApiKeyRequired?: (provider: string) => Promise<boolean>;
+ 	// Optional callback called before sending a message
+ 	@property({ attribute: false }) onBeforeSend?: () => void | Promise<void>;
++	/** Context to deliver ahead of a "Send now" message mid-run (onBeforeSend can't append mid-run). */
++	@property({ attribute: false }) steerContext?: () => Promise<AgentMessage[]>;
+ 	// Optional callback called before executing a tool call - return false to prevent execution
+ 	@property({ attribute: false }) onBeforeToolCall?: (toolName: string, args: any) => boolean | Promise<boolean>;
+ 	// Optional callback called when cost display is clicked
  	@property({ attribute: false }) onCostClick?: () => void;
  	// Optional callback to override model selector behavior
  	@property({ attribute: false }) onModelSelect?: () => void;
@@ -48,17 +98,303 @@ index b8f6550ec..7b32533ed 100644
  
  	// References
  	@query("message-editor") private _messageEditor!: MessageEditor;
-@@ -368,6 +373,8 @@ export class AgentInterface extends LitElement {
+@@ -46,6 +54,12 @@ export class AgentInterface extends LitElement {
+ 	private _resizeObserver?: ResizeObserver;
+ 	private _unsubscribeSession?: () => void;
+ 
++
++	/** Messages sent while the agent runs (see MessageQueue); one queue per session. */
++	private _queue?: MessageQueue;
++	/** A send is between its checks and prompt(); another send in that window queues. */
++	private _starting = false;
++
+ 	public setInput(text: string, attachments?: Attachment[]) {
+ 		const update = () => {
+ 			if (!this._messageEditor) requestAnimationFrame(update);
+@@ -150,12 +164,37 @@ export class AgentInterface extends LitElement {
+ 			};
+ 		}
+ 
++		const session = this.session;
++		if (this._queue?.agent === session) {
++			// Same session after a reconnect: events may have been missed while unsubscribed.
++			this._queue.sync();
++		} else {
++			this._queue?.dispose();
++			session.setSteeringMode("all"); // a Send now message and its page context arrive together
++			const queue: MessageQueue = new MessageQueue(
++				session,
++				// A queue sends only into its own session, and only while it is the panel's queue.
++				(item) =>
++					this.session === session && this._queue === queue
++						? this.startSend(item.input, item.attachments, "queue").then((r) => r.result)
++						: Promise.resolve<SendResult>("busy"),
++				() => this.requestUpdate(),
++				() => this.steerContext?.() ?? Promise.resolve([]),
++			);
++			this._queue = queue;
++		}
+ 		this._unsubscribeSession = this.session.subscribe(async (ev: AgentEvent) => {
+ 			switch (ev.type) {
+ 				case "message_start":
++					this._queue?.onMessageStart(ev.message);
++					this.requestUpdate();
++					break;
++				case "agent_start":
++					this._queue?.onAgentStart();
++					this.requestUpdate();
++					break;
+ 				case "turn_start":
+ 				case "turn_end":
+-				case "agent_start":
+ 					this.requestUpdate();
+ 					break;
+ 				case "message_end":
+@@ -166,14 +205,16 @@ export class AgentInterface extends LitElement {
+ 					}
+ 					this.requestUpdate();
+ 					break;
+-				case "agent_end":
++				case "agent_end": {
+ 					// Clear streaming container when agent finishes
+ 					if (this._streamingContainer) {
+ 						this._streamingContainer.isStreaming = false;
+ 						this._streamingContainer.setMessage(null, true);
+ 					}
++					this._queue?.onAgentEnd(ev.messages);
+ 					this.requestUpdate();
+ 					break;
++				}
+ 				case "message_update":
+ 					if (this._streamingContainer) {
+ 						const isStreaming = this.session?.state.isStreaming || false;
+@@ -213,52 +254,167 @@ export class AgentInterface extends LitElement {
+ 	};
+ 
+ 	public async sendMessage(input: string, attachments?: Attachment[]) {
+-		if ((!input.trim() && attachments?.length === 0) || this.session?.state.isStreaming) return;
++		const { run } = await this.startSend(input, attachments, "api");
++		await run;
++	}
++
++	/**
++	 * Start a send. While a run or another send is under way it queues instead (a send from the
++	 * queue reports "busy" and stays queued). Resolves once prompt() has started, with the run.
++	 * Only a send that came from the editor clears it, so a draft survives queued sends.
++	 */
++	private async startSend(
++		input: string,
++		attachments: Attachment[] | undefined,
++		origin: "editor" | "api" | "queue",
++	): Promise<{ result: SendResult; run?: Promise<void> }> {
++		const fromQueue = origin === "queue";
++		if (!input.trim() && (attachments?.length ?? 0) === 0) return { result: "refused" };
+ 		const session = this.session;
+ 		if (!session) throw new Error("No session set on AgentInterface");
+-		if (!session.state.model) throw new Error("No model set on AgentInterface");
+-
+-		// Check if API key exists for the provider (only needed in direct mode)
+-		const provider = session.state.model.provider;
+-		const apiKey = await getAppStorage().providerKeys.get(provider);
++		// The queue this send belongs to; a later session switch must not move it to another chat.
++		const queue = this._queue;
++		// An editor send takes its text out of the editor at once, so a second Enter in the
++		// window below can't send it again. It goes back only if the send is refused.
++		// (A programmatic send can come before the first render, when there is no editor yet.)
++		const editor = this._messageEditor as MessageEditor | undefined;
++		const fromEditor = origin === "editor" && !!editor;
++		const draftAttachments = fromEditor ? editor?.attachments : undefined;
++		if (fromEditor && editor) {
++			editor.value = "";
++			editor.attachments = [];
++		}
++		const giveBack = () => {
++			if (fromEditor && editor && !editor.value && editor.attachments.length === 0) {
++				editor.value = input;
++				editor.attachments = draftAttachments ?? [];
++			}
++		};
++		const queueIt = (): { result: SendResult } => {
++			if (fromQueue) return { result: "busy" };
++			if (queue && queue === this._queue && queue.agent === session) {
++				queue.add(input, attachments);
++				if (!session.state.isStreaming && !this._starting) queue.kick();
++			} else giveBack();
++			return { result: "busy" };
++		};
++		// While a run, another send, or queued items about to go out are ahead, a new send waits its turn.
++		if (session.state.isStreaming || this._starting || (!fromQueue && queue?.hasSendable)) return queueIt();
++		if (!session.state.model) {
++			giveBack();
++			if (fromQueue) return { result: "refused" };
++			throw new Error("No model set on AgentInterface");
++		}
+ 
+-		// If no API key, prompt for it
+-		if (!apiKey) {
+-			if (!this.onApiKeyRequired) {
+-				console.error("No API key configured and no onApiKeyRequired handler set");
+-				return;
++		this._starting = true;
++		let started = false;
++		try {
++			// Check if API key exists for the provider (only needed in direct mode)
++			const provider = session.state.model.provider;
++			const apiKey = await getAppStorage().providerKeys.get(provider);
++
++			// If no API key, prompt for it
++			if (!apiKey) {
++				if (!this.onApiKeyRequired) {
++					console.error("No API key configured and no onApiKeyRequired handler set");
++					giveBack();
++					return { result: "refused" };
++				}
++				if (!(await this.onApiKeyRequired(provider))) {
++					giveBack();
++					return { result: "refused" };
++				}
+ 			}
+ 
+-			const success = await this.onApiKeyRequired(provider);
++			// The panel moved to another session, or a run started while we waited.
++			if (session !== this.session || session.state.isStreaming) return queueIt();
+ 
+-			// If still no API key, abort the send
+-			if (!success) {
+-				return;
++			// Call onBeforeSend hook before sending
++			if (this.onBeforeSend) {
++				await this.onBeforeSend();
++			}
++			if (session !== this.session || session.state.isStreaming) return queueIt();
++
++			this._autoScroll = true; // Enable auto-scroll when sending a message
++
++			// Compose message with attachments if any. prompt() marks the session streaming at once.
++			let run: Promise<void>;
++			if (attachments && attachments.length > 0) {
++				const message: UserMessageWithAttachments = {
++					role: "user-with-attachments",
++					content: input,
++					attachments,
++					timestamp: Date.now(),
++				};
++				run = session.prompt(message);
++			} else {
++				run = session.prompt(input);
++			}
++			started = true;
++			return { result: "started", run };
++		} catch (err) {
++			giveBack();
++			throw err;
++		} finally {
++			this._starting = false;
++			// Items that queued behind this send would otherwise wait for a run that never comes.
++			// A queue send's drain decides what comes next itself; kicking it here would retry the next
++			// item at once (another key dialog right after the user cancelled one).
++			if (!started && !fromQueue) {
++				queue?.kick();
++				// _starting held up the whole panel, so a queue for another session may be waiting too.
++				if (this._queue !== queue) this._queue?.kick();
+ 			}
+ 		}
++	}
+ 
+-		// Call onBeforeSend hook before sending
+-		if (this.onBeforeSend) {
+-			await this.onBeforeSend();
+-		}
+-
+-		// Only clear editor after we know we can send
+-		this._messageEditor.value = "";
+-		this._messageEditor.attachments = [];
+-		this._autoScroll = true; // Enable auto-scroll when sending a message
+-
+-		// Compose message with attachments if any
+-		if (attachments && attachments.length > 0) {
+-			const message: UserMessageWithAttachments = {
+-				role: "user-with-attachments",
+-				content: input,
+-				attachments,
+-				timestamp: Date.now(),
+-			};
+-			await this.session?.prompt(message);
+-		} else {
+-			await this.session?.prompt(input);
+-		}
++	private renderQueue() {
++		const queue = this._queue;
++		if (!queue || queue.items.length === 0) return "";
++		return html`
++			<div class="flex flex-col gap-1 pt-2" role="list" aria-label=${i18n("Queued")}>
++				${queue.items.map(
++					(item) => html`
++						<div
++							role="listitem"
++							class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1 text-sm"
++						>
++							<span class="text-xs text-muted-foreground shrink-0">${i18n("Queued")}</span>
++							<span class="flex-1 truncate" title=${item.input}>${item.input.trim() || i18n("(attachments)")}</span>
++							${
++								item.steered
++									? html`<span class="text-xs text-muted-foreground shrink-0">${i18n("Sending…")}</span>`
++									: html`
++										<button
++											type="button"
++											class="text-xs font-medium text-foreground hover:underline shrink-0"
++											@click=${() => void queue.sendNow(item.id)}
++										>
++											${i18n("Send now")}
++										</button>
++										<button
++											type="button"
++											class="text-muted-foreground hover:text-foreground shrink-0 px-1"
++											aria-label=${i18n("Remove from queue")}
++											title=${i18n("Remove from queue")}
++											@click=${() => queue.remove(item.id)}
++										>
++											×
++										</button>
++									`
++							}
++						</div>
++					`,
++				)}
++				${
++					queue.paused && !this.session?.state.isStreaming
++						? html`<div class="text-xs text-muted-foreground px-1">
++								${i18n("Stopped. Send a queued message or remove it.")}
++							</div>`
++						: ""
++				}
++			</div>
++		`;
+ 	}
+ 
+ 	private renderMessages() {
+@@ -361,6 +517,7 @@ export class AgentInterface extends LitElement {
+ 				<!-- Input Area -->
+ 				<div class="shrink-0">
+ 					<div class="max-w-3xl mx-auto px-2">
++						${this.renderQueue()}
+ 						<message-editor
+ 							.isStreaming=${state.isStreaming}
+ 							.currentModel=${state.model}
+@@ -368,8 +525,10 @@ export class AgentInterface extends LitElement {
  							.showAttachmentButton=${this.enableAttachments}
  							.showModelSelector=${this.enableModelSelector}
  							.showThinkingSelector=${this.enableThinkingSelector}
 +							.historyProvider=${this.historyProvider}
 +							.slashCommandProvider=${this.slashCommandProvider}
  							.onSend=${(input: string, attachments: Attachment[]) => {
- 								this.sendMessage(input, attachments);
+-								this.sendMessage(input, attachments);
++								void this.startSend(input, attachments, "editor").then(({ run }) => run);
  							}}
+ 							.onAbort=${() => session.abort()}
+ 							.onModelSelect=${() => {
 diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
-index f0987c4d1..23fdad150 100644
+index f0987c4d1..286192751 100644
 --- a/packages/web-ui/src/components/MessageEditor.ts
 +++ b/packages/web-ui/src/components/MessageEditor.ts
 @@ -11,6 +11,16 @@ import { i18n } from "../utils/i18n.js";
@@ -97,7 +433,7 @@ index f0987c4d1..23fdad150 100644
  	private fileInputRef = createRef<HTMLInputElement>();
  
  	protected override createRenderRoot(): HTMLElement | DocumentFragment {
-@@ -57,9 +72,58 @@ export class MessageEditor extends LitElement {
+@@ -57,12 +72,62 @@ export class MessageEditor extends LitElement {
  		const textarea = e.target as HTMLTextAreaElement;
  		this.value = textarea.value;
  		this.onInput?.(this.value);
@@ -155,8 +491,13 @@ index f0987c4d1..23fdad150 100644
 +		}
  		if (e.key === "Enter" && !e.shiftKey) {
  			e.preventDefault();
- 			if (!this.isStreaming && !this.processingFiles && (this.value.trim() || this.attachments.length > 0)) {
-@@ -274,6 +338,32 @@ export class MessageEditor extends LitElement {
+-			if (!this.isStreaming && !this.processingFiles && (this.value.trim() || this.attachments.length > 0)) {
++			// While the agent runs, a send goes to the queue (AgentInterface decides).
++			if (!this.processingFiles && (this.value.trim() || this.attachments.length > 0)) {
+ 				this.handleSend();
+ 			}
+ 		} else if (e.key === "Escape" && this.isStreaming) {
+@@ -274,6 +339,32 @@ export class MessageEditor extends LitElement {
  						: ""
  				}
  
@@ -189,6 +530,34 @@ index f0987c4d1..23fdad150 100644
  				<textarea
  					class="w-full bg-transparent p-4 text-foreground placeholder-muted-foreground outline-none resize-none overflow-y-auto"
  					placeholder=${i18n("Type a message...")}
+@@ -383,17 +474,17 @@ export class MessageEditor extends LitElement {
+ 										className: "h-8 w-8",
+ 									})}
+ 								`
+-								: html`
+-									${Button({
+-										variant: "ghost",
+-										size: "icon",
+-										onClick: this.handleSend,
+-										disabled: (!this.value.trim() && this.attachments.length === 0) || this.processingFiles,
+-										children: html`<div style="transform: rotate(-45deg)">${icon(Send, "sm")}</div>`,
+-										className: "h-8 w-8",
+-									})}
+-								`
++								: ""
+ 						}
++						${Button({
++							variant: "ghost",
++							size: "icon",
++							onClick: this.handleSend,
++							disabled: (!this.value.trim() && this.attachments.length === 0) || this.processingFiles,
++							children: html`<div style="transform: rotate(-45deg)">${icon(Send, "sm")}</div>`,
++							className: "h-8 w-8",
++							title: this.isStreaming ? i18n("Add to queue") : undefined,
++						})}
+ 					</div>
+ 				</div>
+ 			</div>
 diff --git a/packages/web-ui/src/dialogs/ModelSelector.ts b/packages/web-ui/src/dialogs/ModelSelector.ts
 index 192c3c536..451f2f957 100644
 --- a/packages/web-ui/src/dialogs/ModelSelector.ts
@@ -309,3 +678,303 @@ index 48284c742..9eb3d1873 100644
  export { PersistentStorageDialog } from "./dialogs/PersistentStorageDialog.js";
  export { ProvidersModelsTab } from "./dialogs/ProvidersModelsTab.js";
  export { SessionListDialog } from "./dialogs/SessionListDialog.js";
+diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
+index 1f50a7d08..1da1213a3 100644
+--- a/packages/web-ui/src/utils/i18n.ts
++++ b/packages/web-ui/src/utils/i18n.ts
+@@ -61,6 +61,13 @@ declare module "@mariozechner/mini-lit" {
+ 		"Call was aborted; no result.": string;
+ 		"No session available": string;
+ 		"No session set": string;
++		"Queued": string;
++		"Add to queue": string;
++		"Send now": string;
++		"Remove from queue": string;
++		"Sending…": string;
++		"Stopped. Send a queued message or remove it.": string;
++		"(attachments)": string;
+ 		"Preparing tool parameters...": string;
+ 		"(no output)": string;
+ 		Input: string;
+@@ -272,6 +279,13 @@ export const translations = {
+ 		"Call was aborted; no result.": "Call was aborted; no result.",
+ 		"No session available": "No session available",
+ 		"No session set": "No session set",
++		"Queued": "Queued",
++		"Add to queue": "Add to queue",
++		"Send now": "Send now",
++		"Remove from queue": "Remove from queue",
++		"Sending…": "Sending…",
++		"Stopped. Send a queued message or remove it.": "Stopped. Send a queued message or remove it.",
++		"(attachments)": "(attachments)",
+ 		"Preparing tool parameters...": "Preparing tool parameters...",
+ 		"(no output)": "(no output)",
+ 		Input: "Input",
+@@ -491,6 +505,13 @@ export const translations = {
+ 		"Call was aborted; no result.": "Aufruf wurde abgebrochen; kein Ergebnis.",
+ 		"No session available": "Keine Sitzung verfügbar",
+ 		"No session set": "Keine Sitzung gesetzt",
++		"Queued": "In Warteschlange",
++		"Add to queue": "Zur Warteschlange hinzufügen",
++		"Send now": "Jetzt senden",
++		"Remove from queue": "Aus der Warteschlange entfernen",
++		"Sending…": "Wird gesendet…",
++		"Stopped. Send a queued message or remove it.": "Gestoppt. Sende eine Nachricht aus der Warteschlange oder entferne sie.",
++		"(attachments)": "(Anhänge)",
+ 		"Preparing tool parameters...": "Bereite Tool-Parameter vor...",
+ 		"(no output)": "(keine Ausgabe)",
+ 		Input: "Eingabe",
+diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
+new file mode 100644
+index 000000000..daa256961
+--- /dev/null
++++ b/packages/web-ui/src/utils/message-queue.ts
+@@ -0,0 +1,248 @@
++import type { AgentMessage } from "@mariozechner/pi-agent-core";
++import type { Attachment } from "./attachment-utils.js";
++
++export interface QueuedMessage {
++	id: number;
++	input: string;
++	attachments?: Attachment[];
++	/** Set once "Send now" handed it to the running agent; cleared if the run ends first. */
++	steered?: AgentMessage;
++	/** Set by Send now: its press order. Pressed items lead the list, in press order. */
++	nowSeq?: number;
++}
++
++/** The parts of Agent the queue uses. */
++export interface QueueAgent {
++	state: { isStreaming: boolean; messages: AgentMessage[] };
++	steer(message: AgentMessage): void;
++	clearSteeringQueue(): void;
++	waitForIdle(): Promise<void>;
++}
++
++/**
++ * How a send went. "started": a prompt is running. "busy": another send or run got there
++ * first, so the item goes back in its place and waits for the next chance. "refused": it can't
++ * go (no key, no model), so the item goes back in its place and is held until Send now or ×.
++ */
++export type SendResult = "started" | "busy" | "refused";
++
++/**
++ * Messages the user sends while the agent runs, for one agent. The list is the only queue:
++ * when a run ends the first item goes out through `send` as an ordinary prompt. "Send now"
++ * during a run hands the item (after a page note, unless the same note already went this run)
++ * to the agent with steer(), which delivers it after the current tool call; it leaves the list
++ * once the agent injects it, and if the run ends first it goes out ahead of the rest. Items
++ * pressed with Send now lead the list in press order. A stopped or failed run holds the items
++ * that were waiting then (not pressed ones, not later ones) until Send now or ×.
++ */
++export class MessageQueue {
++	items: QueuedMessage[] = [];
++	/** Items that were waiting when a run was stopped or failed; they wait for Send now or ×. */
++	private held = new Set<number>();
++	private running: boolean;
++	private seq = 0;
++	private nowSeq = 0;
++	private draining = false;
++	/** A drain was asked for while one ran; run again when it finishes. */
++	private drainAgain = false;
++	private disposed = false;
++	/** The page note steered but not yet injected, so the same note isn't steered twice. */
++	private lastContext?: string;
++	private pendingContext: AgentMessage[] = [];
++	/** Send now presses still building their page context; the drain waits for them to decide. */
++	private sendNowPending = 0;
++
++	constructor(
++		readonly agent: QueueAgent,
++		private readonly send: (item: QueuedMessage) => Promise<SendResult>,
++		private readonly changed: () => void,
++		private readonly beforeSteer?: () => Promise<AgentMessage[]>,
++	) {
++		this.running = agent.state.isStreaming;
++	}
++
++	/** Something is held after a Stop or failure (the panel shows a note). */
++	get paused(): boolean {
++		return this.items.some((q) => this.held.has(q.id));
++	}
++
++	add(input: string, attachments?: Attachment[]): void {
++		// New items are never held: a Stop only holds what was waiting when it happened.
++		this.items = [...this.items, { id: ++this.seq, input, attachments }];
++		this.changed();
++	}
++
++	/** The user message for an item, shaped as Agent.prompt() builds one. */
++	static message(item: QueuedMessage): AgentMessage {
++		if (item.attachments && item.attachments.length > 0) {
++			return {
++				role: "user-with-attachments",
++				content: item.input,
++				attachments: item.attachments,
++				timestamp: Date.now(),
++			} as unknown as AgentMessage;
++		}
++		return { role: "user", content: [{ type: "text", text: item.input }], timestamp: Date.now() } as AgentMessage;
++	}
++
++	/** Send an item now: into the running turn, or next when nothing runs. Always resumes. */
++	async sendNow(id: number): Promise<void> {
++		const pending = (q: QueuedMessage) => q.id === id && !q.steered;
++		if (!this.items.some(pending)) return;
++		this.held.clear();
++		// Press order, recorded on the item at once: a Stop during the wait below must not hold it.
++		const nowSeq = ++this.nowSeq;
++		this.items = this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q));
++		let context: AgentMessage[] = [];
++		if (this.running) {
++			this.sendNowPending++;
++			try {
++				context = (await this.beforeSteer?.().catch(() => [])) ?? [];
++			} finally {
++				this.sendNowPending--;
++			}
++		}
++		const item = this.items.find(pending);
++		if (!item) {
++			// Removed while its context was built; the drain stood down for it, so restart it.
++			if (!this.running) void this.drain();
++			return;
++		}
++		this.held.delete(id);
++		if (this.running) {
++			const message = MessageQueue.message(item);
++			// The page note goes unless it repeats the one already steered in this run.
++			const key = context.length > 0 ? JSON.stringify(context.map((m) => (m as { url?: string }).url ?? m)) : undefined;
++			if (key && key !== this.lastContext) {
++				for (const extra of context) this.agent.steer(extra);
++				this.lastContext = key;
++				this.pendingContext = context;
++			}
++			this.agent.steer(message);
++			this.items = this.items.map((q) => (q.id === id ? { ...q, steered: message, nowSeq } : q));
++			this.changed();
++			return;
++		}
++		// Nothing runs: it goes next, after items pressed before it.
++		this.items = this.ordered(this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q)));
++		this.changed();
++		void this.drain();
++	}
++
++	/** Pressed items first, in press order; the rest keep their order. */
++	private ordered(items: QueuedMessage[]): QueuedMessage[] {
++		const pressed = items.filter((q) => q.nowSeq !== undefined).sort((x, y) => (x.nowSeq ?? 0) - (y.nowSeq ?? 0));
++		return [...pressed, ...items.filter((q) => q.nowSeq === undefined)];
++	}
++
++	/** The panel missed events (it was disconnected): take the run state from the agent again. */
++	sync(): void {
++		// A Send now message the agent injected while nobody listened is already sent.
++		const seen = new Set(this.agent.state.messages);
++		this.items = this.items.filter((q) => !q.steered || !seen.has(q.steered));
++		this.running = this.agent.state.isStreaming;
++		if (this.running) {
++			this.changed();
++			return;
++		}
++		// The run ended unheard: apply the end-of-run rules (a Stop still holds what waited).
++		this.onAgentEnd(this.agent.state.messages);
++	}
++
++	/** Try to send again (a send that held the panel ended without starting a run). */
++	kick(): void {
++		void this.drain();
++	}
++
++	remove(id: number): void {
++		this.items = this.items.filter((q) => q.id !== id || q.steered);
++		this.held.delete(id);
++		this.changed();
++	}
++
++	onAgentStart(): void {
++		this.running = true;
++		this.lastContext = undefined;
++		this.pendingContext = [];
++	}
++
++	/** A message the agent injected: a steered item is now in the transcript. */
++	onMessageStart(message: AgentMessage): void {
++		// Once the note is in the transcript, the panel's own page check takes over from here.
++		if (this.pendingContext.includes(message)) {
++			this.lastContext = undefined;
++			this.pendingContext = [];
++		}
++		if (!this.items.some((q) => q.steered === message)) return;
++		this.items = this.items.filter((q) => q.steered !== message);
++		this.changed();
++	}
++
++	/** The run is over; send the next item, or pause if the user stopped it or it failed. */
++	onAgentEnd(messages: AgentMessage[]): void {
++		this.running = false;
++		this.lastContext = undefined;
++		this.pendingContext = [];
++		// A steer that arrived after the last turn is never injected. It was asked for first, so
++		// it goes out first.
++		this.agent.clearSteeringQueue();
++		this.items = this.ordered(this.items.map((q) => (q.steered ? { ...q, steered: undefined } : q)));
++		const last = [...messages].reverse().find((m) => m.role === "assistant") as { stopReason?: string } | undefined;
++		// A Stop or failure holds what was waiting, except items the user pressed Send now on.
++		if (last?.stopReason === "aborted" || last?.stopReason === "error") {
++			for (const q of this.items) if (q.nowSeq === undefined) this.held.add(q.id);
++		}
++		this.changed();
++		void this.drain();
++	}
++
++	/** Forget everything (the panel switched to another session). */
++	dispose(): void {
++		this.disposed = true;
++		this.agent.clearSteeringQueue();
++		this.items = [];
++		this.held.clear();
++	}
++
++	/** Once the agent is idle, send the first item not held; the next waits for that run's end. */
++	private async drain(): Promise<void> {
++		if (this.draining) {
++			this.drainAgain = true;
++			return;
++		}
++		this.draining = true;
++		try {
++			await this.agent.waitForIdle();
++			// A Send now still building its context decides what goes next; it drains when done.
++			if (this.disposed || this.running || this.sendNowPending > 0) return;
++			const next = this.items.find((q) => !this.held.has(q.id));
++			if (!next) return;
++			this.items = this.items.filter((q) => q !== next);
++			this.changed();
++			let result: SendResult;
++			try {
++				result = await this.send(next);
++			} catch {
++				result = "refused";
++			}
++			if (result !== "started" && !this.disposed) {
++				// Back in its place: behind anything pressed while it was out.
++				this.items = this.ordered([next, ...this.items]);
++				if (result === "refused") this.held.add(next.id);
++				this.changed();
++			}
++		} finally {
++			this.draining = false;
++			// Can't spin: a refused item is held, and a busy one waits on waitForIdle or a run.
++			if (this.drainAgain) {
++				this.drainAgain = false;
++				void this.drain();
++			}
++		}
++	}
++
++	/** Whether the queue has something it would send now (nothing held, not mid-send). */
++	get hasSendable(): boolean {
++		return this.items.some((q) => !q.steered && !this.held.has(q.id));
++	}
++}

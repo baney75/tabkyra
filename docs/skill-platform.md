@@ -172,6 +172,21 @@ invokes 10% (1 of 10). The top-1 gate needs 206 of 228, so the margin is three c
 Matching takes about 0.2 ms at p95 and the index build about 20 ms on the CI runner (about
 0.1 ms and under 10 ms on an Apple-silicon Mac).
 
+Measured on 2026-10-26 (15 skills, after `visual-explainer` and `mechanism-design`): tuned
+set of 326 cases, top-1 93.2% (246 of 264) and false invokes 0% (0 of 62); 62 held-out
+cases, top-1 91.8% (45 of 49) and false invokes 7.7% (1 of 13). Adding skills raises every
+word's IDF, so a word held by three skills becomes evidence and a word held by one scores
+higher: the new skills' descriptions were worded so the existing none cases stay none. On the
+held-out cases written after tuning, `visual-explainer` routes 2 of 4 and `mechanism-design`
+4 of 4. The two `visual-explainer` misses: "Draw me a picture of how our
+microservices call each other, as an HTML page" goes to `artifacts` (a wrong skill, a known
+gap), and "Diagram the database schema and the foreign keys between tables" goes to none. Two measured near-misses are not in the case files: "Sketch my kitchen floor plan as
+a diagram" and "Explain photosynthesis as a diagram" both go to `visual-explainer` (the words
+diagram and plan or explain). Adding the first as a held-out none case would put held-out
+false invokes at 2 of 14, over the 10% floor.
+
+With #19 and #26 merged (34 skills, measured 2026-10-26): tuned set of 545 cases, top-1 92.9% (421 of 453) and false invokes 0% (0 of 92); held-out top-1 87.7% over 106 cases and false invokes 5.9% (1 of 17). The merged catalog moved three skills below main's baseline, recorded in `accepted-drops.json`: kyraskillmaker 77.8% to 72.2%, mechanism-design 100% to 93.3%, visual-explainer 100% to 94.1%.
+
 With the 19 skills from pull request #19 (32 skills, measured 2026-10-26): on the tuned set of
 499 cases, top-1 93.3% (389 of 417) and false invokes 0% (0 of 82); on the 110 held-out cases,
 top-1 88.5% (85 of 96) and false invokes 0% (0 of 14). The top-1 gate needs 376 of 417.

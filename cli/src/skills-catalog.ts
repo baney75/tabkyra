@@ -22,6 +22,7 @@ import SKILL_KYRASKILLMAKER from "../../skills/kyraskillmaker/SKILL.md";
 import SKILL_MAP_DATA from "../../skills/map-data/SKILL.md";
 import SKILL_MAPS from "../../skills/maps/SKILL.md";
 import SKILL_MATHEMATICS from "../../skills/mathematics/SKILL.md";
+import SKILL_MECHANISM_DESIGN from "../../skills/mechanism-design/SKILL.md";
 import SKILL_NEWS_RESEARCH from "../../skills/news-research/SKILL.md";
 import SKILL_NOTES from "../../skills/notes/SKILL.md";
 import SKILL_OFFICE_DOCS from "../../skills/office-docs/SKILL.md";
@@ -33,6 +34,7 @@ import SKILL_REFERENCE from "../../skills/reference/SKILL.md";
 import SKILL_RSI from "../../skills/rsi/SKILL.md";
 import SKILL_TABKYRA from "../../skills/tabkyra/SKILL.md";
 import SKILL_VIDEO_EDITING from "../../skills/video-editing/SKILL.md";
+import SKILL_VISUAL_EXPLAINER from "../../skills/visual-explainer/SKILL.md";
 import SKILL_WORLD_DATA from "../../skills/world-data/SKILL.md";
 import SKILL_WRITING from "../../skills/writing/SKILL.md";
 import SKILL_WRITING_VOICE from "../../skills/writing-voice/SKILL.md";
@@ -58,6 +60,7 @@ export const SKILLS: ReadonlyMap<string, string> = new Map([
 	["map-data", SKILL_MAP_DATA],
 	["maps", SKILL_MAPS],
 	["mathematics", SKILL_MATHEMATICS],
+	["mechanism-design", SKILL_MECHANISM_DESIGN],
 	["news-research", SKILL_NEWS_RESEARCH],
 	["notes", SKILL_NOTES],
 	["office-docs", SKILL_OFFICE_DOCS],
@@ -68,6 +71,7 @@ export const SKILLS: ReadonlyMap<string, string> = new Map([
 	["reference", SKILL_REFERENCE],
 	["rsi", SKILL_RSI],
 	["video-editing", SKILL_VIDEO_EDITING],
+	["visual-explainer", SKILL_VISUAL_EXPLAINER],
 	["world-data", SKILL_WORLD_DATA],
 	["writing", SKILL_WRITING],
 	["writing-voice", SKILL_WRITING_VOICE],

@@ -305,7 +305,9 @@ test("--base fails a pull request that loosens a threshold or hides them", () =>
 
 test("--base runs the base code's gates on the pull request's skills, with no tolerance below the base baseline", () => {
 	const accuracy = repoBaseline();
-	const weak = Object.entries(accuracy).find(([name, v]) => name !== "none" && v <= 0.85)[0];
+	// A weak skill with no drop already on record: a drop the base has counts only once.
+	const recorded = new Set((JSON.parse(readFileSync(join(repo, "skills-eval", "accepted-drops.json"), "utf8")).drops ?? []).map((d) => d.skill));
+	const weak = Object.entries(accuracy).find(([name, v]) => name !== "none" && v <= 0.85 && !recorded.has(name))[0];
 	const raised = { "baseline.json": JSON.stringify({ accuracy: { ...accuracy, [weak]: Math.min(1, accuracy[weak] + 0.02) } }) };
 	const r = baseRun(headCheckout(), baseCheckout(raised));
 	assert.equal(r.code, 1);

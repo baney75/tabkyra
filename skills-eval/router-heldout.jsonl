@@ -108,3 +108,16 @@
 {"task": "What's the square root of 144?", "skill": "none"}
 {"task": "Convert 5 miles to kilometers", "skill": "none"}
 {"task": "Sort these hex color codes by brightness", "skill": "none"}
+{"task": "Draw me a picture of how our microservices call each other, as an HTML page", "skill": "visual-explainer"}
+{"task": "Make a visual explainer of the retry logic in worker.py", "skill": "visual-explainer"}
+{"task": "Diagram the database schema and the foreign keys between tables", "skill": "visual-explainer"}
+{"task": "Visualize the changes on my feature branch so I can review them quickly", "skill": "visual-explainer"}
+{"task": "Put together a printable one-page summary of the poll numbers with a chart", "skill": "artifacts"}
+{"task": "Make a comparison page for the four phone plans with prices and sources", "skill": "artifacts"}
+{"task": "I want a crank and connecting rod that pushes a plunger 25 mm back and forth", "skill": "mechanism-design"}
+{"task": "Which mechanism gives intermittent rotation, like a film advance?", "skill": "mechanism-design"}
+{"task": "Check whether my four-bar linkage has a dead point anywhere in its rotation", "skill": "mechanism-design"}
+{"task": "Design a cam so the follower rises, dwells and returns once per revolution", "skill": "mechanism-design"}
+{"task": "Explain what a closure is in JavaScript", "skill": "none"}
+{"task": "Draw a bar chart in matplotlib of these five values", "skill": "none"}
+{"task": "Recommend a gear set for my first road bike", "skill": "none"}
