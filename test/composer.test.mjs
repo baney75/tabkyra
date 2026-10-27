@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { skillMenuItems, tabMenuItems } from "../src/composer/menus.ts";
-import { asData, displayText, failedRefs, parseRefs, refsForModel, removeTabToken, resolveRefs } from "../src/composer/refs.ts";
+import { asData, displayText, failedRefs, leadingSkill, parseRefs, refsForModel, removeTabToken, resolveRefs } from "../src/composer/refs.ts";
 import { browserMessageTransformer } from "../src/messages/message-transformer.ts";
 
 const site = (name, domainPatterns, shortDescription = `${name} helper`) => ({ name, domainPatterns, shortDescription });
@@ -144,7 +144,9 @@ function deps(overrides = {}) {
 				return undefined;
 			},
 			isRestricted: (u) => !u.startsWith("http"),
-			findSkill: async (name) => (name === "osint" ? { name, source: "library", instructions: "# OSINT\nSteps." } : undefined),
+			findSkill: async (name) =>
+				["osint", "Gmail cleanup"].includes(name) ? { name, source: name === "osint" ? "library" : "site", instructions: "# OSINT\nSteps." } : undefined,
+			skillNames: async () => ["osint", "Gmail cleanup", "Gmail"],
 			...overrides,
 		},
 	};
@@ -164,7 +166,7 @@ test("resolving: shared tabs go through adopt; other agents' tabs, browser pages
 			[9, "gone"],
 		],
 	);
-	assert.deepEqual(adopted, [[1, true]], "only tab 1 is adopted, and it becomes current");
+	assert.deepEqual(adopted, [[1, false]], "only tab 1 is adopted, and the current tab doesn't move");
 	assert.equal(refs.tabs.find((t) => t.id === 5).owner, "Claude Code");
 	assert.equal(refs.tabs.find((t) => t.id === 4).url, "", "nothing about a private tab is kept");
 	assert.equal(await resolveRefs("/etc/hosts", d), undefined, "not a skill, no tabs: plain text");
@@ -177,7 +179,8 @@ test("what the model sees: skill instructions, a compact line per tab, then the 
 	const out = refsForModel(text, refs);
 	assert.match(out, /^<skill name="osint" source="library">/);
 	assert.match(out, /# OSINT\nSteps\./);
-	assert.ok(out.includes('- tab 1: "Inbox - Gmail" https://mail.google.com/mail/u/0/ (shared with you for this task'), out);
+	assert.ok(out.includes('- tab 1: "Inbox - Gmail" https://mail.google.com/mail/u/0/ (was shared with you when this message was sent; it is one of your tabs but not the current one)'), out);
+	assert.ok(out.includes("Your current tab did not change"), out);
 	assert.ok(out.includes('- tab 5: "Docs" https://docs.google.com/ (owned by another session (another agent or chat), so it was NOT shared; do not use it, and tell the user: "Claude Code")'), out);
 	assert.ok(out.endsWith("Task: who runs [tab 1] and [tab 5]"), out);
 	const bare = refsForModel("/osint", { skill: refs.skill, tabs: [] });
@@ -270,4 +273,19 @@ test("references that could not be resolved mark every tab unusable and load no 
 			{ id: 4, title: "", url: "", status: "unavailable" },
 		],
 	});
+});
+
+test("skill names with spaces run: the longest existing name at the start wins", async () => {
+	const { d } = deps();
+	const refs = await resolveRefs("/Gmail cleanup older than a year", d);
+	assert.equal(refs.skill.name, "Gmail cleanup");
+	assert.ok(refsForModel("/Gmail cleanup older than a year", refs).endsWith("Task: older than a year"));
+	assert.equal(displayText("/Gmail cleanup older than a year", "Gmail cleanup"), "older than a year");
+	assert.equal(leadingSkill("/Gmailer x", ["Gmail"]), undefined, "a name must end at a space");
+});
+
+test("every item the / menu offers parses back to its own skill", () => {
+	const names = [...siteSkills.map((s) => s.name), "Gmail cleanup", "a.b_c-d", ...library.map((s) => s.name)];
+	const items = skillMenuItems("", [...siteSkills, site("Gmail cleanup", ["mail.google.com"]), site("a.b_c-d", ["x.test"])], new Set(), library);
+	for (const item of items) assert.equal(leadingSkill(`${item.value} do it`, names), item.id, item.value);
 });

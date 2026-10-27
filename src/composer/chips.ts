@@ -5,7 +5,7 @@
 import { icon } from "@mariozechner/mini-lit";
 import { html, nothing, type TemplateResult } from "lit";
 import { AppWindow, CircleAlert, Sparkles, X } from "lucide";
-import { type ComposerRefs, parseRefs, removeTabToken, type TabRef } from "./refs.js";
+import { type ComposerRefs, leadingSkill, parseRefs, removeTabToken, type TabRef } from "./refs.js";
 
 export interface KnownTab {
 	title: string;
@@ -70,8 +70,9 @@ function skillChip(name: string, onRemove?: () => void): TemplateResult {
 
 /** The composer accessory: one chip per reference in the text being typed. */
 export function composerChips(value: string, setValue: (v: string) => void): unknown {
-	const { skill, tabIds } = parseRefs(value);
-	const showSkill = skill !== undefined && knownSkills.has(skill);
+	const { tabIds } = parseRefs(value);
+	const skill = leadingSkill(value, knownSkills);
+	const showSkill = skill !== undefined;
 	if (!showSkill && tabIds.length === 0) return nothing;
 	return html`<div class="px-3 pt-3 flex flex-wrap gap-1.5" aria-label="References">
 		${showSkill ? skillChip(skill, () => setValue(value.trimStart().replace(`/${skill}`, "").trimStart())) : nothing}
@@ -91,7 +92,7 @@ export function composerChips(value: string, setValue: (v: string) => void): unk
 export function sentChips(text: string, refs: ComposerRefs | null | undefined): TemplateResult | typeof nothing {
 	if (refs === null) return nothing;
 	const parsed = parseRefs(text);
-	const skill = refs?.skill?.name ?? (parsed.skill && knownSkills.has(parsed.skill) ? parsed.skill : undefined);
+	const skill = refs ? refs.skill?.name : leadingSkill(text, knownSkills);
 	const tabs = refs
 		? refs.tabs
 		: parsed.tabIds.map(

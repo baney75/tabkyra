@@ -10,6 +10,7 @@ import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
 import { renderMessage, type TranscriptContext, type TranscriptRenderer } from "@mariozechner/pi-web-ui";
 import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import { Brain, Check, ChevronRight, CircleAlert, Code, FileText, Globe, Loader2, Sparkles } from "lucide";
 import { SkillPill } from "../components/SkillPill.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
@@ -49,9 +50,18 @@ export class SiteSkills extends LitElement {
 		return this;
 	}
 
-	override async connectedCallback() {
-		super.connectedCallback();
-		this.skills = this.url ? await getTabkyraStorage().skills.getSkillsForUrl(this.url) : [];
+	/** Load on every URL change (a row can be reused for another page); a stale answer is dropped. */
+	override willUpdate(changed: Map<string, unknown>) {
+		if (!changed.has("url")) return;
+		const url = this.url;
+		this.skills = [];
+		if (!url) return;
+		void getTabkyraStorage()
+			.skills.getSkillsForUrl(url)
+			.then((skills) => {
+				if (this.url === url) this.skills = skills;
+			})
+			.catch(() => undefined);
 	}
 
 	override render() {
@@ -215,7 +225,11 @@ export class StepList extends LitElement {
 							</li>`
 						: nothing
 				}
-				${shown.map((s) => this.renderStep(s))}
+				${repeat(
+					shown,
+					(s) => s.key,
+					(s) => this.renderStep(s),
+				)}
 			</ul>
 		`;
 	}

@@ -40,7 +40,7 @@ import {
 	displayText,
 	failedRefs,
 	hasRefTokens,
-	parseRefs,
+	leadingSkill,
 	REFS_RESOLVED,
 	resolveRefs,
 	type SkillRun,
@@ -396,6 +396,10 @@ async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Pr
 			},
 			isRestricted: isRestrictedUrl,
 			findSkill,
+			skillNames: async () => [
+				...(await storage.skills.list()).map((s) => s.name),
+				...LIBRARY_SKILLS.map((s) => s.name),
+			],
 		}).catch((err) => {
 			// Nothing was shared and no skill loaded; say so rather than show chips that look fine.
 			console.error("Resolving references failed:", err);
@@ -602,8 +606,7 @@ const generateTitle = (messages: AgentMessage[]): string => {
 	}
 
 	// A chosen skill or tab shows as a chip; the title reads the words, not the tokens.
-	const skill = parseRefs(text).skill;
-	text = displayText(text, skill && knownSkills.has(skill) ? skill : undefined).trim() || text.trim();
+	text = displayText(text, leadingSkill(text, knownSkills)).trim() || text.trim();
 	if (!text) return "";
 
 	const sentenceEnd = text.search(/[.!?]/);

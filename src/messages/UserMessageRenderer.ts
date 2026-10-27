@@ -3,7 +3,7 @@ import { registerMessageRenderer, type UserMessageWithAttachments } from "@mario
 import { html, LitElement, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { knownSkills, sentChips } from "../composer/chips.js";
-import { type ComposerRefs, displayText, parseRefs, REFS_RESOLVED } from "../composer/refs.js";
+import { type ComposerRefs, displayText, leadingSkill, REFS_RESOLVED } from "../composer/refs.js";
 
 /**
  * Custom user message component for Tabkyra with fancy pill styling.
@@ -41,8 +41,7 @@ export class TabkyraUserMessage extends LitElement {
 		const refs = (this.message as { tabkyraRefs?: ComposerRefs | null }).tabkyraRefs;
 		const chips = sentChips(content, refs);
 		// Only a real skill's token is hidden: "/deploy staging" stays as typed.
-		const typed = parseRefs(content).skill;
-		const skill = refs ? refs.skill?.name : typed && knownSkills.has(typed) ? typed : undefined;
+		const skill = refs ? refs.skill?.name : leadingSkill(content, knownSkills);
 		const shown = chips === nothing ? content : displayText(content, skill);
 
 		return html`
