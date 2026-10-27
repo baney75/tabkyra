@@ -2403,10 +2403,10 @@ index 000000000..42a30c7b7
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/drawingml.ts b/packages/web-ui/src/tools/artifacts/preview/drawingml.ts
 new file mode 100644
-index 000000000..76a5b1875
+index 000000000..1832f816d
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/drawingml.ts
-@@ -0,0 +1,992 @@
+@@ -0,0 +1,930 @@
 +/**
 + * DrawingML pieces shared by the pptx reader: colors, fills, lines, text styles and preset
 + * geometry. Everything here is pure (no DOM) so it runs in unit tests.
@@ -3025,25 +3025,28 @@ index 000000000..76a5b1875
 +
 +const f = (v: number) => Math.round(v * 100) / 100;
 +
-+function polygon(points: [number, number][]): string {
-+	return `${points.map(([x, y], i) => `${i === 0 ? "M" : "L"}${f(x)} ${f(y)}`).join(" ")} Z`;
++/** A closed polygon from flat x, y pairs. */
++function polygon(xy: number[]): string {
++	let d = "";
++	for (let i = 0; i + 1 < xy.length; i += 2) d += `${i === 0 ? "M" : "L"}${f(xy[i])} ${f(xy[i + 1])} `;
++	return `${d}Z`;
 +}
 +
 +function regular(n: number, w: number, h: number, rotate = -Math.PI / 2): string {
-+	const pts: [number, number][] = [];
++	const pts: number[] = [];
 +	for (let i = 0; i < n; i++) {
 +		const a = rotate + (i * 2 * Math.PI) / n;
-+		pts.push([w / 2 + (w / 2) * Math.cos(a), h / 2 + (h / 2) * Math.sin(a)]);
++		pts.push(w / 2 + (w / 2) * Math.cos(a), h / 2 + (h / 2) * Math.sin(a));
 +	}
 +	return polygon(pts);
 +}
 +
 +function star(n: number, w: number, h: number, inner = 0.38): string {
-+	const pts: [number, number][] = [];
++	const pts: number[] = [];
 +	for (let i = 0; i < n * 2; i++) {
 +		const a = -Math.PI / 2 + (i * Math.PI) / n;
 +		const r = i % 2 === 0 ? 1 : inner;
-+		pts.push([w / 2 + (w / 2) * r * Math.cos(a), h / 2 + (h / 2) * r * Math.sin(a)]);
++		pts.push(w / 2 + (w / 2) * r * Math.cos(a), h / 2 + (h / 2) * r * Math.sin(a));
 +	}
 +	return polygon(pts);
 +}
@@ -3059,12 +3062,7 @@ index 000000000..76a5b1875
 +		case "rect":
 +		case "flowChartProcess":
 +		case "frame":
-+			return polygon([
-+				[0, 0],
-+				[w, 0],
-+				[w, h],
-+				[0, h],
-+			]);
++			return polygon([0, 0, w, 0, w, h, 0, h]);
 +		case "roundRect":
 +		case "flowChartAlternateProcess": {
 +			const r = ss * Math.min(0.5, a("adj", 16667));
@@ -3076,91 +3074,39 @@ index 000000000..76a5b1875
 +		case "triangle":
 +		case "flowChartExtract": {
 +			const x = w * a("adj", 50000);
-+			return polygon([
-+				[x, 0],
-+				[w, h],
-+				[0, h],
-+			]);
++			return polygon([x, 0, w, h, 0, h]);
 +		}
 +		case "rtTriangle":
-+			return polygon([
-+				[0, 0],
-+				[w, h],
-+				[0, h],
-+			]);
++			return polygon([0, 0, w, h, 0, h]);
 +		case "diamond":
 +		case "flowChartDecision":
-+			return polygon([
-+				[w / 2, 0],
-+				[w, h / 2],
-+				[w / 2, h],
-+				[0, h / 2],
-+			]);
++			return polygon([w / 2, 0, w, h / 2, w / 2, h, 0, h / 2]);
 +		case "parallelogram":
 +		case "flowChartInputOutput": {
 +			const x = ss * a("adj", 25000);
-+			return polygon([
-+				[x, 0],
-+				[w, 0],
-+				[w - x, h],
-+				[0, h],
-+			]);
++			return polygon([x, 0, w, 0, w - x, h, 0, h]);
 +		}
 +		case "trapezoid": {
 +			const x = ss * a("adj", 25000);
-+			return polygon([
-+				[x, 0],
-+				[w - x, 0],
-+				[w, h],
-+				[0, h],
-+			]);
++			return polygon([x, 0, w - x, 0, w, h, 0, h]);
 +		}
 +		case "pentagon":
 +		case "homePlate": {
 +			if (preset === "pentagon") return regular(5, w, h);
 +			const x = w - ss * a("adj", 50000);
-+			return polygon([
-+				[0, 0],
-+				[x, 0],
-+				[w, h / 2],
-+				[x, h],
-+				[0, h],
-+			]);
++			return polygon([0, 0, x, 0, w, h / 2, x, h, 0, h]);
 +		}
 +		case "chevron": {
 +			const x = ss * a("adj", 50000);
-+			return polygon([
-+				[0, 0],
-+				[w - x, 0],
-+				[w, h / 2],
-+				[w - x, h],
-+				[0, h],
-+				[x, h / 2],
-+			]);
++			return polygon([0, 0, w - x, 0, w, h / 2, w - x, h, 0, h, x, h / 2]);
 +		}
 +		case "hexagon": {
 +			const x = ss * a("adj", 25000);
-+			return polygon([
-+				[x, 0],
-+				[w - x, 0],
-+				[w, h / 2],
-+				[w - x, h],
-+				[x, h],
-+				[0, h / 2],
-+			]);
++			return polygon([x, 0, w - x, 0, w, h / 2, w - x, h, x, h, 0, h / 2]);
 +		}
 +		case "octagon": {
 +			const x = ss * a("adj", 29289);
-+			return polygon([
-+				[x, 0],
-+				[w - x, 0],
-+				[w, x],
-+				[w, h - x],
-+				[w - x, h],
-+				[x, h],
-+				[0, h - x],
-+				[0, x],
-+			]);
++			return polygon([x, 0, w - x, 0, w, x, w, h - x, w - x, h, x, h, 0, h - x, 0, x]);
 +		}
 +		case "heptagon":
 +			return regular(7, w, h);
@@ -3184,77 +3130,77 @@ index 000000000..76a5b1875
 +			const shaft = h * a("adj1", 50000);
 +			const head = ss * a("adj2", 50000);
 +			const top = (h - shaft) / 2;
-+			const pts: [number, number][] = [
-+				[0, top],
-+				[w - head, top],
-+				[w - head, 0],
-+				[w, h / 2],
-+				[w - head, h],
-+				[w - head, top + shaft],
-+				[0, top + shaft],
-+			];
-+			return polygon(preset === "rightArrow" ? pts : pts.map(([x, y]) => [w - x, y]));
++			const pts = [0, top, w - head, top, w - head, 0, w, h / 2, w - head, h, w - head, top + shaft, 0, top + shaft];
++			return polygon(preset === "rightArrow" ? pts : pts.map((v, i) => (i % 2 === 0 ? w - v : v)));
 +		}
 +		case "upArrow":
 +		case "downArrow": {
 +			const shaft = w * a("adj1", 50000);
 +			const head = ss * a("adj2", 50000);
 +			const left = (w - shaft) / 2;
-+			const pts: [number, number][] = [
-+				[left, h],
-+				[left, head],
-+				[0, head],
-+				[w / 2, 0],
-+				[w, head],
-+				[left + shaft, head],
-+				[left + shaft, h],
-+			];
-+			return polygon(preset === "upArrow" ? pts : pts.map(([x, y]) => [x, h - y]));
++			const pts = [left, h, left, head, 0, head, w / 2, 0, w, head, left + shaft, head, left + shaft, h];
++			return polygon(preset === "upArrow" ? pts : pts.map((v, i) => (i % 2 === 1 ? h - v : v)));
 +		}
 +		case "leftRightArrow": {
 +			const shaft = h * a("adj1", 50000);
 +			const head = ss * a("adj2", 50000);
 +			const top = (h - shaft) / 2;
 +			return polygon([
-+				[0, h / 2],
-+				[head, 0],
-+				[head, top],
-+				[w - head, top],
-+				[w - head, 0],
-+				[w, h / 2],
-+				[w - head, h],
-+				[w - head, top + shaft],
-+				[head, top + shaft],
-+				[head, h],
++				0,
++				h / 2,
++				head,
++				0,
++				head,
++				top,
++				w - head,
++				top,
++				w - head,
++				0,
++				w,
++				h / 2,
++				w - head,
++				h,
++				w - head,
++				top + shaft,
++				head,
++				top + shaft,
++				head,
++				h,
 +			]);
 +		}
 +		case "plus":
 +		case "mathPlus": {
 +			const t = ss * a("adj", 25000);
 +			return polygon([
-+				[t, 0],
-+				[w - t, 0],
-+				[w - t, t],
-+				[w, t],
-+				[w, h - t],
-+				[w - t, h - t],
-+				[w - t, h],
-+				[t, h],
-+				[t, h - t],
-+				[0, h - t],
-+				[0, t],
-+				[t, t],
++				t,
++				0,
++				w - t,
++				0,
++				w - t,
++				t,
++				w,
++				t,
++				w,
++				h - t,
++				w - t,
++				h - t,
++				w - t,
++				h,
++				t,
++				h,
++				t,
++				h - t,
++				0,
++				h - t,
++				0,
++				t,
++				t,
++				t,
 +			]);
 +		}
 +		case "snip1Rect": {
 +			const x = ss * a("adj", 16667);
-+			return polygon([
-+				[0, 0],
-+				[w - x, 0],
-+				[w, x],
-+				[w, h],
-+				[0, h],
-+			]);
++			return polygon([0, 0, w - x, 0, w, x, w, h, 0, h]);
 +		}
 +		case "round1Rect":
 +		case "round2SameRect": {
@@ -3266,15 +3212,7 @@ index 000000000..76a5b1875
 +		case "wedgeRoundRectCallout": {
 +			const tx = w / 2 + w * a("adj1", -20833);
 +			const ty = h / 2 + h * a("adj2", 62500);
-+			return polygon([
-+				[0, 0],
-+				[w, 0],
-+				[w, h],
-+				[w * 0.583, h],
-+				[tx, ty],
-+				[w * 0.333, h],
-+				[0, h],
-+			]);
++			return polygon([0, 0, w, 0, w, h, w * 0.583, h, tx, ty, w * 0.333, h, 0, h]);
 +		}
 +		case "wedgeEllipseCallout": {
 +			const tx = w / 2 + w * a("adj1", -20833);
@@ -3401,10 +3339,10 @@ index 000000000..76a5b1875
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/file-types.ts b/packages/web-ui/src/tools/artifacts/preview/file-types.ts
 new file mode 100644
-index 000000000..1cc968e60
+index 000000000..dd8e8add4
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/file-types.ts
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,189 @@
 +/** Which viewer an artifact gets, decided by its file extension. */
 +export type ArtifactFileType =
 +	| "html"
@@ -3445,73 +3383,10 @@ index 000000000..1cc968e60
 +const SPREADSHEET_EXT = ["xlsx", "xls", "xlsm", "xlsb", "xltx", "xltm", "ods", "numbers"];
 +const AUDIO_EXT = ["mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac", "weba"];
 +const VIDEO_EXT = ["mp4", "m4v", "webm", "mov", "ogv"];
-+const TEXT_EXT = [
-+	"txt",
-+	"text",
-+	"log",
-+	"json",
-+	"jsonl",
-+	"ndjson",
-+	"xml",
-+	"yaml",
-+	"yml",
-+	"toml",
-+	"ini",
-+	"cfg",
-+	"conf",
-+	"env",
-+	"js",
-+	"mjs",
-+	"cjs",
-+	"ts",
-+	"mts",
-+	"cts",
-+	"jsx",
-+	"tsx",
-+	"py",
-+	"rb",
-+	"go",
-+	"rs",
-+	"java",
-+	"kt",
-+	"kts",
-+	"swift",
-+	"c",
-+	"cc",
-+	"cpp",
-+	"cxx",
-+	"h",
-+	"hpp",
-+	"cs",
-+	"php",
-+	"pl",
-+	"lua",
-+	"r",
-+	"sql",
-+	"css",
-+	"scss",
-+	"sass",
-+	"less",
-+	"sh",
-+	"bash",
-+	"zsh",
-+	"fish",
-+	"ps1",
-+	"bat",
-+	"diff",
-+	"patch",
-+	"tex",
-+	"bib",
-+	"srt",
-+	"vtt",
-+	"rst",
-+	"adoc",
-+	"org",
-+	"graphql",
-+	"proto",
-+	"dockerfile",
-+	"makefile",
-+];
++const TEXT_EXT =
++	"txt text log json jsonl ndjson xml yaml yml toml ini cfg conf env js mjs cjs ts mts cts jsx tsx py rb go rs java kt kts swift c cc cpp cxx h hpp cs php pl lua r sql css scss sass less sh bash zsh fish ps1 bat diff patch tex bib srt vtt rst adoc org graphql proto dockerfile makefile".split(
++		" ",
++	);
 +
 +const BY_EXT = new Map<string, ArtifactFileType>();
 +for (const e of IMAGE_EXT) BY_EXT.set(e, "image");
@@ -6009,10 +5884,10 @@ index 000000000..e30eb8a01
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/rtf.ts b/packages/web-ui/src/tools/artifacts/preview/rtf.ts
 new file mode 100644
-index 000000000..e551bde6a
+index 000000000..db0ac2542
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/rtf.ts
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,632 @@
 +/**
 + * RTF reading for the preview: paragraphs with basic character and paragraph formatting,
 + * simple tables and embedded PNG/JPEG pictures. Fields show their result, objects show their
@@ -6105,65 +5980,11 @@ index 000000000..e551bde6a
 +	uc: number;
 +}
 +
-+const SKIP_DESTINATIONS = new Set([
-+	"stylesheet",
-+	"info",
-+	"listtable",
-+	"listoverridetable",
-+	"rsidtbl",
-+	"generator",
-+	"xmlnstbl",
-+	"mmathPr",
-+	"themedata",
-+	"colorschememapping",
-+	"datastore",
-+	"latentstyles",
-+	"header",
-+	"footer",
-+	"headerl",
-+	"headerr",
-+	"headerf",
-+	"footerl",
-+	"footerr",
-+	"footerf",
-+	"footnote",
-+	"annotation",
-+	"atnid",
-+	"atnauthor",
-+	"nonshppict",
-+	"objdata",
-+	"objclass",
-+	"pgdsctbl",
-+	"filetbl",
-+	"revtbl",
-+	"protusertbl",
-+	"bkmkstart",
-+	"bkmkend",
-+	"xe",
-+	"tc",
-+	"txe",
-+	"pnseclvl",
-+	"template",
-+	"userprops",
-+	"docvar",
-+	"wgrffmtfilter",
-+	"pntxtb",
-+	"pntxta",
-+	"fldtype",
-+	"defchp",
-+	"defpap",
-+	"panose",
-+	"falt",
-+	"fname",
-+	"ftnsep",
-+	"ftnsepc",
-+	"aftnsep",
-+	"aftnsepc",
-+	"shpinst",
-+	"sp",
-+	"sn",
-+	"sv",
-+]);
++const SKIP_DESTINATIONS = new Set(
++	"stylesheet info listtable listoverridetable rsidtbl generator xmlnstbl mmathPr themedata colorschememapping datastore latentstyles header footer headerl headerr headerf footerl footerr footerf footnote annotation atnid atnauthor nonshppict objdata objclass pgdsctbl filetbl revtbl protusertbl bkmkstart bkmkend xe tc txe pnseclvl template userprops docvar wgrffmtfilter pntxtb pntxta fldtype defchp defpap panose falt fname ftnsep ftnsepc aftnsep aftnsepc shpinst sp sn sv".split(
++		" ",
++	),
++);
 +
 +const SYMBOLS: Record<string, string> = {
 +	bullet: "•",
@@ -6701,10 +6522,10 @@ index 000000000..e551bde6a
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/sanitize.ts b/packages/web-ui/src/tools/artifacts/preview/sanitize.ts
 new file mode 100644
-index 000000000..54cde554f
+index 000000000..61d0d2306
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/sanitize.ts
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,94 @@
 +/**
 + * Allow-list HTML sanitizer for untrusted fragments (notebook outputs). The input is parsed in
 + * an inert document (no scripts run, no images load), then rebuilt element by element in the
@@ -6712,92 +6533,18 @@ index 000000000..54cde554f
 + * forms, frames and remote images never make it across.
 + */
 +
-+const ALLOWED_TAGS = new Set([
-+	"a",
-+	"abbr",
-+	"b",
-+	"blockquote",
-+	"br",
-+	"caption",
-+	"code",
-+	"col",
-+	"colgroup",
-+	"dd",
-+	"del",
-+	"details",
-+	"div",
-+	"dl",
-+	"dt",
-+	"em",
-+	"figcaption",
-+	"figure",
-+	"h1",
-+	"h2",
-+	"h3",
-+	"h4",
-+	"h5",
-+	"h6",
-+	"hr",
-+	"i",
-+	"img",
-+	"ins",
-+	"kbd",
-+	"li",
-+	"mark",
-+	"ol",
-+	"p",
-+	"pre",
-+	"q",
-+	"s",
-+	"samp",
-+	"small",
-+	"span",
-+	"strong",
-+	"sub",
-+	"summary",
-+	"sup",
-+	"table",
-+	"tbody",
-+	"td",
-+	"tfoot",
-+	"th",
-+	"thead",
-+	"tr",
-+	"u",
-+	"ul",
-+	"var",
-+]);
++const ALLOWED_TAGS = new Set(
++	"a abbr b blockquote br caption code col colgroup dd del details div dl dt em figcaption figure h1 h2 h3 h4 h5 h6 hr i img ins kbd li mark ol p pre q s samp small span strong sub summary sup table tbody td tfoot th thead tr u ul var".split(
++		" ",
++	),
++);
 +
 +/** Elements dropped with everything inside them. */
-+const DROP_WITH_CONTENT = new Set([
-+	"script",
-+	"style",
-+	"template",
-+	"iframe",
-+	"frame",
-+	"frameset",
-+	"object",
-+	"embed",
-+	"applet",
-+	"noscript",
-+	"svg",
-+	"math",
-+	"form",
-+	"input",
-+	"button",
-+	"select",
-+	"textarea",
-+	"audio",
-+	"video",
-+	"source",
-+	"track",
-+	"link",
-+	"meta",
-+	"base",
-+	"title",
-+	"head",
-+	"canvas",
-+]);
++const DROP_WITH_CONTENT = new Set(
++	"script style template iframe frame frameset object embed applet noscript svg math form input button select textarea audio video source track link meta base title head canvas".split(
++		" ",
++	),
++);
 +
 +const ALLOWED_ATTRS: Record<string, Set<string>> = {
 +	"*": new Set(["title", "colspan", "rowspan", "align", "valign", "dir", "lang"]),
