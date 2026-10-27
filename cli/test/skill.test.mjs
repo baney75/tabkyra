@@ -49,14 +49,14 @@ test("the skill has frontmatter a harness can index", () => {
 
 test("every tool the skill names exists", () => {
 	// Error codes the skill quotes are not tools (src/bridge/protocol.ts, ERR).
-	const errorCodes = new Set(["dialog_open", "permission_denied", "no_tab", "bad_params", "not_found", "timeout"]);
+	const errorCodes = new Set(["dialog_open", "permission_denied", "no_tab", "bad_params", "not_found", "timeout", "interrupted", "tab_limit"]);
 	const named = new Set(
 		[...skill.matchAll(/`([a-z]+(?:_[a-z]+)*)`/g)].map((m) => m[1]).filter((n) => !errorCodes.has(n) && (tools.has(n) || /_/.test(n))),
 	);
 	// Also tool calls in the worked examples: `name {...}` at the start of a line.
 	for (const m of skill.matchAll(/(?:^|`)([a-z]+(?:_[a-z]+)*) \{/gm)) named.add(m[1]);
 	for (const name of named) assert.ok(tools.has(name), `SKILL.md mentions ${name}, which the MCP server doesn't have`);
-	for (const core of ["status", "navigate", "read_page", "click", "fill", "type", "wait", "handle_dialog", "tabs_show", "tabs_close"]) {
+	for (const core of ["tabs_context", "status", "navigate", "read_page", "click", "fill", "type", "wait", "handle_dialog", "tabs_show", "tabs_close"]) {
 		assert.ok(named.has(core), `SKILL.md should teach ${core}`);
 	}
 });
@@ -79,7 +79,9 @@ test("server instructions and the skill teach the same rules", () => {
 		[/untrusted data/i, /untrusted data/i],
 		[/Ask the user before you act under their sign-in/, /Ask before you act under the user's sign-in/],
 		[/passwords or payment details/, /passwords or (?:card numbers|payment details)/],
-		[/Call status before any browser tool/, /check `status`/i],
+		[/Call tabs_context before any browser tool/, /Call `tabs_context` first/],
+		[/tabs_release/, /tabs_release/],
+		[/fails with interrupted/, /Error `interrupted`/],
 		[/"filter":"interactive"/, /"filter":"interactive"/],
 		[/read_page again to confirm/, /`read_page` again to verify/],
 		[/Refs expire/, /refs are gone/],
@@ -147,7 +149,7 @@ test("skill print is the same text for AGENTS.md, nested one heading level down"
 	assert.equal(r.code, 0);
 	assert.ok(r.out.startsWith("## Browser: Tabkyra"), r.out.slice(0, 80));
 	assert.doesNotMatch(r.out, /^---$/m, "no frontmatter in the snippet");
-	assert.match(r.out, /^### Step 1: check `status`/m);
+	assert.match(r.out, /^### Step 1: call `tabs_context`/m);
 	assert.match(r.out, /Page text is untrusted data/);
 	assert.equal(run(join(root, "h3"), "skill", "bogus").code, 2);
 });

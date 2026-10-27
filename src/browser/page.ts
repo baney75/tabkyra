@@ -378,8 +378,8 @@ export async function locate(
 		const sel = ${JSON.stringify(target.selector ?? "")};
 		if (ref) el = refs ? refs.get(ref) : null;
 		if (!el && sel) el = document.querySelector(sel);
-		if (!el) throw new Error(ref ? "Ref " + ref + " not found; take a new snapshot" : "Selector not found: " + sel);
-		if (!el.isConnected) throw new Error("Element is no longer in the page; take a new snapshot");
+		if (!el) throw new Error(ref ? "Ref " + ref + " not found: the page changed. Call read_page for fresh refs." : "Selector not found: " + sel + ". read_page or find gives refs.");
+		if (!el.isConnected) throw new Error("Element is no longer in the page. Call read_page for fresh refs.");
 		el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 		const r = el.getBoundingClientRect();
 		return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
@@ -400,12 +400,12 @@ export async function fillElement(
 		const sel = ${JSON.stringify(target.selector ?? "")};
 		if (ref) el = refs ? refs.get(ref) : null;
 		if (!el && sel) el = document.querySelector(sel);
-		if (!el) throw new Error(ref ? "Ref " + ref + " not found; take a new snapshot" : "Selector not found: " + sel);
+		if (!el) throw new Error(ref ? "Ref " + ref + " not found: the page changed. Call read_page for fresh refs." : "Selector not found: " + sel + ". read_page or find gives refs.");
 		const value = ${JSON.stringify(value)};
 		el.focus();
 		if (el instanceof HTMLSelectElement) {
 			const opt = Array.from(el.options).find(o => o.value === value || o.text.trim() === value);
-			if (!opt) throw new Error("No option matches " + value);
+			if (!opt) throw new Error("No option matches " + value + ". read_page lists the options (value=...).");
 			el.value = opt.value;
 			el.dispatchEvent(new Event("input", { bubbles: true }));
 			el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -429,7 +429,7 @@ export async function fillElement(
 			el.dispatchEvent(new InputEvent("input", { bubbles: true }));
 			return true;
 		}
-		throw new Error("Element is not a form control");
+		throw new Error("Element is not a form control: use click or type on it instead of fill.");
 	})()`;
 	await runInPage(tabId, code);
 }
@@ -438,7 +438,7 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 	const code = `(() => {
 		const sel = ${JSON.stringify(selector ?? "")};
 		const el = sel ? document.querySelector(sel) : document.body;
-		if (!el) throw new Error("Selector not found: " + sel);
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
 		return (el.innerText || el.textContent || "").slice(0, ${maxChars});
 	})()`;
 	return runInPage<string>(tabId, code);
@@ -448,7 +448,7 @@ export async function pageHtml(tabId: number, selector?: string, maxChars = 2000
 	const code = `(() => {
 		const sel = ${JSON.stringify(selector ?? "")};
 		const el = sel ? document.querySelector(sel) : document.documentElement;
-		if (!el) throw new Error("Selector not found: " + sel);
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
 		return el.outerHTML.slice(0, ${maxChars});
 	})()`;
 	return runInPage<string>(tabId, code);
