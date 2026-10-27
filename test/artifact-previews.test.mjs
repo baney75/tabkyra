@@ -5,16 +5,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import JSZip from "jszip";
 
-const base = "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview";
-const { conversionHint, getArtifactFileType, mimeTypeFor } = await import(`${base}/file-types.js`);
-const { detectDelimiter, parseDelimited } = await import(`${base}/delimited.js`);
-const { parseXml, XmlError, textOf } = await import(`${base}/xml.js`);
-const { autoNumberLabel, presetPath, colorOf, emptyTheme } = await import(`${base}/drawingml.js`);
-const { readPptx } = await import(`${base}/pptx.js`);
-const { readOdt, readOdp } = await import(`${base}/odf.js`);
-const { parseRtf } = await import(`${base}/rtf.js`);
-const { parseNotebook, neutralizeRemoteImages, stripAnsi } = await import(`${base}/notebook.js`);
-const { decodeBase64Content, readTextContent, PreviewLimitError } = await import(`${base}/content.js`);
+import { conversionHint, getArtifactFileType, mimeTypeFor } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/file-types.js";
+import { detectDelimiter, parseDelimited } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/delimited.js";
+import { parseXml, XmlError, textOf } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/xml.js";
+import { autoNumberLabel, presetPath, colorOf, emptyTheme } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/drawingml.js";
+import { readPptx } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/pptx.js";
+import { readOdt, readOdp } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/odf.js";
+import { parseRtf } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/rtf.js";
+import { parseNotebook, neutralizeRemoteImages, stripAnsi } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/notebook.js";
+import { decodeBase64Content, readTextContent, PreviewLimitError } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/content.js";
 
 test("each file type gets its viewer", () => {
 	const cases = {
