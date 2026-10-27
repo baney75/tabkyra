@@ -200,7 +200,8 @@ The owner asked for a `visual-explainer` skill adapted from nicobailon/visual-ex
   `navigate`, start `read_console` and `read_network` and reload, `screenshot`, and
   `run_js` checks for captions, SVG labels, the script count and 375px overflow. The page's
   Content-Security-Policy (first in head: `default-src 'none'`, `script-src 'none'` or the
-  SHA-256 of its one script) is the control that blocks injected script; a check confirms it.
+  SHA-256 of its one script, `form-action 'none'`, `base-uri 'none'`) is the control that
+  blocks injected script and form posts; a check confirms it word for word.
 - **Link the mechanism dataset, never bundle it.** Its images were scraped from a YouTube
   channel, DMG-lib and Artobolevsky's book, partly under copyright, and its code repository
   states no license. `mechanism-design` cites the paper and points to the repository as a

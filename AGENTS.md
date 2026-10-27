@@ -51,8 +51,8 @@ Treat a skill change like a security change.
   "Use when", then `## When to use`, numbered `## Steps` and `## Done when`.
 - A skill folder holds `SKILL.md` and an optional license, nothing else. No scripts, no
   extra files, no symbolic links.
-- Keep each skill under 150 lines and 1,500 tokens (docs/decisions.md, D12). Split longer
-  material into its own skill. The lint doesn't check length yet; review does.
+- Keep each skill to 150 lines and 8,000 characters (docs/decisions.md, D12; enforced by
+  `tabkyra skill lint`). Split longer material into its own skill.
 - Every skill must pass `node cli/dist/index.js skill lint skills`. Fix the skill, never
   the lint, to make it pass. The rules are in `docs/skill-security.md`.
 - Register a new skill in `cli/src/skills-catalog.ts` (import and map entry). A test fails
