@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { matchesDomainPatterns, siteOf } from "../src/storage/stores/domain-match.ts";
 import { defaultSkills, SUPERSEDED_DEFAULTS, shouldReplaceDefault } from "../src/tools/default-skills.ts";
-import { FULL_CARD_TOOLS, groupTranscript, NEAR_EMPTY_THINKING, stepLabel, usageText, visibleSteps } from "../src/transcript/group.ts";
+import { FULL_CARD_TOOLS, groupTranscript, NEAR_EMPTY_THINKING, stepLabel, usageText, stepRows, callInFlight, currentRunAssistant } from "../src/transcript/group.ts";
 
 const calendar = defaultSkills.find((s) => s.name === "google-calendar-events");
 
@@ -182,16 +182,47 @@ test("cards the user acts on never fold into a row: artifacts and ask_user", () 
 	assert.ok(FULL_CARD_TOOLS.has("ask_user"), "an ask_user question folded into a row could not be answered");
 });
 
-test("a long list shows its last 5 rows, and an early artifact card never hides", () => {
-	const msgs = [assistant([call("art", "artifacts", { command: "create", filename: "r.md" })])];
-	for (let i = 0; i < 9; i++) msgs.push(assistant([call(`r${i}`, "repl", { title: `step ${i}`, code: "" })]));
+test("a long list shows its last 5 rows; an early artifact card keeps its place in time", () => {
+	const msgs = [
+		assistant([call("r0", "repl", { title: "before", code: "" })]),
+		assistant([call("art", "artifacts", { command: "create", filename: "r.md" })]),
+	];
+	for (let i = 1; i < 10; i++) msgs.push(assistant([call(`r${i}`, "repl", { title: `step ${i}`, code: "" })]));
 	const { blocks } = groupTranscript(msgs);
-	const { shown, hidden } = visibleSteps(blocks[0].steps, false);
+	const rows = stepRows(blocks[0].steps, false);
 	assert.deepEqual(
-		shown.map((s) => s.call.id),
-		["art", "r4", "r5", "r6", "r7", "r8"],
+		rows.map((r) => (r.kind === "step" ? r.step.call.id : `+${r.count}`)),
+		["+1", "art", "+4", "r5", "r6", "r7", "r8", "r9"],
 	);
-	assert.equal(hidden, 4);
-	assert.equal(visibleSteps(blocks[0].steps, true).shown.length, 10);
-	assert.equal(visibleSteps(blocks[0].steps.slice(0, 8), false).hidden, 0, "8 rows or fewer all show");
+	assert.equal(new Set(rows.map((r) => (r.kind === "step" ? r.step.key : r.key))).size, rows.length, "keys unique");
+	assert.equal(stepRows(blocks[0].steps, true).length, 11);
+	assert.ok(stepRows(blocks[0].steps.slice(0, 8), false).every((r) => r.kind === "step"), "8 rows or fewer all show");
+});
+
+test("a call is in flight only in the current run", () => {
+	const old = assistant([call("q1", "ask_user", { questions: [] })], { stopReason: "toolUse" });
+	const cur = assistant([call("q2", "ask_user", { questions: [] })], { stopReason: "toolUse" });
+	const { blocks } = groupTranscript([old, { role: "user", content: "next" }, cur]);
+	const oldStep = blocks[0].steps[0];
+	const curStep = blocks[2].steps[0];
+	const base = { live: false, running: true, pending: false, lastAssistant: cur };
+	assert.equal(callInFlight(curStep, base), true, "last message, before its tool starts");
+	assert.equal(callInFlight(oldStep, base), false, "an earlier turn's call stays cut off while a new run goes");
+	assert.equal(callInFlight(curStep, { ...base, pending: true }), false, "running: the tool shows its own state");
+	assert.equal(callInFlight(curStep, { ...base, running: false }), false, "nothing runs: cut off");
+	assert.equal(callInFlight(oldStep, { ...base, live: true, lastAssistant: undefined }), true, "the live message's calls are arriving");
+	const done = { ...curStep, result: { role: "toolResult", toolCallId: "q2" } };
+	assert.equal(callInFlight(done, { ...base, live: true }), false, "a call with a result is done");
+	const aborted = { ...curStep, message: { ...cur, stopReason: "aborted" } };
+	assert.equal(callInFlight(aborted, { ...base, lastAssistant: aborted.message }), false, "a stopped call is not in flight");
+});
+
+test("once the user speaks again, no earlier assistant message counts as the current run", () => {
+	const old = assistant([call("q1", "ask_user", { questions: [] })]);
+	const next = { role: "user", content: "next" };
+	assert.equal(currentRunAssistant([old]), old);
+	assert.equal(currentRunAssistant([old, result("q1", "ask_user", {}), nav("https://a.test/")]), old, "tool results and page notes stay in the run");
+	assert.equal(currentRunAssistant([old, next]), undefined, "a new turn: the old call is cut off");
+	const { blocks } = groupTranscript([old, next]);
+	assert.equal(callInFlight(blocks[0].steps[0], { live: false, running: true, pending: false, lastAssistant: currentRunAssistant([old, next]) }), false);
 });
