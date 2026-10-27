@@ -318,6 +318,8 @@ The owner asked to clean up the side panel chat, remove the in-chat Artifacts pi
   with a saved chat are never resolved again.
 - **A referenced tab owned by any other session stays with it**, not only a bridge agent's:
   the reference is consent for this chat, not permission to take another agent's tab.
+- **A referenced tab never becomes current.** The model is told to switch to it with navigate
+  `switchToTab`; a reference queued mid-run must not move the agent's next action to another page.
 - **Browser pages, private tabs, tabs without a readable URL and tabs in another window are
   not referenceable.** The menu lists only the panel's window; a typed id elsewhere is refused.
 - **References that fail to resolve are frozen as unusable**, with a toast, so a chip never

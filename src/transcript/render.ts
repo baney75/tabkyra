@@ -17,15 +17,17 @@ import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import {
 	type Block,
+	callInFlight,
+	currentRunAssistant,
 	FULL_CARD_TOOLS,
 	groupTranscript,
 	type Step,
 	stepLabel,
+	stepRows,
 	stepState,
 	type TMessage,
 	type TToolCall,
 	usageText,
-	visibleSteps,
 } from "./group.js";
 
 /** The page's own favicon from the tab; no third-party favicon service ever sees the host. */
@@ -76,6 +78,10 @@ export class StepList extends LitElement {
 	@property({ attribute: false }) tools: AgentTool[] = [];
 	@property({ attribute: false }) pending?: Set<string>;
 	@property({ type: Boolean }) running = false;
+	/** The list belongs to the message still streaming (see callInFlight). */
+	@property({ type: Boolean }) streaming = false;
+	/** The transcript's last assistant message: its calls may still be about to run. */
+	@property({ attribute: false }) lastAssistant?: TMessage;
 	@state() private open = new Set<string>();
 	@state() private showAll = false;
 
@@ -137,7 +143,12 @@ export class StepList extends LitElement {
 			.result=${step.result as ToolResultMessage | undefined}
 			.pending=${this.pending?.has(step.call.id) ?? false}
 			.aborted=${aborted}
-			.isStreaming=${false}
+			.isStreaming=${callInFlight(step, {
+				live: this.streaming,
+				running: this.running,
+				pending: this.pending?.has(step.call.id) ?? false,
+				lastAssistant: this.lastAssistant,
+			})}
 		></tool-message>`;
 	}
 
@@ -207,28 +218,25 @@ export class StepList extends LitElement {
 	}
 
 	override render() {
-		const { shown, hidden } = visibleSteps(this.steps, this.showAll);
 		return html`
 			<ul class="mx-4 flex flex-col border-l border-border pl-1.5" aria-label="Agent steps">
-				${
-					hidden
-						? html`<li>
-								<button
-									type="button"
-									class="w-full text-left rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-									@click=${() => {
-										this.showAll = true;
-									}}
-								>
-									${hidden} earlier ${hidden === 1 ? "step" : "steps"}
-								</button>
-							</li>`
-						: nothing
-				}
 				${repeat(
-					shown,
-					(s) => s.key,
-					(s) => this.renderStep(s),
+					stepRows(this.steps, this.showAll),
+					(r) => (r.kind === "step" ? r.step.key : r.key),
+					(r) =>
+						r.kind === "step"
+							? this.renderStep(r.step)
+							: html`<li>
+									<button
+										type="button"
+										class="w-full text-left rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+										@click=${() => {
+											this.showAll = true;
+										}}
+									>
+										${r.count} earlier ${r.count === 1 ? "step" : "steps"}
+									</button>
+								</li>`,
 				)}
 			</ul>
 		`;
@@ -251,7 +259,12 @@ function textBlock(text: string, usage?: string): TemplateResult {
 	</div>`;
 }
 
-function renderBlock(block: Block, ctx: TranscriptContext): TemplateResult | undefined {
+function renderBlock(
+	block: Block,
+	ctx: TranscriptContext,
+	live = false,
+	lastAssistant?: TMessage,
+): TemplateResult | undefined {
 	switch (block.kind) {
 		case "message": {
 			const m = block.message as AgentMessage;
@@ -269,6 +282,8 @@ function renderBlock(block: Block, ctx: TranscriptContext): TemplateResult | und
 				.tools=${ctx.tools}
 				.pending=${ctx.pendingToolCalls}
 				.running=${ctx.isStreaming}
+				.streaming=${live}
+				.lastAssistant=${lastAssistant}
 			></tk-steps>`;
 		case "status":
 			return block.status === "error"
@@ -290,8 +305,9 @@ export const tabkyraTranscript: TranscriptRenderer = {
 		});
 		stableLastSite = lastSite;
 		const items: Array<{ key: string; template: TemplateResult }> = [];
+		const lastAssistant = currentRunAssistant(messages as unknown as TMessage[]);
 		for (const b of blocks) {
-			const template = renderBlock(b, ctx);
+			const template = renderBlock(b, ctx, false, lastAssistant);
 			if (template) items.push({ key: b.key, template });
 		}
 		return items;
@@ -307,8 +323,8 @@ export const tabkyraTranscript: TranscriptRenderer = {
 			.filter((b) => b.kind !== "status")
 			.map((b) =>
 				b.kind === "steps"
-					? renderBlock({ ...b, steps: b.steps.filter((s) => s.kind !== "thought") }, ctx)
-					: renderBlock(b, ctx),
+					? renderBlock({ ...b, steps: b.steps.filter((s) => s.kind !== "thought") }, ctx, true)
+					: renderBlock(b, ctx, true),
 			);
 		return html`<div class="flex flex-col gap-3 mb-3">
 			${parts}
