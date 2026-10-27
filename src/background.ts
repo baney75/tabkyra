@@ -138,6 +138,10 @@ async function reconcileActiveTab(windowId: number, tabId: number): Promise<void
 		await applyTab(tabId, `${PANEL_PATH}?tabId=${runningHome}`);
 		return;
 	}
+	// A panel the user opened on this tab is this tab's own task, even before its session record
+	// names the tab (the panel writes that a moment later). Disabling it here closed every panel
+	// right after it opened.
+	if (panelPathCache.get(tabId) === `${PANEL_PATH}?tabId=${tabId}`) return;
 	await applyTab(tabId, undefined);
 }
 
