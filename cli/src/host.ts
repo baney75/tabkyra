@@ -147,15 +147,12 @@ export function runNativeHost(): void {
 		clients.set(id, client);
 		const parser = new FrameParser(MAX_FRAME_TO_EXTENSION);
 		socket.on("data", (chunk) => {
-			let messages: unknown[];
-			try {
-				messages = parser.push(chunk);
-			} catch (err) {
-				process.stderr.write(`[tabkyra-host] bad frame from ${id}: ${String(err)}\n`);
-				socket.destroy();
-				return;
-			}
+			const { messages, error } = parser.push(chunk);
 			for (const m of messages) onClientMessage(client, m as ClientToHost);
+			if (error) {
+				process.stderr.write(`[tabkyra-host] bad frame from ${id}: ${String(error)}\n`);
+				socket.destroy();
+			}
 		});
 		const drop = () => {
 			if (!clients.delete(id)) return;
@@ -171,25 +168,26 @@ export function runNativeHost(): void {
 	// stdin: frames from the extension
 	const parser = new FrameParser(MAX_FRAME_FROM_EXTENSION);
 	process.stdin.on("data", (chunk: Buffer) => {
-		let messages: unknown[];
-		try {
-			messages = parser.push(chunk);
-		} catch (err) {
-			process.stderr.write(`[tabkyra-host] bad frame from extension: ${String(err)}\n`);
-			return;
-		}
+		const { messages, error } = parser.push(chunk);
 		for (const m of messages) onExtensionMessage(m as ExtToHost);
+		if (error) {
+			// A dropped frame was a response some client is waiting for, and the extension can't
+			// tell. Exit: Chrome closes the port, the extension reconnects and spawns a fresh host,
+			// and clients retry on the new socket.
+			process.stderr.write(`[tabkyra-host] bad frame from extension, restarting: ${String(error)}\n`);
+			shutdown(1);
+		}
 	});
 
-	const shutdown = () => {
+	const shutdown = (code = 0) => {
 		for (const client of clients.values()) client.socket.destroy();
 		server.close();
 		rmSync(path, { force: true });
-		process.exit(0);
+		process.exit(code);
 	};
-	process.stdin.on("end", shutdown);
-	process.on("SIGINT", shutdown);
-	process.on("SIGTERM", shutdown);
+	process.stdin.on("end", () => shutdown());
+	process.on("SIGINT", () => shutdown());
+	process.on("SIGTERM", () => shutdown());
 
 	const ping = setInterval(() => toExtension({ type: "ping" }), 20000);
 	ping.unref();
