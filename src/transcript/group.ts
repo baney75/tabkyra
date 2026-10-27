@@ -67,8 +67,11 @@ function chunks(m: TMessage): Array<Record<string, unknown>> {
 	return Array.isArray(m.content) ? (m.content as Array<Record<string, unknown>>) : [];
 }
 
-/** Tool calls that render as full cards, not rows: their card is the way to open the output. */
-export const FULL_CARD_TOOLS = new Set(["artifacts"]);
+/**
+ * Tool calls that render as full cards, not rows: the artifacts card is how the user opens the
+ * output, and the ask_user card is where the user answers (it must never fold away).
+ */
+export const FULL_CARD_TOOLS = new Set(["artifacts", "ask_user"]);
 
 function navigateUrl(result: TMessage | undefined): string | undefined {
 	const details = result?.details as { finalUrl?: unknown; switchedToTab?: unknown } | undefined;
@@ -245,4 +248,18 @@ export function usageText(u: TUsage | undefined): string {
 	if (u.cacheWrite) parts.push(`W${k(u.cacheWrite)}`);
 	if (u.cost?.total) parts.push(`$${u.cost.total.toFixed(4)}`);
 	return parts.join(" ");
+}
+
+/** A long run keeps its last rows in view; earlier ones sit behind one "N earlier steps" row. */
+export const VISIBLE_TAIL = 5;
+export const COLLAPSE_OVER = 8;
+
+/**
+ * The rows a step list shows. Past COLLAPSE_OVER rows only the last VISIBLE_TAIL show, plus
+ * every full card (artifacts, ask_user), which never hides; `hidden` counts the rest.
+ */
+export function visibleSteps(steps: readonly Step[], showAll: boolean): { shown: Step[]; hidden: number } {
+	const cut = !showAll && steps.length > COLLAPSE_OVER ? steps.length - VISIBLE_TAIL : 0;
+	const shown = steps.filter((s, i) => i >= cut || (s.kind === "tool" && FULL_CARD_TOOLS.has(s.call.name)));
+	return { shown, hidden: steps.length - shown.length };
 }

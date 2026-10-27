@@ -38,6 +38,7 @@ import { skillMenuItems, tabMenuItems } from "./composer/menus.js";
 import {
 	type ComposerRefs,
 	displayText,
+	failedRefs,
 	hasRefTokens,
 	parseRefs,
 	REFS_RESOLVED,
@@ -74,7 +75,7 @@ import { TabkyraAppStorage } from "./storage/app-storage.js";
 import type { Skill } from "./storage/stores/skills-store.js";
 import { DebuggerTool } from "./tools/debugger.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
-import { AskUserWhichElementTool, skillTool } from "./tools/index.js";
+import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
 import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
 import { createReplTool } from "./tools/repl/repl.js";
@@ -85,6 +86,7 @@ import * as port from "./utils/port.js";
 import "./utils/i18n-extension.js";
 import { createArtifactViewer } from "./artifacts/viewers.js";
 import "./utils/live-reload.js";
+import { bridgeQuestions, watchBridgeQuestions } from "./ask/bridge-panel.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tabkyraTranscript } from "./transcript/render.js";
 import { tutorials } from "./tutorials.js";
@@ -379,24 +381,28 @@ async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Pr
 			m.tabkyraRefs = null;
 			continue;
 		}
-		const session = browserSession;
-		const refs = await resolveRefs(text, {
+		let refs = await resolveRefs(text, {
 			getTab: (id) => chrome.tabs.get(id).catch(() => undefined),
 			ownerOf: async (id) => {
 				const o = await sessionOwningTab(id);
 				return o ? { id: o.id, label: o.label } : undefined;
 			},
-			sessionId: session?.id ?? "",
+			// The live session: the first save renames it while this runs.
+			sessionId: () => browserSession?.id ?? "",
+			windowId: currentWindowId,
 			adopt: async (id, makeCurrent) => {
-				if (!session) throw new Error("No browser session");
-				return session.adoptIfFree(id, makeCurrent);
+				if (!browserSession) throw new Error("No browser session");
+				return browserSession.adoptIfFree(id, makeCurrent);
 			},
 			isRestricted: isRestrictedUrl,
 			findSkill,
 		}).catch((err) => {
+			// Nothing was shared and no skill loaded; say so rather than show chips that look fine.
 			console.error("Resolving references failed:", err);
-			return undefined;
+			Toast.error("Couldn't share the referenced tabs or load the skill");
+			return failedRefs(text);
 		});
+		if (refs && !refs.skill && refs.tabs.length === 0) refs = undefined;
 		m.tabkyraRefs = refs ?? null;
 		for (const t of refs?.tabs ?? []) {
 			const name = `"${t.title || `Tab ${t.id}`}"`;
@@ -964,6 +970,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const tools: AgentTool<any, any>[] = [
 				navigateTool,
 				selectElementTool,
+				new AskUserTool(),
 				replTool,
 				skillTool,
 				extractDocumentTool,
@@ -1209,6 +1216,7 @@ const renderApp = () => {
 			</div>
 
 			${updateNotice()}
+			${bridgeQuestions()}
 
 			<!-- Chat Panel -->
 			${chatPanel}
@@ -1247,7 +1255,9 @@ window.addEventListener(
 	(e) => {
 		// Escape key to abort streaming - works globally in sidepanel
 		// Use capturing phase to intercept before MessageEditor handles it
-		if (e.key === "Escape" && agent?.state.isStreaming) {
+		// Escape in an external agent's question card is not a Stop for this panel's agent.
+		const inBridgeQuestion = e.target instanceof Element && e.target.closest('[data-testid="bridge-questions"]');
+		if (e.key === "Escape" && agent?.state.isStreaming && !inBridgeQuestion) {
 			e.preventDefault();
 			e.stopPropagation();
 			agent.abort();
@@ -1441,6 +1451,7 @@ async function initApp() {
 			});
 
 			renderApp();
+			void watchBridgeQuestions(renderApp).catch(() => {});
 			return;
 		} else {
 			// Session doesn't exist, redirect to new session
@@ -1462,6 +1473,8 @@ async function initApp() {
 
 	renderApp();
 	void watchUpdateStatus(renderApp).catch(() => {});
+	// External agents' questions (ask_user over the bridge) show above the chat.
+	void watchBridgeQuestions(renderApp).catch(() => {});
 
 	// If no API keys configured, show welcome dialog, open settings, then auto-select model
 	if (!(await hasAnyApiKey())) {

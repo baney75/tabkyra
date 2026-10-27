@@ -24,11 +24,8 @@ import {
 	type TMessage,
 	type TToolCall,
 	usageText,
+	visibleSteps,
 } from "./group.js";
-
-/** A long run keeps its last rows in view; earlier ones sit behind one "N earlier steps" row. */
-const VISIBLE_TAIL = 5;
-const COLLAPSE_OVER = 8;
 
 /** The page's own favicon from the tab; no third-party favicon service ever sees the host. */
 function faviconFor(_url: string | undefined, favicon?: string): string | undefined {
@@ -200,8 +197,7 @@ export class StepList extends LitElement {
 	}
 
 	override render() {
-		const hidden = !this.showAll && this.steps.length > COLLAPSE_OVER ? this.steps.length - VISIBLE_TAIL : 0;
-		const shown = hidden ? this.steps.slice(hidden) : this.steps;
+		const { shown, hidden } = visibleSteps(this.steps, this.showAll);
 		return html`
 			<ul class="mx-4 flex flex-col border-l border-border pl-1.5" aria-label="Agent steps">
 				${

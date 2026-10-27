@@ -240,3 +240,119 @@ test("skill_match sees two same-size edits applied in quick succession", async (
 		await client.close();
 	}
 });
+
+test("ask_user is listed with its schema, checks its arguments, and needs the browser", async () => {
+	const { tools } = await mcp.listTools();
+	const ask = tools.find((t) => t.name === "ask_user");
+	assert.ok(ask, "ask_user is listed");
+	assert.match(ask.description, /\(Recommended\)/);
+	assert.match(ask.description, /routine confirmations/);
+	const item = ask.inputSchema.properties.questions.items;
+	assert.deepEqual(Object.keys(item.properties).sort(), ["header", "multiSelect", "options", "question"]);
+	assert.equal(ask.inputSchema.properties.questions.maxItems, 4);
+	assert.equal(item.properties.options.minItems, 2);
+	assert.equal(item.properties.options.maxItems, 4);
+	assert.match(mcp.getInstructions() ?? "", /call ask_user instead of guessing/);
+
+	const question = { header: "Format", question: "Which format?", options: [{ label: "PDF", description: "" }, { label: "Other", description: "" }] };
+	const refused = await mcp.callTool({ name: "ask_user", arguments: { questions: [question] } });
+	assert.equal(refused.isError, true);
+	assert.match(refused.content[0].text, /"Other" is added automatically/);
+	const started = Date.now();
+	const offline = await mcp.callTool({ name: "ask_user", arguments: { questions: [{ ...question, options: [question.options[0], { label: "Markdown", description: "" }] }] } });
+	assert.equal(offline.isError, true);
+	assert.equal(offline.content[0].text, NOT_CONNECTED);
+	assert.ok(Date.now() - started < 5000);
+});
+
+test("ask_user goes over the bridge once and returns the panel's answer as text", async () => {
+	// A fake native host with the extension behind it: answers ask_user the way the worker does.
+	const dir = join(root, "ask-sock");
+	mkdirSync(dir, { mode: 0o700 });
+	const path = join(dir, `${process.pid}.sock`);
+	const frame = (m) => {
+		const body = Buffer.from(JSON.stringify(m));
+		const head = Buffer.alloc(4);
+		head.writeUInt32LE(body.length);
+		return Buffer.concat([head, body]);
+	};
+	const requests = [];
+	let slow;
+	const server = createServer((socket) => {
+		let buffered = Buffer.alloc(0);
+		socket.on("data", (chunk) => {
+			buffered = Buffer.concat([buffered, chunk]);
+			while (buffered.length >= 4 && buffered.length >= 4 + buffered.readUInt32LE(0)) {
+				const msg = JSON.parse(buffered.subarray(4, 4 + buffered.readUInt32LE(0)).toString());
+				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
+				if (msg.type === "hello") socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: true }));
+				else if (msg.type === "request") {
+					requests.push(msg);
+					// "slow" questions wait for a cancel; the cancel ends them as the worker would.
+					if (msg.method === "ask_user" && msg.params.questions[0].question === "slow?") {
+						slow = msg;
+						continue;
+					}
+					if (msg.method === "ask_user.cancel") {
+						socket.write(frame({ type: "response", id: msg.id, result: { cancelled: slow ? 1 : 0 } }));
+						if (slow) socket.write(frame({ type: "response", id: slow.id, result: { status: "no_answer", reason: "aborted", text: "No answer" } }));
+						continue;
+					}
+					const q = msg.params.questions[0].question;
+					socket.write(
+						frame({
+							type: "response",
+							id: msg.id,
+							result: { status: "answered", answers: { [q]: "Markdown" }, text: `The user answered:\n"${q}" = "Markdown"` },
+						}),
+					);
+				}
+			}
+		});
+	});
+	await new Promise((r) => server.listen(path, r));
+	chmodSync(path, 0o600);
+	const client = new Client({ name: "tabkyra-mcp-ask", version: "0.0.0" });
+	try {
+		await client.connect(
+			new StdioClientTransport({
+				command: process.execPath,
+				args: [cli, "mcp"],
+				env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: dir, TABKYRA_ASK_PROGRESS_MS: "100" },
+				stderr: "ignore",
+			}),
+		);
+		// A slow answer: progress keeps a client's timeout from firing, and giving up withdraws the question.
+		const progress = [];
+		const controller = new AbortController();
+		const waiting = client.callTool(
+			{ name: "ask_user", arguments: { questions: [{ header: "Slow", question: "slow?", options: [{ label: "A", description: "" }, { label: "B", description: "" }] }] } },
+			undefined,
+			{ onprogress: (p) => progress.push(p), signal: controller.signal, timeout: 60_000 },
+		);
+		const deadline = Date.now() + 5000;
+		while (progress.length < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+		assert.ok(progress.length >= 2, `progress while waiting: ${progress.length}`);
+		assert.match(progress[0].message, /Waiting for the user's answer/);
+		controller.abort();
+		await waiting.catch(() => undefined);
+		const cancelDeadline = Date.now() + 5000;
+		while (!requests.some((r) => r.method === "ask_user.cancel") && Date.now() < cancelDeadline) await new Promise((r) => setTimeout(r, 50));
+		assert.ok(requests.some((r) => r.method === "ask_user.cancel"), "an abandoned call withdraws its question");
+		const cancel = requests.find((r) => r.method === "ask_user.cancel");
+		assert.ok(slow.params.askId && cancel.params.askId === slow.params.askId, "the cancel names that call");
+
+		const result = await client.callTool({
+			name: "ask_user",
+			arguments: { questions: [{ header: " Format ", question: "Which format?", options: [{ label: "PDF", description: "x" }, { label: "Markdown", description: "y" }] }] },
+		});
+		assert.notEqual(result.isError, true, JSON.stringify(result));
+		assert.equal(result.content[0].text, 'The user answered:\n"Which format?" = "Markdown"');
+		const asks = requests.filter((r) => r.method === "ask_user" && r.params.questions[0].question !== "slow?");
+		assert.equal(asks.length, 1, "asked once");
+		assert.equal(asks[0].params.questions[0].header, "Format", "sent the checked, trimmed questions");
+	} finally {
+		await client.close().catch(() => {});
+		server.close();
+	}
+});

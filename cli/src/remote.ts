@@ -41,6 +41,7 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	"library.read": { tools: ["library_search", "library_cite"], what: "Search and cite the source library" },
 	"library.write": { tools: ["library_add"], what: "Add sources to the library (fetches from doi.org, OpenAlex, Crossref)" },
 	"skills.read": { tools: ["skill_match", "skill_read"], what: "Find the skill for a task and read the bundled skills (never your local edits)" },
+	"user.ask": { tools: ["ask_user"], what: "Ask the user multiple-choice questions in the Tabkyra side panel and get their answers" },
 };
 
 export interface TokenRecord {

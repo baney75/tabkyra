@@ -84,8 +84,12 @@ export function composerChips(value: string, setValue: (v: string) => void): unk
 	</div>`;
 }
 
-/** Chips on a sent message: the frozen refs when it has them, else what the menu knew. */
-export function sentChips(text: string, refs: ComposerRefs | undefined): TemplateResult | typeof nothing {
+/**
+ * Chips on a sent message: the frozen refs when it has them, else (not resolved yet) what the
+ * menu knew. `null` means resolved to nothing: the text went as typed, so no chips.
+ */
+export function sentChips(text: string, refs: ComposerRefs | null | undefined): TemplateResult | typeof nothing {
+	if (refs === null) return nothing;
 	const parsed = parseRefs(text);
 	const skill = refs?.skill?.name ?? (parsed.skill && knownSkills.has(parsed.skill) ? parsed.skill : undefined);
 	const tabs = refs

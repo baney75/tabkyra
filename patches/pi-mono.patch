@@ -447,7 +447,7 @@ index b8f6550ec..f95c50374 100644
  							.onAbort=${() => session.abort()}
  							.onModelSelect=${() => {
 diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
-index f0987c4d1..c0f692bd9 100644
+index f0987c4d1..c4eae5b18 100644
 --- a/packages/web-ui/src/components/MessageEditor.ts
 +++ b/packages/web-ui/src/components/MessageEditor.ts
 @@ -11,6 +11,32 @@ import { i18n } from "../utils/i18n.js";
@@ -628,7 +628,7 @@ index f0987c4d1..c0f692bd9 100644
  				this.handleSend();
  			}
  		} else if (e.key === "Escape" && this.isStreaming) {
-@@ -225,6 +368,66 @@ export class MessageEditor extends LitElement {
+@@ -225,6 +368,67 @@ export class MessageEditor extends LitElement {
  		this.processingFiles = false;
  	};
  
@@ -648,6 +648,7 @@ index f0987c4d1..c0f692bd9 100644
 +				id=${this.menuId}
 +				role="listbox"
 +				aria-label=${label}
++				@mousedown=${(e: MouseEvent) => e.preventDefault()}
 +				class="absolute bottom-full left-0 right-0 mb-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-md z-20 py-1"
 +			>
 +				${this.slashItems.map((item, i) => {
@@ -695,7 +696,7 @@ index f0987c4d1..c0f692bd9 100644
  	override firstUpdated() {
  		const textarea = this.textareaRef.value;
  		if (textarea) {
-@@ -274,13 +477,25 @@ export class MessageEditor extends LitElement {
+@@ -274,13 +478,25 @@ export class MessageEditor extends LitElement {
  						: ""
  				}
  
@@ -721,7 +722,7 @@ index f0987c4d1..c0f692bd9 100644
  					@keydown=${this.handleKeyDown}
  					@paste=${this.handlePaste}
  					${ref(this.textareaRef)}
-@@ -383,17 +598,17 @@ export class MessageEditor extends LitElement {
+@@ -383,17 +599,17 @@ export class MessageEditor extends LitElement {
  										className: "h-8 w-8",
  									})}
  								`

@@ -38,7 +38,7 @@ export class TabkyraUserMessage extends LitElement {
 						?.text || "";
 
 		// References typed in the composer (/skill, @tab:<id>) show as chips, not raw tokens.
-		const refs = (this.message as { tabkyraRefs?: ComposerRefs }).tabkyraRefs;
+		const refs = (this.message as { tabkyraRefs?: ComposerRefs | null }).tabkyraRefs;
 		const chips = sentChips(content, refs);
 		// Only a real skill's token is hidden: "/deploy staging" stays as typed.
 		const typed = parseRefs(content).skill;

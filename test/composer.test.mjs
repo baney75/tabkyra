@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { skillMenuItems, tabMenuItems } from "../src/composer/menus.ts";
-import { asData, displayText, parseRefs, refsForModel, removeTabToken, resolveRefs } from "../src/composer/refs.ts";
+import { asData, displayText, failedRefs, parseRefs, refsForModel, removeTabToken, resolveRefs } from "../src/composer/refs.ts";
 import { browserMessageTransformer } from "../src/messages/message-transformer.ts";
 
 const site = (name, domainPatterns, shortDescription = `${name} helper`) => ({ name, domainPatterns, shortDescription });
@@ -137,7 +137,8 @@ function deps(overrides = {}) {
 		d: {
 			getTab: async (id) => live.get(id),
 			ownerOf: async (id) => owners.get(id),
-			sessionId: "mine",
+			sessionId: () => "mine",
+			windowId: 1,
 			adopt: async (id, makeCurrent) => {
 				adopted.push([id, makeCurrent]);
 				return undefined;
@@ -177,7 +178,7 @@ test("what the model sees: skill instructions, a compact line per tab, then the 
 	assert.match(out, /^<skill name="osint" source="library">/);
 	assert.match(out, /# OSINT\nSteps\./);
 	assert.ok(out.includes('- tab 1: "Inbox - Gmail" https://mail.google.com/mail/u/0/ (shared with you for this task'), out);
-	assert.ok(out.includes('- tab 5: "Docs" https://docs.google.com/ (owned by another agent session, so it was NOT shared; do not use it, and tell the user: "Claude Code")'), out);
+	assert.ok(out.includes('- tab 5: "Docs" https://docs.google.com/ (owned by another session (another agent or chat), so it was NOT shared; do not use it, and tell the user: "Claude Code")'), out);
 	assert.ok(out.endsWith("Task: who runs [tab 1] and [tab 5]"), out);
 	const bare = refsForModel("/osint", { skill: refs.skill, tabs: [] });
 	assert.ok(bare.endsWith("Task: (none given; ask the user what to do with this skill)"));
@@ -253,4 +254,20 @@ test("a message with attachments gets its references and its files", async () =>
 	assert.match(msg.content[0].text, /^<skill name="osint"[\s\S]*Task: who runs \[tab 1\]$/);
 	assert.deepEqual(msg.content[1], { type: "image", data: "AAAA", mimeType: "image/png" });
 	assert.match(msg.content[2].text, /\[Document: b\.pdf\]\nhello/);
+});
+
+test("a typed reference to a tab in another window is not shared", async () => {
+	const { adopted, d } = deps({ getTab: async (id) => ({ id, title: "Elsewhere", url: "https://x.test/", windowId: 2 }) });
+	const refs = await resolveRefs("@tab:11", d);
+	assert.equal(refs.tabs[0].status, "unavailable");
+	assert.deepEqual(adopted, []);
+});
+
+test("references that could not be resolved mark every tab unusable and load no skill", () => {
+	assert.deepEqual(failedRefs("/osint see @tab:3 and @tab:4"), {
+		tabs: [
+			{ id: 3, title: "", url: "", status: "unavailable" },
+			{ id: 4, title: "", url: "", status: "unavailable" },
+		],
+	});
 });
