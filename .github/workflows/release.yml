@@ -88,6 +88,8 @@ jobs:
 
   publish:
     needs: build
+    # The signing key is an environment secret that only main and v* tags can reach.
+    environment: release
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -110,7 +112,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           if [ -z "$MINISIGN_SECRET_KEY" ]; then
-            echo "::error::The MINISIGN_SECRET_KEY repository secret is not set (docs/updates.md)"; exit 1
+            echo "::error::The release environment's MINISIGN_SECRET_KEY secret is not set (docs/updates.md)"; exit 1
           fi
           umask 077
           key="$RUNNER_TEMP/minisign.key"

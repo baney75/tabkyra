@@ -44,6 +44,20 @@ const SIDEPANEL_OPEN_KEY = "sidepanel_open_windows";
 
 // Desired per-tab panel path (undefined = disabled). Avoids redundant setOptions calls.
 const panelPathCache = new Map<number, string | undefined>();
+/**
+ * Tabs the user just opened a fresh task on, until that task's session record names the tab.
+ * The panel writes its session in steps, so for a moment the tab looks owned by no task; a
+ * reconcile in that moment disabled (closed) the panel the user had just opened.
+ */
+const pendingOpen = new Map<number, ReturnType<typeof setTimeout>>();
+const PENDING_OPEN_MS = 10_000;
+
+function clearPendingOpen(tabId: number): void {
+	const timer = pendingOpen.get(tabId);
+	if (timer === undefined) return;
+	clearTimeout(timer);
+	pendingOpen.delete(tabId);
+}
 let openSidepanels = new Set<number>();
 
 chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
@@ -134,9 +148,13 @@ async function reconcileActiveTab(windowId: number, tabId: number): Promise<void
 	const owned = await ownedTabs(windowId);
 	const own = owned.get(tabId);
 	if (own) {
+		clearPendingOpen(tabId);
 		await applyTab(tabId, `${PANEL_PATH}?tabId=${own.homeTabId}`);
 		return;
 	}
+	// The panel just opened here is this tab's own task, before its record says so. It comes
+	// before a running task's claim: a fresh task's own tab shows its own panel.
+	if (pendingOpen.has(tabId)) return;
 	const runningHome = openSidepanels.has(windowId) ? await busyHomeTab(windowId) : undefined;
 	if (runningHome !== undefined) {
 		await applyTab(tabId, `${PANEL_PATH}?tabId=${runningHome}`);
@@ -160,6 +178,18 @@ function openPanelOnTab(tabId: number, source: string): void {
 	}
 	const path = `${PANEL_PATH}?tabId=${tabId}`;
 	panelPathCache.set(tabId, path);
+	clearPendingOpen(tabId);
+	pendingOpen.set(
+		tabId,
+		setTimeout(() => {
+			// The task never named this tab (it failed to start, or moved): decide normally.
+			pendingOpen.delete(tabId);
+			chrome.tabs
+				.get(tabId)
+				.then((tab) => (tab.active ? reconcileActiveTab(tab.windowId, tabId) : undefined))
+				.catch(() => undefined);
+		}, PENDING_OPEN_MS),
+	);
 	// Both calls must run in the click's user-gesture tick; Chrome applies them in order.
 	chrome.sidePanel.setOptions({ tabId, path, enabled: true }).catch((err) => recordPanelError("setOptions", err));
 	chrome.sidePanel.open({ tabId }).catch((err) => recordPanelError(`open(${source})`, err));
@@ -167,7 +197,10 @@ function openPanelOnTab(tabId: number, source: string): void {
 }
 
 chrome.tabs.onActivated.addListener((info) => void reconcileActiveTab(info.windowId, info.tabId));
-chrome.tabs.onRemoved.addListener((tabId) => panelPathCache.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+	panelPathCache.delete(tabId);
+	clearPendingOpen(tabId);
+});
 
 chrome.storage.onChanged.addListener((changes, area) => {
 	if (area === "local" && "browser_sessions" in changes) void onSessionsChanged();
