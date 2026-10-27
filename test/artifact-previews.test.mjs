@@ -1,4 +1,4 @@
-// Artifact previews (pi-web-ui, patches/pi-mono.patch): which viewer a file gets, and the
+// Artifact previews (src/artifacts/): which viewer a file gets, and the
 // readers behind the new viewers. The readers parse untrusted files, so the limits and the
 // no-network rules are tested here too. Drawing is checked live (see the PR's screenshots).
 import assert from "node:assert/strict";
@@ -7,16 +7,16 @@ import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import XLSX_ZAHL from "xlsx/dist/xlsx.zahl.mjs";
 
-import { conversionHint, getArtifactFileType, mimeTypeFor } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/file-types.js";
-import { detectDelimiter, parseDelimited } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/delimited.js";
-import { parseXml, XmlError, textOf } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/xml.js";
-import { autoNumberLabel, presetPath, colorOf, emptyTheme } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/drawingml.js";
-import { readPptx } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/pptx.js";
-import { readOdt, readOdp } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/odf.js";
-import { parseRtf } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/rtf.js";
-import { cappedWorkbookZip, clampSheet, iwaUncompressedSize } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/spreadsheet.js";
-import { parseNotebook, neutralizeRemoteImages, stripAnsi } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/notebook.js";
-import { decodeBase64Content, readTextContent, PreviewLimitError, PREVIEW_LIMITS } from "../node_modules/@mariozechner/pi-web-ui/dist/tools/artifacts/preview/content.js";
+import { conversionHint, getArtifactFileType, mimeTypeFor } from "../src/artifacts/preview/file-types.ts";
+import { detectDelimiter, parseDelimited } from "../src/artifacts/preview/delimited.ts";
+import { parseXml, XmlError, textOf } from "../src/artifacts/preview/xml.ts";
+import { autoNumberLabel, presetPath, colorOf, emptyTheme } from "../src/artifacts/preview/drawingml.ts";
+import { readPptx } from "../src/artifacts/preview/pptx.ts";
+import { readOdt, readOdp } from "../src/artifacts/preview/odf.ts";
+import { parseRtf } from "../src/artifacts/preview/rtf.ts";
+import { cappedWorkbookZip, clampSheet, iwaUncompressedSize } from "../src/artifacts/preview/spreadsheet.ts";
+import { parseNotebook, neutralizeRemoteImages, stripAnsi } from "../src/artifacts/preview/notebook.ts";
+import { countZipEntries, decodeBase64Content, readTextContent, PreviewLimitError, PREVIEW_LIMITS } from "../src/artifacts/preview/content.ts";
 
 test("each file type gets its viewer", () => {
 	const cases = {
@@ -378,7 +378,7 @@ test("notebook markdown never loads a remote image", () => {
 	assert.ok(!/!\[[^\]]*\]\(https?:/.test(out.replace("`![code](https://x/y.png)`", "")));
 	assert.match(out, /\[Image: logo\]\(https:\/\/example.com\/a.png\)/);
 	assert.match(out, /\[Image: ref\]/);
-	assert.match(out, /!\[att\]\(data:image\/png;base64,AAAA\)/);
+	assert.match(out, /!\[att\]\(attachment:p.png\)/, "attachment references stay as written for the viewer to resolve");
 	assert.match(out, /`!\[code\]\(https:\/\/x\/y.png\)`/, "code spans are left alone");
 });
 
@@ -690,4 +690,62 @@ test("a Numbers stream whose declared and actual sizes disagree is refused", () 
 	assert.throws(() => iwaUncompressedSize(iwaChunk(10, expandingTags(2)), 1e9), /Malformed/);
 	assert.equal(iwaUncompressedSize(iwaChunk(4 + 2 * 64, expandingTags(2)), 1e9), 132);
 	assert.throws(() => iwaUncompressedSize(Buffer.from([0, 200, 0, 0, 1]), 1e9), /Malformed/);
+});
+
+// ---------------------------------------------------------------------------
+// Series 2, round 1
+// ---------------------------------------------------------------------------
+
+test("custom-shape commands come out of one deck-wide budget", async () => {
+	const path = `<a:moveTo><a:pt x="0" y="0"/></a:moveTo>${'<a:lnTo><a:pt x="1" y="1"/></a:lnTo>'.repeat(799)}`;
+	const shape = `<p:sp><p:nvSpPr><p:cNvPr id="92" name="c"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12" cy="12"/></a:xfrm><a:custGeom><a:pathLst><a:path w="10" h="10">${path}</a:path></a:pathLst></a:custGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr></p:sp>`;
+	const deck = await withLimits({ maxDeckCommands: 1000 }, async () => readPptx(await deckWithMaster(shape)));
+	const commands = (slide) => (slide.elements.find((e) => e.kind === "shape" && e.box.w === 12)?.paths?.[0]?.d.match(/[ML]/g) ?? []).length;
+	assert.equal(commands(deck.slides[0]), 800);
+	assert.equal(commands(deck.slides[1]), 200, "the second slide gets what is left");
+});
+
+test("a gradient keeps at most 64 stops", async () => {
+	const stops = Array.from({ length: 300 }, (_, i) => `<a:gs pos="${i * 300}"><a:srgbClr val="00FF00"/></a:gs>`).join("");
+	const zip = await JSZip.loadAsync(await cookieDeck());
+	const master = await zip.file("ppt/slideMasters/slideMaster1.xml").async("string");
+	zip.file("ppt/slideMasters/slideMaster1.xml", master.replace(/<p:bgPr>.*?<\/p:bgPr>/s, `<p:bgPr><a:gradFill><a:gsLst>${stops}</a:gsLst><a:lin ang="0"/></a:gradFill></p:bgPr>`));
+	const deck = await readPptx(await zip.generateAsync({ type: "uint8array" }));
+	assert.equal(deck.slides[0].background.stops.length, 64);
+});
+
+test("base64 text over the preview limit still decodes for download", () => {
+	const csv = "a,b\n".repeat(11 * 1024 * 1024);
+	const decoded = readTextContent(Buffer.from(csv).toString("base64"), (t) => t.includes(","));
+	assert.equal(decoded.length, csv.length);
+});
+
+test("odt and odp table columns are charged to the document budget", async () => {
+	const zip = new JSZip();
+	const table = '<table:table><table:table-column table:style-name="co" table:number-columns-repeated="256"/><table:table-column table:style-name="co" table:number-columns-repeated="256"/></table:table>';
+	zip.file("content.xml", `<office:document-content ${ODF_NS}><office:automatic-styles><style:style style:name="co" style:family="table-column"><style:table-column-properties style:column-width="1cm"/></style:style></office:automatic-styles><office:body><office:text>${table.repeat(2000)}</office:text></office:body></office:document-content>`);
+	const doc = await readOdt(await zip.generateAsync({ type: "uint8array" }));
+	const cols = doc.blocks.reduce((n, b) => n + (b.columns?.length ?? 0), 0);
+	assert.ok(cols <= 20_500, `${cols} columns`);
+	assert.equal(doc.truncated, true);
+	const odp = new JSZip();
+	const frame = '<draw:frame svg:x="0cm" svg:y="0cm" svg:width="1cm" svg:height="1cm"><table:table><table:table-column table:number-columns-repeated="64"/><table:table-column table:number-columns-repeated="64"/></table:table></draw:frame>';
+	odp.file("content.xml", `<office:document-content ${ODF_NS}><office:body><office:presentation><draw:page>${frame.repeat(400)}</draw:page></office:presentation></office:body></office:document-content>`);
+	const deck = await withLimits({ maxDeckElements: 1000 }, async () => readOdp(await odp.generateAsync({ type: "uint8array" })));
+	const odpCols = deck.slides[0].elements.reduce((n, e) => n + (e.columns?.length ?? 0), 0);
+	assert.ok(odpCols <= 1000, `${odpCols} columns`);
+});
+
+test("an archive with too many entries is refused before JSZip reads it, even with bytes prepended", async () => {
+	const zip = new JSZip();
+	for (let i = 0; i < 10_050; i++) zip.file(`f${i}`, "");
+	const bytes = await zip.generateAsync({ type: "uint8array" });
+	assert.equal(countZipEntries(bytes, 10_000), 10_001);
+	await assert.rejects(readPptx(bytes), /too many entries/);
+	const prepended = new Uint8Array(bytes.length + 100);
+	prepended.set(bytes, 100);
+	assert.equal(countZipEntries(prepended, 10_000), 10_001);
+	await assert.rejects(readPptx(prepended), /too many entries/);
+	const deckBytes = await cookieDeck();
+	assert.equal(countZipEntries(deckBytes, 10_000), Object.keys((await JSZip.loadAsync(deckBytes)).files).length);
 });

@@ -214,21 +214,27 @@ The owner asked for previews of more document types in the side panel's artifact
 available"). Defaults chosen:
 
 - **Own readers, no new libraries.** pptx, odt, odp, RTF and notebooks are read by small
-  readers in pi-web-ui (`tools/artifacts/preview/`, through `patches/pi-mono.patch`) over
-  the JSZip already in the bundle. `pptx-preview` (ISC) was the only maintained pptx
-  renderer found; it ships minified code and pulls in ECharts, lodash and uuid, about a
-  megabyte. `rtf.js` (MIT) was last released in 2022. The readers add about 180 KB
-  unminified (45 KB gzipped) to `sidepanel.js`. The build has no code splitting and
-  AGENTS.md forbids dynamic imports, so nothing is lazy-loaded; nothing heavy was added.
+  readers in `src/artifacts/preview/` over the JSZip already in the bundle. `pptx-preview`
+  (ISC) was the only maintained pptx renderer found; it ships minified code and pulls in
+  ECharts, lodash and uuid, about a megabyte. `rtf.js` (MIT) was last released in 2022.
+  `marked`, already bundled for mini-lit's markdown, becomes a direct dependency for the
+  notebook preview; the build aliases it, SheetJS, JSZip and highlight.js to one copy each.
+  The previews add about 58 KB unminified (18 KB gzipped) to `sidepanel.js`. The build has
+  no code splitting and AGENTS.md forbids dynamic imports, so nothing is lazy-loaded.
+- **Viewers live in Tabkyra, not the pi-mono patch.** pi-web-ui gains one hook,
+  `setArtifactViewerFactory` (through `patches/pi-mono.patch`), which the artifacts panel
+  asks before its built-in viewers; `src/artifacts/viewers.ts` answers it. The fork patch
+  stays small, and the viewers are ordinary Tabkyra source with Tabkyra's tests and review.
 - **Spreadsheets** (`xlsm`, `xlsb`, `ods`, `numbers` and templates) go through the SheetJS
   build already bundled. CSV and TSV get a table with a toggle to the raw text.
 - **Untrusted input.** Nothing in a file runs or reaches the network: text is set as text,
   external images and links to files outside the package are dropped, notebook HTML outputs
   go through an allow-list sanitizer with only inline `data:` images, notebook markdown
   turns remote images into links, and SVG outputs show as `<img>`. The XML reader never
-  expands DTD entities. Size limits (`PREVIEW_LIMITS` in `preview/content.ts`) cap the
-  file, each inflated zip entry (read through a stream that stops at the cap), the whole
-  archive, slides, table rows and notebook cells.
+  expands DTD entities. Size limits (`PREVIEW_LIMITS` in `preview/content.ts`) bound each
+  whole file, not each part: the file, every inflated zip entry (read through a stream that
+  stops at the cap), the archive, the entries it lists, Apple Numbers' Snappy streams
+  (checked before SheetJS inflates them), and what a deck, document, table or notebook draws.
 - **No preview for legacy binaries** (`doc`, `ppt`, `key`, `pages` and a few others): the
   message names the format and says what to save it as.
 - **Slides show as a scrolling column** scaled to the panel width, which suits a narrow

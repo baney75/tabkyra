@@ -19,6 +19,7 @@ import {
 	SettingsDialog,
 	// PersistentStorageDialog,
 	setAppStorage,
+	setArtifactViewerFactory,
 	setShowJsonMode,
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
@@ -67,9 +68,13 @@ import { syncCustomProviderCorsRules } from "./utils/custom-provider-cors.js";
 import { downloadChatMarkdown } from "./utils/export-chat.js";
 import * as port from "./utils/port.js";
 import "./utils/i18n-extension.js";
+import { createArtifactViewer } from "./artifacts/viewers.js";
 import "./utils/live-reload.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tutorials } from "./tutorials.js";
+
+// Previews for more file types in the artifacts panel (src/artifacts/)
+setArtifactViewerFactory(createArtifactViewer);
 
 // Register custom message renderers
 registerNavigationRenderer();
