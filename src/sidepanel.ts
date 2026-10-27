@@ -41,6 +41,7 @@ import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
+import { UpdatesTab } from "./dialogs/UpdatesTab.js";
 import { WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
 import { browserMessageTransformer } from "./messages/message-transformer.js";
 import {
@@ -410,6 +411,7 @@ function openApiKeysDialog(): Promise<void> {
 				new BridgeTab(),
 				new PrivacyTab(),
 				new ProxyTab(),
+				new UpdatesTab(),
 				new AboutTab(),
 			],
 			resolve,
@@ -998,6 +1000,7 @@ const renderApp = () => {
 								new BridgeTab(),
 								new PrivacyTab(),
 								new ProxyTab(),
+								new UpdatesTab(),
 								new AboutTab(),
 							]),
 						title: "Settings",

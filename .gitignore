@@ -12,6 +12,8 @@ version.json
 docs/*.html
 cli/node_modules
 cli/dist
+# The checkout updater's builds in progress and the build kept for rollback (cli/src/checkout.ts).
+.tabkyra-update/
 
 # The demo video and its poster are published assets.
 !media/demo.mp4

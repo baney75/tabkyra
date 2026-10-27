@@ -10,6 +10,8 @@
 import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, NoTabError, pruneSessions } from "../browser/session.js";
+import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
+import type { UpdateAction } from "../update/logic.js";
 import {
 	addPendingRequest,
 	allowHost,
@@ -30,9 +32,12 @@ import {
 	type HostClientConnected,
 	type HostForwardedRequest,
 	type HostToExt,
+	type HostUpdateProgress,
+	type HostUpdateStatus,
 	MAX_FRAME_FROM_EXTENSION,
 	NATIVE_HOST_NAME,
 	PROTOCOL_VERSION,
+	UPDATE_PROGRESS_KEY,
 	UPDATE_STATUS_KEY,
 } from "./protocol.js";
 import { BridgeError, type HandlerContext, handlers } from "./tools.js";
@@ -58,6 +63,8 @@ interface ClientState {
 	/** Only one request at a time per client; the CLI serialises anyway. */
 	queue: Promise<void>;
 	inFlight?: { method: string; since: number };
+	/** When a request last started or ended; the update idle gate reads it. */
+	lastActivityAt: number;
 	lastError?: string;
 }
 
@@ -142,6 +149,7 @@ async function onClientConnected(msg: HostClientConnected): Promise<void> {
 		name: msg.client.name || "harness",
 		sessionKey: sessionIdFor(msg.client, msg.clientId),
 		queue: Promise.resolve(),
+		lastActivityAt: 0,
 	};
 	clients.set(msg.clientId, state);
 	// Sessions open lazily on the first browser call: maintenance clients (status, debug,
@@ -276,6 +284,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		const handler = handlers[req.method];
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
 		state.inFlight = { method: req.method, since: Date.now() };
+		state.lastActivityAt = Date.now();
 		const t0 = performance.now();
 		let aborted = false;
 		const session = await withTimeout(getSession(state), 15000, "session open");
@@ -322,6 +331,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		else reply(undefined, new BridgeError(ERR.INTERNAL, err instanceof Error ? err.message : String(err)));
 	} finally {
 		state.inFlight = undefined;
+		state.lastActivityAt = Date.now();
 	}
 }
 
@@ -353,8 +363,13 @@ function onHostMessage(message: HostToExt): void {
 			void onClientDisconnected(message.clientId);
 			return;
 		case "update_status":
-			// The side panel reads this and shows a quiet "Update available". Nothing installs here.
+			// The side panel and Settings > Updates read this; the update worker acts on it (auto updates).
 			void chrome.storage.local.set({ [UPDATE_STATUS_KEY]: message });
+			updateHandlers.status?.(message);
+			return;
+		case "update_progress":
+			void chrome.storage.local.set({ [UPDATE_PROGRESS_KEY]: message });
+			updateHandlers.progress?.(message);
 			return;
 		case "request": {
 			if (message.method === "permission.respond") {
@@ -535,6 +550,7 @@ function onHostMessage(message: HostToExt): void {
 					name: "harness",
 					sessionKey: `bridge-harness-${message.clientId}`,
 					queue: Promise.resolve(),
+					lastActivityAt: 0,
 				};
 				clients.set(message.clientId, state);
 			}
@@ -583,12 +599,63 @@ function connect(): void {
 		scheduleReconnect();
 	});
 	trace("native port connected");
-	send({
-		type: "hello",
-		version: chrome.runtime.getManifest().version,
-		protocol: PROTOCOL_VERSION,
-		methods: [...BRIDGE_METHODS],
+	// The hello says which build runs and which build the extension folder holds now, so the host
+	// can tell whether the browser loads Tabkyra from the folder it updates (docs/updates.md).
+	void readDiskBuild().then((diskBuild) => {
+		if (port !== next) return;
+		send({
+			type: "hello",
+			version: chrome.runtime.getManifest().version,
+			protocol: PROTOCOL_VERSION,
+			methods: [...BRIDGE_METHODS],
+			build: BUILD,
+			diskBuild,
+		});
 	});
+}
+
+/** The extension folder's build-info.json as it is on disk now (an unpacked extension reads from disk). */
+export async function readDiskBuild(): Promise<BuildInfo | undefined> {
+	try {
+		const response = await fetch(chrome.runtime.getURL("build-info.json"), { cache: "no-store" });
+		return response.ok ? asBuildInfo(await response.json()) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+// ---- updates --------------------------------------------------------------------------------
+
+const updateHandlers: {
+	status?: (status: HostUpdateStatus) => void;
+	progress?: (progress: HostUpdateProgress) => void;
+} = {};
+
+/** The update worker (src/update/worker.ts) listens here. */
+export function onUpdateMessages(handlers: typeof updateHandlers): void {
+	updateHandlers.status = handlers.status;
+	updateHandlers.progress = handlers.progress;
+}
+
+/** Ask the native host for an update action; false when no host is connected. */
+export function sendUpdateAction(action: UpdateAction): boolean {
+	if (!port) return false;
+	send({ type: "update_action", action });
+	return true;
+}
+
+/** Whether a host is connected right now. */
+export function hostConnected(): boolean {
+	return port !== undefined;
+}
+
+/** Each harness: is a request running, and when did it last do something. */
+export function bridgeActivity(): Array<{ name: string; inFlight: boolean; lastActivityAt: number }> {
+	return [...clients.values()].map((c) => ({
+		name: c.name,
+		inFlight: c.inFlight !== undefined,
+		lastActivityAt: c.lastActivityAt,
+	}));
 }
 
 /**

@@ -1,6 +1,7 @@
 import { startBridge, trace } from "./bridge/native.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
+import { startUpdateWorker } from "./update/worker.js";
 
 // Keep popups opened by agent-driven background tabs from stealing the user's focus.
 startForegroundGuard();
@@ -17,6 +18,9 @@ chrome.webNavigation.onTabReplaced.addListener(({ replacedTabId, tabId }) => {
 // External harnesses (omp, pi, Claude Code, Codex) drive the browser through the
 // native-messaging bridge. Connects when the CLI has installed the host manifest.
 startBridge();
+
+// "Update now", the reload after an update (only when no agent runs), automatic updates.
+startUpdateWorker();
 
 // ============================================================================
 // PER-TAB SIDE PANEL (Claude-in-Chrome model)
