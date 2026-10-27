@@ -18,6 +18,7 @@ import type { Skill } from "../storage/stores/skills-store.js";
 import {
 	type Block,
 	callInFlight,
+	currentRunAssistant,
 	FULL_CARD_TOOLS,
 	groupTranscript,
 	type Step,
@@ -304,7 +305,7 @@ export const tabkyraTranscript: TranscriptRenderer = {
 		});
 		stableLastSite = lastSite;
 		const items: Array<{ key: string; template: TemplateResult }> = [];
-		const lastAssistant = [...(messages as unknown as TMessage[])].reverse().find((m) => m.role === "assistant");
+		const lastAssistant = currentRunAssistant(messages as unknown as TMessage[]);
 		for (const b of blocks) {
 			const template = renderBlock(b, ctx, false, lastAssistant);
 			if (template) items.push({ key: b.key, template });

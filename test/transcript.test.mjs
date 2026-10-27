@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { matchesDomainPatterns, siteOf } from "../src/storage/stores/domain-match.ts";
 import { defaultSkills, SUPERSEDED_DEFAULTS, shouldReplaceDefault } from "../src/tools/default-skills.ts";
-import { FULL_CARD_TOOLS, groupTranscript, NEAR_EMPTY_THINKING, stepLabel, usageText, stepRows, callInFlight } from "../src/transcript/group.ts";
+import { FULL_CARD_TOOLS, groupTranscript, NEAR_EMPTY_THINKING, stepLabel, usageText, stepRows, callInFlight, currentRunAssistant } from "../src/transcript/group.ts";
 
 const calendar = defaultSkills.find((s) => s.name === "google-calendar-events");
 
@@ -215,4 +215,14 @@ test("a call is in flight only in the current run", () => {
 	assert.equal(callInFlight(done, { ...base, live: true }), false, "a call with a result is done");
 	const aborted = { ...curStep, message: { ...cur, stopReason: "aborted" } };
 	assert.equal(callInFlight(aborted, { ...base, lastAssistant: aborted.message }), false, "a stopped call is not in flight");
+});
+
+test("once the user speaks again, no earlier assistant message counts as the current run", () => {
+	const old = assistant([call("q1", "ask_user", { questions: [] })]);
+	const next = { role: "user", content: "next" };
+	assert.equal(currentRunAssistant([old]), old);
+	assert.equal(currentRunAssistant([old, result("q1", "ask_user", {}), nav("https://a.test/")]), old, "tool results and page notes stay in the run");
+	assert.equal(currentRunAssistant([old, next]), undefined, "a new turn: the old call is cut off");
+	const { blocks } = groupTranscript([old, next]);
+	assert.equal(callInFlight(blocks[0].steps[0], { live: false, running: true, pending: false, lastAssistant: currentRunAssistant([old, next]) }), false);
 });

@@ -288,3 +288,16 @@ export function callInFlight(
 	if (step.result || opts.pending || step.message.stopReason === "aborted") return false;
 	return opts.live || (opts.running && step.message === opts.lastAssistant);
 }
+
+/**
+ * The assistant message whose calls may still be about to run: the last one, unless the user
+ * has spoken since (a new turn started; its reply is still streaming and not in the list).
+ */
+export function currentRunAssistant(messages: readonly TMessage[]): TMessage | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const role = messages[i].role;
+		if (role === "assistant") return messages[i];
+		if (role === "user" || role === "user-with-attachments") return undefined;
+	}
+	return undefined;
+}
