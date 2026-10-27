@@ -92,6 +92,23 @@ export function installFakeChrome() {
 	const detachCalls = [];
 	const badge = { text: "", title: "" };
 	const ports = [];
+	// Events fire after the call returns, as Chrome's do. Only modules that listen see them.
+	const fire = (ev, ...args) => setTimeout(() => {
+		for (const fn of ev.listeners) fn(...args);
+	}, 0);
+	const tabEvents = { onActivated: event(), onCreated: event(), onRemoved: event(), onUpdated: event() };
+	/** Chrome removes a group once its last tab leaves. */
+	const dropEmptyGroup = (g) => {
+		if (g !== -1 && g !== undefined && ![...tabs.values()].some((t) => t.groupId === g)) groups.delete(g);
+	};
+	const setGroup = (id, g) => {
+		const t = tabs.get(id);
+		if (!t || t.groupId === g) return;
+		const before = t.groupId;
+		t.groupId = g;
+		dropEmptyGroup(before);
+		fire(tabEvents.onUpdated, id, { groupId: g }, { ...t });
+	};
 	globalThis.chrome = {
 		storage: { local: area("local"), session: area("session"), onChanged },
 		tabs: {
@@ -117,22 +134,29 @@ export function installFakeChrome() {
 				tabs.set(t.id, t);
 				return { ...t };
 			},
-			async remove(id) {
+			async remove(ids) {
 				await tick();
-				tabs.delete(id);
+				for (const id of Array.isArray(ids) ? ids : [ids]) {
+					const t = tabs.get(id);
+					if (!t) continue;
+					tabs.delete(id);
+					dropEmptyGroup(t.groupId);
+					fire(tabEvents.onRemoved, id, { windowId: t.windowId, isWindowClosing: false });
+				}
 			},
 			async group({ tabIds, groupId, createProperties }) {
 				await tick();
+				if (groupId !== undefined && !groups.has(groupId)) err(`No group with id: ${groupId}`);
 				const g = groupId ?? nextGroup++;
 				if (!groups.has(g))
-					groups.set(g, { id: g, windowId: createProperties?.windowId ?? 1, title: "", collapsed: false });
-				for (const id of tabIds) tabs.get(id).groupId = g;
+					groups.set(g, { id: g, windowId: createProperties?.windowId ?? 1, title: "", collapsed: false, color: "grey" });
+				for (const id of Array.isArray(tabIds) ? tabIds : [tabIds]) setGroup(id, g);
 				return g;
 			},
-			async ungroup(id) {
+			async ungroup(ids) {
 				await tick();
 				if (ungroupDelay) await new Promise((r) => setTimeout(r, ungroupDelay));
-				if (tabs.has(id)) tabs.get(id).groupId = -1;
+				for (const id of Array.isArray(ids) ? ids : [ids]) setGroup(id, -1);
 			},
 			async update(id, p) {
 				await tick();
@@ -142,10 +166,7 @@ export function installFakeChrome() {
 			async move() {
 				await tick();
 			},
-			onActivated: event(),
-			onCreated: event(),
-			onRemoved: event(),
-			onUpdated: event(),
+			...tabEvents,
 		},
 		tabGroups: {
 			async get(id) {
@@ -244,6 +265,17 @@ export function installFakeChrome() {
 			return tab.id;
 		},
 		removeTab: (id) => tabs.delete(id),
+		/** The user closes a tab (fires onRemoved, drops an emptied group). */
+		userCloseTab: (id, isWindowClosing = false) => {
+			const t = tabs.get(id);
+			if (!t) return;
+			tabs.delete(id);
+			dropEmptyGroup(t.groupId);
+			fire(tabEvents.onRemoved, id, { windowId: t.windowId, isWindowClosing });
+		},
+		/** The user drags a tab out of its group (-1) or into a group. */
+		userSetGroup: (id, g) => setGroup(id, g),
+		group: (g) => (groups.has(g) ? { ...groups.get(g) } : undefined),
 		hasTab: (id) => tabs.has(id),
 		detachCalls,
 		ports,

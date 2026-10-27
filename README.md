@@ -166,7 +166,9 @@ agent on another machine, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 | Tools | |
 | --- | --- |
 | `status` | Is the browser connected, which sites are allowed, which tabs are mine |
-| `navigate`, `tabs_context`, `tabs_create`, `tabs_select`, `tabs_close` | Open pages in its own background tabs |
+| `tabs_context`, `session_info`, `session_end` | Its session: name, tab group, tabs, and news such as a tab you took back |
+| `navigate`, `tabs_create`, `tabs_select`, `tabs_close` | Open pages in its own background tabs (at most 15 per session) |
+| `tabs_release` | Give you one of its tabs, out of its group, to keep |
 | `read_page`, `find`, `get_page_text`, `get_page_html`, `screenshot` | Read a page as element refs and text, or look at it |
 | `click`, `type`, `fill`, `press`, `hover`, `scroll`, `drag`, `actions` | Act with real input events, by ref or by screenshot pixel |
 | `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits and debugging |
@@ -178,6 +180,50 @@ agent on another machine, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 Every tool's description documents its parameters and includes an example. `actions`
 batches up to 40 input steps (keys, clicks, drags, typing) in one call, which is what
 canvas apps need.
+
+## Sessions and tab groups
+
+Each agent works in a session: its own tab group, titled with the agent and the project,
+for example **Tabkyra · claude · dbaney.com**. The group is how you see what an agent is
+doing, and what you do to it means something:
+
+| You | Tabkyra |
+| --- | --- |
+| Drag a tab out of an agent's group, or ungroup it | The tab is yours. The agent loses it and is told on its next `tabs_context`. |
+| Drag one of your tabs into an agent's group | The agent may use it, and is told. |
+| Close the group | The session ends and its record goes. |
+| Collapse the group | It stays collapsed while the agent works. |
+| Close the window | The session survives and opens its next tab in the window you're using. |
+
+Groups an agent hasn't touched for 30 minutes after it disconnected collapse on their own,
+and blank tabs left by an abandoned session are closed.
+
+**Which session an agent gets.** `tabkyra mcp` picks the session from, in order:
+`tabkyra mcp --session <name>`, `TABKYRA_SESSION`, then the project: the git root of the
+folder the agent runs in (or the folder), as `<folder>-<4 hex>`. Restart Claude Code in the
+same repository and it finds the tabs it left; a different folder gets its own session. The
+harness is part of the session, so Claude Code and Codex in one project don't share tabs.
+
+**Several agents at once.** Two agents in the same project at the same time each get their
+own session and group ("claude · shop" and "claude · shop 2") in distinct colors, and
+neither can see the other's tabs. A name you choose with `--session` is shared on purpose:
+every client that gives it drives the same tabs (an agent and a recorder, say).
+
+**From the terminal.**
+
+```bash
+tabkyra sessions                        # every agent session: group, tabs, connected or idle
+tabkyra sessions show shop-1a2b         # its tabs, times, and how to resume it
+tabkyra sessions rename shop-1a2b checkout
+tabkyra sessions focus checkout         # bring its group in front of you
+tabkyra sessions collapse checkout      # or expand
+tabkyra sessions release checkout       # its tabs are yours now; the session ends
+tabkyra sessions end checkout --close   # end it and close its tabs
+tabkyra tabs                            # every agent tab, by session
+```
+
+Each takes `--json`. A renamed session keeps its connected agent, which reconnects under the
+new name; start an agent on it later with `tabkyra mcp --session checkout`.
 
 ## Skills
 

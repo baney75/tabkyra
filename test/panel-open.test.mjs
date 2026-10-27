@@ -172,3 +172,46 @@ test("a reconcile already reading the busy marker when the user opens a fresh ta
 	assert.ok(!setOptions.some((o) => o.tabId === tab && o.path === `sidepanel.html?tabId=${otherHome}`), "not re-pointed at the other task");
 	assert.ok(!setOptions.some((o) => o.tabId === tab && o.enabled === false), "and not closed");
 });
+
+test("the worker turns the user's gestures on an agent's group into hand-overs, an end, or nothing", async () => {
+	const { fake } = setup();
+	await import(`../src/background.ts?ctx=worker-gestures-${Math.random()}`);
+	await settle(50);
+	const { BrowserSession } = await import(`../src/browser/session.ts?ctx=bridge-${Math.random()}`);
+	const notices = async () => (await chrome.storage.local.get("browser_session_notices")).browser_session_notices ?? {};
+
+	// Dragged out of the group: the user's now, and the agent hears it.
+	const agent = await BrowserSession.open("bridge-claude-shop", "claude · shop", 1, { agent: "claude", project: "shop" });
+	const a = (await agent.createTab("https://example.com/a")).id;
+	const b = (await agent.createTab("https://example.com/b")).id;
+	fake.userSetGroup(b, -1);
+	await settle(300);
+	assert.deepEqual(fake.table()["bridge-claude-shop"].tabIds, [a]);
+	assert.equal(fake.groupOf(b), -1);
+	assert.match((await notices())["bridge-claude-shop"]?.[0]?.text ?? "", /took tab \d+ .*out of your group/);
+
+	// Dragged into the group: the agent's now.
+	const user = fake.addTab({ url: "https://example.com/mine" });
+	fake.userSetGroup(user, fake.table()["bridge-claude-shop"].groupId);
+	await settle(300);
+	assert.ok(fake.table()["bridge-claude-shop"].tabIds.includes(user));
+
+	// A window closing is not a gesture: the session stays.
+	fake.userCloseTab(user, true);
+	await settle(300);
+	assert.ok(fake.table()["bridge-claude-shop"], "a closing window ended the session");
+
+	// Closing the group (its last tab) ends the session; its record goes.
+	fake.userCloseTab(a);
+	await settle(300);
+	assert.equal(fake.table()["bridge-claude-shop"], undefined);
+	assert.ok((await notices())["bridge-claude-shop"].some((n) => /closed your tab group, which ended your session/.test(n.text)));
+
+	// A side panel chat is left alone.
+	const home = fake.addTab({ active: true });
+	const chat = await BrowserSession.open("saved-chat", "chat", 1);
+	await chat.adopt(home, true);
+	fake.userCloseTab(home);
+	await settle(300);
+	assert.ok(fake.table()["saved-chat"], "closing a chat's tab ended the chat's session");
+});

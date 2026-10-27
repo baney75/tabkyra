@@ -26,6 +26,13 @@ export interface ClientHello {
 		name: string;
 		/** Stable per-conversation id so a reconnect re-adopts its tabs. */
 		session?: string;
+		/**
+		 * True when `session` is the CLI's default (project plus harness), not one the user named:
+		 * a second live client with the same default gets its own session ("-2") instead of sharing.
+		 */
+		auto?: boolean;
+		/** The project the agent works in (its git root or folder name), for the group title. */
+		project?: string;
 		version?: string;
 	};
 }
@@ -271,6 +278,8 @@ export const ERR = {
 	INTERRUPTED: "interrupted",
 	/** The request was refused before it reached the browser (the bridge is restarting); repeating it is safe. */
 	NOT_SENT: "not_sent",
+	/** The session holds the most tabs it may (MAX_SESSION_TABS); close some first. */
+	TAB_LIMIT: "tab_limit",
 } as const;
 
 /**
@@ -280,6 +289,8 @@ export const ERR = {
 export const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
 	"status",
 	"tabs.context",
+	"session.info",
+	"sessions.list",
 	"tabs.select",
 	"snapshot",
 	"text",
@@ -310,6 +321,13 @@ export const BRIDGE_METHODS = [
 	"tabs.close",
 	"tabs.select",
 	"tabs.show",
+	"tabs.release",
+	"session.info",
+	"session.end",
+	"sessions.list",
+	"sessions.rename",
+	"sessions.end",
+	"sessions.group",
 	"navigate",
 	"screenshot",
 	"screencast.start",

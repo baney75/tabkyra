@@ -10,7 +10,14 @@
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
 import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
-import { BrowserSession, listSessions, NoTabError, pruneSessions } from "../browser/session.js";
+import {
+	BrowserSession,
+	listSessions,
+	NoTabError,
+	pruneSessions,
+	type SessionMeta,
+	sanitizeLabel,
+} from "../browser/session.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
 import {
@@ -41,6 +48,7 @@ import {
 	UPDATE_PROGRESS_KEY,
 	UPDATE_STATUS_KEY,
 } from "./protocol.js";
+import { handleSessionsAdmin } from "./sessions-admin.js";
 import { BridgeError, type HandlerContext, handlers } from "./tools.js";
 
 const ALARM_NAME = "tabkyra-bridge-keepalive";
@@ -60,6 +68,11 @@ interface ClientState {
 	clientId: string;
 	name: string;
 	sessionKey: string;
+	/** Group label: the agent, then the project or session name ("claude · tabkyra"). */
+	label?: string;
+	meta?: SessionMeta;
+	/** For a default (auto) session moved to "-2": the key and name it wanted, for when it frees up. */
+	wanted?: { key: string; name: string };
 	session?: BrowserSession;
 	/** Only one request at a time per client; the CLI serialises anyway. */
 	queue: Promise<void>;
@@ -145,29 +158,80 @@ function sessionIdFor(client: HostClientConnected["client"], clientId: string): 
 }
 
 async function getSession(state: ClientState): Promise<BrowserSession> {
+	// Ended by the user, the CLI or the agent itself: the next call starts a fresh session (same
+	// name, new group), which also carries the notice saying why.
+	if (state.session?.ended) state.session = undefined;
 	if (!state.session) {
-		state.session = await BrowserSession.open(state.sessionKey, state.name);
+		state.session = await BrowserSession.open(state.sessionKey, state.label ?? state.name, undefined, state.meta);
 	}
 	return state.session;
 }
 
+/**
+ * The session a new client gets. A name the user chose is shared by every client that gives it
+ * (an agent and a recorder can drive one session). The CLI's default name (project plus
+ * harness) is not: a second agent in the same project at the same time gets "<name>-2".
+ */
+function sessionFor(client: HostClientConnected["client"], clientId: string): { key: string; name?: string } {
+	const key = sessionIdFor(client, clientId);
+	if (!client.auto || !client.session) return { key, name: client.session };
+	const taken = new Set([...clients.values()].map((c) => c.sessionKey));
+	if (!taken.has(key)) return { key, name: client.session };
+	for (let n = 2; ; n++) if (!taken.has(`${key}-${n}`)) return { key: `${key}-${n}`, name: `${client.session}-${n}` };
+}
+
 async function onClientConnected(msg: HostClientConnected): Promise<void> {
+	const name = msg.client.name || "harness";
+	const { key, name: sessionName } = sessionFor(msg.client, msg.clientId);
+	const project = msg.client.project ? sanitizeLabel(msg.client.project) : undefined;
+	// "claude · tabkyra" for the default session, "claude · research" for a named one; older
+	// clients that send neither keep the plain harness name.
+	const subject = msg.client.auto ? project : msg.client.session ? sanitizeLabel(msg.client.session) : undefined;
 	const state: ClientState = {
 		clientId: msg.clientId,
-		name: msg.client.name || "harness",
-		sessionKey: sessionIdFor(msg.client, msg.clientId),
+		name,
+		sessionKey: key,
+		label: subject && subject !== name ? `${name} · ${subject}` : name,
+		meta: { agent: name, ...(project ? { project } : {}), ...(sessionName ? { name: sessionName } : {}) },
 		queue: Promise.resolve(),
 		lastActivityAt: 0,
+		...(msg.client.auto && msg.client.session && sessionName !== msg.client.session
+			? { wanted: { key: sessionIdFor(msg.client, msg.clientId), name: msg.client.session } }
+			: {}),
 	};
+	// The client reconnects under the name it got, so a reload can't hand it another agent's tabs.
+	if (state.wanted && sessionName) assign(state, key, sessionName);
 	clients.set(msg.clientId, state);
 	// Sessions open lazily on the first browser call: maintenance clients (status, debug,
 	// reload, allow) never touch tabs and must not leave session records behind.
 	console.log(`[Bridge] client ${msg.clientId} (${state.name}) connected as ${state.sessionKey}`);
 }
 
+/** Point a client at a session and tell it the name to reconnect with. */
+function assign(state: ClientState, key: string, name: string): void {
+	state.sessionKey = key;
+	if (state.meta) state.meta.name = name;
+	send({ type: "event", clientId: state.clientId, event: "session_assigned", data: { session: name } });
+}
+
 async function onClientDisconnected(clientId: string): Promise<void> {
 	const state = clients.get(clientId);
 	clients.delete(clientId);
+	// A restarted harness can connect before its old process hangs up and get "<name>-2". If it
+	// hasn't opened that session yet, it gets the one it asked for, with the tabs it left.
+	if (state) {
+		for (const c of clients.values()) {
+			if (
+				c.wanted?.key !== state.sessionKey ||
+				c.session ||
+				[...clients.values()].some((o) => o.sessionKey === state.sessionKey)
+			)
+				continue;
+			assign(c, c.wanted.key, c.wanted.name);
+			c.wanted = undefined;
+			break;
+		}
+	}
 	await stopScreencastsOwnedBy(clientId).catch(() => undefined);
 	// ask_user: a question from a client that left has nobody to answer to.
 	cancelQuestionsFor(clientId);
@@ -489,6 +553,23 @@ function onHostMessage(message: HostToExt): void {
 				}
 				setPermissionMode(mode as PermissionMode).then(() =>
 					send({ type: "response", clientId: message.clientId, id: message.id, result: { mode } }),
+				);
+				return;
+			}
+			if (message.method.startsWith("sessions.")) {
+				// `tabkyra sessions`: a local user process, the side panel's trust; no session of its own.
+				handleSessionsAdmin(message.method, message.params ?? {}, adminHost).then(
+					(result) => send({ type: "response", clientId: message.clientId, id: message.id, result }),
+					(err) =>
+						send({
+							type: "response",
+							clientId: message.clientId,
+							id: message.id,
+							error:
+								err instanceof BridgeError
+									? err.toRpc()
+									: { code: ERR.INTERNAL, message: err instanceof Error ? err.message : String(err) },
+						}),
 				);
 				return;
 			}
@@ -848,6 +929,25 @@ export function startBridge(): void {
 	chrome.action.onClicked.addListener(() => connect());
 	connect();
 }
+
+/** What the sessions admin module may see and do with the live clients. */
+const adminHost = {
+	liveSessionKeys(): Map<string, number> {
+		const counts = new Map<string, number>();
+		for (const c of clients.values()) counts.set(c.sessionKey, (counts.get(c.sessionKey) ?? 0) + 1);
+		return counts;
+	},
+	/** A renamed session keeps its clients: they drive it under the new name, and reconnect with it. */
+	renameLive(oldId: string, newId: string, newName: string): void {
+		for (const c of clients.values()) {
+			if (c.sessionKey !== oldId) continue;
+			c.sessionKey = newId;
+			if (c.meta) c.meta.name = newName;
+			c.label = `${c.name} · ${newName}`;
+			send({ type: "event", clientId: c.clientId, event: "session_renamed", data: { session: newName } });
+		}
+	},
+};
 
 /** For the sidepanel: which harnesses are connected right now. */
 export function connectedClients(): Array<{ clientId: string; name: string; sessionKey: string }> {

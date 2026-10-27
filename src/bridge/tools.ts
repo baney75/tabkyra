@@ -38,7 +38,7 @@ import {
 	waitFor,
 	waitForLoad,
 } from "../browser/page.js";
-import type { BrowserSession } from "../browser/session.js";
+import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR, type RpcError } from "./protocol.js";
 
@@ -110,6 +110,33 @@ async function resolveTab(ctx: HandlerContext, params: Params, attach: boolean):
 	return tab.id;
 }
 
+/** A new tab for the agent, refused with what to do once the session holds the most it may. */
+async function createCapped(session: BrowserSession, url?: string): Promise<chrome.tabs.Tab> {
+	try {
+		return await session.createTab(url, { capped: true });
+	} catch (err) {
+		if (err instanceof TabLimitError) throw new BridgeError(ERR.TAB_LIMIT, err.message);
+		throw err;
+	}
+}
+
+/** The session as session_info and tabs_context show it. */
+async function sessionSummary(session: BrowserSession) {
+	const r = session.record;
+	const group = r.groupId === undefined ? undefined : await chrome.tabGroups.get(r.groupId).catch(() => undefined);
+	return {
+		name: r.name ?? r.id.replace(/^bridge-/, ""),
+		...(r.agent ? { agent: r.agent } : {}),
+		...(r.project ? { project: r.project } : {}),
+		group: group
+			? { title: group.title ?? session.groupName, color: group.color, collapsed: group.collapsed }
+			: { title: session.groupName, color: r.color, open: false },
+		currentTabId: r.currentTabId ?? null,
+		...(r.createdAt ? { createdAt: new Date(r.createdAt).toISOString() } : {}),
+		...(r.lastUsedAt ? { lastUsedAt: new Date(r.lastUsedAt).toISOString() } : {}),
+	};
+}
+
 /** `stillLoading`: the wait gave up before DOMContentLoaded (the page may be incomplete). */
 async function tabSummary(tabId: number, stillLoading = false) {
 	const tab = await chrome.tabs.get(tabId);
@@ -176,7 +203,10 @@ export const handlers: Record<string, Handler> = {
 
 	"tabs.context": async (ctx) => {
 		const tabs = await ctx.session.tabs();
+		const notices = await takeNotices(ctx.session.id);
 		return {
+			session: await sessionSummary(ctx.session),
+			...(notices.length ? { notices } : {}),
 			tabs: tabs.map((t) => ({
 				tabId: t.id,
 				url: t.url,
@@ -190,7 +220,7 @@ export const handlers: Record<string, Handler> = {
 	"tabs.create": async (ctx, params) => {
 		const url = str(params, "url");
 		if (url) await ctx.checkUrl(url);
-		const tab = await ctx.session.createTab(url);
+		const tab = await createCapped(ctx.session, url);
 		const ready = url ? await waitForLoad(tab.id!, 20000) : true;
 		return tabSummary(tab.id!, !ready);
 	},
@@ -209,6 +239,42 @@ export const handlers: Record<string, Handler> = {
 		return tabSummary(tab.id!);
 	},
 
+	/** Hand one of the session's tabs to the user: out of the group, still open, no longer the agent's. */
+	"tabs.release": async (ctx, params) => {
+		const tabId = num(params, "tabId");
+		if (tabId === undefined)
+			throw new BridgeError(ERR.BAD_PARAMS, "tabId is required (tabs_context lists your tabs)");
+		if (!ctx.session.tabIds.includes(tabId))
+			throw new BridgeError(ERR.NOT_FOUND, `Tab ${tabId} is not one of your tabs. tabs_context lists them.`);
+		const summary = await tabSummary(tabId);
+		await ctx.session.release(tabId);
+		return {
+			released: tabId,
+			url: summary.url,
+			title: summary.title,
+			note: "The tab is the user's now, outside your group; you can't use it any more.",
+		};
+	},
+
+	/** Who this session is, its group and tabs; with `label`, names the group from the agent's side. */
+	"session.info": async (ctx, params) => {
+		const label = str(params, "label");
+		if (label !== undefined) await ctx.session.setAgentLabel(label);
+		const tabs = await ctx.session.tabs();
+		const notices = await takeNotices(ctx.session.id);
+		return {
+			...(await sessionSummary(ctx.session)),
+			tabs: tabs.map((t) => ({ tabId: t.id, url: t.url, title: t.title, current: t.current })),
+			...(notices.length ? { notices } : {}),
+		};
+	},
+
+	/** End the session: hand its tabs to the user (or close them) and forget it. */
+	"session.end": async (ctx, params) => {
+		const result = await ctx.session.end({ close: params.close === true });
+		return { ended: true, ...result };
+	},
+
 	"tabs.show": async (ctx, params) => {
 		const tabId = num(params, "tabId") ?? ctx.session.currentTabId;
 		if (tabId === undefined) throw new BridgeError(ERR.NO_TAB, "No tab to show");
@@ -222,7 +288,7 @@ export const handlers: Record<string, Handler> = {
 		if (!history) await ctx.checkUrl(url);
 		// The first navigate of a session opens its tab straight on the URL (no blank tab).
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
-			const tab = await ctx.session.createTab(url);
+			const tab = await createCapped(ctx.session, url);
 			const ready = await waitForLoad(tab.id!, num(params, "timeoutMs") ?? 20000);
 			return tabSummary(tab.id!, !ready);
 		}

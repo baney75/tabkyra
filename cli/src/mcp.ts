@@ -11,6 +11,7 @@ import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
 import { addSource, cite, search, summary } from "./library.ts";
+import { chooseSession } from "./session-name.ts";
 import { matchTask, readSkill } from "./skill.ts";
 import { VERSION } from "./version.ts";
 
@@ -71,6 +72,29 @@ function errorMessage(err: unknown): string {
 	return err instanceof BridgeRpcError ? `${err.rpc.code}: ${err.rpc.message}` : err instanceof Error ? err.message : String(err);
 }
 
+interface ContextResult {
+	session?: { name: string; agent?: string; project?: string; group: { title: string; color?: string; collapsed?: boolean; open?: boolean }; currentTabId: number | null };
+	notices?: string[];
+	tabs: Array<{ tabId: number; url: string; title: string; current: boolean; inGroup?: boolean }>;
+}
+
+/** tabs_context as a few short lines: the session, any news, then one line per tab. */
+export function formatContext(ctx: ContextResult): string {
+	const lines: string[] = [];
+	ctx = { ...ctx, tabs: ctx.tabs ?? [] };
+	const s = ctx.session;
+	if (s) {
+		const g = s.group;
+		const state = g.open === false ? "no group open yet" : `${g.color ?? ""}${g.collapsed ? ", collapsed by the user" : ""}`.replace(/^, /, "");
+		lines.push(`Session ${s.name} | group "${g.title}"${state ? ` (${state})` : ""} | ${ctx.tabs.length} tab${ctx.tabs.length === 1 ? "" : "s"}`);
+	}
+	for (const n of ctx.notices ?? []) lines.push(`News: ${n}`);
+	if (ctx.tabs.length === 0) lines.push("No tabs yet: navigate opens one in your group.");
+	for (const t of ctx.tabs) lines.push(`${t.current ? "*" : " "} ${t.tabId} ${JSON.stringify(t.title)} ${t.url}${t.inGroup === false ? " (outside your group)" : ""}`);
+	if (ctx.tabs.length && !ctx.tabs.some((t) => t.current)) lines.push("No current tab: tabs_select one, or navigate.");
+	return lines.join("\n");
+}
+
 /** Socket-level failures all mean the same thing to the agent: no browser to talk to. */
 function isNotConnected(err: unknown): boolean {
 	if (err instanceof BridgeRpcError) return false;
@@ -90,24 +114,8 @@ function harnessName(): string {
 	return "mcp";
 }
 
-/**
- * The browser session this server drives. Always set: without one every reconnect
- * (extension reload, worker restart) got a fresh session and lost its tabs. One MCP
- * server process serves one harness session, so the process identity is the fallback.
- */
-function sessionKey(): string {
-	return (
-		process.env.TABKYRA_SESSION ||
-		process.env.CLAUDE_SESSION_ID ||
-		process.env.CODEX_THREAD_ID ||
-		process.env.OMP_SESSION_ID ||
-		process.env.PI_SESSION_ID ||
-		`p${process.pid}-${Date.now().toString(36)}`
-	);
-}
-
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
-const INSTRUCTION_TOOLS = ["status", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user"];
+const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user"];
 
 function mentionedTools(sentence: string): string[] {
 	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
@@ -116,8 +124,10 @@ function mentionedTools(sentence: string): string[] {
 export interface McpServerOptions {
 	/** Tab group label and bridge client name. */
 	name?: string;
-	/** Browser session key; one per MCP session. */
+	/** Browser session key; one per MCP session. Without it, cli/src/session-name.ts decides. */
 	session?: string;
+	/** `tabkyra mcp --session <name>`: a name the user chose. */
+	sessionFlag?: string;
 	/**
 	 * Which tools this server exposes. A tool outside it is never registered, so the client
 	 * can't see or call it, and the instructions don't mention it. Omitted for the local
@@ -173,9 +183,12 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, ...rest: unknown[]) =>
 			allow(String(name)) ? register(name, ...rest) : undefined;
 	}
+	const choice = options.session ? { name: options.session, auto: false } : chooseSession({ flag: options.sessionFlag });
 	const client = new BridgeClient({
 		name: options.name ?? harnessName(),
-		session: options.session ?? sessionKey(),
+		session: choice.name,
+		auto: choice.auto,
+		project: "project" in choice ? choice.project : undefined,
 		onEvent: (event, data) => {
 			if (event === "permission_request") void handlePermission(data);
 		},
@@ -268,13 +281,53 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	server.registerTool(
 		"tabs_context",
 		{
-			title: "List my tabs",
+			title: "My session and tabs",
 			description:
-				"List the tabs in your own tab group: tabId, url, title, and which one is current. These are background tabs, separate " +
-				"from the user's; you cannot see the user's other tabs. A new session has none, and navigate opens the first. Example: {}",
+				"Your session: its name, your tab group, and your tabs (tabId, title, url; * marks the current one), plus news such as a tab the user " +
+				"took out of your group. These are background tabs, separate from the user's; you can't see the user's other tabs. A session resumes " +
+				"in the same project, so tabs from earlier work may be here. Example: {}",
 			inputSchema: {},
 		},
-		() => call("tabs.context"),
+		async () => {
+			try {
+				return { content: text(formatContext((await client.call("tabs.context")) as ContextResult)) };
+			} catch (err) {
+				return errorResult(err);
+			}
+		},
+	);
+	server.registerTool(
+		"session_info",
+		{
+			title: "About my session",
+			description:
+				"Your session in full: name, agent, project, tab group (title, color, collapsed), tabs, current tab, and when it was created and last used. " +
+				'Pass label to name your group for the user, e.g. {"label":"Flight search"} (plain text, up to 32 characters). Example: {}',
+			inputSchema: { label: z.string().max(200).optional().describe('A name for your tab group, shown after your agent name; "" clears it') },
+		},
+		(args) => call("session.info", args),
+	);
+	server.registerTool(
+		"session_end",
+		{
+			title: "End my session",
+			description:
+				"Finish: hand your tabs to the user (default) or close them (close:true), and forget the session. Your next browser call starts a " +
+				'fresh group. Use it when the task is done and the user does not need your tabs. Example: {"close":true}',
+			inputSchema: { close: z.boolean().optional().describe("Close the tabs instead of leaving them open for the user") },
+		},
+		(args) => call("session.end", args),
+	);
+	server.registerTool(
+		"tabs_release",
+		{
+			title: "Give a tab to the user",
+			description:
+				"Hand one of your tabs to the user: it leaves your group, stays open, and is theirs (you can't use it after). Use it when the user " +
+				"should keep a page, e.g. a filled cart for them to check out. tabs_show only brings a tab to the front. Example: {\"tabId\":123}",
+			inputSchema: { tabId: z.number().int().describe("A tabId from tabs_context") },
+		},
+		(args) => call("tabs.release", args),
 	);
 	server.registerTool(
 		"tabs_create",
@@ -752,13 +805,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	return { server, client };
 }
 
-export async function runMcpServer(): Promise<void> {
+export async function runMcpServer(options: { session?: string } = {}): Promise<void> {
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
 		const result = install();
 		process.stderr.write(`[tabkyra] installed native host manifest (${result.written.length} browser dir(s))\n`);
 	}
-	const { server, client } = createMcpServer();
+	const { server, client } = createMcpServer({ sessionFlag: options.session });
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
 	// Connect lazily on the first call, but try once now so a missing extension is reported early.

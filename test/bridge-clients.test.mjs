@@ -34,10 +34,12 @@ async function startBridge() {
 		throw new Error(`no reply to ${method}`);
 	};
 	const settle = () => new Promise((r) => realSetTimeout(r, 100));
-	const connect = (clientId, session) =>
-		port.deliver({ type: "client_connected", clientId, client: { name: "claude", session } });
+	const connect = (clientId, session, extra = {}) =>
+		port.deliver({ type: "client_connected", clientId, client: { name: "claude", session, ...extra } });
+	/** Events the extension sent one client. */
+	const events = (clientId, name) => port.sent.filter((m) => m.type === "event" && m.clientId === clientId && m.event === name).map((m) => m.data);
 	const disconnect = (clientId) => port.deliver({ type: "client_disconnected", clientId });
-	return { fake, port, request, settle, connect, disconnect, native };
+	return { fake, port, request, settle, connect, disconnect, events, native };
 }
 
 test("an old client hanging up leaves the session its successor shares untouched", async () => {
@@ -196,4 +198,105 @@ test("a request refused during an update install is not_sent, so the client rese
 	} finally {
 		native.setInstallGate(() => false);
 	}
+});
+
+test("two agents in one project at once get separate sessions, titled with the agent and the project", async () => {
+	const { fake, request, settle, connect, events } = await startBridge();
+	connect("c1", "shop-1a2b", { auto: true, project: "shop" });
+	connect("c2", "shop-1a2b", { auto: true, project: "shop" });
+	const one = await request("c1", "tabs.create", {});
+	const two = await request("c2", "tabs.create", {});
+	await settle();
+	const t = fake.table();
+	assert.ok(t["bridge-claude-shop-1a2b"]?.tabIds.includes(one.result.tabId));
+	assert.ok(t["bridge-claude-shop-1a2b-2"]?.tabIds.includes(two.result.tabId), JSON.stringify(Object.keys(t)));
+	assert.equal(t["bridge-claude-shop-1a2b"].label, "claude · shop");
+	assert.equal(t["bridge-claude-shop-1a2b-2"].label, "claude · shop 2");
+	assert.notEqual(t["bridge-claude-shop-1a2b"].color, t["bridge-claude-shop-1a2b-2"].color);
+	// The second is told its name, so a reconnect after a reload can't land on the first one's tabs.
+	assert.deepEqual(events("c2", "session_assigned"), [{ session: "shop-1a2b-2" }]);
+	assert.deepEqual(events("c1", "session_assigned"), []);
+	const ctx = await request("c2", "tabs.context");
+	assert.deepEqual(ctx.result.tabs.map((x) => x.tabId), [two.result.tabId], "an agent saw another agent's tab");
+	assert.equal(ctx.result.session.name, "shop-1a2b-2");
+	assert.equal(ctx.result.session.group.title, "Tabkyra · claude · shop 2");
+});
+
+test("a name the user chose is shared, not split", async () => {
+	const { fake, request, settle, connect } = await startBridge();
+	connect("c1", "research");
+	connect("c2", "research");
+	await request("c1", "tabs.create", {});
+	await request("c2", "tabs.create", {});
+	await settle();
+	assert.deepEqual(Object.keys(fake.table()), ["bridge-claude-research"]);
+	assert.equal(fake.table()["bridge-claude-research"].label, "claude · research");
+});
+
+test("a restarted harness that connected before its old process hung up gets its project session back", async () => {
+	const { fake, request, settle, connect, disconnect, events } = await startBridge();
+	connect("old", "shop-1a2b", { auto: true, project: "shop" });
+	const tab = (await request("old", "tabs.create", {})).result.tabId;
+	connect("new", "shop-1a2b", { auto: true, project: "shop" });
+	assert.deepEqual(events("new", "session_assigned"), [{ session: "shop-1a2b-2" }]);
+	disconnect("old");
+	await settle();
+	assert.deepEqual(events("new", "session_assigned").at(-1), { session: "shop-1a2b" });
+	const ctx = await request("new", "tabs.context");
+	assert.deepEqual(ctx.result.tabs.map((x) => x.tabId), [tab]);
+	assert.equal(fake.table()["bridge-claude-shop-1a2b-2"], undefined, "an empty -2 session was left behind");
+});
+
+test("tabs_release hands one tab to the user; session_end hands over the rest and the next call starts fresh", async () => {
+	const { fake, request, settle, connect } = await startBridge();
+	connect("c1", "work");
+	const a = (await request("c1", "tabs.create", {})).result.tabId;
+	const b = (await request("c1", "tabs.create", {})).result.tabId;
+	const released = await request("c1", "tabs.release", { tabId: a });
+	assert.equal(released.result.released, a);
+	assert.equal(fake.groupOf(a), -1);
+	assert.ok(fake.hasTab(a));
+	const notMine = await request("c1", "tabs.release", { tabId: a });
+	assert.equal(notMine.error.code, "not_found");
+	assert.match(notMine.error.message, /tabs_context lists them/);
+	const ended = await request("c1", "session.end", {});
+	assert.deepEqual(ended.result, { ended: true, tabs: [b], closed: false });
+	await settle();
+	assert.equal(fake.table()["bridge-claude-work"], undefined);
+	const fresh = await request("c1", "tabs.context");
+	assert.deepEqual(fresh.result.tabs, []);
+});
+
+test("the CLI's admin methods list, rename and end sessions without opening one of their own", async () => {
+	const { fake, port, request, settle, connect, events } = await startBridge();
+	connect("agent", "shop-1a2b", { auto: true, project: "shop" });
+	const tab = (await request("agent", "tabs.create", {})).result.tabId;
+	connect("cli", undefined);
+	const list = await request("cli", "sessions.list", {});
+	assert.deepEqual(
+		list.result.sessions.map((s) => [s.name, s.agent, s.project, s.tabCount, s.connected]),
+		[["shop-1a2b", "claude", "shop", 1, 1]],
+	);
+	const renamed = await request("cli", "sessions.rename", { from: "shop", to: "checkout" });
+	assert.equal(renamed.error, undefined, JSON.stringify(renamed.error));
+	assert.deepEqual(events("agent", "session_renamed"), [{ session: "checkout" }]);
+	await settle();
+	assert.ok(fake.table()["bridge-claude-checkout"]?.tabIds.includes(tab));
+	assert.equal(fake.table()["bridge-claude-shop-1a2b"], undefined);
+	// The agent keeps driving it under the new name.
+	const ctx = await request("agent", "tabs.context");
+	assert.deepEqual(ctx.result.tabs.map((x) => x.tabId), [tab]);
+	assert.equal(ctx.result.session.name, "checkout");
+	const bad = await request("cli", "sessions.rename", { from: "checkout", to: "../x" });
+	assert.equal(bad.error.code, "bad_params");
+	const ended = await request("cli", "sessions.end", { name: "checkout" });
+	assert.deepEqual(ended.result.tabs, [tab]);
+	await settle();
+	// The agent's next call opens a fresh session and hears why.
+	const after = await request("agent", "tabs.context");
+	assert.deepEqual(after.result.tabs, []);
+	assert.match(after.result.notices[0], /The user ended your session from the terminal/);
+	// None of this made a session for the CLI client.
+	assert.ok(!Object.keys(fake.table()).some((k) => k.includes("cli")), JSON.stringify(Object.keys(fake.table())));
+	assert.equal(port.sent.filter((m) => m.clientId === "cli" && m.error).length, 1, "only the bad rename failed");
 });

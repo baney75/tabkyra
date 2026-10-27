@@ -365,3 +365,30 @@ safely or fails with a clear retryable error, never a hang". Defaults chosen:
   request still in its preamble (update gate, session open) never reaches its handler, and
   nothing queued for that client starts, so the agent's "check the page, then repeat" can't
   race a handler still running.
+## D23. Sessions follow the project; the user's gestures on a group are commands (Claude, 2026-10-27)
+
+Owner, 2026-10-27: sessions "resumable across restarts of the harness", "a clear rule for the
+default name (cwd or project plus harness)", and "improve group management too". Defaults
+chosen:
+
+- **The default session is the project**, not the harness conversation: the git root of the
+  MCP server's working directory (or the directory), named `<folder>-<4 hex of its path>`.
+  `--session` and `TABKYRA_SESSION` override it. Harness conversation ids
+  (`CLAUDE_SESSION_ID`, `CODEX_THREAD_ID`) no longer pick it: each new conversation made a new
+  group and lost the old one's tabs.
+- **A default is never shared by two live clients.** The second gets `<name>-2` and is told
+  (`session_assigned`) so a reload can't swap it onto the first one's tabs. A restarted harness
+  that connected before its old process hung up gets the base session back if it hasn't
+  opened its `-2` yet. A name the user chose is shared on purpose.
+- **Group titles** are `Tabkyra · <agent> · <project or session name>`, plus an optional label
+  the agent sets (session_info), sanitized as plain text, at most 32 characters, never
+  starting with "Tabkyra".
+- **Gestures apply to agent sessions only.** Side panel chats keep their rules: their tabs are
+  the user's already. A tab counts as moved out only once it was seen inside the group, so a
+  tab still being grouped is never handed over by mistake. A closed window is not a gesture.
+- **An agent never lands on a page it didn't choose**: when the user takes or closes its
+  current tab, it has no current tab until it picks one or navigates.
+- **15 tabs per session**, refused with `tab_limit` and what to do. Popups the foreground
+  guard adopts are not refused (they come from the page, not the agent).
+- **`tabkyra sessions` acts as the user**, like the side panel: any local process that can
+  reach the bridge socket can list, rename, end, focus or collapse agent sessions.

@@ -22,11 +22,11 @@ import { createMcpServer } from "./mcp.ts";
 /** What each scope grants. Acting under the user's sign-in is its own scope, never implied. */
 export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	"browser.read": {
-		tools: ["status", "tabs_context", "read_page", "find", "get_page_text", "get_page_html", "screenshot", "read_console", "read_network"],
+		tools: ["status", "tabs_context", "session_info", "read_page", "find", "get_page_text", "get_page_html", "screenshot", "read_console", "read_network"],
 		what: "See the agent's own tabs and read pages",
 	},
 	"browser.navigate": {
-		tools: ["navigate", "tabs_create", "tabs_select", "tabs_close", "tabs_show", "wait"],
+		tools: ["navigate", "tabs_create", "tabs_select", "tabs_close", "tabs_show", "tabs_release", "session_end", "wait"],
 		what: "Open and close pages in the agent's own tab group (site permissions still apply)",
 	},
 	"browser.act": {
