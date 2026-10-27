@@ -657,7 +657,7 @@ index 71620552e..f0cce34c8 100644
  							</div>
  
 diff --git a/packages/web-ui/src/index.ts b/packages/web-ui/src/index.ts
-index 48284c742..9eb3d1873 100644
+index 48284c742..6cfb7b051 100644
 --- a/packages/web-ui/src/index.ts
 +++ b/packages/web-ui/src/index.ts
 @@ -10,7 +10,7 @@ export { ConsoleBlock } from "./components/ConsoleBlock.js";
@@ -678,6 +678,54 @@ index 48284c742..9eb3d1873 100644
  export { PersistentStorageDialog } from "./dialogs/PersistentStorageDialog.js";
  export { ProvidersModelsTab } from "./dialogs/ProvidersModelsTab.js";
  export { SessionListDialog } from "./dialogs/SessionListDialog.js";
+@@ -93,7 +93,13 @@ export type {
+ // Artifacts
+ export { ArtifactElement } from "./tools/artifacts/ArtifactElement.js";
+ export { ArtifactPill } from "./tools/artifacts/ArtifactPill.js";
+-export { type Artifact, ArtifactsPanel, type ArtifactsParams } from "./tools/artifacts/artifacts.js";
++export {
++	type Artifact,
++	ArtifactsPanel,
++	type ArtifactsParams,
++	type ArtifactViewerFactory,
++	setArtifactViewerFactory,
++} from "./tools/artifacts/artifacts.js";
+ export { ArtifactsToolRenderer } from "./tools/artifacts/artifacts-tool-renderer.js";
+ export { HtmlArtifact } from "./tools/artifacts/HtmlArtifact.js";
+ export { ImageArtifact } from "./tools/artifacts/ImageArtifact.js";
+diff --git a/packages/web-ui/src/tools/artifacts/artifacts.ts b/packages/web-ui/src/tools/artifacts/artifacts.ts
+index 0a5474a7a..05f41d16d 100644
+--- a/packages/web-ui/src/tools/artifacts/artifacts.ts
++++ b/packages/web-ui/src/tools/artifacts/artifacts.ts
+@@ -30,6 +30,16 @@ import { PdfArtifact } from "./PdfArtifact.js";
+ import { SvgArtifact } from "./SvgArtifact.js";
+ import { TextArtifact } from "./TextArtifact.js";
+ 
++/** Supplies a viewer for a file, or undefined to keep the built-in one. */
++export type ArtifactViewerFactory = (filename: string) => ArtifactElement | undefined;
++
++let viewerFactory: ArtifactViewerFactory | undefined;
++
++/** Let the host app add or replace artifact viewers (Tabkyra's previews for more file types). */
++export function setArtifactViewerFactory(factory: ArtifactViewerFactory | undefined): void {
++	viewerFactory = factory;
++}
++
+ // Simple artifact model
+ export interface Artifact {
+ 	filename: string;
+@@ -183,7 +193,10 @@ export class ArtifactsPanel extends LitElement {
+ 
+ 		if (!element) {
+ 			const type = this.getFileType(filename);
+-			if (type === "html") {
++			const custom = type === "html" ? undefined : viewerFactory?.(filename);
++			if (custom) {
++				element = custom;
++			} else if (type === "html") {
+ 				element = new HtmlArtifact();
+ 				(element as HtmlArtifact).runtimeProviders = this.getHtmlArtifactRuntimeProviders();
+ 				if (this.sandboxUrlProvider) {
 diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
 index 1f50a7d08..1da1213a3 100644
 --- a/packages/web-ui/src/utils/i18n.ts
