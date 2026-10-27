@@ -1,15 +1,34 @@
 diff --git a/package-lock.json b/package-lock.json
-index 9faf9769d..286a0a067 100644
+index 9faf9769d..f1885e344 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -8807,6 +8807,7 @@
  				"docx-preview": "^0.3.7",
  				"jszip": "^3.10.1",
  				"lucide": "^0.544.0",
-+				"marked": "^15.0.12",
++				"marked": "^16.3.0",
  				"ollama": "^0.6.0",
  				"pdfjs-dist": "5.4.394",
  				"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+@@ -8837,6 +8838,18 @@
+ 				"typescript": "^5.7.3",
+ 				"vite": "^7.1.6"
+ 			}
++		},
++		"packages/web-ui/node_modules/marked": {
++			"version": "16.4.2",
++			"resolved": "https://registry.npmjs.org/marked/-/marked-16.4.2.tgz",
++			"integrity": "sha512-TI3V8YYWvkVf3KJe1dRkpnjs68JUPyEa5vjKrp1XEEJUAOaQc+Qj+L1qWbPd0SJuAdQkFU0h73sXXqwDYxsiDA==",
++			"license": "MIT",
++			"bin": {
++				"marked": "bin/marked.js"
++			},
++			"engines": {
++				"node": ">= 20"
++			}
+ 		}
+ 	}
+ }
 diff --git a/packages/ai/src/models.ts b/packages/ai/src/models.ts
 index 101c83f2c..12cd0c2e3 100644
 --- a/packages/ai/src/models.ts
@@ -41,14 +60,14 @@ index 101c83f2c..12cd0c2e3 100644
 +	return generated ? Object.values(generated) : [];
 +}
 diff --git a/packages/web-ui/package.json b/packages/web-ui/package.json
-index bcec466b7..af60e4c07 100644
+index bcec466b7..bfb1ccc57 100644
 --- a/packages/web-ui/package.json
 +++ b/packages/web-ui/package.json
 @@ -23,6 +23,7 @@
  		"docx-preview": "^0.3.7",
  		"jszip": "^3.10.1",
  		"lucide": "^0.544.0",
-+		"marked": "^15.0.12",
++		"marked": "^16.3.0",
  		"ollama": "^0.6.0",
  		"pdfjs-dist": "5.4.394",
  		"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
@@ -847,16 +866,20 @@ index 000000000..7eeb5d4fd
 +	}
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts b/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
-index dd6d41d7b..cedf5f01d 100644
+index dd6d41d7b..4db95be8e 100644
 --- a/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
 +++ b/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
-@@ -4,9 +4,13 @@ import { customElement, property, state } from "lit/decorators.js";
+@@ -4,9 +4,17 @@ import { customElement, property, state } from "lit/decorators.js";
  import * as XLSX from "xlsx";
  import { i18n } from "../../utils/i18n.js";
  import { ArtifactElement } from "./ArtifactElement.js";
 +import { decodeBase64Content, PREVIEW_LIMITS } from "./preview/content.js";
 +import { mimeTypeFor } from "./preview/file-types.js";
++import { sanitizeHtml } from "./preview/sanitize.js";
 +import { cappedWorkbookZip, clampSheet, MAX_SHEETS } from "./preview/spreadsheet.js";
++
++/** Enough nodes for a full clamped sheet: every cell, its text and its row. */
++const SHEET_NODES = 600_000;
  
  @customElement("excel-artifact")
  export class ExcelArtifact extends ArtifactElement {
@@ -864,7 +887,7 @@ index dd6d41d7b..cedf5f01d 100644
  	@property({ type: String }) private _content = "";
  	@state() private error: string | null = null;
  
-@@ -30,24 +34,6 @@ export class ExcelArtifact extends ArtifactElement {
+@@ -30,24 +38,6 @@ export class ExcelArtifact extends ArtifactElement {
  		this.style.height = "100%";
  	}
  
@@ -889,7 +912,7 @@ index dd6d41d7b..cedf5f01d 100644
  	private decodeBase64(): Uint8Array {
  		let base64Data = this._content;
  		if (this._content.startsWith("data:")) {
-@@ -66,9 +52,7 @@ export class ExcelArtifact extends ArtifactElement {
+@@ -66,9 +56,7 @@ export class ExcelArtifact extends ArtifactElement {
  	}
  
  	private getMimeType(): string {
@@ -900,7 +923,7 @@ index dd6d41d7b..cedf5f01d 100644
  	}
  
  	public getHeaderButtons() {
-@@ -96,9 +80,16 @@ export class ExcelArtifact extends ArtifactElement {
+@@ -96,9 +84,16 @@ export class ExcelArtifact extends ArtifactElement {
  		const container = this.querySelector("#excel-container");
  		if (!container || !this._content) return;
  
@@ -919,7 +942,7 @@ index dd6d41d7b..cedf5f01d 100644
  
  			container.innerHTML = "";
  			const wrapper = document.createElement("div");
-@@ -158,6 +149,7 @@ export class ExcelArtifact extends ArtifactElement {
+@@ -158,18 +153,22 @@ export class ExcelArtifact extends ArtifactElement {
  				wrapper.appendChild(this.renderExcelSheet(workbook.Sheets[sheetName], sheetName));
  			}
  		} catch (error: any) {
@@ -927,14 +950,24 @@ index dd6d41d7b..cedf5f01d 100644
  			console.error("Error rendering Excel:", error);
  			this.error = error?.message || i18n("Failed to load spreadsheet");
  		}
-@@ -165,6 +157,7 @@ export class ExcelArtifact extends ArtifactElement {
+ 	}
  
- 	private renderExcelSheet(worksheet: any, sheetName: string): HTMLElement {
+-	private renderExcelSheet(worksheet: any, sheetName: string): HTMLElement {
++	private renderExcelSheet(worksheet: any, _sheetName: string): HTMLElement {
  		const sheetDiv = document.createElement("div");
 +		clampSheet(worksheet);
  
  		// Generate HTML table
- 		const htmlTable = XLSX.utils.sheet_to_html(worksheet, { id: `sheet-${sheetName}` });
+-		const htmlTable = XLSX.utils.sheet_to_html(worksheet, { id: `sheet-${sheetName}` });
++		// Sheet names and cell text come from the file. The name stays out of the HTML, and the
++		// table goes through the allow-list sanitizer instead of innerHTML.
++		const htmlTable = XLSX.utils.sheet_to_html(worksheet);
+ 		const tempDiv = document.createElement("div");
+-		tempDiv.innerHTML = htmlTable;
++		tempDiv.appendChild(sanitizeHtml(htmlTable, document, { nodes: SHEET_NODES }));
+ 
+ 		// Find and style the table
+ 		const table = tempDiv.querySelector("table");
 diff --git a/packages/web-ui/src/tools/artifacts/GenericArtifact.ts b/packages/web-ui/src/tools/artifacts/GenericArtifact.ts
 index 597615e51..cca4fa3f4 100644
 --- a/packages/web-ui/src/tools/artifacts/GenericArtifact.ts
@@ -1118,7 +1151,7 @@ index 000000000..87255ba92
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/NotebookArtifact.ts b/packages/web-ui/src/tools/artifacts/NotebookArtifact.ts
 new file mode 100644
-index 000000000..fd7274814
+index 000000000..ea5e6caae
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/NotebookArtifact.ts
 @@ -0,0 +1,181 @@
@@ -1148,7 +1181,7 @@ index 000000000..fd7274814
 +	const div = doc.createElement("div");
 +	div.className =
 +		"markdown-content text-foreground break-words [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-2 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-2 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:my-1 [&_p]:my-1 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_pre]:p-2 [&_pre]:bg-muted/50 [&_pre]:rounded [&_pre]:overflow-x-auto [&_code]:font-mono [&_code]:text-xs [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_table]:border-collapse [&_td]:border [&_td]:px-2 [&_th]:border [&_th]:px-2 [&_img]:max-w-full";
-+	const html = marked.parse(clip(neutralizeRemoteImages(source, attachments)), { async: false, gfm: true }) as string;
++	const html = marked.parse(neutralizeRemoteImages(clip(source), attachments), { async: false, gfm: true }) as string;
 +	div.appendChild(sanitizeHtml(html, doc, budget));
 +	return div;
 +}
@@ -1714,10 +1747,10 @@ index 0a5474a7a..0a0312c4e 100644
  			} else {
 diff --git a/packages/web-ui/src/tools/artifacts/preview/PreviewArtifact.ts b/packages/web-ui/src/tools/artifacts/preview/PreviewArtifact.ts
 new file mode 100644
-index 000000000..9d58a2f4b
+index 000000000..183a14a53
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/PreviewArtifact.ts
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,167 @@
 +import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
 +import { html, type TemplateResult } from "lit";
 +import { state } from "lit/decorators.js";
@@ -1820,16 +1853,15 @@ index 000000000..9d58a2f4b
 +	 * download button. Throws a limit error when the file is larger than `maxBytes`.
 +	 */
 +	protected decodedContent(maxBytes: number): Uint8Array {
-+		if (base64DecodedSize(this._content) > maxBytes) {
++		// The cache comes first, so a header re-render never rescans a large string.
++		const cached = this.decodeCache?.content === this._content ? this.decodeCache.bytes : undefined;
++		const size = cached ? cached.length : base64DecodedSize(this._content);
++		if (size > maxBytes)
 +			throw new PreviewLimitError(`File is larger than ${Math.round(maxBytes / (1024 * 1024))} MB`);
-+		}
-+		if (this.decodeCache?.content !== this._content) {
-+			this.decodeCache = {
-+				content: this._content,
-+				bytes: decodeBase64Content(this._content, Number.POSITIVE_INFINITY),
-+			};
-+		}
-+		return this.decodeCache.bytes;
++		if (cached) return cached;
++		const bytes = decodeBase64Content(this._content, Number.POSITIVE_INFINITY);
++		this.decodeCache = { content: this._content, bytes };
++		return bytes;
 +	}
 +
 +	/** A text format's text, decoded from base64 when it was stored that way. */
@@ -3627,10 +3659,10 @@ index 000000000..1cc968e60
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/notebook.ts b/packages/web-ui/src/tools/artifacts/preview/notebook.ts
 new file mode 100644
-index 000000000..1d752cda0
+index 000000000..01275c93c
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/notebook.ts
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,232 @@
 +/** Jupyter notebook (.ipynb, nbformat 4 and 3) reading for the preview. Pure: no DOM. */
 +
 +export type NotebookOutput =
@@ -3841,8 +3873,9 @@ index 000000000..1d752cda0
 +	return parts
 +		.map((part, i) => {
 +			if (i % 2 === 1) return part;
++			// Every bounded class stops at "[", so a scan from one "![" ends at the next: linear time.
 +			return part.replace(
-+				/!\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(\s+"[^"]*")?\s*\)|!\[([^\]]*)\]/g,
++				/!\[([^\][\n]{0,200})\]\(\s{0,10}<?([^)\s>[(]{0,4096})>?(\s{1,10}"[^"\n]{0,200}")?\s{0,10}\)|!\[([^\][\n]{0,200})\]/g,
 +				(whole, alt, url, title, refAlt) => {
 +					if (refAlt !== undefined) return `[Image: ${refAlt}]`;
 +					if (typeof url === "string" && url.startsWith("attachment:")) {
@@ -3864,10 +3897,10 @@ index 000000000..1d752cda0
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/odf.ts b/packages/web-ui/src/tools/artifacts/preview/odf.ts
 new file mode 100644
-index 000000000..ad1206355
+index 000000000..023f19f43
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/odf.ts
-@@ -0,0 +1,1067 @@
+@@ -0,0 +1,1073 @@
 +/**
 + * OpenDocument reading for the preview. Text documents (.odt) become a flow of paragraphs,
 + * lists, tables and images; presentations (.odp) become the same slide model the pptx
@@ -4606,7 +4639,13 @@ index 000000000..ad1206355
 +		const visit = (el: XmlElement, level: number, listName: string | undefined, depth: number) => {
 +			if (depth > 20 || paragraphs.length > 2000) return;
 +			for (const c of children(el)) {
++				// The cap and the run budget apply per paragraph, empty ones included.
++				if (paragraphs.length >= 2000 || this.budget.runs <= 0) {
++					this.budget.exhausted = this.budget.exhausted || this.budget.runs <= 0;
++					return;
++				}
 +				if (c.name === "text:p" || c.name === "text:h") {
++					this.budget.runs--;
 +					const name = attr(c, "text:style-name");
 +					const pText = styles.find("paragraph", name) ? styles.resolve("paragraph", name, "text-properties") : {};
 +					const size = styles.find("paragraph", name) ? sizeFrom(pText["fo:font-size"], baseSize) : baseSize;
@@ -4962,10 +5001,10 @@ index 000000000..423bf3a3c
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/pptx.ts b/packages/web-ui/src/tools/artifacts/preview/pptx.ts
 new file mode 100644
-index 000000000..d21359942
+index 000000000..e30eb8a01
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/pptx.ts
-@@ -0,0 +1,984 @@
+@@ -0,0 +1,1002 @@
 +/**
 + * Reads a .pptx into a plain slide model the panel can draw: positioned text boxes with basic
 + * formatting, shapes with fills and outlines, pictures, tables and slide backgrounds. Layout and
@@ -5117,6 +5156,8 @@ index 000000000..d21359942
 +const MAX_ELEMENTS_PER_SLIDE = 4000;
 +/** Most drawing commands read from one custom shape. */
 +const MAX_PATH_COMMANDS = 20_000;
++/** Most placeholders indexed per layout or master. */
++const MAX_PLACEHOLDERS = 200;
 +/** Most paragraphs read from one text body. */
 +const MAX_PARAGRAPHS = 2_000;
 +
@@ -5124,7 +5165,11 @@ index 000000000..d21359942
 +export interface Budget {
 +	elements: number;
 +	runs: number;
++	chars: number;
 +}
++
++/** Longest text run kept; template text is redrawn on every slide. */
++const MAX_RUN_CHARS = 100_000;
 +
 +interface Rel {
 +	target: string;
@@ -5175,7 +5220,11 @@ index 000000000..d21359942
 +	private themes = new Map<string, Theme>();
 +	readonly images = new Map<string, { mime: string; data: Uint8Array }>();
 +	private defaultTextXml?: XmlElement;
-+	readonly budget: Budget = { elements: PREVIEW_LIMITS.maxDeckElements, runs: PREVIEW_LIMITS.maxTextRuns };
++	readonly budget: Budget = {
++		elements: PREVIEW_LIMITS.maxDeckElements,
++		runs: PREVIEW_LIMITS.maxTextRuns,
++		chars: PREVIEW_LIMITS.maxTextChars,
++	};
 +
 +	constructor(private readonly zip: SafeZip) {}
 +
@@ -5225,6 +5274,8 @@ index 000000000..d21359942
 +		for (const sp of children(child(child(root, "cSld"), "spTree"))) {
 +			const ph = placeholderOf(sp);
 +			if (ph) out.push({ type: ph.type, idx: ph.idx, sp });
++			// A real layout has a dozen; more only makes every lookup slower.
++			if (out.length >= MAX_PLACEHOLDERS) break;
 +		}
 +		return out;
 +	}
@@ -5293,7 +5344,7 @@ index 000000000..d21359942
 +		const limit = Math.min(slidePaths.length, PREVIEW_LIMITS.maxSlides);
 +		for (let i = 0; i < limit; i++) {
 +			// One budget for the whole deck: master and layout shapes count on every slide they draw on.
-+			if (this.budget.elements <= 0 || this.budget.runs <= 0) break;
++			if (this.budget.elements <= 0 || this.budget.runs <= 0 || this.budget.chars <= 0) break;
 +			slides.push(await this.slide(slidePaths[i], i + 1));
 +		}
 +		return { width, height, slides, totalSlides: slidePaths.length, images: this.images };
@@ -5751,7 +5802,10 @@ index 000000000..d21359942
 +]);
 +
 +function readTable(tbl: XmlElement, box: Box, ctx: ColorContext, scope: Scope): TableElement {
-+	const columns = children(child(tbl, "tblGrid"), "gridCol").map((c) => numAttr(c, "w") ?? 0);
++	const columns = children(child(tbl, "tblGrid"), "gridCol")
++		.slice(0, PREVIEW_LIMITS.maxTableColumns)
++		.map((c) => numAttr(c, "w") ?? 0);
++	scope.reader.budget.elements -= columns.length;
 +	const tblPr = child(tbl, "tblPr");
 +	const styleId = textOf(child(tblPr, "tableStyleId")).trim();
 +	const styled = !!styleId && !PLAIN_TABLE_STYLES.has(styleId);
@@ -5829,8 +5883,8 @@ index 000000000..d21359942
 +				return {
 +					text,
 +					fill,
-+					gridSpan: Math.max(1, numAttr(tc, "gridSpan") ?? 1),
-+					rowSpan: Math.max(1, numAttr(tc, "rowSpan") ?? 1),
++					gridSpan: Math.min(Math.max(1, numAttr(tc, "gridSpan") ?? 1), Math.max(1, columns.length)),
++					rowSpan: Math.min(Math.max(1, numAttr(tc, "rowSpan") ?? 1), PREVIEW_LIMITS.maxTableRows),
 +					merged: attr(tc, "hMerge") === "1" || attr(tc, "vMerge") === "1",
 +					borders: { l: border("lnL"), r: border("lnR"), t: border("lnT"), b: border("lnB") },
 +				};
@@ -5901,6 +5955,9 @@ index 000000000..d21359942
 +			if (r.local === "r" || r.local === "br" || r.local === "fld") budget.runs--;
 +			if (r.local === "r" || r.local === "fld") {
 +				let text = textOf(child(r, "t"));
++				if (text.length > MAX_RUN_CHARS) text = text.slice(0, MAX_RUN_CHARS);
++				budget.chars -= text.length;
++				if (budget.chars < 0) break;
 +				if (r.local === "fld" && attr(r, "type") === "slidenum") text = String(slideNumber);
 +				runs.push({ text, style: mergeRun(style.run, parseRunStyle(child(r, "rPr"), ctx)) });
 +			} else if (r.local === "br") {
@@ -5952,10 +6009,10 @@ index 000000000..d21359942
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/rtf.ts b/packages/web-ui/src/tools/artifacts/preview/rtf.ts
 new file mode 100644
-index 000000000..f55301b69
+index 000000000..e551bde6a
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/rtf.ts
-@@ -0,0 +1,676 @@
+@@ -0,0 +1,686 @@
 +/**
 + * RTF reading for the preview: paragraphs with basic character and paragraph formatting,
 + * simple tables and embedded PNG/JPEG pictures. Fields show their result, objects show their
@@ -6257,6 +6314,12 @@ index 000000000..f55301b69
 +		// Bytes from \'hh escapes come first: they precede this text in the file.
 +		flushBytes();
 +		text += t;
++		// Long unstyled text never flushes on its own; the character cap applies as it grows.
++		if (charCount + text.length + bytes.length >= maxChars) {
++			text = text.slice(0, Math.max(0, maxChars - charCount - bytes.length));
++			flushText();
++			truncated = true;
++		}
 +	};
 +	const addBlock = (b: RtfBlock) => {
 +		if (blocks.length >= maxBlocks) {
@@ -6342,6 +6405,10 @@ index 000000000..f55301b69
 +						if (runStyle && JSON.stringify(runStyle) !== JSON.stringify(style)) flushText();
 +						runStyle = style;
 +						bytes.push(Number.parseInt(hex, 16));
++						if (charCount + text.length + bytes.length >= maxChars) {
++							flushText();
++							truncated = true;
++						}
 +					} else if (st.dest === "fonttbl") {
 +						addText(String.fromCharCode(Number.parseInt(hex, 16)));
 +					}
@@ -6634,10 +6701,10 @@ index 000000000..f55301b69
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/sanitize.ts b/packages/web-ui/src/tools/artifacts/preview/sanitize.ts
 new file mode 100644
-index 000000000..ab2c18c2e
+index 000000000..54cde554f
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/sanitize.ts
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,168 @@
 +/**
 + * Allow-list HTML sanitizer for untrusted fragments (notebook outputs). The input is parsed in
 + * an inert document (no scripts run, no images load), then rebuilt element by element in the
@@ -6765,10 +6832,9 @@ index 000000000..ab2c18c2e
 +		return out;
 +	}
 +	const parsed = new DOMParser().parseFromString(`<!doctype html><body>${html}`, "text/html");
-+	let count = 0;
 +	const copy = (src: Node, dest: Node, depth: number) => {
 +		for (const node of Array.from(src.childNodes)) {
-+			if (++count > MAX_NODES || --budget.nodes < 0 || depth > 64) return;
++			if (--budget.nodes < 0 || depth > 64) return;
 +			if (node.nodeType === Node.TEXT_NODE) {
 +				dest.appendChild(target.createTextNode(node.textContent ?? ""));
 +				continue;
@@ -7352,10 +7418,10 @@ index 000000000..f618ba67d
 +}
 diff --git a/packages/web-ui/src/tools/artifacts/preview/xml.ts b/packages/web-ui/src/tools/artifacts/preview/xml.ts
 new file mode 100644
-index 000000000..fec523833
+index 000000000..e57e602cb
 --- /dev/null
 +++ b/packages/web-ui/src/tools/artifacts/preview/xml.ts
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,260 @@
 +/**
 + * A small, strict-enough XML reader for office documents (OOXML, ODF).
 + *
@@ -7384,6 +7450,9 @@ index 000000000..fec523833
 +export const DEFAULT_XML_LIMITS: XmlLimits = { maxChars: 20_000_000, maxDepth: 200, maxNodes: 1_000_000 };
 +
 +export class XmlError extends Error {}
++
++/** Office files use a handful per element; thousands only slow every lookup. */
++const MAX_ATTRIBUTES = 256;
 +
 +const NAMED_ENTITIES: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
 +
@@ -7475,6 +7544,7 @@ index 000000000..fec523833
 +		if (!name) throw new XmlError("Empty tag name");
 +		const attrs: Record<string, string> = {};
 +		let selfClosing = false;
++		let attrCount = 0;
 +		while (j < n) {
 +			const c = source[j];
 +			if (c === ">") {
@@ -7490,6 +7560,7 @@ index 000000000..fec523833
 +				j++;
 +				continue;
 +			}
++			if (++attrCount > MAX_ATTRIBUTES) throw new XmlError("XML element has too many attributes to preview");
 +			let k = j;
 +			while (k < n && source[k] !== "=" && !/[\s/>]/.test(source[k])) k++;
 +			const attrName = source.slice(j, k);

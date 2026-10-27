@@ -584,3 +584,50 @@ test("a large honest workbook still previews its first rows, and media is left o
 	clampSheet(sheet);
 	assert.equal(XLSX.utils.decode_range(sheet["!ref"]).e.r, 4999);
 });
+
+// ---------------------------------------------------------------------------
+// Review round 3
+// ---------------------------------------------------------------------------
+
+test("markdown image neutralizing stays linear on hostile input", () => {
+	const started = Date.now();
+	neutralizeRemoteImages("![".repeat(500_000), {});
+	neutralizeRemoteImages(`![${"a".repeat(200_000)}`, {});
+	assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
+test("the XML reader refuses elements with thousands of attributes", () => {
+	const attrs = Array.from({ length: 300 }, (_, i) => `a${i}=""`).join(" ");
+	assert.throws(() => parseXml(`<r ${attrs}/>`), XmlError);
+	assert.doesNotThrow(() => parseXml(`<r ${attrs.split(" ").slice(0, 200).join(" ")}/>`));
+});
+
+test("deck text has a character budget and a table grid is capped", async () => {
+	const longText = `<p:sp><p:nvSpPr><p:cNvPr id="91" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:p><a:r><a:t>${"x".repeat(200_000)}</a:t></a:r></a:p></p:txBody></p:sp>`;
+	const deck = await withLimits({ maxTextChars: 150_000 }, async () => readPptx(await deckWithMaster(longText)));
+	const longShape = (slide) => slide.elements.find((e) => e.kind === "shape" && e.box.w === 10);
+	assert.equal(longShape(deck.slides[0]).text.paragraphs[0].runs[0].text.length, 100_000, "one run is clipped to 100,000 characters");
+	assert.equal(longShape(deck.slides[1]).text, undefined, "the master's text stops drawing once the deck's characters are spent");
+	const zip = await JSZip.loadAsync(await cookieDeck());
+	const slide = await zip.file("ppt/slides/slide1.xml").async("string");
+	zip.file("ppt/slides/slide1.xml", slide.replace("<a:tblGrid>", `<a:tblGrid>${'<a:gridCol w="1"/>'.repeat(2000)}`));
+	const grid = await readPptx(await zip.generateAsync({ type: "uint8array" }));
+	assert.equal(grid.slides[0].elements.find((e) => e.kind === "table").columns.length, 500);
+});
+
+test("odp text bodies cap paragraphs and charge empty ones", async () => {
+	const zip = new JSZip();
+	zip.file(
+		"content.xml",
+		`<office:document-content ${ODF_NS}><office:body><office:presentation><draw:page><draw:frame svg:x="0cm" svg:y="0cm" svg:width="1cm" svg:height="1cm"><draw:text-box>${"<text:p/>".repeat(5000)}<text:p>x</text:p></draw:text-box></draw:frame></draw:page></office:presentation></office:body></office:document-content>`,
+	);
+	const deck = await readOdp(await zip.generateAsync({ type: "uint8array" }));
+	const shape = deck.slides[0].elements[0];
+	assert.equal(shape.text, undefined, "the body stops at 2,000 paragraphs, before its one run");
+});
+
+test("RTF applies the character cap to one long unstyled run", () => {
+	const doc = parseRtf(`{\\rtf1 ${"a".repeat(2000)}\\par}`, 1000, 1000, 500);
+	assert.equal(doc.truncated, true);
+	assert.ok(doc.blocks.flatMap((b) => b.runs).reduce((n, r) => n + (r.text?.length ?? 0), 0) <= 600);
+});
