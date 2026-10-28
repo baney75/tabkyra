@@ -110,7 +110,8 @@ export class PrivacyTab extends SettingsTab {
 					<p class="text-xs text-muted-foreground">
 						The side panel agent then runs only OpenRouter models, sent with zero data retention required and no
 						fallback to other endpoints, and models on this computer or on the hosts you list below (a LAN or tailnet
-						machine counts only once you list it). A local server that forwards to a cloud service (for example an
+						machine counts only once you list it). Free mode then uses only free models with zero data retention, and
+						refuses to send when none is available. A local server that forwards to a cloud service (for example an
 						Ollama cloud model) is still a cloud service: don't use one in private mode.
 						Other providers, and a CORS proxy that isn't on those machines, are refused. This covers the side panel
 						agent; an outside agent using the Bridge follows its own settings.

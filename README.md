@@ -49,7 +49,7 @@ with one-command setup, a doctor, skills, a library and a new brand.
 
 **Contents:** [Quick start](#quick-start) · [Connect your agent](#connect-your-agent) ·
 [What your agent can do](#what-your-agent-can-do) · [Skills](#skills) ·
-[Library](#library) · [Private mode and bug reports](#private-mode-and-bug-reports) ·
+[Library](#library) · [Free mode](#free-mode) · [Private mode and bug reports](#private-mode-and-bug-reports) ·
 [Remote MCP](#remote-mcp-and-tunnels) · [Safety model](#safety-model) ·
 [How it works](#how-it-works) · [FAQ](#faq) · [Support](#support-tabkyra) ·
 [Credits](#credits)
@@ -100,7 +100,7 @@ Then ask your agent something like:
 
 If anything is off, `tabkyra doctor` checks each piece and prints the exact command
 that fixes it. For the side panel agent, press `Cmd+Shift+S` (`Ctrl+Shift+S`) and add a
-provider's API key.
+provider's API key, or pick [Free mode](#free-mode) with a free OpenRouter key.
 
 <p align="center">
   <img src="media/demo.gif" alt="A scripted MCP client searches a library catalog, places a hold and reads the confirmation through Tabkyra's tools" width="860">
@@ -329,6 +329,38 @@ tabkyra library obsidian ~/Vault                        # one note per source in
 retracted source is flagged everywhere it appears. Agents get the same through the
 `library_add`, `library_search` and `library_cite` MCP tools, and the `academic-research`
 skill uses them.
+
+## Free mode
+
+Free mode runs the side panel agent on OpenRouter's free models, at no cost. Pick **Free (best
+available)** at the top of the model list, or turn on **Settings > Providers > Free mode**. It
+needs a free OpenRouter key (sign up at [openrouter.ai/keys](https://openrouter.ai/keys)); without
+one, Tabkyra opens the key prompt and says so.
+
+- **Measured, not guessed.** Every free model that can call tools was run on four browser
+  tasks through Tabkyra's tools and scored by what the test site recorded
+  (`cli/eval/free-models.mjs`). The ranking ships in `src/models/free-ranking.json`, and a test
+  fails if its order doesn't match its scores. The leaders on 2026-10-28:
+
+  | Rank | Model | Tasks passed | Mean tool calls | Mean seconds |
+  | --- | --- | --- | --- | --- |
+  | 1 | `dots-studio/dots-3-note-preview:free` | 8/8 | 6.3 | 23.8 |
+  | 2 | `nvidia/nemotron-3.5-super-vl:free` | 8/8 | 6.8 | 26.1 |
+  | 3 | `nvidia/nemotron-3-ultra-550b-a55b:free` | 7/8 | 6.1 | 105.1 |
+  | 4 | `cohere/north-mini-code:free` | 7/8 | 10.4 | 41.6 |
+  | 5 | `poolside/laguna-s-2.1:free` | 6/8 | 8 | 198 |
+  | 6 | `nvidia/nemotron-3.5-lightning:free` | 6/8 | 10.6 | 51.9 |
+
+- **Live.** Tabkyra rereads OpenRouter's free list about once a day and drops any model that
+  stopped being free or stopped taking tools. New free models rank after the measured ones.
+- **Never paid.** Each request names the two best free models plus OpenRouter's free router as
+  fallbacks, so one rate limit doesn't fail the turn. Every model in it is checked free first,
+  and the request caps the price at zero.
+- **Shows who answered.** The model button reads "Free · <model>" after each reply.
+- **Limits.** OpenRouter allows 50 free requests a day (1,000 once you have bought $10 of
+  credits) and 20 a minute. When every free model is limited, the turn says so.
+- **Privacy.** Free providers may log and train on your prompts. In private mode, Free mode
+  uses only free models with zero data retention and refuses to send when none is available.
 
 ## Private mode and bug reports
 
