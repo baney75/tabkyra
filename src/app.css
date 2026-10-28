@@ -460,16 +460,6 @@ body {
 	cursor: pointer;
 }
 
-.tk-share-pill {
-	color: var(--tk-brass-text);
-	background: rgba(227, 169, 59, 0.14);
-	border: 1px solid rgba(227, 169, 59, 0.45);
-}
-
-.tk-share-pill:hover {
-	background: rgba(227, 169, 59, 0.24);
-}
-
 .tk-rec-pill {
 	color: #fff;
 	background: #c42b2b;

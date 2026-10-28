@@ -429,11 +429,12 @@ Defaults chosen:
 - **Header**: chat title, then Past chats, New chat, More, Settings. Copy chat, Record a skill
   and the theme moved under More. Every icon has a name that shows as a tooltip on hover and on
   keyboard focus. Recording shows a red "Recording" pill that stops it.
-- **Share this tab shows only when it would do something.** The panel shows on its own task's
-  tabs, so the tab in front was nearly always the agent's already and the old link button did
-  nothing, silently. The pill appears when the active tab is not one of the session's tabs (a
-  run keeps the panel open while the user looks elsewhere) and goes away once shared. Other tabs
-  are referenced with `@`.
+- **No share button: the tab in front goes with the message.** Owner, 2026-10-28: "No we
+  shouldn't need to press share this tab it should all be available". Sending a message gives
+  the agent the tab the user is looking at and makes it the agent's page; "Send now" mid-run adds
+  it without swapping the run's page. A tab another agent is driving stays with that agent, and
+  browser pages (settings, the extension's own pages, the web store) never go to the agent; a
+  blank new tab does. Other tabs are referenced with `@`.
 - **Hover is neutral, brass means on.** The theme's accent text (blue in light, yellow in dark)
   made a hovered icon look switched on.
 - **Settings has six tabs** that all show at the panel's width: Providers (API keys, then custom
