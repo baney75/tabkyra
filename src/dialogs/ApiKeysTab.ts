@@ -8,11 +8,15 @@ import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { providerDisplayName } from "../models/display.js";
 import { FREE_PRIVACY_NOTE } from "../models/free-mode.js";
 import { isFreeModeOn, setFreeMode } from "../models/free-panel.js";
+import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/constants.js";
 import { CustomProvidersTab } from "./CustomProvidersTab.js";
+import "../subscriptions/SubscriptionsSection.js";
 
 // Providers to hide from the API key list: removed sign-ins, and clouds that need more than a key.
 const HIDDEN_PROVIDERS = new Set([
 	...REMOVED_SIGN_IN_PROVIDERS,
+	// Signed in under "Use your subscription"; they never take a key.
+	...SUBSCRIPTION_PROVIDERS,
 	"amazon-bedrock",
 	"azure-openai-responses",
 	"google-vertex",
@@ -105,6 +109,7 @@ export class ApiKeysTab extends SettingsTab {
 					</p>
 					${agentSetupPromptButton("Using your own agent instead? Paste this prompt into Claude Code, Codex, pi, OMP or any agent to connect it to this browser.")}
 				</div>
+				<tabkyra-subscriptions></tabkyra-subscriptions>
 				${
 					this.justSaved
 						? html`<div

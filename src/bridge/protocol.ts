@@ -158,6 +158,18 @@ export interface ExtCommunityAction {
 	action: "on" | "off" | "sync";
 }
 
+/**
+ * A subscription sign-in request from the side panel (relayed by the background worker).
+ * The host keeps every token; the extension only ever gets status and the loopback proxy's
+ * address and secret (cli/src/subscriptions, docs/auth-policy.md).
+ */
+export interface ExtSubscription {
+	type: "subscription";
+	id: number;
+	method: string;
+	params?: Record<string, unknown>;
+}
+
 export type ExtToHost =
 	| ExtHello
 	| ExtResponse
@@ -165,7 +177,8 @@ export type ExtToHost =
 	| ExtPong
 	| ExtUpdateAction
 	| ExtThreadsMirror
-	| ExtCommunityAction;
+	| ExtCommunityAction
+	| ExtSubscription;
 
 export interface HostClientConnected {
 	type: "client_connected";
@@ -313,7 +326,17 @@ export const UPDATE_PROGRESS_KEY = "tabkyra.updateProgress";
 /** chrome.storage.local key where the extension keeps the last HostUpdateStatus. */
 export const UPDATE_STATUS_KEY = "tabkyra.updateStatus";
 
+/** The answer to an ExtSubscription, or a step along the way (`progress`, then `result` or `error`). */
+export interface HostSubscription {
+	type: "subscription";
+	id: number;
+	result?: unknown;
+	error?: RpcError;
+	progress?: Record<string, unknown>;
+}
+
 export type HostToExt =
+	| HostSubscription
 	| HostClientConnected
 	| HostClientDisconnected
 	| HostForwardedRequest

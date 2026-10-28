@@ -581,3 +581,35 @@ test("the side panel has no share button: the tab in front goes with the message
 	await inPanel(`chrome.tabs.remove(${tabId}).then(() => true)`);
 	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
 });
+
+test("subscription sign-ins: the side panel reaches the native host through the relay and gets a proxy, never a token", async () => {
+	await connected();
+	const version = await (await fetch(`http://${devtools}/json/version`)).json();
+	const { targetId } = await cdp(version.webSocketDebuggerUrl, "Target.createTarget", { url: `chrome-extension://${EXTENSION_ID}/sidepanel.html` });
+	const panel = await until(async () => (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.id === targetId && t.url.includes("sidepanel.html")), 15_000, "the side panel page");
+	const inPanel = async (expression) => {
+		const r = await cdp(panel.webSocketDebuggerUrl, "Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+		if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? "evaluate threw");
+		return r.result.value;
+	};
+	const ask = (method) =>
+		inPanel(`new Promise((resolve) => { const p = chrome.runtime.connect({ name: "tabkyra-subscriptions" }); p.onDisconnect.addListener(() => resolve({ error: { code: "disconnected" } })); p.onMessage.addListener((m) => { if (m.result !== undefined || m.error) { p.disconnect(); resolve(m); } }); p.postMessage({ id: 1, method: ${JSON.stringify(method)} }); })`);
+	const status = await until(async () => {
+		const reply = await ask("status");
+		return reply.result ? reply.result : undefined;
+	}, 20_000, "the subscription status");
+	assert.match(status.proxy.url, /^http:\/\/127\.0\.0\.1:\d+$/);
+	assert.equal(status.chatgpt.signedIn, false);
+	assert.equal(status.copilot.signedIn, false);
+	assert.doesNotMatch(JSON.stringify(status), /access_token|refresh_token|id_token/);
+	// Not a method the relay forwards.
+	assert.equal((await ask("chatgpt.token")).error.code, "bad_params");
+	// The proxy answers the panel only with the secret, and without a sign-in it refuses.
+	const probe = (auth) =>
+		inPanel(`fetch(${JSON.stringify(`${status.proxy.url}/chatgpt/v1/models`)}, { headers: ${JSON.stringify(auth ? { Authorization: `Bearer ${auth}` } : {})} }).then(async (r) => ({ status: r.status, body: await r.json() }))`);
+	assert.equal((await probe()).status, 401);
+	const signedOut = await probe(status.proxy.secret);
+	assert.equal(signedOut.status, 401);
+	assert.equal(signedOut.body.error.code, "not_signed_in");
+	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
+});
