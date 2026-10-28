@@ -576,3 +576,47 @@ test("an idle agent group collapses; one in use, or one the user is looking at, 
 	assert.equal(fake.group(t["bridge-claude-live"].groupId).collapsed, false, "a connected agent's group was folded");
 	assert.equal(fake.group(t["bridge-claude-watched"].groupId).collapsed, false, "the group the user is looking at was folded");
 });
+
+test("tabs the user shares stay out of any group; only tabs the agent opens are grouped", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("panel");
+	// The tab the panel opened on, and a tab in front when the user sent a message.
+	const home = fake.addTab({ active: true, url: "https://mail.example/" });
+	const other = fake.addTab({ url: "https://news.example/" });
+	const s = await BrowserSession.open(`tab-${home}`, "chat", 1);
+	await s.setHomeTab(home);
+	await s.adopt(home, true, { group: false });
+	assert.equal(await s.adoptIfFree(other, true, { group: false }), undefined);
+	assert.equal(fake.groupOf(home), -1, "the panel's own tab was put in a group");
+	assert.equal(fake.groupOf(other), -1, "the shared tab was put in a group");
+	assert.deepEqual(s.tabIds.sort(), [home, other].sort(), "the agent can use both");
+	// Reconcile (run on every tool call) must not pull them into a group later.
+	await s.reconcile();
+	assert.equal(fake.groupOf(home), -1, "reconcile grouped the user's tab");
+	assert.equal(fake.groupOf(other), -1, "reconcile grouped the user's tab");
+	// A tab the agent opens itself is grouped, as before.
+	const opened = await s.createTab("https://shop.example/");
+	assert.notEqual(fake.groupOf(opened.id), -1, "the agent's own tab is not grouped");
+	// The user drags a shared tab into the agent's group: from then on it is grouped like the rest.
+	fake.userSetGroup(other, fake.groupOf(opened.id));
+	await s.reconcile();
+	assert.equal(s.isLoose(other), false);
+	assert.equal(s.isLoose(home), true);
+	// Released tabs leave the loose list too.
+	await s.release(home);
+	assert.equal(s.isLoose(home), false);
+});
+
+test("a user's tab an older version grouped comes out of the group when shared again", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("panel");
+	const home = fake.addTab({ active: true, url: "https://mail.example/" });
+	const s = await BrowserSession.open(`tab-${home}`, "chat", 1);
+	await s.adopt(home, true); // what earlier versions did: grouped
+	assert.notEqual(fake.groupOf(home), -1);
+	await s.adopt(home, true, { group: false });
+	assert.equal(fake.groupOf(home), -1);
+	await s.reconcile();
+	assert.equal(fake.groupOf(home), -1, "reconcile put it back");
+	assert.ok(s.tabIds.includes(home), "the agent lost access to it");
+});
