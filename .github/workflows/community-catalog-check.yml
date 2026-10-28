@@ -1,0 +1,53 @@
+# Daily check that the published community catalog is current (docs/decisions.md D27). It needs
+# no secrets and no approval, and runs no repo code: it reads the catalog's `source` commit from
+# the release and asks git whether any later commit on main changed what the catalog is built
+# or signed from. If so (a publish was rejected, failed or never triggered), it opens an issue,
+# or comments on the open one, so someone re-runs community-catalog.yml.
+name: Community catalog check
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Compare the published catalog with main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          inputs=(community cli/src/skill-lint.ts cli/src/skill-community.ts cli/src/community-catalog.ts keys)
+          latest=$(git log -1 --format=%H -- "${inputs[@]}")
+          if ! gh release download community-catalog --repo "$GITHUB_REPOSITORY" -p community-catalog.json -O "$RUNNER_TEMP/catalog.json" 2>/dev/null; then
+            reason="No community catalog is published."
+          else
+            source=$(jq -r '.source // empty' "$RUNNER_TEMP/catalog.json")
+            if [[ ! "$source" =~ ^[0-9a-f]{40}$ ]]; then
+              reason="The published catalog has no valid source commit."
+            elif ! git cat-file -e "$source^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$latest" "$source"; then
+              reason="The published catalog was built from $source, but $latest on main changed its inputs since."
+            else
+              echo "Current: built from $source, which includes $latest."; exit 0
+            fi
+          fi
+          echo "::warning::$reason"
+          title="Community catalog is behind main"
+          body="$reason Re-run the Community catalog workflow and approve its publish: \`gh workflow run community-catalog.yml --repo $GITHUB_REPOSITORY\`."
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$open" ]; then gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"; fi
