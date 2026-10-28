@@ -109,6 +109,16 @@ test("bug reports drop web addresses, emails, keys and home paths, and never tra
 		assert.equal(out, "at ext:/a.js:3:9", dir);
 	}
 	assert.equal(redact(`chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/${"0123456789abcdef".repeat(2)}01234567.js`), "ext:/[file]", "a long file name is dropped");
+	// Anything that isn't plainly a build file name loses its path.
+	for (const [input, out] of [
+		["203.0.113.9", "x ext:/[file]"],
+		["Users/donovan", "x ext:/[file]"],
+		["home/ada", "x ext:/[file]"],
+		["Zq8xW3mN7pL2vR9tY4kB6cH1dF5gJ0s+Ab3Cd4Ef5Gh6", "x ext:/[file]"],
+		["a.js@example.com", "x ext:/[file]"],
+	]) {
+		assert.equal(redact(`x chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/${input}`), out, input);
+	}
 	const more = redact(
 		"chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/sidepanel.html?session=abc&q=jdoe data:image/png;base64,iVBORw0K/a+b blob:https://x.example/1 at 203.0.113.9:8080",
 	);

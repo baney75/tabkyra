@@ -47,16 +47,18 @@ export function redactSecrets(text: string): string {
  * keep only the file name, which is what a maintainer needs from a stack trace.
  */
 export function redact(text: string): string {
-	// Tabkyra's own script URLs keep only a short file name, set aside before any rule runs: the
-	// long-token and home-path rules would otherwise eat it. Directories go, since a path can carry
-	// anything (a key, an address). The query and fragment stay in place until the secret rules
-	// have read them, then go.
+	// Tabkyra's own script URLs keep only the file name, and only when it looks like one of its
+	// build files ("chunk-4f2a.js") followed by a line number or a break; anything else in the
+	// path (a key, an address, a user name) becomes "[file]". The name is set aside so the
+	// long-token rule can't eat it. The query and fragment stay until the secret rules have read
+	// them, then go.
 	const files: string[] = [];
 	const marked = text
 		.replace(/\u0000/g, "")
-		.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)/gi, (_m, path: string) => {
-			const name = path.slice(path.lastIndexOf("/") + 1);
-			return `\u0000${files.push(/^[\w.-]{1,31}$/.test(name) ? redactSecrets(name) : "[file]") - 1}\u0000`;
+		.replace(/\bchrome-extension:\/\/[a-p]{32}\/([^\s"'<>?#)]*)/gi, (_m, path: string) => {
+			const name = /^(?:.*\/)?([A-Za-z][\w-]{0,40}\.(?:m?js|html|css|wasm|json))(?::\d+){0,2}$/.exec(path)?.[1];
+			const tail = name ? path.slice(path.lastIndexOf(name) + name.length) : "";
+			return `\u0000${files.push(name ?? "[file]") - 1}\u0000${tail}`;
 		});
 	return (
 		redactSecrets(marked)
