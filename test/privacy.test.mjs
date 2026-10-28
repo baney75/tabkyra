@@ -123,6 +123,10 @@ test("bug reports drop web addresses, emails, keys and home paths, and never tra
 	]) {
 		assert.equal(redact(`x chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/${input}`), out, input);
 	}
+	// A short key that fits the file-name shape still goes through the secret rules.
+	for (const key of [["AKIA", "IOSFODNN7EXAMPLE"].join(""), ["sk", "-ant-", "abc123def4"].join("")]) {
+		assert.equal(redact(`at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/assets/${key}.js:3:9`), "at ext:/[secret].js:3:9", key);
+	}
 	const more = redact(
 		"chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/sidepanel.html?session=abc&q=jdoe data:image/png;base64,iVBORw0K/a+b blob:https://x.example/1 at 203.0.113.9:8080",
 	);
