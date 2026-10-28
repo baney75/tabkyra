@@ -22,7 +22,11 @@ export async function tabToShare(
 
 interface SharingSession {
 	readonly tabIds: readonly number[];
-	adoptIfFree(tabId: number, makeCurrent?: boolean): Promise<{ id: string; label: string } | undefined>;
+	adoptIfFree(
+		tabId: number,
+		makeCurrent?: boolean,
+		options?: { group?: boolean },
+	): Promise<{ id: string; label: string } | undefined>;
 }
 
 /**
@@ -36,6 +40,7 @@ export async function shareActiveTab(
 ): Promise<{ tabId: number; heldBy?: string } | undefined> {
 	const tabId = await tabToShare(windowId, session.tabIds);
 	if (tabId === undefined) return undefined;
-	const owner = await session.adoptIfFree(tabId, makeCurrent);
+	// The user's tab: the agent may use it, but it stays where they keep it (no group).
+	const owner = await session.adoptIfFree(tabId, makeCurrent, { group: false });
 	return owner ? { tabId, heldBy: owner.label } : { tabId };
 }

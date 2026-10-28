@@ -257,7 +257,7 @@ async function openBrowserSession(id: string): Promise<void> {
 		if (!owner || owner.id === browserSession.id || !owner.id.startsWith("bridge-"))
 			// Only start on the home tab; re-opening (e.g. the rename on first save) must not yank
 			// the agent back from a tab it switched to.
-			await browserSession.adopt(homeTabId, browserSession.currentTabId === undefined);
+			await browserSession.adopt(homeTabId, browserSession.currentTabId === undefined, { group: false });
 	}
 	renderApp();
 }
@@ -403,7 +403,7 @@ async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Pr
 			windowId: currentWindowId,
 			adopt: async (id, makeCurrent) => {
 				if (!browserSession) throw new Error("No browser session");
-				return browserSession.adoptIfFree(id, makeCurrent);
+				return browserSession.adoptIfFree(id, makeCurrent, { group: false });
 			},
 			isRestricted: isRestrictedUrl,
 			findSkill,

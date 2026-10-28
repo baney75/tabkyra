@@ -74,6 +74,12 @@ interface PersistedSession {
 	 * still being grouped and goes (back) in.
 	 */
 	grouped?: number[];
+	/**
+	 * Tabs the user gave the agent from their own tab strip (the tab the panel opened on, the tab
+	 * in front when they sent, an `@` reference). The agent may use them, but they stay where the
+	 * user keeps them: never moved into the agent's group. Only tabs the agent opens are grouped.
+	 */
+	loose?: number[];
 }
 
 /** Who and what a bridge session serves, for its group title and `tabkyra sessions`. */
@@ -238,6 +244,17 @@ if (typeof chrome !== "undefined")
 
 function ownedElsewhere(table: SessionTable, selfId: string, tabId: number): boolean {
 	return Object.values(table).some((s) => s.id !== selfId && s.tabIds.includes(tabId));
+}
+
+/** Add a tab to, or take it off, the session's list of the user's own (ungrouped) tabs. */
+function markLoose(s: PersistedSession, tabId: number, loose: boolean): void {
+	const rest = (s.loose ?? []).filter((id) => id !== tabId);
+	if (loose) {
+		rest.push(tabId);
+		s.grouped = (s.grouped ?? []).filter((id) => id !== tabId);
+	}
+	if (rest.length) s.loose = rest;
+	else delete s.loose;
 }
 
 function fixCurrent(s: PersistedSession): void {
@@ -477,6 +494,11 @@ export class BrowserSession {
 		return this.state.windowId;
 	}
 
+	/** Whether a tab is one of the user's own tabs the agent may use (kept out of the group). */
+	isLoose(tabId: number): boolean {
+		return this.state.loose?.includes(tabId) ?? false;
+	}
+
 	get tabIds(): number[] {
 		return [...this.state.tabIds];
 	}
@@ -697,8 +719,10 @@ export class BrowserSession {
 		const lostGroup = seen.groupId !== undefined && !group ? seen.groupId : undefined;
 		// Chrome puts tabs opened from a grouped tab into that group; those are this agent's.
 		const found: number[] = [];
+		const groupedNow = new Set<number>();
 		if (group) {
 			for (const t of await chrome.tabs.query({ groupId: group.id }).catch(() => [] as chrome.tabs.Tab[])) {
+				if (t.id !== undefined) groupedNow.add(t.id);
 				if (t.id !== undefined && !seen.tabIds.includes(t.id)) found.push(t.id);
 			}
 		}
@@ -707,6 +731,14 @@ export class BrowserSession {
 			if (isAgentSession(s.id) && s.currentTabId !== undefined && dead.has(s.currentTabId))
 				s.currentTabId = undefined;
 			s.tabIds = s.tabIds.filter((id) => !dead.has(id));
+			if (s.loose) s.loose = s.loose.filter((id) => !dead.has(id));
+			// A shared tab the user dragged into the agent's group is grouped from now on.
+			if (group && s.loose?.length) {
+				for (const id of s.loose.filter((id) => groupedNow.has(id))) {
+					markLoose(s, id, false);
+					s.grouped = [...(s.grouped ?? []), id];
+				}
+			}
 			for (const id of found)
 				if (!s.tabIds.includes(id) && !s.released?.[id] && !ownedElsewhere(stored, s.id, id)) {
 					s.tabIds.push(id);
@@ -720,6 +752,8 @@ export class BrowserSession {
 		// A tab of an agent session that was in the group and is now outside it was moved by the
 		// user (dragged out, ungrouped, even the last one, which deletes the group): it is theirs.
 		for (const id of this.state.tabIds) {
+			// The user's own tabs stay where they keep them.
+			if (this.state.loose?.includes(id)) continue;
 			const tab = await tabExists(id);
 			if (!tab || (this.state.groupId !== undefined && tab.groupId === this.state.groupId)) continue;
 			// Still in the group this session just lost track of (another record claims it, or
@@ -727,6 +761,12 @@ export class BrowserSession {
 			if (lostGroup !== undefined && tab.groupId === lostGroup) continue;
 			if (isAgentSession(this.state.id) && this.state.grouped?.includes(id) && !agentTouching.has(id)) {
 				await this.userTook(id, tab);
+				continue;
+			}
+			// A side panel chat's tab the user took out of the group stays out: the agent keeps
+			// using it, ungrouped. (Putting it back is what made groups re-form on their own.)
+			if (!isAgentSession(this.state.id) && this.state.grouped?.includes(id) && !agentTouching.has(id)) {
+				await this.update((s) => markLoose(s, id, true));
 				continue;
 			}
 			await this.groupTab(id);
@@ -880,7 +920,8 @@ export class BrowserSession {
 
 	/** Record that a tab made it into the group, so a later move out of it reads as the user's. */
 	private async markGrouped(tabId: number): Promise<void> {
-		if (!isAgentSession(this.state.id) || this.state.grouped?.includes(tabId)) return;
+		// Side panel chats track this too: a tab the user later takes out stays out (reconcile).
+		if (this.state.grouped?.includes(tabId)) return;
 		await this.update((s) => {
 			if (!s.tabIds.includes(tabId)) return false;
 			s.grouped = [...(s.grouped ?? []).filter((id) => s.tabIds.includes(id)), tabId];
@@ -935,19 +976,27 @@ export class BrowserSession {
 	}
 
 	/** Take ownership of an existing tab (user handed it over, or a popup opened from an owned tab). */
-	async adopt(tabId: number, makeCurrent = true): Promise<void> {
+	async adopt(tabId: number, makeCurrent = true, options: { group?: boolean } = {}): Promise<void> {
+		const group = options.group !== false;
 		await this.update((s, table) => {
 			// A tab belongs to one session; take it away from whoever had it before.
 			for (const other of Object.values(table)) {
 				if (other.id === s.id || !other.tabIds.includes(tabId)) continue;
 				other.tabIds = other.tabIds.filter((id) => id !== tabId);
+				markLoose(other, tabId, false);
+				other.grouped = (other.grouped ?? []).filter((id) => id !== tabId);
 				fixCurrent(other);
 			}
-			if (!s.tabIds.includes(tabId)) s.tabIds.push(tabId);
+			// A tab this session already has keeps its place: the agent's own grouped tab stays
+			// grouped when the user references it, a shared tab stays where the user keeps it.
+			if (!s.tabIds.includes(tabId)) {
+				s.tabIds.push(tabId);
+				markLoose(s, tabId, !group);
+			}
 			if (makeCurrent) s.currentTabId = tabId;
 			if (s.released) delete s.released[tabId];
 		});
-		await this.groupTab(tabId);
+		if (group) await this.groupTab(tabId);
 	}
 
 	/**
@@ -955,7 +1004,12 @@ export class BrowserSession {
 	 * and the claim happen under one lock, so an agent that takes the tab meanwhile keeps it.
 	 * Returns that other session when it owns the tab (nothing changes then).
 	 */
-	async adoptIfFree(tabId: number, makeCurrent = true): Promise<{ id: string; label: string } | undefined> {
+	async adoptIfFree(
+		tabId: number,
+		makeCurrent = true,
+		options: { group?: boolean } = {},
+	): Promise<{ id: string; label: string } | undefined> {
+		const group = options.group !== false;
 		let owner: { id: string; label: string } | undefined;
 		await this.update((s, table) => {
 			const other = Object.values(table).find((o) => o.id !== s.id && o.tabIds.includes(tabId));
@@ -963,11 +1017,14 @@ export class BrowserSession {
 				owner = { id: other.id, label: other.label };
 				return false;
 			}
-			if (!s.tabIds.includes(tabId)) s.tabIds.push(tabId);
+			if (!s.tabIds.includes(tabId)) {
+				s.tabIds.push(tabId);
+				markLoose(s, tabId, !group);
+			}
 			if (makeCurrent) s.currentTabId = tabId;
 			if (s.released) delete s.released[tabId];
 		});
-		if (!owner) await this.groupTab(tabId);
+		if (!owner && group && !this.state.loose?.includes(tabId)) await this.groupTab(tabId);
 		return owner;
 	}
 
@@ -976,6 +1033,7 @@ export class BrowserSession {
 		const done = touch(tabId);
 		await this.update((s) => {
 			s.grouped = (s.grouped ?? []).filter((id) => id !== tabId);
+			markLoose(s, tabId, false);
 			s.tabIds = s.tabIds.filter((id) => id !== tabId);
 			// An agent that gave its current tab away picks the next page itself.
 			if (options.clearCurrent && s.currentTabId === tabId) s.currentTabId = undefined;

@@ -54,8 +54,9 @@ async function onNewTab(tabId: number, sourceTabId: number, via: string): Promis
 	// this ran, and opening the id read above would recreate the old record.
 	const session = await BrowserSession.openOwnerOf(sourceTabId);
 	if (!session) return;
-	// The popup becomes the session's current tab, as the model would expect after a click.
-	await session.adopt(tabId, true);
+	// The popup becomes the session's current tab, as the model would expect after a click. A
+	// tab opened from one of the user's own tabs stays out of the group, like its opener.
+	await session.adopt(tabId, true, { group: !session.isLoose(sourceTabId) });
 	guardLog(`popup tab=${tabId} from=${sourceTabId} -> ${session.id}${restored ? " (focus restored)" : ""}`);
 }
 
