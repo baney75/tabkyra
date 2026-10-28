@@ -546,7 +546,10 @@ test("when a new tab can't join the agent's group it waits outside, without spli
 	assert.equal(fake.groupOf(c), groupId);
 });
 
-test("a side panel chat's tab that leaves its group goes back: the agent rules are for agent sessions", async () => {
+// Owner, 2026-10-28: "groups keep auto forming even when i dont request it". A side panel chat's
+// tab the user takes out of the group stays out; the chat keeps using it (no hand-off notice:
+// that rule is for agent sessions).
+test("a side panel chat's tab that leaves its group stays out, and the chat keeps it", async () => {
 	const fake = installFakeChrome();
 	const { BrowserSession } = await load("panel");
 	const home = fake.addTab({ active: true });
@@ -557,7 +560,7 @@ test("a side panel chat's tab that leaves its group goes back: the agent rules a
 	await settle();
 	await s.reconcile();
 	assert.ok(s.tabIds.includes(other));
-	assert.notEqual(fake.groupOf(other), -1);
+	assert.equal(fake.groupOf(other), -1);
 });
 
 test("an idle agent group collapses; one in use, or one the user is looking at, doesn't", async () => {
@@ -607,16 +610,34 @@ test("tabs the user shares stay out of any group; only tabs the agent opens are 
 	assert.equal(s.isLoose(home), false);
 });
 
-test("a user's tab an older version grouped comes out of the group when shared again", async () => {
+test("a panel tab the user takes out of the group stays out, and the agent keeps using it", async () => {
 	const fake = installFakeChrome();
 	const { BrowserSession } = await load("panel");
 	const home = fake.addTab({ active: true, url: "https://mail.example/" });
 	const s = await BrowserSession.open(`tab-${home}`, "chat", 1);
 	await s.adopt(home, true); // what earlier versions did: grouped
 	assert.notEqual(fake.groupOf(home), -1);
-	await s.adopt(home, true, { group: false });
-	assert.equal(fake.groupOf(home), -1);
+	fake.userSetGroup(home, -1); // the user ungroups it
 	await s.reconcile();
-	assert.equal(fake.groupOf(home), -1, "reconcile put it back");
+	assert.equal(fake.groupOf(home), -1, "reconcile put it back in a group");
 	assert.ok(s.tabIds.includes(home), "the agent lost access to it");
+	await s.reconcile();
+	assert.equal(fake.groupOf(home), -1, "a later reconcile put it back");
+});
+
+test("the agent's own grouped tab stays grouped when the user references it", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("panel");
+	const home = fake.addTab({ active: true, url: "https://mail.example/" });
+	const s = await BrowserSession.open(`tab-${home}`, "chat", 1);
+	await s.adopt(home, true, { group: false });
+	const opened = await s.createTab("https://shop.example/");
+	const g = fake.groupOf(opened.id);
+	assert.notEqual(g, -1);
+	// "@" reference or the tab in front on send: both adopt with { group: false }.
+	assert.equal(await s.adoptIfFree(opened.id, true, { group: false }), undefined);
+	await s.adopt(opened.id, false, { group: false });
+	await s.reconcile();
+	assert.equal(fake.groupOf(opened.id), g, "the agent's tab left its group");
+	assert.equal(s.isLoose(opened.id), false);
 });

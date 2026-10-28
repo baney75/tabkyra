@@ -763,6 +763,12 @@ export class BrowserSession {
 				await this.userTook(id, tab);
 				continue;
 			}
+			// A side panel chat's tab the user took out of the group stays out: the agent keeps
+			// using it, ungrouped. (Putting it back is what made groups re-form on their own.)
+			if (!isAgentSession(this.state.id) && this.state.grouped?.includes(id) && !agentTouching.has(id)) {
+				await this.update((s) => markLoose(s, id, true));
+				continue;
+			}
 			await this.groupTab(id);
 		}
 	}
@@ -914,7 +920,8 @@ export class BrowserSession {
 
 	/** Record that a tab made it into the group, so a later move out of it reads as the user's. */
 	private async markGrouped(tabId: number): Promise<void> {
-		if (!isAgentSession(this.state.id) || this.state.grouped?.includes(tabId)) return;
+		// Side panel chats track this too: a tab the user later takes out stays out (reconcile).
+		if (this.state.grouped?.includes(tabId)) return;
 		await this.update((s) => {
 			if (!s.tabIds.includes(tabId)) return false;
 			s.grouped = [...(s.grouped ?? []).filter((id) => s.tabIds.includes(id)), tabId];
@@ -976,22 +983,20 @@ export class BrowserSession {
 			for (const other of Object.values(table)) {
 				if (other.id === s.id || !other.tabIds.includes(tabId)) continue;
 				other.tabIds = other.tabIds.filter((id) => id !== tabId);
+				markLoose(other, tabId, false);
+				other.grouped = (other.grouped ?? []).filter((id) => id !== tabId);
 				fixCurrent(other);
 			}
-			if (!s.tabIds.includes(tabId)) s.tabIds.push(tabId);
+			// A tab this session already has keeps its place: the agent's own grouped tab stays
+			// grouped when the user references it, a shared tab stays where the user keeps it.
+			if (!s.tabIds.includes(tabId)) {
+				s.tabIds.push(tabId);
+				markLoose(s, tabId, !group);
+			}
 			if (makeCurrent) s.currentTabId = tabId;
 			if (s.released) delete s.released[tabId];
-			markLoose(s, tabId, !group);
 		});
 		if (group) await this.groupTab(tabId);
-		else await this.ungroupOwn(tabId);
-	}
-
-	/** A user's tab that an older version put in this session's group comes back out of it. */
-	private async ungroupOwn(tabId: number): Promise<void> {
-		const tab = await chrome.tabs.get(tabId).catch(() => undefined);
-		if (tab && this.state.groupId !== undefined && tab.groupId === this.state.groupId)
-			await chrome.tabs.ungroup(tabId).catch(() => undefined);
 	}
 
 	/**
@@ -1012,12 +1017,14 @@ export class BrowserSession {
 				owner = { id: other.id, label: other.label };
 				return false;
 			}
-			if (!s.tabIds.includes(tabId)) s.tabIds.push(tabId);
+			if (!s.tabIds.includes(tabId)) {
+				s.tabIds.push(tabId);
+				markLoose(s, tabId, !group);
+			}
 			if (makeCurrent) s.currentTabId = tabId;
 			if (s.released) delete s.released[tabId];
-			markLoose(s, tabId, !group);
 		});
-		if (!owner) await (group ? this.groupTab(tabId) : this.ungroupOwn(tabId));
+		if (!owner && group && !this.state.loose?.includes(tabId)) await this.groupTab(tabId);
 		return owner;
 	}
 
