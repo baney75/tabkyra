@@ -426,3 +426,138 @@ test("before the first catalog is published, a 404 is not an error and waits a d
 		server.close();
 	}
 });
+
+// --- Review round 1 (PR #56): each high finding gets a test that failed before its fix. -----
+
+const MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
+const statePath = (home) => join(home, ".config", "tabkyra", "community", "state.json");
+const editState = (home, fn) => writeFileSync(statePath(home), JSON.stringify(fn(JSON.parse(readFileSync(statePath(home), "utf8")))));
+
+test("first-F1/sol-F2: the MCP server's sync and every later sync delete installed copies of pulled skills", async () => {
+	const home = newHome();
+	const repo = fixtureRepo("mcp-sync-repo", { "notion-navigation": skillText });
+	assert.equal(run(home, ["skill", "sync"], { TABKYRA_COMMUNITY_URL: publish(repo, 30) }).code, 0);
+	assert.equal(run(home, ["skill", "install", "notion-navigation"]).code, 0);
+	const installed = join(home, ".claude", "skills", "notion-navigation", "SKILL.md");
+	assert.ok(existsSync(installed));
+	const pulled = fixtureRepo("mcp-sync-repo-2");
+	mkdirSync(join(pulled, "community"), { recursive: true });
+	writeFileSync(join(pulled, "community", "revoked.json"), JSON.stringify({ revoked: [{ skill: "notion-navigation", reason: "pulled" }] }));
+	const dir = publish(pulled, 31);
+	// Make the server's start-up sync due, then let `tabkyra mcp` do it on its own.
+	editState(home, ({ lastCheck, ...rest }) => rest);
+	const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+	const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
+	const mcp = new Client({ name: "sync-test", version: "0.0.0" });
+	await mcp.connect(
+		new StdioClientTransport({
+			command: process.execPath,
+			args: [cli, "mcp"],
+			env: { HOME: home, PATH: "/usr/bin:/bin", NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(home, "sock"), TABKYRA_UPDATE_PUBKEY: keyFile, TABKYRA_COMMUNITY_URL: dir },
+			stderr: "ignore",
+		}),
+	);
+	try {
+		for (let i = 0; i < 100 && existsSync(installed); i++) await new Promise((r) => setTimeout(r, 100));
+		assert.equal(JSON.parse(readFileSync(statePath(home), "utf8")).serial, 31);
+		assert.ok(!existsSync(installed), "the MCP server's sync deleted the installed copy");
+	} finally {
+		await mcp.close();
+	}
+	// A copy an interrupted cleanup left behind goes on the next sync, though the catalog is current.
+	mkdirSync(dirname(installed), { recursive: true });
+	writeFileSync(installed, `---\nname: notion-navigation\n---\n${MARKER}\nleft over\n`);
+	const again = run(home, ["skill", "sync"], { TABKYRA_COMMUNITY_URL: dir });
+	assert.equal(again.code, 0, again.out);
+	assert.ok(!existsSync(installed), again.out);
+});
+
+test("sol-F1: a slow sync that finishes after a newer catalog was accepted doesn't roll it back", async () => {
+	const { createServer } = await import("node:http");
+	const { spawn } = await import("node:child_process");
+	const home = newHome();
+	const repo = fixtureRepo("race-repo", { "notion-navigation": skillText });
+	const older = publish(repo, 150);
+	const newer = publish(repo, 200);
+	let release;
+	const released = new Promise((r) => {
+		release = r;
+	});
+	let requests = 0;
+	const server = createServer(async (req, res) => {
+		requests++;
+		await released;
+		res.end(readFileSync(join(older, req.url.split("/").pop())));
+	});
+	await new Promise((r) => server.listen(0, "127.0.0.1", r));
+	try {
+		const env = { HOME: home, PATH: "/usr/bin:/bin", NO_COLOR: "1", TABKYRA_UPDATE_PUBKEY: keyFile, TABKYRA_COMMUNITY_URL: `http://127.0.0.1:${server.address().port}/c` };
+		const slow = new Promise((done) => {
+			const child = spawn(process.execPath, [cli, "skill", "sync"], { env });
+			let out = "";
+			child.stdout.on("data", (d) => {
+				out += d;
+			});
+			child.stderr.on("data", (d) => {
+				out += d;
+			});
+			child.on("close", (code) => done({ code, out }));
+		});
+		for (let i = 0; i < 100 && requests < 2; i++) await new Promise((r) => setTimeout(r, 50));
+		assert.equal(requests, 2, "the slow sync is downloading");
+		assert.equal(run(home, ["skill", "sync"], { TABKYRA_COMMUNITY_URL: newer }).code, 0);
+		release();
+		const r = await slow;
+		assert.equal(r.code, 1, r.out);
+		assert.match(r.out, /serial 150 is older than 200/);
+		assert.equal(JSON.parse(readFileSync(statePath(home), "utf8")).serial, 200);
+		assert.equal(JSON.parse(run(home, ["skill", "list", "--json"]).stdout).find((s) => s.name === "notion-navigation")?.provenance, "community, catalog 200");
+	} finally {
+		server.close();
+	}
+});
+
+test("sol-F3: a local copy of a community skill is used only while that skill is, whatever the removal history keeps", () => {
+	const home = newHome();
+	const repo = fixtureRepo("base-repo", { "notion-navigation": skillText });
+	assert.equal(run(home, ["skill", "sync"], { TABKYRA_COMMUNITY_URL: publish(repo, 40) }).code, 0);
+	assert.equal(run(home, ["skill", "write", "notion-navigation", "--yes"], {}, edited).code, 0);
+	const pulled = fixtureRepo("base-repo-2");
+	mkdirSync(join(pulled, "community"), { recursive: true });
+	writeFileSync(join(pulled, "community", "revoked.json"), JSON.stringify({ revoked: [{ skill: "notion-navigation", reason: "pulled" }] }));
+	assert.equal(run(home, ["skill", "sync"], { TABKYRA_COMMUNITY_URL: publish(pulled, 41) }).code, 0);
+	// The bounded removal history no longer mentions it (200 later removals, or a hand edit).
+	editState(home, (s) => ({ ...s, removed: [] }));
+	assert.ok(!JSON.parse(run(home, ["skill", "list", "--json"]).stdout).some((s) => s.name === "notion-navigation"));
+	const read = run(home, ["skill", "print", "notion-navigation"]);
+	assert.equal(read.code, 1, read.out);
+	// Opting out turns such copies off too; the file stays.
+	const home2 = newHome();
+	assert.equal(run(home2, ["skill", "sync"], { TABKYRA_COMMUNITY_URL: publish(repo, 42) }).code, 0);
+	assert.equal(run(home2, ["skill", "write", "notion-navigation", "--yes"], {}, edited).code, 0);
+	assert.equal(run(home2, ["skill", "sync", "--off"]).code, 0);
+	assert.ok(!JSON.parse(run(home2, ["skill", "list", "--json"]).stdout).some((s) => s.name === "notion-navigation"));
+	assert.equal(readFileSync(join(home2, ".config", "tabkyra", "skills-local", "notion-navigation", "SKILL.md"), "utf8"), edited);
+});
+
+test("sol-F4: a catalog can't pull a built-in skill or delete its installed copies", () => {
+	const bad = fixtureRepo("revoke-builtin");
+	mkdirSync(join(bad, "community"), { recursive: true });
+	writeFileSync(join(bad, "community", "revoked.json"), JSON.stringify({ revoked: [{ skill: "dorks", reason: "x" }] }));
+	const r = run(root, ["skill", "catalog", bad, "--out", join(root, "revoke-builtin.json"), "--serial", "1"]);
+	assert.equal(r.code, 1);
+	assert.match(r.out, /names dorks, a built-in skill/);
+	// A signed catalog that says so anyway (built by hand) changes nothing for built-in skills.
+	const home = newHome();
+	assert.equal(run(home, ["skill", "install", "dorks"]).code, 0);
+	const installed = join(home, ".claude", "skills", "dorks", "SKILL.md");
+	assert.ok(existsSync(installed));
+	const dir = join(root, "handmade-catalog");
+	mkdirSync(dir);
+	const data = Buffer.from(JSON.stringify({ schema: 1, serial: 50, generated: new Date().toISOString(), source: "test", skills: [], revoked: [{ skill: "dorks", reason: "x" }] }));
+	writeFileSync(join(dir, "community-catalog.json"), data);
+	writeFileSync(join(dir, "community-catalog.json.minisig"), signMinisign(data, key, "tabkyra community-catalog 50"));
+	assert.equal(run(home, ["skill", "sync"], { TABKYRA_COMMUNITY_URL: dir }).code, 0);
+	assert.ok(existsSync(installed), "the built-in skill's installed copy is still there");
+	assert.ok(JSON.parse(run(home, ["skill", "list", "--json"]).stdout).some((s) => s.name === "dorks"));
+});

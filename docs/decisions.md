@@ -472,9 +472,17 @@ then synced amongst those who use tabkyra." Defaults chosen:
   refused fetch keeps the catalog in use and doesn't count as a check. `tabkyra skill sync`
   checks now; `--off` (or the switch in Settings > Skills) turns community skills off and stops
   checking. The side panel gets the skills from the native host, never from the network.
-- **Local edits win.** Editing a community skill keeps a local copy (`skills-local`, base
-  `community`). A sync never touches it; `skill list` says it overrides the community version
-  and when that version changed. `skill revert` goes back.
+- **Local edits win, while their base is in use.** Editing a community skill keeps a local copy
+  (`skills-local`, base `community`). A sync never touches it; `skill list` says it overrides the
+  community version and when that version changed. `skill revert` goes back. Such a copy is used
+  only while the community skill it was made from is: in the verified catalog, community skills
+  on, not removed by the user. So a pulled skill can't come back through a local copy, and
+  opting out turns these copies off too. The file is always kept. (Review of #56, sol-F3.)
+- **Cleanup is idempotent.** Every sync, from any process, deletes the installed copies (ours,
+  with the marker) of community skills not in use, so a cleanup another process skipped happens
+  on the next pass. A catalog can't pull a built-in skill: the build refuses it and clients never
+  delete a built-in skill's copies. Catalog commits take a lock and recheck the serial under it,
+  so a slow sync can't roll back a newer catalog. (Review of #56, first-F1, sol-F1, sol-F2, sol-F4.)
 - **Pulling a skill.** Delete its folder and list it in `community/revoked.json` with a reason.
   At the next sync the skill is no longer matched or read (`skill_read` gives the reason), the
   copies Tabkyra installed into harnesses are deleted, and a local copy based on it is turned

@@ -16,8 +16,7 @@ import { chooseSession } from "./session-name.ts";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { syncCatalog } from "./community-catalog.ts";
-import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, writeSkill } from "./skill.ts";
+import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, syncCommunity, writeSkill } from "./skill.ts";
 import { stageCases } from "./skill-submit.ts";
 import { VERSION } from "./version.ts";
 
@@ -881,7 +880,8 @@ export async function runMcpServer(options: { session?: string } = {}): Promise<
 	}
 	const { server, client } = createMcpServer({ sessionFlag: options.session });
 	// Community skills, about daily, in the background: many harnesses keep this server running.
-	const sync = () => syncCatalog({ due: true }).catch(() => undefined);
+	// The whole reconciliation (skill.ts syncCommunity), not just the fetch: pulled skills lose their installed copies here too.
+	const sync = () => syncCommunity({ due: true }).catch(() => undefined);
 	void sync();
 	setInterval(sync, 6 * 60 * 60 * 1000).unref();
 	const transport = new StdioServerTransport();

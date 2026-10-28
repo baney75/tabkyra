@@ -10,7 +10,7 @@
 
 import type { HostCommunitySkill, HostCommunityStatus, HostToExt } from "../../src/bridge/protocol.ts";
 import { loadCatalog, readState, setEnabled, SYNC_INTERVAL_MS } from "./community-catalog.ts";
-import { listSkills, readSkill, removeInstalledCopies, syncCommunity } from "./skill.ts";
+import { listSkills, readSkill, reconcileInstalled, syncCommunity } from "./skill.ts";
 
 type Send = (message: HostToExt) => void;
 
@@ -82,7 +82,7 @@ export function handleCommunityAction(message: unknown, send: Send): void {
 		return;
 	}
 	setEnabled(action === "on");
-	if (action === "off") for (const name of loadCatalog().catalog?.skills.map((s) => s.name) ?? []) removeInstalledCopies(name);
+	if (action === "off") reconcileInstalled();
 	if (action === "on") void sync(send, false);
 	else sendStatus(send);
 }

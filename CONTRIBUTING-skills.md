@@ -63,8 +63,10 @@ A maintainer reads the skill and merges it by hand. Nothing merges on its own.
 - Merged skills reach users in a signed catalog, checked about once a day. It is signed with
   the release key in CI; clients refuse an unsigned, tampered or older catalog.
 - Settings > Skills in the side panel, or `tabkyra skill sync --off`, turns community skills off.
-- If you edit a community skill, your copy is kept and used. A newer community version never
-  overwrites it; `tabkyra skill list` says so, and `tabkyra skill revert <name>` goes back.
+- If you edit a community skill, your copy is kept and used while that community skill is in
+  use. A newer community version never overwrites it; `tabkyra skill list` says so, and
+  `tabkyra skill revert <name>` goes back. If the skill is pulled or you turn community skills
+  off, your copy is turned off too; the file stays.
 - `tabkyra skill remove <name>` turns a community skill off on your device;
   `tabkyra skill enable <name>` turns it back on.
 - To pull a merged skill, a maintainer deletes its folder and adds it with a reason to

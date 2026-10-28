@@ -57,11 +57,19 @@ function baseText(name: string): string | undefined {
 	return SKILLS.get(name) ?? communitySkills().get(name)?.text;
 }
 
-/** A local copy made from a community skill the catalog has since pulled: never used. */
-function pulledBase(name: string): string | undefined {
+/**
+ * Why a local copy made from a community skill is off, if it is. It is used only while the
+ * community skill it was made from is in use: in the verified catalog, community skills on, not
+ * removed by the user. So a pulled skill can't come back through a local copy, however long ago
+ * it was pulled, and a missing or refused catalog turns such copies off too. The file is kept.
+ */
+function communityBaseProblem(name: string): string | undefined {
 	if (readIndex()[name]?.base !== "community" || SKILLS.has(name) || communitySkills().has(name)) return undefined;
+	if (!readState().enabled) return "community skills are off";
 	const reason = removalReason(name);
-	return reason?.startsWith("the community catalog pulled") ? reason : undefined;
+	if (reason) return reason;
+	const { problem } = loadCatalog();
+	return problem ? `the community catalog isn't in use (${problem})` : `the community skill ${name} it was made from is not in the verified community catalog`;
 }
 
 /** Every name reaches a path, so every name is checked first: no "..", no slashes. */
@@ -211,8 +219,8 @@ function localText(name: string): { text?: string; problem?: string; overBudget?
 	if (!existsSync(file) && !isLink(file)) return {};
 	if (!readIndex()[name]) return { problem: `${file} wasn't added with tabkyra skill apply` };
 	if (PROTECTED_SKILLS.has(name)) return { problem: `${name} changes only through a reviewed pull request` };
-	const pulled = pulledBase(name);
-	if (pulled) return { problem: `${pulled}, so your copy based on it is off too` };
+	const off = communityBaseProblem(name);
+	if (off) return { problem: `${off}, so your copy based on it is off too (the file is kept)` };
 	if (isLink(file) || isLink(dirname(file))) return { problem: `${file} is a symlink` };
 	if (!lstatSync(file).isFile()) return { problem: `${file} is not a file` };
 	const text = readFileSync(file, "utf8");
@@ -657,6 +665,8 @@ export function revertSkill(name: string): { removed: boolean; results: InstallR
 /** Delete the copies of `name` Tabkyra installed into harnesses (they carry the marker); never anyone else's. */
 export function removeInstalledCopies(name: string): string[] {
 	const removed: string[] = [];
+	// Built-in skills' copies are refreshed or kept, never deleted by community state.
+	if (SKILLS.has(name)) return removed;
 	for (const target of skillTargets()) {
 		const installed = join(target.dir, assertName(name), "SKILL.md");
 		if (isLink(installed) || isLink(dirname(installed))) continue;
@@ -1129,16 +1139,39 @@ export interface CommunitySync extends SyncResult {
 export async function syncCommunity(options: { due?: boolean } = {}): Promise<CommunitySync> {
 	const result = await syncCatalog(options);
 	const notes: string[] = [];
+	// Every pass, whatever the fetch did: a cleanup an earlier process skipped or didn't finish
+	// happens now (it only deletes copies Tabkyra installed, of skills no longer in use).
+	const deleted = reconcileInstalled();
 	for (const r of result.removed) {
-		const files = removeInstalledCopies(r.name);
 		const local = readIndex()[r.name]?.base === "community" ? " Your local copy of it is turned off too; tabkyra skill revert removes it." : "";
-		notes.push(`Removed the community skill ${r.name}: ${r.reason}.${files.length ? ` Deleted ${files.length} installed cop${files.length === 1 ? "y" : "ies"}.` : ""}${local}`);
+		notes.push(`Removed the community skill ${r.name}: ${r.reason}.${local}`);
 	}
+	if (deleted.length) notes.push(`Deleted ${deleted.length} installed cop${deleted.length === 1 ? "y" : "ies"} of community skills no longer in use.`);
 	for (const name of result.updated) {
 		if (localText(name).text !== undefined) notes.push(`Kept your local copy of ${name}; the community version changed. tabkyra skill revert ${name} switches to it.`);
 	}
 	if (result.updated.length) refreshInstalledSkills();
 	return { ...result, notes };
+}
+
+/**
+ * Delete the installed copies (ours, with the marker) of community skills that aren't in use:
+ * pulled, removed by the user, or all of them when community skills are off. Never a built-in
+ * skill's copy, and never a copy of the user's own skill that happens to share a name.
+ */
+export function reconcileInstalled(): string[] {
+	const state = readState();
+	const { catalog } = loadCatalog();
+	const active = communitySkills();
+	const candidates = new Set([...state.removed.map((r) => r.name), ...(catalog?.revoked.map((r) => r.skill) ?? []), ...state.disabled, ...(state.enabled ? [] : (catalog?.skills.map((s) => s.name) ?? []))]);
+	const index = readIndex();
+	const deleted: string[] = [];
+	for (const name of candidates) {
+		if (!isName(name) || SKILLS.has(name) || active.has(name)) continue;
+		if (index[name] && index[name].base !== "community") continue;
+		deleted.push(...removeInstalledCopies(name));
+	}
+	return deleted;
 }
 
 export async function runSkillSync(args: string[], flags: SkillFlags): Promise<number> {
@@ -1147,7 +1180,7 @@ export async function runSkillSync(args: string[], flags: SkillFlags): Promise<n
 		if (flags.on && flags.off) throw new SkillError("Pick one of --on and --off.");
 		if (flags.on || flags.off) {
 			setEnabled(Boolean(flags.on));
-			if (flags.off) for (const name of loadCatalog().catalog?.skills.map((s) => s.name) ?? []) removeInstalledCopies(name);
+			if (flags.off) reconcileInstalled();
 			console.log(flags.on ? `${sym.ok} Community skills are on. They are checked about once a day; run tabkyra skill sync to check now.` : `${sym.ok} Community skills are off: none is matched or read, and Tabkyra stops checking for them.`);
 			return 0;
 		}

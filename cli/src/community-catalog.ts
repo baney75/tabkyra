@@ -19,7 +19,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import RELEASE_KEY from "../../keys/tabkyra-release.pub";
@@ -126,7 +126,7 @@ export function buildCatalog(root: string, options: { serial: number; source: st
 	if (!Number.isSafeInteger(options.serial) || options.serial < 1) throw new CatalogError("The serial must be a positive whole number.");
 	const bundled = bundledNamesIn(root);
 	const revoked = readRevoked(root);
-	const problems: string[] = [];
+	const problems: string[] = revoked.filter((r) => bundled.has(r.skill)).map((r) => `community/revoked.json names ${r.skill}, a built-in skill; the community catalog can only pull community skills.`);
 	const skills: CatalogSkill[] = [];
 	for (const { name, text } of readCommunityFolder(root)) {
 		problems.push(...communityProblems(name, text, bundled));
@@ -407,6 +407,22 @@ export async function syncCatalog(options: { due?: boolean } = {}): Promise<Sync
 		writeState({ ...readState(), lastError: message });
 		return { state: "refused", message, serial: state.serial, ...empty };
 	}
+	return withSyncLock(() => commitCatalog(next, data, signature, at, empty));
+}
+
+/**
+ * Keep an accepted catalog. Runs under the sync lock and compares against the state as it is
+ * now, not as it was before the download: another process may have accepted a newer catalog
+ * meanwhile, and this one must not roll it back.
+ */
+function commitCatalog(next: Catalog, data: Buffer, signature: string, at: string, empty: { added: string[]; updated: string[]; removed: Array<{ name: string; reason: string }> }): SyncResult {
+	const state = readState();
+	if (state.serial !== undefined && next.serial < state.serial) {
+		const message = `Refused the community catalog: serial ${next.serial} is older than ${state.serial}, the one in use. An old catalog could bring back a pulled skill.`;
+		writeState({ ...state, lastError: message });
+		return { state: "refused", message, serial: state.serial, ...empty };
+	}
+	cached = undefined;
 	const before = loadCatalog().catalog;
 	const old = new Map((before?.skills ?? []).map((s) => [s.name, s]));
 	const fresh = new Map(next.skills.map((s) => [s.name, s]));
@@ -430,4 +446,36 @@ export async function syncCatalog(options: { due?: boolean } = {}): Promise<Sync
 	});
 	cached = undefined;
 	return { state: next.serial === state.serial && added.length + updated.length + removed.length === 0 ? "current" : "updated", message, serial: next.serial, added, updated, removed };
+}
+
+/** Lock files older than this belong to a process that died mid-commit. */
+const STALE_LOCK_MS = 60_000;
+
+/** One commit at a time across processes (the native host, MCP servers, the CLI). */
+function withSyncLock<T>(fn: () => T): T {
+	const dir = communityDir();
+	if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) throw new CatalogError(`${dir} is a symbolic link; Tabkyra won't write through it.`);
+	mkdirSync(dir, { recursive: true });
+	const lock = join(dir, "sync.lock");
+	const deadline = Date.now() + 15_000;
+	for (;;) {
+		try {
+			writeFileSync(lock, String(process.pid), { flag: "wx", mode: 0o600 });
+			break;
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+			try {
+				if (Date.now() - statSync(lock).mtimeMs > STALE_LOCK_MS) rmSync(lock, { force: true });
+			} catch {
+				/* gone meanwhile */
+			}
+			if (Date.now() > deadline) throw new CatalogError("Another Tabkyra process is saving the community catalog; try again in a moment.");
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+		}
+	}
+	try {
+		return fn();
+	} finally {
+		rmSync(lock, { force: true });
+	}
 }
