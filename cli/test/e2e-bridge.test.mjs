@@ -580,6 +580,7 @@ test("the side panel has no share button: the tab in front goes with the message
 	assert.equal(await inPanel(`[...document.querySelectorAll("button")].some((b) => /share this tab/i.test(b.innerText))`), false);
 	await inPanel(`chrome.tabs.remove(${tabId}).then(() => true)`);
 	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
+});
 
 test("subscription sign-ins: the side panel reaches the native host through the relay and gets a proxy, never a token", async () => {
 	await connected();
