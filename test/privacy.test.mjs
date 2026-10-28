@@ -87,6 +87,46 @@ test("bug reports drop web addresses, emails, keys and home paths, and never tra
 	assert.doesNotMatch(text, /mail\.example|patient-records|ada@example|ABCDEFGHIJKLMNOP|donovan|\\ada\\|kenehmggpggpiolepbjojeenmeapgfoc/);
 	assert.match(text, /\[url\]/);
 	assert.match(text, /ext:\/sidepanel\.js/);
+	assert.match(
+		redact("at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/assets/chunk-4f2a.js:3:9"),
+		/ext:\/chunk-4f2a\.js:3:9/,
+		"a stack line keeps its file name when the path has digits",
+	);
+	assert.match(
+		redact("at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/assets/components/ThreadListView.js:3:9"),
+		/ext:\/ThreadListView\.js:3:9/,
+		"a long path keeps its file name",
+	);
+	assert.match(redact("at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/pages/home/view.js:3:9"), /ext:\/view\.js:3:9/);
+	const tokenAfterQuery = ["a1b2c3d4", "e5f6g7h8i9"].join("");
+	const leaked = redact(`at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/api.js?auth=Bearer ${tokenAfterQuery}`);
+	assert.doesNotMatch(leaked, new RegExp(tokenAfterQuery), "the query is read by the secret rules before it is dropped");
+	assert.doesNotMatch(leaked, /auth=/);
+	assert.match(redact("a \u00000\u0000 b"), /^a 0 b$/, "a planted marker can't pull in a path");
+	// Directories never survive: a path can carry a key (with "/" in it) or an address.
+	for (const dir of [["Zx9", "Qw8".repeat(10)].join(""), "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "0123456789abcdef".repeat(2) + "01234567", "a/203.0.113.9"]) {
+		const out = redact(`at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/${dir}/a.js:3:9`);
+		assert.equal(out, "at ext:/a.js:3:9", dir);
+	}
+	assert.equal(redact(`chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/${"0123456789abcdef".repeat(2)}01234567.js`), "ext:/[file]", "a long file name is dropped");
+	// Anything that isn't plainly a build file name loses its path.
+	for (const [input, out] of [
+		["203.0.113.9", "x ext:/[file]"],
+		["Users/donovan", "x ext:/[file]"],
+		["home/ada", "x ext:/[file]"],
+		["Zq8xW3mN7pL2vR9tY4kB6cH1dF5gJ0s+Ab3Cd4Ef5Gh6", "x ext:/[file]"],
+		["a.js@example.com", "x ext:/[file]"],
+		[`${["Zx9", "Qw8".repeat(10)].join("")}.js:3:9`, "x ext:/[file]"],
+		[`${["ghp", "_", "a1".repeat(18)].join("")}.js`, "x ext:/[file]"],
+		["a.js:3?q=patient-records-jdoe", "x ext:/a.js:3"],
+		["a.js#frag-jdoe", "x ext:/a.js"],
+	]) {
+		assert.equal(redact(`x chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/${input}`), out, input);
+	}
+	// A short key that fits the file-name shape still goes through the secret rules.
+	for (const key of [["AKIA", "IOSFODNN7EXAMPLE"].join(""), ["sk", "-ant-", "abc123def4"].join("")]) {
+		assert.equal(redact(`at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/assets/${key}.js:3:9`), "at ext:/[secret].js:3:9", key);
+	}
 	const more = redact(
 		"chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/sidepanel.html?session=abc&q=jdoe data:image/png;base64,iVBORw0K/a+b blob:https://x.example/1 at 203.0.113.9:8080",
 	);

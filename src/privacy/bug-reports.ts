@@ -18,11 +18,6 @@ export interface BugEntry {
 }
 
 /**
- * Strip what could identify the user or leak a secret. Web addresses become `[url]`
- * (paths and hosts can name people, records or accounts); Tabkyra's own extension scripts
- * keep only the file name, which is what a maintainer needs from a stack trace.
- */
-/**
  * Strip secrets only: API keys and tokens by their known prefixes, bearer headers, JWTs and
  * private key blocks. Unlike `redact`, it keeps addresses and names: a chat transcript an
  * agent reads back still needs its URLs, but never a key someone pasted into it.
@@ -46,10 +41,28 @@ export function redactSecrets(text: string): string {
 	);
 }
 
+/**
+ * Strip what could identify the user or leak a secret. Web addresses become `[url]`
+ * (paths and hosts can name people, records or accounts); Tabkyra's own extension scripts
+ * keep only the file name, which is what a maintainer needs from a stack trace.
+ */
 export function redact(text: string): string {
+	// Tabkyra's own script URLs keep only the file name, and only when it looks like one of its
+	// build files ("chunk-4f2a.js", at most 24 characters before the extension) followed by a line number or a break; anything else in the
+	// path (a key, an address, a user name) becomes "[file]". The name is set aside so the
+	// long-token rule can't eat it. The query and fragment stay until the secret rules have read
+	// them, then go.
+	const files: string[] = [];
+	const marked = text
+		.replace(/\u0000/g, "")
+		.replace(/\bchrome-extension:\/\/[a-p]{32}\/([^\s"'<>?#)]*)/gi, (_m, path: string) => {
+			const name = /^(?:.*\/)?([A-Za-z][\w-]{0,23}\.(?:m?js|html|css|wasm|json))(?::\d+){0,2}$/.exec(path)?.[1];
+			const tail = name ? path.slice(path.lastIndexOf(name) + name.length) : "";
+			return `\u0000${files.push(name ? redactSecrets(name) : "[file]") - 1}\u0000${tail}`;
+		});
 	return (
-		redactSecrets(text)
-			.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)(?:[?#][^\s"'<>)]*)?/gi, "ext:/$1")
+		redactSecrets(marked)
+			.replace(/(\u0000\d+\u0000(?::\d+){0,2})[?#][^\s"'<>)]*/g, "$1")
 			// A URL may contain ")" (wiki paths); only trailing punctuation belongs to the sentence.
 			.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>]+/gi, (m) => `[url]${/[).,;:!?]+$/.exec(m)?.[0] ?? ""}`)
 			// Addresses without "//": data, blob, about and javascript URLs carry page content.
@@ -65,6 +78,7 @@ export function redact(text: string): string {
 			.replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, "[long-token]")
 			.replace(/\/(Users|home)\/[^/\s]+/g, "/$1/[user]")
 			.replace(/[A-Z]:\\Users\\[^\\\s]+/g, "C:\\Users\\[user]")
+			.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => `ext:/${files[Number(i)]}`)
 			.slice(0, 2000)
 	);
 }
