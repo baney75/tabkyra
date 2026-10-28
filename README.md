@@ -241,7 +241,10 @@ or Codex can answer "what did I ask Tabkyra yesterday about Lisbon flights?":
 Live answers come from the extension; when the browser is closed, the CLI and MCP read the
 files. The files are written by the native host (folder 0700, files 0600, each write atomic) a
 couple of seconds after a chat changes, and go when you delete the chat. Settings > Privacy >
-"Let my coding agents read my past chats" turns this off and deletes the files.
+"Let my coding agents read my past chats" turns this off: agents can't read any past chat, live
+or from files, and the files are deleted. Chats from before you installed this version stay
+hidden from agents (older versions didn't mark private-mode chats) until you tick "Also chats
+from before ..." under that switch.
 
 What agents see: who said what, tool calls and short results, attachments by name only. API
 keys and tokens pasted into a chat are removed. A chat from private mode is never served or

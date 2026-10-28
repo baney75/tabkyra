@@ -84,6 +84,41 @@ export async function readThread(id: string): Promise<{ meta?: ThreadMeta; data?
 	}
 }
 
+/**
+ * When this build first ran. Chats saved in private mode before then carry no private mark, so
+ * nothing created before it is shown to agents unless the user says so (SHARE_OLDER_KEY).
+ */
+export const SHARED_SINCE_KEY = "threads.sharedSince";
+/** chrome.storage.local: true when the user lets agents read chats from before SHARED_SINCE_KEY too. */
+export const SHARE_OLDER_KEY = "threads.shareOlder";
+
+/** Record the cutoff once (the worker calls this at start, before any chat of this build is saved). */
+export async function markSharingStart(now = new Date().toISOString()): Promise<string | undefined> {
+	if (typeof chrome === "undefined" || !chrome.storage?.local) return undefined;
+	const got = (await chrome.storage.local.get(SHARED_SINCE_KEY)) as Record<string, unknown>;
+	if (typeof got[SHARED_SINCE_KEY] === "string") return got[SHARED_SINCE_KEY] as string;
+	await chrome.storage.local.set({ [SHARED_SINCE_KEY]: now });
+	return now;
+}
+
+/**
+ * Which threads agents may see: never a private one, and none created before the cutoff unless
+ * the user shared older chats. A thread without a creation time counts as older.
+ */
+export async function agentsMayRead(): Promise<(meta?: ThreadMeta, data?: ThreadData) => boolean> {
+	if (typeof chrome === "undefined" || !chrome.storage?.local) return (meta, data) => !isPrivate(meta, data);
+	const got = (await chrome.storage.local.get([SHARED_SINCE_KEY, SHARE_OLDER_KEY])) as Record<string, unknown>;
+	const since =
+		typeof got[SHARED_SINCE_KEY] === "string" ? (got[SHARED_SINCE_KEY] as string) : await markSharingStart();
+	const older = got[SHARE_OLDER_KEY] === true;
+	return (meta, data) => {
+		if (isPrivate(meta, data)) return false;
+		if (older || !since) return true;
+		const created = meta?.createdAt ?? data?.createdAt;
+		return typeof created === "string" && created >= since;
+	};
+}
+
 /** Private threads are never mirrored or served; either record carrying the mark is enough. */
 export function isPrivate(meta?: ThreadMeta, data?: ThreadData): boolean {
 	return meta?.tabkyraPrivate === true || data?.tabkyraPrivate === true;

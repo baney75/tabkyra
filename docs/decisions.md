@@ -400,7 +400,11 @@ chosen:
 Owner, 2026-10-27: "Make it so tabkyra threads are accessible locally too for the agents using
 the mcp, and cli, and such." Defaults chosen:
 
-- **On by default**, with a Settings > Privacy switch that turns it off and deletes the files.
+- **On by default**, with a Settings > Privacy switch that turns it off: no agent reads a past
+  chat, live or from files, and the files are deleted.
+- **Only chats from this version on**, unless the user ticks "Also chats from before <date>".
+  Older versions saved private-mode chats without a mark, so nothing created before this build
+  first ran (`threads.sharedSince`) is shown or mirrored by default.
   The files sit in the user's own data folder, readable only by the user, the same reach a local
   agent already has over the user's other files.
 - **Never private-mode chats.** A chat saved while private mode is on is marked private for

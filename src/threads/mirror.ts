@@ -10,11 +10,11 @@
 
 import type { ExtThreadsMirror } from "../bridge/protocol.js";
 import { THREAD_CHANGED } from "./events.js";
+import { MIRROR_KEY } from "./keys.js";
 import { modelOf, renderMarkdown, sanitizeJson, validThreadId } from "./render.js";
-import { isPrivate, listThreadMeta, readThread } from "./store.js";
+import { agentsMayRead, listThreadMeta, markSharingStart, readThread, SHARE_OLDER_KEY } from "./store.js";
 
-/** chrome.storage.local key; anything but false means on (the default). */
-export const MIRROR_KEY = "threads.mirror";
+export { MIRROR_KEY };
 /** Quiet time before a changed thread is written; a streaming reply saves many times. */
 export const DEBOUNCE_MS = 2000;
 /** Threads sent when a host connects, newest first. */
@@ -34,7 +34,7 @@ export async function mirrorEnabled(): Promise<boolean> {
 export async function mirrorThread(id: string): Promise<void> {
 	if (!validThreadId(id) || !(await mirrorEnabled())) return;
 	const { meta, data } = await readThread(id);
-	if (!data || !meta || isPrivate(meta, data)) {
+	if (!data || !meta || !(await agentsMayRead())(meta, data)) {
 		send({ type: "threads_mirror", op: "delete", id });
 		return;
 	}
@@ -75,7 +75,8 @@ export async function resyncMirror(): Promise<void> {
 		send({ type: "threads_mirror", op: "clear" });
 		return;
 	}
-	const metas = (await listThreadMeta()).filter((m) => validThreadId(m.id) && !isPrivate(m)).slice(0, RESYNC_LIMIT);
+	const may = await agentsMayRead();
+	const metas = (await listThreadMeta()).filter((m) => validThreadId(m.id) && may(m)).slice(0, RESYNC_LIMIT);
 	send({ type: "threads_mirror", op: "sync", ids: metas.map((m) => m.id) });
 	for (const m of metas) await mirrorThread(m.id).catch(() => undefined);
 }
@@ -83,12 +84,13 @@ export async function resyncMirror(): Promise<void> {
 /** Wire the mirror into the worker. `sender` posts to the native host (false when there is none). */
 export function startThreadMirror(sender: Send): void {
 	send = sender;
+	void markSharingStart().catch(() => undefined);
 	chrome.runtime.onMessage?.addListener((message: { type?: string; id?: string }) => {
 		if (message?.type === THREAD_CHANGED && typeof message.id === "string") scheduleMirror(message.id);
 	});
 	chrome.storage.onChanged.addListener((changes, area) => {
-		if (area !== "local" || !(MIRROR_KEY in changes)) return;
-		if (changes[MIRROR_KEY].newValue === false) send({ type: "threads_mirror", op: "clear" });
+		if (area !== "local" || !(MIRROR_KEY in changes || SHARE_OLDER_KEY in changes)) return;
+		if (changes[MIRROR_KEY]?.newValue === false) send({ type: "threads_mirror", op: "clear" });
 		else void resyncMirror().catch(() => undefined);
 	});
 }

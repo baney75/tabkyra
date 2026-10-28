@@ -116,6 +116,8 @@ test("the mirror writes a changed thread once it has been quiet, deletes private
 		read: async () => ({ meta: meta(t, { tabkyraPrivate: isPrivate }), data: t }),
 	});
 	const sent = [];
+	// Sharing began before this thread was made (older chats are the next test's subject).
+	await chrome.storage.local.set({ "threads.sharedSince": "2026-10-01T00:00:00.000Z" });
 	try {
 		mirror.startThreadMirror((m) => {
 			sent.push(m);
@@ -146,6 +148,41 @@ test("the mirror writes a changed thread once it has been quiet, deletes private
 		await mirror.mirrorThread("live1");
 		await mirror.resyncMirror();
 		assert.deepEqual(sent.map((m) => m.op), ["clear", "clear"], "off writes nothing, and a reconnect clears again");
+	} finally {
+		store.setThreadSource(undefined);
+	}
+});
+
+test("chats from before agent access began stay hidden unless the user shares them, and the switch off stops every read", async () => {
+	installFakeChrome();
+	const old = thread("before1", { createdAt: "2026-10-20T10:00:00.000Z" });
+	const fresh = thread("after1", { createdAt: "2026-10-27T10:00:00.000Z" });
+	store.setThreadSource({
+		list: async () => [meta(fresh), meta(old)],
+		read: async (id) => (id === "after1" ? { meta: meta(fresh), data: fresh } : id === "before1" ? { meta: meta(old), data: old } : {}),
+	});
+	try {
+		// This build first ran on the 26th: the chat from the 20th may be an unmarked private one.
+		await chrome.storage.local.set({ "threads.sharedSince": "2026-10-26T00:00:00.000Z" });
+		assert.deepEqual((await bridge.handleThreads("threads.list", {})).threads.map((t) => t.id), ["after1"]);
+		const err = (id) => bridge.handleThreads("threads.read", { id }).then(() => "no error", (e) => `${e.code}`);
+		assert.equal(await err("before1"), "not_found");
+		assert.deepEqual((await bridge.handleThreads("threads.search", { query: "lisbon" })).hits.map((h) => h.id), ["after1"]);
+		const mirror = await import("../src/threads/mirror.ts");
+		const sent = [];
+		mirror.startThreadMirror((m) => {
+			sent.push(m);
+			return true;
+		});
+		await mirror.resyncMirror();
+		assert.deepEqual(sent.find((m) => m.op === "sync").ids, ["after1"], "an older chat was mirrored");
+		// The user shares older chats too.
+		await chrome.storage.local.set({ "threads.shareOlder": true });
+		assert.deepEqual((await bridge.handleThreads("threads.list", {})).threads.map((t) => t.id), ["after1", "before1"]);
+		// The switch off: no agent reads any chat, live included.
+		await chrome.storage.local.set({ "threads.mirror": false });
+		for (const [method, params] of [["threads.list", {}], ["threads.read", { id: "after1" }], ["threads.search", { query: "lisbon" }]])
+			await assert.rejects(() => bridge.handleThreads(method, params), (e) => e.code === "permission_denied" && /Settings > Privacy/.test(e.message));
 	} finally {
 		store.setThreadSource(undefined);
 	}
