@@ -1,5 +1,5 @@
 // The side panel's display helpers: readable model and provider names, prices that stay
-// prices, when the header offers "Share this tab", and the starter chips.
+// prices, how the active tab reaches the agent, and the starter chips.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -48,31 +48,49 @@ test("dollar amounts are escaped so they render as prices, math and code are not
 	assert.equal(escapeCurrency("already \\$5 and $$x$$"), "already \\$5 and $$x$$");
 });
 
-test("Share this tab is offered only for an active tab the agent does not have", async () => {
+test("the tab the user is looking at goes to the agent with their message, no button needed", async () => {
 	const fake = installFakeChrome();
-	const { tabToShare } = await import(`../src/browser/share-tab.ts?${Math.random()}`);
-	const home = fake.addTab({ active: true, url: "https://shop.example/" });
-	// The panel's own task tab in front: nothing to share. This was the button that did nothing.
-	assert.equal(await tabToShare(1, [home]), undefined);
-	// The user looks at another tab while the panel stays open: offer it.
-	const fake1 = installFakeChrome();
-	const task = fake1.addTab({ url: "https://shop.example/" });
-	const other = fake1.addTab({ active: true, url: "https://news.example/" });
-	assert.equal(await tabToShare(1, [task]), other);
-	// Once shared, the offer goes away.
+	const { shareActiveTab, tabToShare } = await import(`../src/browser/share-tab.ts?${Math.random()}`);
+	const task = fake.addTab({ url: "https://shop.example/" });
+	const other = fake.addTab({ active: true, url: "https://news.example/" });
+	const adopted = [];
+	const session = (heldBy) => ({
+		tabIds: [task],
+		adoptIfFree: async (id, makeCurrent) => {
+			if (heldBy) return { id: "bridge-x", label: heldBy };
+			adopted.push([id, makeCurrent]);
+		},
+	});
+	// Sending from another tab hands that tab over and makes it the agent's page.
+	assert.deepEqual(await shareActiveTab(session(), 1, true), { tabId: other });
+	assert.deepEqual(adopted, [[other, true]]);
+	// "Send now" mid-run adds it without swapping the run's page.
+	await shareActiveTab(session(), 1, false);
+	assert.deepEqual(adopted.at(-1), [other, false]);
+	// A tab another agent is driving stays with it.
+	assert.deepEqual(await shareActiveTab(session("claude · shop"), 1, true), { tabId: other, heldBy: "claude · shop" });
+	// The agent's own tab in front: nothing to do.
 	assert.equal(await tabToShare(1, [task, other]), undefined);
-	// The extension's own pages are never offered.
-	const fake2 = installFakeChrome();
-	fake2.addTab({ active: true, url: "chrome-extension://abc/sidepanel.html" });
-	assert.equal(await tabToShare(1, []), undefined);
+	// Browser pages never go to the agent; a blank new tab does.
+	for (const [url, shared] of [
+		["chrome://settings/", false],
+		["chrome-extension://abc/sidepanel.html", false],
+		["https://chromewebstore.google.com/detail/x", false],
+		["chrome://newtab/", true],
+		["about:blank", true],
+	]) {
+		const f = installFakeChrome();
+		const id = f.addTab({ active: true, url });
+		assert.equal(await tabToShare(1, []), shared ? id : undefined, url);
+	}
 	assert.equal(await tabToShare(undefined, []), undefined);
 });
 
 test("the header has no always-on share button, and every icon button has a tooltip", () => {
 	const src = readFileSync(new URL("../src/sidepanel.ts", import.meta.url), "utf8");
 	const header = src.slice(src.indexOf("const renderApp = () => {"), src.indexOf("${updateNotice()}"));
-	// Share is the labeled pill, shown only when shareableTabId is set.
-	assert.match(header, /shareableTabId !== undefined\s*\?\s*html`<button[\s\S]*?Share this tab/);
+	// No share control at all: the active tab goes with the message.
+	assert.doesNotMatch(header, /Share this tab|data-share-tab/);
 	assert.doesNotMatch(header, /icon\(Link/);
 	for (const call of header.matchAll(/headerButton\("([^"]+)"/g)) assert.ok(call[1].length > 2, `empty label: ${call[0]}`);
 	assert.match(src, /function headerButton[\s\S]*?aria-label=\$\{label\} data-tip=\$\{label\}/);

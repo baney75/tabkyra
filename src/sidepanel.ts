@@ -24,13 +24,13 @@ import {
 	setTranscriptRenderer,
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
-import { CircleDot, Copy, FileCode2, History, type IconNode, Monitor, Moon, Plus, Settings, Share2, Sun } from "lucide";
+import { CircleDot, Copy, FileCode2, History, type IconNode, Monitor, Moon, Plus, Settings, Sun } from "lucide";
 import { isBlockedModel, purgeRemovedSignIns, RemovedSignInError, resolveApiKey } from "./auth/policy.js";
 import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
 import { dispatchToSandbox, setCdpMessageHandler } from "./browser/inject.js";
 import { BrowserSession, listSessions, sessionIdForTab, sessionOwningTab } from "./browser/session.js";
-import { tabToShare } from "./browser/share-tab.js";
+import { shareActiveTab } from "./browser/share-tab.js";
 import { helmMark } from "./components/HelmMark.js";
 import "./components/HeaderMenu.js";
 import type { HeaderMenuItem } from "./components/HeaderMenu.js";
@@ -256,25 +256,6 @@ async function openBrowserSession(id: string): Promise<void> {
 			await browserSession.adopt(homeTabId, browserSession.currentTabId === undefined);
 	}
 	renderApp();
-	void refreshShareState();
-}
-
-/** Move the window's active tab into the session (quietly on startup, with a toast on request). */
-async function adoptActiveTab(notify: boolean): Promise<void> {
-	if (!browserSession) return;
-	const [tab] = await chrome.tabs.query({ active: true, windowId: currentWindowId });
-	// Any tab can be the session's start, including a New Tab page the agent will navigate
-	// away from; only the extension's own pages are excluded.
-	if (!tab?.id || (tab.url ?? "").startsWith("chrome-extension://")) {
-		if (notify) Toast.error("This page cannot be shared with the agent");
-		return;
-	}
-	if (browserSession.tabIds.includes(tab.id)) {
-		if (notify) Toast.info("The agent already has this tab");
-		return;
-	}
-	await browserSession.adopt(tab.id, true);
-	if (notify) Toast.success("Tab shared with the agent");
 }
 
 /** Unsaved browser sessions that never got a tab are noise; drop them at startup. */
@@ -287,30 +268,20 @@ async function pruneEmptyUnsavedSessions(): Promise<void> {
 	}
 }
 
-/** User gesture: hand the tab they are looking at to the agent. */
-async function shareActiveTab(): Promise<void> {
-	await adoptActiveTab(true);
-	await refreshShareState();
-}
-
-/** The active tab, when it is not the agent's yet: the header offers "Share this tab" for it. */
-let shareableTabId: number | undefined;
-async function refreshShareState(): Promise<void> {
-	let next: number | undefined;
+/**
+ * The tab the user is looking at goes to the agent with their message, no button needed. A tab
+ * another agent is driving stays with that agent. Mid-run ("Send now") the tab is added without
+ * becoming current, so the run's own page isn't swapped out under it.
+ */
+async function shareActiveTabOnSend(makeCurrent: boolean): Promise<void> {
+	if (!browserSession) return;
 	try {
-		next = await tabToShare(currentWindowId, browserSession?.tabIds);
-	} catch {
-		next = undefined;
-	}
-	if (next !== shareableTabId) {
-		shareableTabId = next;
-		renderApp();
+		const shared = await shareActiveTab(browserSession, currentWindowId, makeCurrent);
+		if (shared?.heldBy) Toast.info(`This tab stays with ${shared.heldBy}, which is working in it`);
+	} catch (err) {
+		console.error("Sharing the active tab failed:", err);
 	}
 }
-chrome.tabs.onActivated.addListener(({ windowId }) => {
-	if (windowId === currentWindowId) void refreshShareState();
-});
-chrome.tabs.onRemoved.addListener(() => void refreshShareState());
 
 /** The URL of the page the agent is on (the session's current tab), if it has one. */
 async function currentPageUrl(): Promise<string | undefined> {
@@ -437,9 +408,7 @@ async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Pr
 		for (const t of refs?.tabs ?? []) {
 			const name = `"${t.title || `Tab ${t.id}`}"`;
 			if (t.status === "other-agent")
-				Toast.error(
-					`${name} stays with ${t.owner}; it was not shared. To hand it over, open that tab and press Share this tab.`,
-				);
+				Toast.error(`${name} stays with ${t.owner}, which is working in it, so it was not shared.`);
 			else if (t.status === "unavailable") Toast.error(`${name} can't be shared with the agent`);
 			else if (t.status === "gone") Toast.error(`Tab ${t.id} was closed before the message was sent`);
 		}
@@ -873,7 +842,6 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const messages = agent.state.messages;
 			publishBusyState();
 			// The agent may have taken the tab in front of the user (navigate, new tab).
-			if (event.type === "tool_execution_end" || event.type === "agent_end") void refreshShareState();
 
 			storage.settings
 				.set("lastUsedModel", agent.state.model)
@@ -961,6 +929,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			// off. Marking the panel busy under the gate makes the update wait for this run instead.
 			// Everything that waits comes first, so nothing async lies between the reservation and
 			// the run starting (AgentInterface calls prompt() right after this hook, synchronously).
+			await shareActiveTabOnSend(true);
 			const note = await pageChangeNote();
 			const reserved = await reserveRun(markBusyForSend);
 			if (!reserved) {
@@ -976,6 +945,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		},
 		// "Send now" mid-run: the same note, delivered with the message.
 		steerContext: async () => {
+			await shareActiveTabOnSend(false);
 			const note = await pageChangeNote();
 			return note ? [note] : [];
 		},
@@ -1264,19 +1234,6 @@ const renderApp = () => {
 								@click=${toggleRecording}
 							>
 								<span class="tk-rec-dot" aria-hidden="true"></span>Recording
-							</button>`
-							: ""
-					}
-					${
-						shareableTabId !== undefined
-							? html`<button
-								type="button"
-								class="tk-header-pill tk-share-pill"
-								data-share-tab
-								data-tip="Give the agent the tab you are looking at"
-								@click=${shareActiveTab}
-							>
-								${icon(Share2, "xs")}Share this tab
 							</button>`
 							: ""
 					}

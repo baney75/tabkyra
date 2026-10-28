@@ -559,9 +559,9 @@ test("a side panel chat is readable live through the CLI and MCP, and as files; 
 	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
 });
 
-// ---- the side panel header: Share this tab ---------------------------------------------------
+// ---- the side panel header: no share button ---------------------------------------------------
 
-test("the side panel offers Share this tab only for a tab the agent does not have, and sharing it works", async () => {
+test("the side panel has no share button: the tab in front goes with the message", async () => {
 	await connected();
 	const version = await (await fetch(`http://${devtools}/json/version`)).json();
 	const { targetId } = await cdp(version.webSocketDebuggerUrl, "Target.createTarget", { url: `chrome-extension://${EXTENSION_ID}/sidepanel.html` });
@@ -571,21 +571,13 @@ test("the side panel offers Share this tab only for a tab the agent does not hav
 		if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? "evaluate threw");
 		return r.result.value;
 	};
-	const pill = `document.querySelector("[data-share-tab]")`;
 	await until(() => inPanel(`!!document.querySelector("textarea")`), 20_000, "the side panel");
-	await new Promise((r) => setTimeout(r, 500));
-	// The old always-on link button is gone; the panel's own page in front offers nothing.
-	assert.equal(await inPanel(`!!document.querySelector('[title="Share the tab you are viewing with the agent"]')`), false);
-	assert.equal(await inPanel(`!!${pill}`), false);
-	// A page the agent doesn't have comes to the front: the pill appears.
+	// A page the agent doesn't have comes to the front: still no button to press.
 	const tabId = await inPanel(`chrome.tabs.create({ url: ${JSON.stringify(`${pageUrl}?share`)}, active: true }).then((t) => t.id)`);
-	await until(() => inPanel(`!!${pill}`), 10_000, "the Share this tab pill");
-	assert.match(await inPanel(`${pill}.innerText`), /Share this tab/);
-	// Sharing it puts the tab in the chat's session, and the pill goes away.
-	await inPanel(`${pill}.click(), true`);
-	await until(() => inPanel(`!${pill}`), 10_000, "the pill to go once shared");
-	const sessions = await inPanel(`chrome.storage.local.get("browser_sessions").then((d) => Object.values(d.browser_sessions ?? {}))`);
-	assert.ok(sessions.some((s) => s.tabIds.includes(tabId)), "the shared tab is in no session");
+	await new Promise((r) => setTimeout(r, 800));
+	assert.equal(await inPanel(`!!document.querySelector("[data-share-tab]")`), false);
+	assert.equal(await inPanel(`!!document.querySelector('[title="Share the tab you are viewing with the agent"]')`), false);
+	assert.equal(await inPanel(`[...document.querySelectorAll("button")].some((b) => /share this tab/i.test(b.innerText))`), false);
 	await inPanel(`chrome.tabs.remove(${tabId}).then(() => true)`);
 	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
 });
