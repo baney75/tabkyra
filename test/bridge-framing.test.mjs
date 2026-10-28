@@ -13,10 +13,15 @@ import { encodeFrame, FrameParser } from "../cli/src/framing.ts";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// The CLI's bundler inlines the release key (a .pub text import); do the same for the source run.
+// The hosts here keep community skill state in a folder of their own and never fetch a catalog
+// (the host syncs on every hello, D27).
+process.env.TABKYRA_CONFIG_DIR = mkdtempSync(join(tmpdir(), "tabkyra-host-config-"));
+process.env.TABKYRA_COMMUNITY_URL = join(process.env.TABKYRA_CONFIG_DIR, "no-catalog");
+
+// The CLI's bundler inlines the release key (a .pub text import) and the bundled SKILL.md files; do the same for the source run.
 const PUB_LOADER = `import { readFileSync } from "node:fs";
 export async function load(url, context, next) {
-	if (!url.endsWith(".pub")) return next(url, context);
+	if (!url.endsWith(".pub") && !url.endsWith(".md")) return next(url, context);
 	return { format: "module", shortCircuit: true, source: "export default " + JSON.stringify(readFileSync(new URL(url), "utf8")) };
 }`;
 const HOST_ENTRY = `import { register } from "node:module";

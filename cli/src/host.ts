@@ -13,6 +13,7 @@ import { ERR, MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { socketDir, socketPath } from "./paths.ts";
 import { applyMirror } from "./threads-mirror.ts";
+import { handleCommunityAction, onCommunityHello, startCommunityTimer } from "./community-host.ts";
 import { handleUpdateAction, noteHello, sendStatus, startUpdateTimer } from "./update-host.ts";
 import { VERSION } from "./version.ts";
 
@@ -95,6 +96,7 @@ function onExtensionMessage(message: ExtToHost): void {
 			extensionMethods = Array.isArray(message.methods) ? message.methods : undefined;
 			noteHello(message, toExtension);
 			void sendStatus(toExtension);
+			onCommunityHello(toExtension);
 			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true, ...(browserId ? { browserId } : {}) });
 			// The extension restarted; re-announce every live client so it recreates sessions.
 			for (const client of clients.values()) {
@@ -124,6 +126,10 @@ function onExtensionMessage(message: ExtToHost): void {
 		case "update_action":
 			// Parsed again strictly inside: only {type, action} with a known action runs anything.
 			handleUpdateAction(message, toExtension);
+			return;
+		case "community_action":
+			// Parsed again strictly inside: only {type, action} with on, off or sync.
+			handleCommunityAction(message, toExtension);
 			return;
 	}
 }
@@ -322,4 +328,5 @@ export function runNativeHost(): void {
 	const ping = setInterval(() => toExtension({ type: "ping" }), 20000);
 	ping.unref();
 	startUpdateTimer(toExtension);
+	startCommunityTimer(toExtension);
 }

@@ -328,3 +328,34 @@ only an untouched draft is refreshed in place.
 
 The protected skills can't be edited this way; they change only through a reviewed pull
 request.
+
+## Managing skills from an agent
+
+Agents manage skills without editing files, through the CLI or one MCP tool. Every write runs
+the lint first (`planApply`), and nothing is saved without `--yes` or `apply:true`.
+
+| Job | CLI | MCP `skill_manage` action |
+| --- | --- | --- |
+| List with provenance (built-in, community with its catalog, local) | `skill list [--json]` | `list` |
+| Read one | `skill print <name> --raw` | `skill_read` |
+| Create or edit | `skill write <name> --file SKILL.md [--yes]` | `write` (`apply:true` after the user approves the diff) |
+| Test: lint, community rules, router cases | `skill test <name\|folder> --cases <file>` | `test` |
+| Remove a local skill, or turn off a community one | `skill remove <name>`, `skill enable <name>` | `remove` |
+| Propose to the community | `skill submit <name> --cases <file>` (preview), then `--confirm <code>` | `prepare_submit` (preview only) |
+
+`skill_manage` exists only on the local stdio server; remote and scoped sessions never get it.
+A skill the user wrote themselves (no built-in or community base) can be rewritten freely; the
+rules on sections apply to edits of built-in and community skills.
+
+## Community skills
+
+Community skills are in `community/skills/` and reach clients in a signed catalog
+(D27, [CONTRIBUTING-skills.md](../CONTRIBUTING-skills.md)). The router keeps its index of
+built-in and local skills as measured above and adds a second index with the community skills.
+A community skill is the answer only when it leads that second index and either the first finds
+nothing or the task names one of the skill's sites (its word, like "notion" for notion.so, or its
+host). `skill eval` routes the same way when a checkout has `community/`, adds the cases from
+`community/cases/`, and prints a second set of gates prefixed `community:`: every gate above,
+built-in skills and `none` at their baselines, and each community skill routing 75% or more of
+its own 8 or more cases. The judge reads the pull request's `community/` as data and runs the
+same gates with the base code.
