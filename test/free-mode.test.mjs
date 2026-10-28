@@ -69,6 +69,7 @@ test("the shipped ranking is in the order its recorded scores give", () => {
 		"best first: score, then fewer tool calls, then fewer seconds",
 	);
 	assert.ok(!r.models.some((m) => m.id === OPENROUTER_FREE_ROUTER), "the router is never ranked; it is always last");
+	for (const id of r.unmeasured ?? []) assert.ok(!r.models.some((m) => m.id === id), `${id} is either measured or not`);
 });
 
 test("at run time the measured order wins, a model that passed nothing is dropped, the router is last", () => {

@@ -33,7 +33,7 @@ export const FREE_MAX_PRICE = { prompt: 0, completion: 0, request: 0, image: 0 }
 export const FREE_PRIVACY_NOTE =
 	"Free providers may log and train on your prompts. Private mode allows only free models with zero data retention.";
 export const FREE_KEY_NOTE =
-	"Free mode needs a free OpenRouter key: sign up at openrouter.ai/keys (no card needed) and paste the key here.";
+	"Free mode needs a free OpenRouter key: sign up at openrouter.ai/keys and paste the key here.";
 
 /** One entry of OpenRouter's GET /api/v1/models. */
 export interface OpenRouterListing {
@@ -67,6 +67,8 @@ export interface FreeRanking {
 	measuredAt: string;
 	method: string;
 	models: MeasuredModel[];
+	/** Rate-limited on every run, so never measured; these rank with new, unmeasured models. */
+	unmeasured?: string[];
 }
 
 export class FreeModeError extends Error {

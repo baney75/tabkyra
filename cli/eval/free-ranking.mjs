@@ -27,7 +27,7 @@ for (const r of runs)
 const repsOf = (id) => Math.max(...rows.filter((r) => r.model === id).map((r) => r.rep));
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 const ids = [...new Set(rows.map((r) => r.model))].filter((id) => id !== "openrouter/free");
-const models = ids
+const scored = ids
 	.map((id) => {
 		const own = rows.filter((r) => r.model === id);
 		const passed = own.filter((r) => r.success).length;
@@ -42,6 +42,10 @@ const models = ids
 		};
 	})
 	.sort((a, b) => b.score - a.score || a.meanToolCalls - b.meanToolCalls || a.meanSeconds - b.meanSeconds);
+// A model rate-limited on every run was never measured: it is left out, so at run time it ranks
+// with the unmeasured models instead of being dropped as a model that passed nothing.
+const unmeasured = scored.filter((m) => m.rateLimited === m.runs).map((m) => m.id);
+const models = scored.filter((m) => m.rateLimited < m.runs);
 
 const repsLine = () => {
 	const more = models.filter((m) => repsOf(m.id) > 1);
@@ -53,11 +57,13 @@ const ranking = {
 	measuredAt: date,
 	method: `cli/eval/free-models.mjs: tasks ${tasks.join(", ")} on the fixture site through Tabkyra's MCP tools in a headless Chromium, ${repsLine()}; score = tasks passed / runs, ties by fewer tool calls then fewer seconds. A run still rate-limited after three retries was rerun (--retry-limited); one never measured counts as a failure. Merged by cli/eval/free-ranking.mjs.`,
 	models,
+	unmeasured,
 };
 console.log("| Rank | Model | Passed | Score | Mean tool calls | Mean seconds | Rate-limited runs |");
 console.log("| --- | --- | --- | --- | --- | --- | --- |");
 models.forEach((m, i) => console.log(`| ${i + 1} | ${m.id} | ${m.passed}/${m.runs} | ${m.score} | ${m.meanToolCalls} | ${m.meanSeconds} | ${m.rateLimited} |`));
 const router = rows.filter((r) => r.model === "openrouter/free");
+if (unmeasured.length) console.log(`\nRate-limited on every run, left unmeasured: ${unmeasured.join(", ")}`);
 if (router.length) console.log(`\nopenrouter/free (not ranked, always last): ${router.filter((r) => r.success).length}/${router.length}`);
 if (!process.argv.includes("--dry-run")) {
 	writeFileSync(join(repo, "src", "models", "free-ranking.json"), `${JSON.stringify(ranking, null, "\t")}\n`);

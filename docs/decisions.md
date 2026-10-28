@@ -441,7 +441,8 @@ usage in tabkyra." Defaults chosen:
   (no key needed) at most once a day and keeps only `:free` ids (or `openrouter/free`) whose
   every price is zero and that list `tools`. A zero-priced model without the `:free` suffix
   is not trusted, since its price can change under the same id. Measured models keep their
-  measured order; a measured model that passed nothing is left out; unmeasured new free
+  measured order; a measured model that passed nothing is left out; a model rate-limited on
+  every run was never measured and ranks with the unmeasured ones; unmeasured new free
   models follow, longest context first, then newest; `openrouter/free` is always last.
 - **Fallbacks, free only.** Each request sends OpenRouter's `models` list: the two best models
   and `openrouter/free` (OpenRouter takes at most three, checked live). Every id is checked

@@ -334,13 +334,23 @@ skill uses them.
 
 Free mode runs the side panel agent on OpenRouter's free models, at no cost. Pick **Free (best
 available)** at the top of the model list, or turn on **Settings > API Keys > Free mode**. It
-needs a free OpenRouter key (sign up at [openrouter.ai/keys](https://openrouter.ai/keys), no
-card needed); without one, Tabkyra opens the key prompt and says so.
+needs a free OpenRouter key (sign up at [openrouter.ai/keys](https://openrouter.ai/keys)); without
+one, Tabkyra opens the key prompt and says so.
 
 - **Measured, not guessed.** Every free model that can call tools was run on four browser
   tasks through Tabkyra's tools and scored by what the test site recorded
-  (`cli/eval/free-models.mjs`). The ranking ships in `src/models/free-ranking.json`;
-  RANKING_SUMMARY
+  (`cli/eval/free-models.mjs`). The ranking ships in `src/models/free-ranking.json`, and a test
+  fails if its order doesn't match its scores. The leaders on 2026-10-28:
+
+  | Rank | Model | Tasks passed | Mean tool calls | Mean seconds |
+  | --- | --- | --- | --- | --- |
+  | 1 | `dots-studio/dots-3-note-preview:free` | 8/8 | 6.3 | 23.8 |
+  | 2 | `nvidia/nemotron-3.5-super-vl:free` | 8/8 | 6.8 | 26.1 |
+  | 3 | `nvidia/nemotron-3-ultra-550b-a55b:free` | 7/8 | 6.1 | 105.1 |
+  | 4 | `cohere/north-mini-code:free` | 7/8 | 10.4 | 41.6 |
+  | 5 | `poolside/laguna-s-2.1:free` | 6/8 | 8 | 198 |
+  | 6 | `nvidia/nemotron-3.5-lightning:free` | 6/8 | 10.6 | 51.9 |
+
 - **Live.** Tabkyra rereads OpenRouter's free list about once a day and drops any model that
   stopped being free or stopped taking tools. New free models rank after the measured ones.
 - **Never paid.** Each request names the two best free models plus OpenRouter's free router as

@@ -1,50 +1,59 @@
 {
 	"measuredAt": "2026-10-28",
-	"method": "cli/eval/free-models.mjs: tasks shop, contact, forum, stores on the fixture site through Tabkyra's MCP tools in a headless Chromium, 1 rep per task; score = tasks passed / runs, ties by fewer tool calls then fewer seconds. A run still rate-limited after three retries was rerun (--retry-limited); one never measured counts as a failure. Merged by cli/eval/free-ranking.mjs.",
+	"method": "cli/eval/free-models.mjs: tasks shop, contact, forum, stores on the fixture site through Tabkyra's MCP tools in a headless Chromium, 1 rep per task, 2 for dots-studio/dots-3-note-preview:free, nvidia/nemotron-3.5-super-vl:free, nvidia/nemotron-3-ultra-550b-a55b:free, cohere/north-mini-code:free, poolside/laguna-s-2.1:free, nvidia/nemotron-3.5-lightning:free; score = tasks passed / runs, ties by fewer tool calls then fewer seconds. A run still rate-limited after three retries was rerun (--retry-limited); one never measured counts as a failure. Merged by cli/eval/free-ranking.mjs.",
 	"models": [
-		{
-			"id": "nvidia/nemotron-3.5-super-vl:free",
-			"score": 1,
-			"passed": 4,
-			"runs": 4,
-			"meanToolCalls": 6,
-			"meanSeconds": 25,
-			"rateLimited": 0
-		},
 		{
 			"id": "dots-studio/dots-3-note-preview:free",
 			"score": 1,
-			"passed": 4,
-			"runs": 4,
+			"passed": 8,
+			"runs": 8,
+			"meanToolCalls": 6.3,
+			"meanSeconds": 23.8,
+			"rateLimited": 0
+		},
+		{
+			"id": "nvidia/nemotron-3.5-super-vl:free",
+			"score": 1,
+			"passed": 8,
+			"runs": 8,
 			"meanToolCalls": 6.8,
-			"meanSeconds": 23.5,
+			"meanSeconds": 26.1,
 			"rateLimited": 0
 		},
 		{
 			"id": "nvidia/nemotron-3-ultra-550b-a55b:free",
-			"score": 1,
-			"passed": 4,
-			"runs": 4,
-			"meanToolCalls": 7,
-			"meanSeconds": 51.8,
+			"score": 0.875,
+			"passed": 7,
+			"runs": 8,
+			"meanToolCalls": 6.1,
+			"meanSeconds": 105.1,
 			"rateLimited": 0
 		},
 		{
 			"id": "cohere/north-mini-code:free",
-			"score": 1,
-			"passed": 4,
-			"runs": 4,
-			"meanToolCalls": 10.5,
-			"meanSeconds": 41.8,
+			"score": 0.875,
+			"passed": 7,
+			"runs": 8,
+			"meanToolCalls": 10.4,
+			"meanSeconds": 41.6,
 			"rateLimited": 0
+		},
+		{
+			"id": "poolside/laguna-s-2.1:free",
+			"score": 0.75,
+			"passed": 6,
+			"runs": 8,
+			"meanToolCalls": 8,
+			"meanSeconds": 198,
+			"rateLimited": 1
 		},
 		{
 			"id": "nvidia/nemotron-3.5-lightning:free",
 			"score": 0.75,
-			"passed": 3,
-			"runs": 4,
-			"meanToolCalls": 9.8,
-			"meanSeconds": 53.3,
+			"passed": 6,
+			"runs": 8,
+			"meanToolCalls": 10.6,
+			"meanSeconds": 51.9,
 			"rateLimited": 0
 		},
 		{
@@ -102,24 +111,6 @@
 			"rateLimited": 0
 		},
 		{
-			"id": "google/gemma-4-31b-it:free",
-			"score": 0,
-			"passed": 0,
-			"runs": 4,
-			"meanToolCalls": 0,
-			"meanSeconds": 108,
-			"rateLimited": 4
-		},
-		{
-			"id": "google/gemma-4-26b-a4b-it:free",
-			"score": 0,
-			"passed": 0,
-			"runs": 4,
-			"meanToolCalls": 0,
-			"meanSeconds": 108.3,
-			"rateLimited": 4
-		},
-		{
 			"id": "poolside/laguna-xs-2.1:free",
 			"score": 0,
 			"passed": 0,
@@ -127,15 +118,7 @@
 			"meanToolCalls": 3,
 			"meanSeconds": 184.8,
 			"rateLimited": 2
-		},
-		{
-			"id": "poolside/laguna-s-2.1:free",
-			"score": 0,
-			"passed": 0,
-			"runs": 4,
-			"meanToolCalls": 5,
-			"meanSeconds": 145.8,
-			"rateLimited": 4
 		}
-	]
+	],
+	"unmeasured": ["google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free"]
 }
