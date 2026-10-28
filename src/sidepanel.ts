@@ -841,7 +841,6 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		agentUnsubscribe = agent.subscribe((event: AgentEvent) => {
 			const messages = agent.state.messages;
 			publishBusyState();
-			// The agent may have taken the tab in front of the user (navigate, new tab).
 
 			storage.settings
 				.set("lastUsedModel", agent.state.model)
@@ -929,7 +928,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			// off. Marking the panel busy under the gate makes the update wait for this run instead.
 			// Everything that waits comes first, so nothing async lies between the reservation and
 			// the run starting (AgentInterface calls prompt() right after this hook, synchronously).
-			await shareActiveTabOnSend(true);
+			// While a run is going, this message queues: the tab joins without becoming the
+			// agent's page, so the run's next steps stay on the page it is working on.
+			await shareActiveTabOnSend(agent?.state.isStreaming !== true);
 			const note = await pageChangeNote();
 			const reserved = await reserveRun(markBusyForSend);
 			if (!reserved) {

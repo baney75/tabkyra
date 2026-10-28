@@ -86,6 +86,14 @@ test("the tab the user is looking at goes to the agent with their message, no bu
 	assert.equal(await tabToShare(undefined, []), undefined);
 });
 
+test("a message sent mid-run queues, so the tab joins without becoming the run's page", () => {
+	const src = readFileSync(new URL("../src/sidepanel.ts", import.meta.url), "utf8");
+	const hook = src.slice(src.indexOf("onBeforeSend: async"), src.indexOf("steerContext: async"));
+	assert.match(hook, /shareActiveTabOnSend\(agent\?\.state\.isStreaming !== true\)/);
+	const steer = src.slice(src.indexOf("steerContext: async"), src.indexOf("onCostClick"));
+	assert.match(steer, /shareActiveTabOnSend\(false\)/);
+});
+
 test("the header has no always-on share button, and every icon button has a tooltip", () => {
 	const src = readFileSync(new URL("../src/sidepanel.ts", import.meta.url), "utf8");
 	const header = src.slice(src.indexOf("const renderApp = () => {"), src.indexOf("${updateNotice()}"));
