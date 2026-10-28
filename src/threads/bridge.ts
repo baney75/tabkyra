@@ -67,7 +67,9 @@ export async function handleThreads(method: string, params: Params): Promise<unk
 			const offset = int(params, "offset", 0, 100000);
 			const limit = int(params, "limit", 20, 100);
 			const query = typeof params.query === "string" ? params.query : "";
-			const all = (await visible()).filter((m) => !query || matches(`${m.title} ${m.preview ?? ""}`, query));
+			const all = (await visible()).filter(
+				(m) => !query || matches(redactSecrets(`${m.title} ${m.preview ?? ""}`), query),
+			);
 			const page = all.slice(offset, offset + limit);
 			return {
 				total: all.length,
@@ -111,7 +113,7 @@ export async function handleThreads(method: string, params: Params): Promise<unk
 				const { data } = await readThread(meta.id);
 				if (!data || !may(meta, data)) continue;
 				const found = snippets(data, query);
-				if (found.length || matches(meta.title, query))
+				if (found.length || matches(redactSecrets(meta.title ?? ""), query))
 					hits.push({
 						id: meta.id,
 						title: redactSecrets(meta.title),

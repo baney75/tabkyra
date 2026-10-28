@@ -106,6 +106,20 @@ test("private-mode threads are never listed, read or searched; a missing and a p
 	}
 });
 
+test("a query can't find a redacted key letter by letter: matching runs on the redacted text", async () => {
+	const keyed = thread("keyed1", { title: `My key ${KEY}` });
+	store.setThreadSource({ list: async () => [meta(keyed, { preview: `use ${KEY}` })], read: async () => ({ meta: meta(keyed), data: keyed }) });
+	try {
+		for (const query of [KEY.slice(0, 12), KEY.slice(0, 20), "AbCdEf0123"]) {
+			assert.equal((await bridge.handleThreads("threads.list", { query })).total, 0, `threads_list matched ${query}`);
+			assert.deepEqual((await bridge.handleThreads("threads.search", { query })).hits, [], `thread_search matched ${query}`);
+		}
+		assert.equal((await bridge.handleThreads("threads.list", { query: "my key" })).total, 1);
+	} finally {
+		store.setThreadSource(undefined);
+	}
+});
+
 test("the mirror writes a changed thread once it has been quiet, deletes private ones, and clears when turned off", async () => {
 	installFakeChrome();
 	const mirror = await import("../src/threads/mirror.ts");

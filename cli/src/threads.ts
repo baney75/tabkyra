@@ -79,7 +79,7 @@ export function fromMirror(method: string, params: Record<string, unknown>): Rep
 			if (!validThreadId(id)) continue;
 			const data = mirrored(id);
 			const found = snippets(data, query);
-			if (found.length || matches(data.title, query)) hits.push({ id, title: data.title, snippets: found });
+			if (found.length || matches(redactSecrets(String(data.title ?? "")), query)) hits.push({ id, title: redactSecrets(String(data.title ?? "")), snippets: found });
 		}
 		return {
 			hits,
