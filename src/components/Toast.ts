@@ -1,9 +1,14 @@
 import { icon } from "@mariozechner/mini-lit";
 import { html, LitElement } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { AlertCircle, CheckCircle, X } from "lucide";
+import { AlertCircle, CheckCircle, Info, X } from "lucide";
 
 type ToastType = "success" | "error" | "info";
+
+export interface ToastAction {
+	label: string;
+	run: () => void;
+}
 
 @customElement("toast-notification")
 export class Toast extends LitElement {
@@ -11,6 +16,8 @@ export class Toast extends LitElement {
 	@property() type: ToastType = "info";
 	@property() duration = 3000;
 	@property({ type: Boolean }) isExiting = false;
+	/** One optional button, such as Undo. */
+	@property({ attribute: false }) action?: ToastAction;
 
 	private timeoutId?: number;
 
@@ -38,21 +45,45 @@ export class Toast extends LitElement {
 	render() {
 		const iconEl =
 			this.type === "success"
-				? icon(CheckCircle, "sm")
+				? html`<span class="inline-flex shrink-0 text-green-700 dark:text-green-400">${icon(CheckCircle, "sm")}</span>`
 				: this.type === "error"
-					? icon(AlertCircle, "sm")
-					: icon(AlertCircle, "sm");
+					? html`<span class="inline-flex shrink-0 text-destructive">${icon(AlertCircle, "sm")}</span>`
+					: html`<span class="inline-flex shrink-0 text-[var(--tk-brass-text)]">${icon(Info, "sm")}</span>`;
+		const accent =
+			this.type === "success" ? "#16a34a" : this.type === "error" ? "var(--color-destructive)" : "var(--tk-brass)";
 
-		const bgColor = this.type === "success" ? "bg-green-600" : this.type === "error" ? "bg-destructive" : "bg-muted";
-
+		// Below the header and inside the panel: the old fixed 300 px box sat on the header's
+		// buttons in a narrow panel, and its white text on the light theme's muted gray was unreadable.
 		return html`
-			<div class="fixed top-4 right-4 z-[9999] ${this.isExiting ? "animate-out slide-out-to-right duration-300" : "animate-in slide-in-from-right duration-300"}">
-				<div class="min-w-[300px] max-w-[400px] flex items-center gap-3 px-4 py-3 ${bgColor} text-white rounded-lg shadow-lg border border-border">
+			<div
+				class="fixed top-14 inset-x-3 z-[9999] flex justify-center pointer-events-none ${this.isExiting ? "animate-out fade-out duration-200" : "animate-in fade-in slide-in-from-top-2 duration-200"}"
+			>
+				<div
+					role=${this.type === "error" ? "alert" : "status"}
+					class="pointer-events-auto w-full max-w-sm flex items-center gap-2.5 pl-3 pr-1.5 py-2 bg-popover text-popover-foreground rounded-lg shadow-lg border border-border"
+					style="border-left: 3px solid ${accent}"
+				>
 					${iconEl}
-					<span class="flex-1 text-sm font-medium">${this.message}</span>
+					<span class="flex-1 min-w-0 text-sm">${this.message}</span>
+					${
+						this.action
+							? html`<button
+								type="button"
+								class="shrink-0 h-8 px-2.5 rounded-md text-sm font-semibold text-foreground hover:bg-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+								@click=${() => {
+									this.action?.run();
+									this.dismiss();
+								}}
+							>
+								${this.action.label}
+							</button>`
+							: ""
+					}
 					<button
+						type="button"
+						aria-label="Dismiss"
 						@click=${() => this.dismiss()}
-						class="hover:bg-white/20 rounded p-1 transition-colors"
+						class="shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
 					>
 						${icon(X, "sm")}
 					</button>
@@ -68,13 +99,20 @@ export class Toast extends LitElement {
 	/**
 	 * Static method to show a toast notification
 	 */
-	static show(message: string, type: ToastType = "info", duration = 3000) {
+	static show(message: string, type: ToastType = "info", duration = 3000, action?: ToastAction) {
+		// One toast at a time: a new one replaces the last instead of stacking on top of it.
+		for (const old of document.querySelectorAll<Toast>("toast-notification")) old.remove();
 		const toast = document.createElement("toast-notification") as Toast;
 		toast.message = message;
 		toast.type = type;
 		toast.duration = duration;
+		toast.action = action;
 		document.body.appendChild(toast);
 		return toast;
+	}
+
+	static info(message: string, duration = 3000) {
+		return Toast.show(message, "info", duration);
 	}
 
 	static success(message: string, duration = 3000) {

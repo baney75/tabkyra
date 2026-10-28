@@ -111,7 +111,7 @@ provider's API key.
 ### Let your agent do the rest
 
 Once the extension is loaded, open the side panel's **Settings > Bridge** (the welcome
-dialog and Settings > API Keys have the same button) and click
+dialog and Settings > Providers have the same button) and click
 **Copy setup prompt for your agent**. Paste it into Claude Code, Codex, pi, OMP or any
 agent with a shell. The agent reuses a working CLI or installs one from the tag that
 matches your extension's version (the default branch when no such tag exists, and it

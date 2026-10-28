@@ -24,7 +24,7 @@ export function surface(element) {
 	return `(() => { let e = ${element}; while (e && getComputedStyle(e).backgroundColor === "rgba(0, 0, 0, 0)") e = e.parentElement; return e; })()`;
 }
 
-const KEY_CODES = { Escape: 27, Enter: 13 };
+const KEY_CODES = { Escape: 27, Enter: 13, Tab: 9 };
 
 /** The few CDP calls the side panel needs, on one attached target and nothing else. */
 export async function connectCdp(wsUrl) {
