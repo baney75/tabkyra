@@ -8,8 +8,9 @@
 #            refuses any skill that fails the lint or the community rules.
 #   publish: no npm and no repo code. Signs with minisign in the release environment, checks
 #            the signature against the committed public key, and uploads both files.
-# It runs on main only: on a merge that touches community/, daily (so a pulled skill reaches
-# clients even without a merge), and by hand:
+# It runs on main only: on a merge that touches community/ (adding, changing or pulling a
+# skill is always such a merge), and by hand. No schedule: each run needs a signing approval,
+# and clients accept a catalog of any age as long as its serial never goes down. By hand:
 #   gh workflow run community-catalog.yml --repo baney75/tabkyra
 name: Community catalog
 
@@ -18,8 +19,6 @@ on:
     branches: [main]
     paths:
       - "community/**"
-  schedule:
-    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions: {}
