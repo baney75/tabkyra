@@ -27,7 +27,9 @@
     "render": "remotion render Demo out/demo.mp4 --codec=h264 --crf=20 && remotion still Poster out/demo-poster.jpg --image-format=jpeg --jpeg-quality=90",
     "publish-media": "cp out/demo.mp4 ../demo.mp4 && cp out/demo-poster.jpg ../demo-poster.jpg",
     "render:hero": "remotion render Hero out/hero.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion render HeroVertical out/hero-vertical.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion still HeroPoster out/hero-poster.jpg --image-format=jpeg --jpeg-quality=90",
-    "publish-hero": "cp out/hero.mp4 ../hero.mp4 && cp out/hero-vertical.mp4 ../hero-vertical.mp4 && cp out/hero-poster.jpg ../hero-poster.jpg"
+    "publish-hero": "cp out/hero.mp4 ../hero.mp4 && cp out/hero-vertical.mp4 ../hero-vertical.mp4 && cp out/hero-poster.jpg ../hero-poster.jpg",
+    "render:agents": "remotion render Agents out/agents.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion render AgentsVertical out/agents-vertical.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion still AgentsPoster out/agents-poster.jpg --image-format=jpeg --jpeg-quality=90",
+    "publish-agents": "cp out/agents.mp4 ../agents.mp4 && cp out/agents-vertical.mp4 ../agents-vertical.mp4 && cp out/agents-poster.jpg ../agents-poster.jpg"
   },
   "allowScripts": {
     "esbuild": false

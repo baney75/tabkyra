@@ -64,7 +64,8 @@ export async function cdp(wsUrl, method, params = {}) {
 	}
 }
 
-export async function launchFixtureBrowser({ extraEnv = {} } = {}) {
+/** `extraArgs`: more Chromium switches (window size, language). */
+export async function launchFixtureBrowser({ extraEnv = {}, extraArgs = [] } = {}) {
 	const home = mkdtempSync(join(tmpdir(), "tk-eval-home-"));
 	// Unix socket paths are capped near 104 bytes on macOS, so keep this one short.
 	const socketDir = mkdtempSync("/tmp/tkev-");
@@ -88,6 +89,7 @@ export async function launchFixtureBrowser({ extraEnv = {} } = {}) {
 			"--remote-debugging-port=0",
 			`--disable-extensions-except=${ext}`,
 			`--load-extension=${ext}`,
+			...extraArgs,
 			"about:blank",
 		],
 		{ env, stdio: ["ignore", "ignore", "pipe"] },
