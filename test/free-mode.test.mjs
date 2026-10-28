@@ -1,7 +1,7 @@
 // Free mode runs the side panel on the best free OpenRouter models. These tests hold its
 // promises: the shipped ranking matches its recorded scores, a request can only ever name free
 // models, private mode refuses rather than sends, and the live list is filtered the way the
-// recorded /models fixture says it should be (D25).
+// recorded /models fixture says it should be (D26).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

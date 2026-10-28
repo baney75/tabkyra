@@ -1,3 +1,4 @@
+import { icon } from "@mariozechner/mini-lit";
 import { i18n } from "@mariozechner/mini-lit/dist/i18n.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import type { AgentInterface, MessageRenderer } from "@mariozechner/pi-web-ui";
@@ -5,12 +6,10 @@ import { registerMessageRenderer } from "@mariozechner/pi-web-ui";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { helmMark } from "../components/HelmMark.js";
+import type { StarterPrompt } from "../tutorials.js";
 import "../utils/i18n-extension.js";
 
-export interface TutorialPrompt {
-	label: string;
-	prompt: string;
-}
+export type TutorialPrompt = StarterPrompt;
 
 export interface WelcomeMessage {
 	role: "welcome";
@@ -34,34 +33,51 @@ export class WelcomeMessageElement extends LitElement {
 		return this;
 	}
 
-	private async selectTutorial(prompt: string) {
+	private async selectTutorial(starter: TutorialPrompt) {
+		if (starter.mode === "compose") {
+			// Into the chat input with the caret at the end; the input event lets the composer
+			// open its "@" tab menu for a prompt that ends in "@".
+			const textarea = this.agentInterface.querySelector<HTMLTextAreaElement>("message-editor textarea");
+			if (!textarea) return;
+			textarea.value = starter.prompt;
+			textarea.focus();
+			textarea.setSelectionRange(starter.prompt.length, starter.prompt.length);
+			textarea.dispatchEvent(new Event("input", { bubbles: true }));
+			return;
+		}
 		// Remove this welcome message
 		const messages = this.agent.state.messages.filter((m) => m !== this.message);
 		this.agent.replaceMessages(messages);
 
-		// Send tutorial prompt
-		await this.agentInterface.sendMessage(prompt);
+		// Send the prompt
+		await this.agentInterface.sendMessage(starter.prompt);
 	}
 
 	override render(): TemplateResult {
 		return html`
-			<div class="welcome-container my-10 flex flex-col items-center justify-center">
-				<div class="flex flex-col items-center text-center mb-8 px-6">
-					${helmMark(72, "tile", "mb-5 rounded-[17px] shadow-[0_10px_30px_-12px_rgba(227,169,59,0.55)]")}
-					<h1 class="text-3xl font-semibold tracking-tight mb-2">Tabkyra</h1>
-					<p class="text-base text-muted-foreground max-w-xs">${i18n("You steer. Tabkyra works the tabs.")}</p>
+			<div class="welcome-container my-8 flex flex-col items-center justify-center">
+				<div class="flex flex-col items-center text-center mb-6 px-6">
+					${helmMark(64, "tile", "mb-4 rounded-[15px] shadow-[0_10px_30px_-12px_rgba(227,169,59,0.55)]")}
+					<h1 class="text-2xl font-semibold tracking-tight mb-1.5">Tabkyra</h1>
+					<p class="text-sm text-muted-foreground max-w-xs">${i18n("You steer. Tabkyra works the tabs.")}</p>
 				</div>
 
-				<!-- Tutorial pills -->
-				<div class="flex flex-wrap gap-3 justify-center max-w-lg px-6 mt-4">
+				<!-- Starter chips -->
+				<div class="grid grid-cols-2 gap-2 w-full max-w-md px-4">
 					${this.tutorials.map(
-						(tutorial, index) => html`
+						(starter, index) => html`
 							<button
-								class="tutorial-pill px-6 py-3 text-sm font-medium text-foreground rounded-full cursor-pointer"
-								@click=${() => this.selectTutorial(tutorial.prompt)}
-								style="animation-delay: ${index * 0.1}s;"
+								type="button"
+								class="tutorial-pill flex items-start gap-2.5 px-3 py-2.5 text-left rounded-xl cursor-pointer min-h-14"
+								data-starter=${starter.mode}
+								@click=${() => this.selectTutorial(starter)}
+								style="animation-delay: ${index * 0.05}s;"
 							>
-								${tutorial.label}
+								${starter.icon ? html`<span class="tk-starter-icon inline-flex shrink-0 mt-0.5">${icon(starter.icon, "sm")}</span>` : ""}
+								<span class="min-w-0">
+									<span class="block text-sm font-medium text-foreground leading-snug">${starter.label}</span>
+									${starter.hint ? html`<span class="block text-xs text-muted-foreground leading-snug mt-0.5">${starter.hint}</span>` : ""}
+								</span>
 							</button>
 						`,
 					)}

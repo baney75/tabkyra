@@ -7,7 +7,7 @@
  * still free and still takes tools; measured models keep their measured order, unmeasured
  * new ones follow (longest context first, then newest), and OpenRouter's own free router
  * comes last. Every model in a request is checked free against the live list, so a turn can
- * never fall through to a paid model (D25).
+ * never fall through to a paid model (D26).
  *
  * Pure functions only: the side panel, the tests and the eval import this file.
  */
@@ -24,7 +24,7 @@ export const OPENROUTER_ZDR_URL = `${OPENROUTER_BASE_URL}/endpoints/zdr`;
 export const FREE_LIST_STALE_MS = 24 * 60 * 60 * 1000;
 /**
  * Models per request, the router included. OpenRouter's `models` fallback list takes at most
- * this many (checked live 2026-10-28; see docs/decisions.md D25).
+ * this many (checked live 2026-10-28; see docs/decisions.md D26).
  */
 export const MAX_CHAIN = 3;
 /** Sent as OpenRouter's `provider.max_price`: a second guard, beside the free-only chain. */

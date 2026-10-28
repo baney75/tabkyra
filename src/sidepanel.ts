@@ -1,5 +1,4 @@
 import { icon } from "@mariozechner/mini-lit";
-import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
 import { LIBRARY_SKILLS } from "virtual:library-skills";
@@ -25,13 +24,16 @@ import {
 	setTranscriptRenderer,
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
-import { Circle, Copy, FileCode2, History, Link, Plus, Settings, Square } from "lucide";
+import { CircleDot, Copy, FileCode2, History, type IconNode, Monitor, Moon, Plus, Settings, Share2, Sun } from "lucide";
 import { isBlockedModel, purgeRemovedSignIns, RemovedSignInError, resolveApiKey } from "./auth/policy.js";
 import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
 import { dispatchToSandbox, setCdpMessageHandler } from "./browser/inject.js";
 import { BrowserSession, listSessions, sessionIdForTab, sessionOwningTab } from "./browser/session.js";
+import { tabToShare } from "./browser/share-tab.js";
 import { helmMark } from "./components/HelmMark.js";
+import "./components/HeaderMenu.js";
+import type { HeaderMenuItem } from "./components/HeaderMenu.js";
 import { Toast } from "./components/Toast.js";
 import { composerChips, knownSkills, knownTabs } from "./composer/chips.js";
 import { skillMenuItems, tabMenuItems } from "./composer/menus.js";
@@ -49,8 +51,8 @@ import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyDialog } from "./dialogs/ApiKeyDialog.js";
 import { ApiKeysTab } from "./dialogs/ApiKeysTab.js";
 import { BridgeTab } from "./dialogs/BridgeTab.js";
+import { CombinedTab } from "./dialogs/CombinedTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
-import { CustomProvidersTab } from "./dialogs/CustomProvidersTab.js";
 import { PrivacyTab } from "./dialogs/PrivacyTab.js";
 import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
@@ -66,8 +68,9 @@ import {
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
-import { FREE_KEY_NOTE } from "./models/free-mode.js";
-import { installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
+import { modelLabelParts } from "./models/display.js";
+import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE } from "./models/free-mode.js";
+import { freeComposerText, installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
 import { isFreeModeModel } from "./models/free-runtime.js";
 import { refreshDiscoveredModels } from "./models/registry.js";
 import { installBugCapture } from "./privacy/capture.js";
@@ -92,7 +95,7 @@ import "./utils/live-reload.js";
 import { bridgeQuestions, watchBridgeQuestions } from "./ask/bridge-panel.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tabkyraTranscript } from "./transcript/render.js";
-import { tutorials } from "./tutorials.js";
+import { starters } from "./tutorials.js";
 import { BUSY_BEAT_PREFIX, reserveRun } from "./update/gate.js";
 
 // Previews for more file types in the artifacts panel (src/artifacts/)
@@ -256,6 +259,7 @@ async function openBrowserSession(id: string): Promise<void> {
 			await browserSession.adopt(homeTabId, browserSession.currentTabId === undefined);
 	}
 	renderApp();
+	void refreshShareState();
 }
 
 /** Move the window's active tab into the session (quietly on startup, with a toast on request). */
@@ -268,7 +272,10 @@ async function adoptActiveTab(notify: boolean): Promise<void> {
 		if (notify) Toast.error("This page cannot be shared with the agent");
 		return;
 	}
-	if (browserSession.tabIds.includes(tab.id)) return;
+	if (browserSession.tabIds.includes(tab.id)) {
+		if (notify) Toast.info("The agent already has this tab");
+		return;
+	}
 	await browserSession.adopt(tab.id, true);
 	if (notify) Toast.success("Tab shared with the agent");
 }
@@ -286,8 +293,27 @@ async function pruneEmptyUnsavedSessions(): Promise<void> {
 /** User gesture: hand the tab they are looking at to the agent. */
 async function shareActiveTab(): Promise<void> {
 	await adoptActiveTab(true);
-	renderApp();
+	await refreshShareState();
 }
+
+/** The active tab, when it is not the agent's yet: the header offers "Share this tab" for it. */
+let shareableTabId: number | undefined;
+async function refreshShareState(): Promise<void> {
+	let next: number | undefined;
+	try {
+		next = await tabToShare(currentWindowId, browserSession?.tabIds);
+	} catch {
+		next = undefined;
+	}
+	if (next !== shareableTabId) {
+		shareableTabId = next;
+		renderApp();
+	}
+}
+chrome.tabs.onActivated.addListener(({ windowId }) => {
+	if (windowId === currentWindowId) void refreshShareState();
+});
+chrome.tabs.onRemoved.addListener(() => void refreshShareState());
 
 /** The URL of the page the agent is on (the session's current tab), if it has one. */
 async function currentPageUrl(): Promise<string | undefined> {
@@ -415,7 +441,7 @@ async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Pr
 			const name = `"${t.title || `Tab ${t.id}`}"`;
 			if (t.status === "other-agent")
 				Toast.error(
-					`${name} stays with ${t.owner}; it was not shared. To hand it over, open that tab and press Share tab (the link button).`,
+					`${name} stays with ${t.owner}; it was not shared. To hand it over, open that tab and press Share this tab.`,
 				);
 			else if (t.status === "unavailable") Toast.error(`${name} can't be shared with the agent`);
 			else if (t.status === "gone") Toast.error(`Tab ${t.id} was closed before the message was sent`);
@@ -570,24 +596,52 @@ async function getProvidersWithKeys(): Promise<string[]> {
 	return result;
 }
 
+/** The composer's model button text; Free mode names the model that answered last. */
+let modelLabelKey: string | undefined;
+function refreshModelLabel(force = false) {
+	const ai = chatPanel?.agentInterface;
+	if (!ai || !agent) return;
+	const free = freeComposerText(agent.state.model, agent.state.messages);
+	const key = free ?? "";
+	if (!force && key === modelLabelKey) return;
+	modelLabelKey = key;
+	// A new function each time: the composer re-renders only when the property changes.
+	ai.modelLabel = (model) => {
+		const text = freeComposerText(model, agent.state.messages);
+		if (text) return { content: text, title: `${text}. ${FREE_PRIVACY_NOTE}` };
+		const parts = modelLabelParts(model);
+		return {
+			content: html`${parts.name}<span class="text-muted-foreground font-normal"> · ${parts.provider}</span>`,
+			title: parts.title,
+		};
+	};
+}
+
 async function hasAnyApiKey(): Promise<boolean> {
 	const providers = await storage.providerKeys.list();
 	return providers.length > 0;
 }
 
+/**
+ * Settings, six tabs that fit the panel's width: Providers (keys and custom providers), Skills,
+ * Bridge, Privacy (with the network proxy), Costs, About (with updates).
+ */
 function openApiKeysDialog(): Promise<void> {
 	return new Promise((resolve) => {
+		const providers = new ApiKeysTab();
+		providers.onChooseModel = () => {
+			document.querySelector("settings-dialog")?.remove();
+			resolve();
+			void chatPanel?.agentInterface?.onModelSelect?.();
+		};
 		SettingsDialog.open(
 			[
-				new ApiKeysTab(),
-				new CustomProvidersTab(),
-				new CostsTab(),
+				providers,
 				new SkillsTab(),
 				new BridgeTab(),
-				new PrivacyTab(),
-				new ProxyTab(),
-				new UpdatesTab(),
-				new AboutTab(),
+				new CombinedTab("Privacy", [{ tab: new PrivacyTab() }, { tab: new ProxyTab(), heading: "CORS proxy" }]),
+				new CostsTab(),
+				new CombinedTab("About", [{ tab: new AboutTab() }, { tab: new UpdatesTab() }]),
 			],
 			resolve,
 		);
@@ -856,6 +910,8 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		agentUnsubscribe = agent.subscribe((event: AgentEvent) => {
 			const messages = agent.state.messages;
 			publishBusyState();
+			// The agent may have taken the tab in front of the user (navigate, new tab).
+			if (event.type === "tool_execution_end" || event.type === "agent_end") void refreshShareState();
 
 			storage.settings
 				.set("lastUsedModel", agent.state.model)
@@ -900,6 +956,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				saveSession();
 			}
 
+			refreshModelLabel();
 			renderApp();
 		});
 	}
@@ -1032,6 +1089,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		// "@" lists the window's tabs; a chosen one is shared with the agent on send.
 		chatPanel.agentInterface.mentionProvider = buildTabMentionProvider();
 		chatPanel.agentInterface.composerAccessory = composerChips;
+		refreshModelLabel(true);
 		// ArrowUp in an empty composer recalls the last prompt for editing or resending.
 		chatPanel.agentInterface.historyProvider = () => {
 			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
@@ -1089,162 +1147,182 @@ const newSession = () => {
 // ============================================================================
 // RENDER
 // ============================================================================
+/** An icon-only header button: its name is the tooltip, shown on hover and on keyboard focus. */
+function headerButton(label: string, iconNode: IconNode, onClick: () => void, badge?: number) {
+	return html`<button type="button" class="tk-icon-btn" aria-label=${label} data-tip=${label} @click=${onClick}>
+		${icon(iconNode, "sm")}
+		${
+			badge
+				? html`<span
+					class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 text-center tabular-nums"
+					aria-hidden="true"
+					>${badge}</span
+				>`
+				: ""
+		}
+	</button>`;
+}
+
 /** Header button for the session's artifacts, with their count; hidden until there is one. */
 function artifactsButton() {
 	const count = chatPanel?.artifactsCount ?? 0;
 	if (count === 0) return "";
-	const label = `Artifacts (${count})`;
+	return headerButton(`Artifacts (${count})`, FileCode2, () => chatPanel?.openArtifacts(), count);
+}
+
+type Theme = "light" | "dark" | "system";
+/** The same setting mini-lit's theme toggle keeps (localStorage "theme", the .dark class). */
+function currentTheme(): Theme {
+	return (localStorage.getItem("theme") as Theme | null) ?? "system";
+}
+function setTheme(theme: Theme) {
+	if (theme === "system") localStorage.removeItem("theme");
+	else localStorage.setItem("theme", theme);
+	const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+	document.documentElement.classList.toggle("dark", dark);
+	renderApp();
+}
+
+function openSettings() {
+	void openApiKeysDialog();
+}
+
+function openSessions() {
+	TabkyraSessionListDialog.open(
+		(sessionId: string) => {
+			loadSession(sessionId);
+		},
+		(deletedSessionId: string) => {
+			// Only reload if the current session was deleted
+			if (deletedSessionId === currentSessionId) {
+				newSession();
+			}
+		},
+		(renamedId: string, title: string) => {
+			if (renamedId !== currentSessionId) return;
+			currentTitle = title;
+			const session = browserSession;
+			const label = sessionLabel();
+			queueBrowserSessionOp(() => session?.setLabel(label));
+			renderApp();
+		},
+		currentSessionId,
+	);
+}
+
+function startTitleEdit() {
+	isEditingTitle = true;
+	renderApp();
+	requestAnimationFrame(() => {
+		const input = document.body.querySelector<HTMLInputElement>("[data-title-input] input");
+		if (input) {
+			input.focus();
+			input.select();
+		}
+	});
+}
+
+async function saveTitle(value: string) {
+	const newTitle = value.trim();
+	if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
+		await storage.sessions.updateTitle(currentSessionId, newTitle);
+		currentTitle = newTitle;
+		const session = browserSession;
+		const label = sessionLabel();
+		queueBrowserSessionOp(() => session?.setLabel(label));
+	}
+	isEditingTitle = false;
+	renderApp();
+}
+
+function titleArea() {
+	if (!currentTitle) return html`<span class="text-sm font-semibold tracking-tight select-none">Tabkyra</span>`;
+	if (isEditingTitle)
+		return html`<div class="flex-1 min-w-0" data-title-input>
+			${Input({
+				type: "text",
+				value: currentTitle,
+				className: "text-sm h-8 w-full",
+				onKeyDown: async (e: KeyboardEvent) => {
+					if (e.key === "Enter") await saveTitle((e.target as HTMLInputElement).value);
+					else if (e.key === "Escape") {
+						e.stopPropagation();
+						isEditingTitle = false;
+						renderApp();
+					}
+				},
+			})}
+		</div>`;
 	return html`<button
 		type="button"
-		class="relative inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-secondary text-foreground"
-		title=${label}
-		aria-label=${label}
-		@click=${() => chatPanel?.openArtifacts()}
+		class="min-w-0 h-8 px-2 text-sm font-medium text-foreground hover:bg-secondary rounded-md truncate text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+		@click=${startTitleEdit}
+		aria-label=${`Rename chat: ${currentTitle}`}
+		title=${currentTitle}
 	>
-		${icon(FileCode2, "sm")}
-		<span
-			class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 text-center tabular-nums"
-			aria-hidden="true"
-			>${count}</span
-		>
+		${currentTitle}
 	</button>`;
+}
+
+function moreMenuItems(): HeaderMenuItem[] {
+	const theme = currentTheme();
+	const themes: Array<[Theme, string, IconNode]> = [
+		["light", "Light theme", Sun],
+		["dark", "Dark theme", Moon],
+		["system", "Match the system", Monitor],
+	];
+	return [
+		{ label: "Copy chat as Markdown", icon: Copy, run: () => void copyCurrentChat() },
+		{ label: "Record a skill on this page", icon: CircleDot, run: () => void toggleRecording() },
+		...themes.map(([value, label, i], n) => ({
+			label,
+			icon: i,
+			checked: theme === value,
+			separator: n === 0,
+			run: () => setTheme(value),
+		})),
+	];
 }
 
 const renderApp = () => {
 	const appHtml = html`
 		<div class="w-full h-full flex flex-col bg-background text-foreground overflow-hidden">
-			<!-- Header -->
-			<div class="flex items-center justify-between border-b border-border shrink-0">
-				<div class="flex items-center gap-2 px-3 py-2 min-w-0">
-					<span class="flex items-center gap-1.5 pr-1 select-none" title="Tabkyra">
-						${helmMark(18)}
-						${currentTitle ? "" : html`<span class="text-sm font-semibold tracking-tight">Tabkyra</span>`}
-					</span>
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(History, "sm"),
-						onClick: () => {
-							TabkyraSessionListDialog.open(
-								(sessionId: string) => {
-									loadSession(sessionId);
-								},
-								(deletedSessionId: string) => {
-									// Only reload if the current session was deleted
-									if (deletedSessionId === currentSessionId) {
-										newSession();
-									}
-								},
-							);
-						},
-						title: "Sessions",
-					})}
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(Plus, "sm"),
-						onClick: newSession,
-						title: "New Session",
-					})}
-
+			<!-- Header: brand or chat title, then what is used every chat; the rest is under More. -->
+			<div class="flex items-center gap-1 border-b border-border shrink-0 h-12 px-2">
+				<span class="flex items-center shrink-0 px-1 select-none" aria-hidden="true">${helmMark(18)}</span>
+				<div class="flex items-center gap-1 flex-1 min-w-0">${titleArea()}</div>
+				<div class="flex items-center gap-0.5 shrink-0 tk-tips-end">
 					${
-						currentTitle
-							? isEditingTitle
-								? html`<div class="flex items-center gap-2">
-									${Input({
-										type: "text",
-										value: currentTitle,
-										className: "text-sm w-48",
-										/*
-										TODO need to add this in Input in mini-lit
-										onBlur: async (e: Event) => {
-											const newTitle = (e.target as HTMLInputElement).value.trim();
-											if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
-												await storage.sessions.updateTitle(currentSessionId, newTitle);
-												currentTitle = newTitle;
-											}
-											isEditingTitle = false;
-											renderApp();
-										},*/
-										onKeyDown: async (e: KeyboardEvent) => {
-											if (e.key === "Enter") {
-												const newTitle = (e.target as HTMLInputElement).value.trim();
-												if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
-													await storage.sessions.updateTitle(currentSessionId, newTitle);
-													currentTitle = newTitle;
-												}
-												isEditingTitle = false;
-												renderApp();
-											} else if (e.key === "Escape") {
-												isEditingTitle = false;
-												renderApp();
-											}
-										},
-									})}
-								</div>`
-								: html`<button
-									class="px-2 py-1 text-xs text-foreground hover:bg-secondary rounded transition-colors truncate max-w-[150px]"
-									@click=${() => {
-										isEditingTitle = true;
-										renderApp();
-										requestAnimationFrame(() => {
-											const input = document.body.querySelector('input[type="text"]') as HTMLInputElement;
-											if (input) {
-												input.focus();
-												input.select();
-											}
-										});
-									}}
-									title="Click to edit title"
-								>
-									${currentTitle}
-								</button>`
-							: html``
+						isRecording
+							? html`<button
+								type="button"
+								class="tk-header-pill tk-rec-pill"
+								aria-label="Stop recording and save as a skill"
+								data-tip="Stop recording and save as a skill"
+								@click=${toggleRecording}
+							>
+								<span class="tk-rec-dot" aria-hidden="true"></span>Recording
+							</button>`
+							: ""
 					}
-				</div>
-				<div class="flex items-center gap-1 px-2">
+					${
+						shareableTabId !== undefined
+							? html`<button
+								type="button"
+								class="tk-header-pill tk-share-pill"
+								data-share-tab
+								data-tip="Give the agent the tab you are looking at"
+								@click=${shareActiveTab}
+							>
+								${icon(Share2, "xs")}Share this tab
+							</button>`
+							: ""
+					}
 					${artifactsButton()}
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(Link, "sm"),
-						onClick: shareActiveTab,
-						title: "Share the tab you are viewing with the agent",
-					})}
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(isRecording ? Square : Circle, "sm"),
-						className: isRecording ? "text-red-500 animate-pulse" : "",
-						onClick: toggleRecording,
-						title: isRecording ? "Stop recording and save as skill" : "Record actions on this page as a skill",
-					})}
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(Copy, "sm"),
-						onClick: copyCurrentChat,
-						title: "Copy chat (Markdown)",
-					})}
-					<theme-toggle></theme-toggle>
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(Settings, "sm"),
-						onClick: () =>
-							SettingsDialog.open([
-								new ApiKeysTab(),
-								new CustomProvidersTab(),
-								new CostsTab(),
-								new SkillsTab(),
-								new BridgeTab(),
-								new PrivacyTab(),
-								new ProxyTab(),
-								new UpdatesTab(),
-								new AboutTab(),
-							]),
-						title: "Settings",
-					})}
+					${headerButton("Past chats", History, openSessions)}
+					${headerButton("New chat", Plus, newSession)}
+					<tk-header-menu .items=${moreMenuItems()} label="More"></tk-header-menu>
+					${headerButton("Settings", Settings, openSettings)}
 				</div>
 			</div>
 
@@ -1517,7 +1595,7 @@ async function initApp() {
 
 	// Add welcome message for new sessions
 	if (agent) {
-		const welcomeMessage = createWelcomeMessage(tutorials);
+		const welcomeMessage = createWelcomeMessage(starters);
 		agent.appendMessage(welcomeMessage);
 		// appendMessage emits no event, so the already-rendered chat would not show it.
 		chatPanel.agentInterface?.requestUpdate();

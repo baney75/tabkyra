@@ -54,7 +54,8 @@ try {
 	// A welcome dialog, if any, goes away first.
 	await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), true`);
 	await sleep(500);
-	const modelButton = `[...document.querySelectorAll("message-editor button")].find((b) => b.querySelector("svg") && b.className.includes("truncate"))`;
+	// The composer's model button: the one whose label span the editor renders (id or app label).
+	const modelButton = `[...document.querySelectorAll("message-editor button")].find((b) => b.querySelector("svg") && b.querySelector("span.ml-1"))`;
 	await evaluate(`${modelButton}.click(), true`);
 	const pinned = await until(
 		() => evaluate(`document.querySelector("agent-model-selector [data-model-item]")?.innerText ?? ""`),

@@ -1,10 +1,14 @@
+import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { getProviders } from "@mariozechner/pi-ai";
-import { SettingsTab } from "@mariozechner/pi-web-ui";
-import { html, type TemplateResult } from "lit";
+import { getAppStorage, SettingsTab } from "@mariozechner/pi-web-ui";
+import { html, nothing, type TemplateResult } from "lit";
+import { repeat } from "lit/directives/repeat.js";
 import { API_BILLING_NOTE, REMOVED_SIGN_IN_PROVIDERS } from "../auth/policy.js";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
+import { providerDisplayName } from "../models/display.js";
 import { FREE_PRIVACY_NOTE } from "../models/free-mode.js";
 import { isFreeModeOn, setFreeMode } from "../models/free-panel.js";
+import { CustomProvidersTab } from "./CustomProvidersTab.js";
 
 // Providers to hide from the API key list: removed sign-ins, and clouds that need more than a key.
 const HIDDEN_PROVIDERS = new Set([
@@ -17,9 +21,61 @@ const HIDDEN_PROVIDERS = new Set([
 	"kimi-coding",
 ]);
 
+/**
+ * Settings > Providers: API keys for the built-in providers, then custom providers. A search
+ * box finds a provider without scrolling, providers with a key come first, and saving a key
+ * offers "Choose a model" right there.
+ */
 export class ApiKeysTab extends SettingsTab {
+	/** Opens the model picker (the composer's own); set by the side panel. */
+	onChooseModel?: () => void;
+	private query = "";
+	private withKeys = new Set<string>();
+	/** The provider whose key was just saved: it gets the "Choose a model" prompt. */
+	private justSaved?: string;
+	private readonly custom = new CustomProvidersTab();
+
 	getTabName(): string {
-		return "API Keys";
+		return "Providers";
+	}
+
+	override async connectedCallback() {
+		super.connectedCallback();
+		this.addEventListener("provider-key-saved", this.onSaved);
+		// Typing a provider's name finds it at once.
+		await this.updateComplete;
+		this.querySelector<HTMLInputElement>("input[type=search]")?.focus();
+		try {
+			const storage = getAppStorage();
+			for (const p of await storage.providerKeys.list()) if (await storage.providerKeys.get(p)) this.withKeys.add(p);
+		} catch (error) {
+			console.error("Failed to load provider keys:", error);
+		}
+		this.requestUpdate();
+	}
+
+	override disconnectedCallback() {
+		super.disconnectedCallback();
+		this.removeEventListener("provider-key-saved", this.onSaved);
+	}
+
+	private onSaved = (e: Event) => {
+		const provider = (e as CustomEvent<string>).detail;
+		this.withKeys.add(provider);
+		this.justSaved = provider;
+		this.requestUpdate();
+	};
+
+	private providers(): string[] {
+		const q = this.query.trim().toLowerCase();
+		return getProviders()
+			.filter((p) => !HIDDEN_PROVIDERS.has(p))
+			.filter((p) => !q || p.includes(q) || providerDisplayName(p).toLowerCase().includes(q))
+			.sort(
+				(a, b) =>
+					Number(this.withKeys.has(b)) - Number(this.withKeys.has(a)) ||
+					providerDisplayName(a).localeCompare(providerDisplayName(b)),
+			);
 	}
 
 	private async toggleFree(e: Event) {
@@ -29,14 +85,13 @@ export class ApiKeysTab extends SettingsTab {
 	}
 
 	render(): TemplateResult {
-		const providers = getProviders().filter((p) => !HIDDEN_PROVIDERS.has(p));
+		const providers = this.providers();
 		return html`
-			<div class="flex flex-col gap-6">
-				<div class="space-y-2">
-					<h3 class="text-sm font-semibold text-foreground">Free mode</h3>
-					<label class="flex items-start gap-2 text-sm text-foreground">
+			<div class="flex flex-col gap-5">
+				<div class="flex flex-col gap-1.5">
+					<label class="flex items-start gap-2 text-sm font-medium text-foreground">
 						<input type="checkbox" class="mt-1" .checked=${isFreeModeOn()} @change=${(e: Event) => this.toggleFree(e)} />
-						<span>Use the best free model (OpenRouter)</span>
+						<span>Free mode: use the best free model (OpenRouter)</span>
 					</label>
 					<p class="text-xs text-muted-foreground">
 						Runs on OpenRouter's free models, ranked by how well they do Tabkyra's browser tasks, with the next ones
@@ -44,17 +99,51 @@ export class ApiKeysTab extends SettingsTab {
 						limited per day. ${FREE_PRIVACY_NOTE}
 					</p>
 				</div>
-				<div>
-					<h3 class="text-sm font-semibold text-foreground mb-2">API Keys</h3>
-					<p class="text-sm text-muted-foreground mb-2">
-						Enter API keys for cloud providers. Keys are stored locally in your browser.
+				<div class="flex flex-col gap-1.5">
+					<p class="text-sm text-muted-foreground">
+						API keys for the side panel's agent. Keys stay in this browser. ${API_BILLING_NOTE}
 					</p>
-					<p class="text-sm text-muted-foreground mb-3">${API_BILLING_NOTE}</p>
 					${agentSetupPromptButton("Using your own agent instead? Paste this prompt into Claude Code, Codex, pi, OMP or any agent to connect it to this browser.")}
 				</div>
-				<div class="flex flex-col gap-6">
-					${providers.map((provider) => html`<provider-key-input .provider=${provider}></provider-key-input>`)}
+				${
+					this.justSaved
+						? html`<div
+								role="status"
+								class="flex items-center justify-between gap-3 rounded-lg border border-[var(--tk-brass)]/50 bg-[var(--tk-brass)]/10 px-3 py-2"
+							>
+								<span class="text-sm text-foreground">${providerDisplayName(this.justSaved)} key saved.</span>
+								${Button({
+									size: "sm",
+									onClick: () => this.onChooseModel?.(),
+									children: "Choose a model",
+								})}
+							</div>`
+						: nothing
+				}
+				<input
+					type="search"
+					aria-label="Find a provider"
+					placeholder="Find a provider"
+					.value=${this.query}
+					@input=${(e: Event) => {
+						this.query = (e.target as HTMLInputElement).value;
+						this.requestUpdate();
+					}}
+					class="w-full h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				/>
+				<div class="flex flex-col gap-5">
+					${
+						providers.length === 0
+							? html`<p class="text-sm text-muted-foreground">No provider matches. Add any OpenAI- or Anthropic-compatible endpoint under Custom providers below.</p>`
+							: repeat(
+									providers,
+									(provider) => provider,
+									(provider) =>
+										html`<provider-key-input .provider=${provider} .label=${providerDisplayName(provider)}></provider-key-input>`,
+								)
+					}
 				</div>
+				<div class="pt-5 border-t border-border">${this.custom}</div>
 			</div>
 		`;
 	}

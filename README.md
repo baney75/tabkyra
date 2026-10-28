@@ -111,7 +111,7 @@ provider's API key, or pick [Free mode](#free-mode) with a free OpenRouter key.
 ### Let your agent do the rest
 
 Once the extension is loaded, open the side panel's **Settings > Bridge** (the welcome
-dialog and Settings > API Keys have the same button) and click
+dialog and Settings > Providers have the same button) and click
 **Copy setup prompt for your agent**. Paste it into Claude Code, Codex, pi, OMP or any
 agent with a shell. The agent reuses a working CLI or installs one from the tag that
 matches your extension's version (the default branch when no such tag exists, and it
@@ -333,7 +333,7 @@ skill uses them.
 ## Free mode
 
 Free mode runs the side panel agent on OpenRouter's free models, at no cost. Pick **Free (best
-available)** at the top of the model list, or turn on **Settings > API Keys > Free mode**. It
+available)** at the top of the model list, or turn on **Settings > Providers > Free mode**. It
 needs a free OpenRouter key (sign up at [openrouter.ai/keys](https://openrouter.ai/keys)); without
 one, Tabkyra opens the key prompt and says so.
 

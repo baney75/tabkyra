@@ -121,5 +121,5 @@ export function assertPrivateProxy(
 	trustedHosts: string[] = [],
 ): void {
 	if (enabled && proxyUrl && !isLocalBaseUrl(proxyUrl, trustedHosts))
-		throw new PrivateModeError("the CORS proxy in Settings > Proxy");
+		throw new PrivateModeError("the CORS proxy in Settings > Privacy");
 }

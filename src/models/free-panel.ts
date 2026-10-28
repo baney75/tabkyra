@@ -1,11 +1,11 @@
 /**
  * Free mode in the side panel: the pinned selector entry, the composer label, the Settings
- * switch and the per-request swap in the stream gate. Decisions: docs/decisions.md D25.
+ * switch and the per-request swap in the stream gate. Decisions: docs/decisions.md D26.
  */
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Api, Model } from "@mariozechner/pi-ai";
-import { setModelLabeler, setPinnedModels } from "@mariozechner/pi-web-ui";
+import { setPinnedModels } from "@mariozechner/pi-web-ui";
 import { ApiKeyDialog } from "../dialogs/ApiKeyDialog.js";
 import { FREE_KEY_NOTE, FREE_MODEL_NAME, freeLabel, OPENROUTER_FREE_ROUTER } from "./free-mode.js";
 import {
@@ -52,6 +52,14 @@ export function lastFreeAnswer(messages: AgentMessage[]): { id: string; name?: s
 	return undefined;
 }
 
+/** The composer's label in Free mode ("Free" or "Free · <model>"); undefined for other models. */
+export function freeComposerText(
+	model: { provider: string; id: string },
+	messages: AgentMessage[],
+): string | undefined {
+	return isFreeModeModel(model) ? freeLabel(lastFreeAnswer(messages)) : undefined;
+}
+
 export function installFreeMode(panelHost: FreePanelHost): void {
 	host = panelHost;
 	setPinnedModels(() => [
@@ -61,7 +69,6 @@ export function installFreeMode(panelHost: FreePanelHost): void {
 			subtitle: "Free · OpenRouter · providers may log prompts",
 		},
 	]);
-	setModelLabeler((model, messages) => (isFreeModeModel(model) ? freeLabel(lastFreeAnswer(messages)) : undefined));
 	// Warm the list (and its names) in the background; a day-old cache is refreshed.
 	loadFreeList(panelHost.settings)
 		.then(remember)
