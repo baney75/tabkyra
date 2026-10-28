@@ -1,9 +1,13 @@
+import { isRestrictedUrl } from "./cdp.js";
+
+/** A blank new tab: the agent may start there and navigate away. */
+const NEW_TAB = /^(chrome|edge|brave|vivaldi|opera|arc):\/\/(newtab|new-tab-page)\/?$|^about:blank$/;
+
 /**
- * Whether the header offers "Share this tab". The panel shows on its own task's tabs, so most of
- * the time the tab in front of the user is already the agent's and a share button would do
- * nothing. It is offered only when the active tab is not one of the session's tabs (the user is
- * looking at another tab while a run keeps the panel open, or the panel has no home tab) and is
- * not one of the extension's own pages.
+ * The tab the user is looking at, when the agent should get it with their next message: it is
+ * not one of the session's tabs yet, and it is a web page or a blank new tab. Browser pages
+ * (settings, the extension's own pages, the web store) never go to the agent, since it can't
+ * work there and would navigate the user's page away.
  */
 export async function tabToShare(
 	windowId: number | undefined,
@@ -11,6 +15,27 @@ export async function tabToShare(
 ): Promise<number | undefined> {
 	if (windowId === undefined || !sessionTabIds) return undefined;
 	const [tab] = await chrome.tabs.query({ active: true, windowId });
-	if (!tab?.id || (tab.url ?? "").startsWith("chrome-extension://")) return undefined;
+	const url = tab?.url ?? "";
+	if (!tab?.id || (isRestrictedUrl(url) && !NEW_TAB.test(url))) return undefined;
 	return sessionTabIds.includes(tab.id) ? undefined : tab.id;
+}
+
+interface SharingSession {
+	readonly tabIds: readonly number[];
+	adoptIfFree(tabId: number, makeCurrent?: boolean): Promise<{ id: string; label: string } | undefined>;
+}
+
+/**
+ * Give the session the tab the user is looking at, unless another agent is driving it.
+ * Returns what happened, so the panel can say so when the tab stayed with someone else.
+ */
+export async function shareActiveTab(
+	session: SharingSession,
+	windowId: number | undefined,
+	makeCurrent: boolean,
+): Promise<{ tabId: number; heldBy?: string } | undefined> {
+	const tabId = await tabToShare(windowId, session.tabIds);
+	if (tabId === undefined) return undefined;
+	const owner = await session.adoptIfFree(tabId, makeCurrent);
+	return owner ? { tabId, heldBy: owner.label } : { tabId };
 }
