@@ -46,10 +46,11 @@ test("list --json gives each skill's version and source", () => {
 	const home = newHome();
 	const list = JSON.parse(run(home, ["skill", "list", "--json"]).stdout);
 	const dorks = list.find((s) => s.name === "dorks");
-	assert.deepEqual(dorks, { name: "dorks", description: /^description: (.*)$/m.exec(bundled("dorks"))[1], version: version(bundled("dorks")), source: "bundled" });
+	assert.deepEqual(dorks, { name: "dorks", description: /^description: (.*)$/m.exec(bundled("dorks"))[1], version: version(bundled("dorks")), source: "bundled", provenance: "built-in" });
 	const edited = applyEdit(home, "dorks", addLesson("try Bing when Google shows a captcha."));
 	const after = JSON.parse(run(home, ["skill", "list", "--json"]).stdout).find((s) => s.name === "dorks");
 	assert.equal(after.source, "local");
+	assert.equal(after.provenance, "local edit of the built-in skill");
 	assert.equal(after.version, version(edited));
 });
 

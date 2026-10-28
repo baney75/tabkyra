@@ -2,6 +2,7 @@ import { startBridge, trace } from "./bridge/native.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { startGroupGestures } from "./browser/group-gestures.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
+import { startCommunityWorker } from "./community/worker.js";
 import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
 
 // Keep popups opened by agent-driven background tabs from stealing the user's focus.
@@ -23,6 +24,9 @@ startBridge();
 
 // "Update now", the reload after an update (only when no agent runs), automatic updates.
 startUpdateWorker();
+
+// Community skills: the side panel's on, off and sync buttons go to the native host.
+startCommunityWorker();
 
 // ============================================================================
 // PER-TAB SIDE PANEL (Claude-in-Chrome model)

@@ -67,12 +67,18 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--format": "<format>",
 	"--out": "FILE",
 	"--folder": "NAME",
+	"--file": "<file>",
+	"--confirm": "<code>",
+	"--repo": "owner/name",
+	"--branch": "<branch>",
+	"--serial": "N",
+	"--source": "<commit>",
 };
 
 export const VALUE_FLAGS = new Set(Object.keys(VALUE_HINTS));
 
 /** Value options whose value is a path: completions offer file names after them. */
-const PATH_VALUES = new Set(["--cases", "--base", "--router", "--out"]);
+const PATH_VALUES = new Set(["--cases", "--base", "--router", "--out", "--file"]);
 
 export const COMMANDS: CommandSpec[] = [
 	{ name: "setup", selfParsed: true, what: "Build, register, load, connect and add to your agents", group: "Get started", flags: SETUP_FLAGS },
@@ -89,7 +95,7 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "install", args: "[name...]", what: "Install the bundled skills into Claude Code, Codex and OpenCode", flags: ["--all", "--force"], max: 64 },
 			{ name: "list", what: "The skills in use, what each is for, its version and source", flags: ["--json"] },
 			{ name: "print", args: "[name]", what: "A skill as text for AGENTS.md; --raw is the exact SKILL.md", flags: ["--raw"], max: 1 },
-			{ name: "lint", args: "[path...]", what: "Check skills for hidden text, injection and missing structure", max: 64, paths: true },
+			{ name: "lint", args: "[path...]", what: "Check skills for hidden text, injection and missing structure; --community adds the community rules", flags: ["--community"], max: 64, paths: true },
 			{ name: "apply", args: "<folder>", what: "Check and show an edited skill; --yes backs up and installs it (/rsi)", flags: ["--yes"], max: 1, paths: true },
 			{ name: "revert", args: "<name>", what: "Drop your edit and go back to the bundled skill", max: 1 },
 			{ name: "match", args: '"<task>"', what: "Which skill fits a task, best first, or none", flags: ["--json", "--top"], max: 64 },
@@ -98,6 +104,13 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "rollback", args: "<name>", what: "Restore a backed-up version, with apply's checks", flags: ["--to", "--yes"], max: 1 },
 			{ name: "edit", args: "<name>", what: "Draft an edit in $EDITOR, show the diff, apply on yes", flags: ["--yes", "--draft-only"], max: 1 },
 			{ name: "refresh", what: "Refresh installed bundled skills you haven't edited", flags: ["--json"] },
+			{ name: "write", args: "<name>", what: "Check new SKILL.md text (--file or stdin) with the lint; --yes saves it as a local skill", flags: ["--file", "--yes"], max: 1 },
+			{ name: "test", args: "<name|folder>", what: "Lint, community rules and the router eval CI runs, for one skill", flags: ["--cases", "--json"], max: 1, paths: true },
+			{ name: "remove", args: "<name>", what: "Remove a local skill or edit (kept in history), or turn off a community skill", max: 1 },
+			{ name: "enable", args: "<name>", what: "Turn a community skill you removed back on", max: 1 },
+			{ name: "sync", what: "Fetch and verify the signed community catalog now; --off and --on opt out and in", flags: ["--on", "--off", "--json"] },
+			{ name: "submit", args: "<name|folder>", what: "Preview a community skill pull request; --confirm <code> from the preview opens it with gh", flags: ["--cases", "--repo", "--branch", "--note", "--dry-run", "--confirm", "--json"], max: 1, paths: true },
+			{ name: "catalog", args: "<checkout>", what: "Build the community catalog (run by CI before signing)", flags: ["--out", "--serial", "--source"], max: 1, paths: true },
 		],
 	},
 	{

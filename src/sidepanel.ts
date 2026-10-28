@@ -31,6 +31,7 @@ import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
 import { dispatchToSandbox, setCdpMessageHandler } from "./browser/inject.js";
 import { BrowserSession, listSessions, sessionIdForTab, sessionOwningTab } from "./browser/session.js";
+import { communityLibrary, readCommunityStatus } from "./community/status.js";
 import { helmMark } from "./components/HelmMark.js";
 import { Toast } from "./components/Toast.js";
 import { composerChips, knownSkills, knownTabs } from "./composer/chips.js";
@@ -295,6 +296,14 @@ async function currentPageUrl(): Promise<string | undefined> {
 	}
 }
 
+/** The bundled library, then community skills whose names it doesn't use. */
+async function libraryWithCommunity() {
+	return [
+		...LIBRARY_SKILLS,
+		...communityLibrary(await readCommunityStatus(), new Set(LIBRARY_SKILLS.map((s) => s.name))),
+	];
+}
+
 /**
  * "/" in the chat input: site skills for the current page, then the bundled library, then site
  * skills for other sites. Choosing one inserts `/<name>`; on send the skill runs with the rest
@@ -305,7 +314,7 @@ function buildSkillSlashProvider() {
 		const url = await currentPageUrl();
 		const all = await storage.skills.list();
 		const onSite = new Set(url ? (await storage.skills.list(url)).map((s) => s.name) : []);
-		const items = skillMenuItems(query, all, onSite, LIBRARY_SKILLS);
+		const items = skillMenuItems(query, all, onSite, await libraryWithCommunity());
 		for (const item of items) knownSkills.add(item.id);
 		return items;
 	};
@@ -354,6 +363,8 @@ async function findSkill(name: string): Promise<SkillRun | undefined> {
 	if (onSite) return siteSkillRun(onSite);
 	const lib = LIBRARY_SKILLS.find((s) => s.name === name);
 	if (lib) return { name, source: "library", instructions: lib.text };
+	const community = (await libraryWithCommunity()).find((s) => s.name === name);
+	if (community) return { name, source: "library", instructions: community.text };
 	const site = await storage.skills.get(name);
 	return site ? siteSkillRun(site) : undefined;
 }
@@ -398,7 +409,7 @@ async function freezeRefs(messages: AgentMessage[], loaded: WeakSet<object>): Pr
 			findSkill,
 			skillNames: async () => [
 				...(await storage.skills.list()).map((s) => s.name),
-				...LIBRARY_SKILLS.map((s) => s.name),
+				...(await libraryWithCommunity()).map((s) => s.name),
 			],
 		}).catch((err) => {
 			// Nothing was shared and no skill loaded; say so rather than show chips that look fine.

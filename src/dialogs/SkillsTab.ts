@@ -1,7 +1,14 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
-import { html } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
+import type { HostCommunityStatus } from "../bridge/protocol.js";
+import {
+	COMMUNITY_STATUS_KEY,
+	type CommunityAction,
+	PANEL_COMMUNITY_MESSAGE,
+	readCommunityStatus,
+} from "../community/status.js";
 import { Toast } from "../components/Toast.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
@@ -15,6 +22,12 @@ export class SkillsTab extends SettingsTab {
 	private editingSkill: Skill | null = null;
 	private importConflicts: { skill: Skill; selected: boolean }[] = [];
 	private importedSkills: Skill[] = [];
+	private community: HostCommunityStatus | undefined;
+	private readonly onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+		if (area !== "local" || !(COMMUNITY_STATUS_KEY in changes)) return;
+		this.community = changes[COMMUNITY_STATUS_KEY].newValue as HostCommunityStatus | undefined;
+		this.requestUpdate();
+	};
 
 	getTabName(): string {
 		return this.label;
@@ -22,7 +35,81 @@ export class SkillsTab extends SettingsTab {
 
 	async connectedCallback() {
 		super.connectedCallback();
+		chrome.storage.onChanged.addListener(this.onStorageChanged);
+		this.community = await readCommunityStatus();
+		this.requestUpdate();
 		await this.loadSkills();
+	}
+
+	override disconnectedCallback() {
+		super.disconnectedCallback();
+		chrome.storage.onChanged.removeListener(this.onStorageChanged);
+	}
+
+	private async sendCommunity(action: CommunityAction) {
+		try {
+			const reply = (await chrome.runtime.sendMessage({ type: PANEL_COMMUNITY_MESSAGE, action })) as
+				| { ok: boolean; message?: string }
+				| undefined;
+			if (!reply?.ok) Toast.error(reply?.message ?? "The Tabkyra native host didn't answer.");
+		} catch (error) {
+			Toast.error((error as Error).message);
+		}
+	}
+
+	private renderCommunity(): TemplateResult {
+		const status = this.community;
+		const checked = status?.enabled ?? true;
+		const lastCheck = status?.lastCheck ? new Date(status.lastCheck).toLocaleString() : "never";
+		return html`
+			<div class="border border-border rounded-lg p-4 bg-card space-y-3">
+				<h3 class="font-semibold text-foreground">Community skills</h3>
+				<label class="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+					<input
+						type="checkbox"
+						.checked=${checked}
+						@change=${(e: Event) => this.sendCommunity((e.target as HTMLInputElement).checked ? "on" : "off")}
+					/>
+					Receive community skills
+				</label>
+				<p class="text-sm text-muted-foreground">
+					Reviewed by a maintainer, signed, checked about once a day. Each is used only on the sites it names. Your own edits are kept and never overwritten.
+				</p>
+				${
+					status
+						? html`<div class="flex items-center gap-2 flex-wrap text-sm text-foreground">
+								<span>Catalog ${status.serial ?? "none yet"}, checked ${lastCheck}</span>
+								${Button({
+									variant: "secondary",
+									size: "sm",
+									onClick: () => this.sendCommunity("sync"),
+									children: "Check now",
+								})}
+							</div>`
+						: html`<p class="text-sm text-muted-foreground">
+								No word from the native host yet; community skills sync through it (tabkyra doctor).
+							</p>`
+				}
+				${status?.error ? html`<p class="text-sm text-destructive">${status.error}</p>` : nothing}
+				${
+					status && status.skills.length > 0
+						? html`<div class="flex flex-col gap-2">
+								${status.skills.map(
+									(skill) => html`<div class="space-y-1">
+										<div class="font-semibold text-foreground">${skill.name}</div>
+										<div class="text-xs text-muted-foreground font-mono">${skill.provenance}; ${skill.sites.join(", ")}</div>
+										<p class="text-sm text-muted-foreground">${skill.description}</p>
+									</div>`,
+								)}
+							</div>`
+						: nothing
+				}
+				${status?.notes.map((note) => html`<p class="text-sm text-muted-foreground">${note}</p>`)}
+				${status?.removed
+					.slice(-5)
+					.map((r) => html`<p class="text-sm text-muted-foreground">Removed ${r.name}: ${r.reason}</p>`)}
+			</div>
+		`;
 	}
 
 	async loadSkills() {
@@ -347,6 +434,7 @@ export class SkillsTab extends SettingsTab {
 
 		return html`
 			<div class="flex flex-col gap-6">
+				${this.renderCommunity()}
 				<p class="text-sm text-muted-foreground">
 					Manage site skills - reusable JavaScript libraries for domain-specific automation.
 				</p>

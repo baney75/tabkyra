@@ -13,7 +13,12 @@ import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "
 import { install, isInstalled } from "./install.ts";
 import { addSource, cite, search, summary } from "./library.ts";
 import { chooseSession } from "./session-name.ts";
-import { matchTask, readSkill } from "./skill.ts";
+import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { syncCatalog } from "./community-catalog.ts";
+import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, writeSkill } from "./skill.ts";
+import { stageCases } from "./skill-submit.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -750,8 +755,21 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			description: "The full SKILL.md of one skill (the user's edit if they made one; remote sessions get the bundled text). Read only the skill skill_match chose, then follow it. Example: {\"name\":\"academic-research\"}",
 			inputSchema: { name: z.string().describe("A skill name from skill_match, lowercase-kebab-case") },
 		},
-		(args) => library(() => readSkill(args.name, bundledOnly)),
+		(args) =>
+			library(() => {
+				const text = readSkill(args.name, bundledOnly);
+				if (bundledOnly) return text;
+				// A community skill says where it came from and where it applies, before its text.
+				const info = skillInfo(args.name);
+				if (info.source !== "community" && info.overrides !== "community") return text;
+				const reviewed = info.source === "community" ? "; written by the Tabkyra community and reviewed by a maintainer" : "";
+				return `[${info.provenance}${reviewed}; scoped to ${(info.sites ?? []).join(", ")}: use it only on those sites]\n\n${text}`;
+			}),
 	);
+
+	// Managing skills changes what the user's agents load, so it's for the local server only:
+	// never a remote or scoped session (D9, D25).
+	if (!bundledOnly) registerSkillManagement(server, library);
 
 	// ask_user (cli/src/ask.ts): questions for the user, answered in the side panel.
 	registerAskUser(server, client);
@@ -772,6 +790,89 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	return { server, client };
 }
 
+type ToolResult = { content: Content[]; isError?: boolean };
+
+const caseSchema = z.object({ task: z.string().min(1).max(500), skill: z.string().min(1).max(64) });
+
+/** Run `tabkyra skill submit <name> --json` as a child: a clone mustn't block this server. */
+async function previewSubmission(name: string, note?: string): Promise<string> {
+	const self = fileURLToPath(import.meta.url);
+	const entry = self.endsWith(".ts") ? join(dirname(self), "..", "dist", "index.js") : self;
+	const argv = [entry, "skill", "submit", name, "--json", ...(note ? ["--note", note] : [])];
+	const { code, stdout, stderr } = await new Promise<{ code: number | null; stdout: string; stderr: string }>((done) => {
+		const child = spawn(process.execPath, argv, { env: { ...process.env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+		let out = "";
+		let err = "";
+		child.stdout.on("data", (d) => {
+			out += d;
+		});
+		child.stderr.on("data", (d) => {
+			err += d;
+		});
+		child.on("close", (c) => done({ code: c, stdout: out, stderr: err }));
+	});
+	if (code !== 3) throw new Error((stderr || stdout).trim() || `skill submit exited ${code}`);
+	const p = JSON.parse(stdout) as { code: string; title: string; body: string; files: Array<{ path: string; text: string }> };
+	return [
+		"Nothing was sent. Show this whole preview to the user and ask whether to submit it.",
+		`Pull request to baney75/tabkyra from a fork on the user's GitHub account. Title: ${p.title}`,
+		...p.files.flatMap((f) => [`--- ${f.path} ---`, f.text.trimEnd()]),
+		"--- pull request body ---",
+		p.body,
+		"---",
+		`Only if the user says yes to this preview, run: tabkyra skill submit ${name}${note ? ` --note ${JSON.stringify(note)}` : ""} --confirm ${p.code}`,
+		"If they say no, do nothing. Never submit without their yes; a maintainer reviews and merges.",
+	].join("\n");
+}
+
+/**
+ * skill_manage: list, write, test, remove and prepare_submit in one tool, so agents that never
+ * manage skills pay for one tool definition, not five (docs/skill-platform.md, D25).
+ */
+function registerSkillManagement(server: McpServer, library: <T>(fn: () => Promise<T> | T) => Promise<ToolResult>): void {
+	server.registerTool(
+		"skill_manage",
+		{
+			title: "Manage skills",
+			description:
+				'list: skills and provenance. write: lint SKILL.md text, show the diff; apply:true saves, only once the user approved it. test: lint, community rules, router cases. remove: only if the user asks. prepare_submit: community pull request preview; never sends. Example: {"action":"list"}',
+			inputSchema: {
+				action: z.enum(["list", "write", "test", "remove", "prepare_submit"]).describe("What to do"),
+				name: z.string().optional().describe("Skill"),
+				text: z.string().max(40000).optional().describe("Whole SKILL.md"),
+				apply: z.boolean().optional().describe("Save"),
+				cases: z.array(caseSchema).max(100).optional().describe("{task, skill: name or none}"),
+				note: z.string().max(500).optional().describe("How it was tested; no personal data"),
+			},
+		},
+		(args) =>
+			library(async () => {
+				if (args.action === "list") {
+					return listSkills()
+						.map((s) => `${s.name} ${s.version} [${s.provenance}${s.sites ? `; sites ${s.sites.join(", ")}` : ""}]: ${s.description.slice(0, 160)}`)
+						.join("\n");
+				}
+				const name = args.name ?? "";
+				if (!name) throw new Error(`${args.action} needs a name.`);
+				if (args.action === "write") {
+					if (!args.text) throw new Error("write needs the whole SKILL.md as text.");
+					const { plan, applied, backup } = writeSkill(name, args.text, args.apply === true);
+					return applied
+						? `Saved ${plan.name} as a local skill.${backup ? ` Backup: ${backup}.` : ""} Undo: {"action":"remove","name":"${plan.name}"}.`
+						: `Lint passed. Nothing changed yet. Show the user this diff; save with apply:true only after they approve.\n${plan.diff}`;
+				}
+				if (args.action === "test") {
+					const cases = args.cases?.map((c) => JSON.stringify({ task: c.task, skill: c.skill })).join("\n");
+					const r = checkSkill(args.text ? { name, text: args.text } : { name }, { cases });
+					return `${r.ok ? "PASS" : "FAIL"}\n${r.lines.join("\n").replace(/\u001b\[[0-9;]*m/g, "")}`;
+				}
+				if (args.action === "remove") return removeSkill(name);
+				if (args.cases) stageCases(name, args.cases);
+				return previewSubmission(name, args.note);
+			}),
+	);
+}
+
 export async function runMcpServer(options: { session?: string } = {}): Promise<void> {
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
@@ -779,6 +880,10 @@ export async function runMcpServer(options: { session?: string } = {}): Promise<
 		process.stderr.write(`[tabkyra] installed native host manifest (${result.written.length} browser dir(s))\n`);
 	}
 	const { server, client } = createMcpServer({ sessionFlag: options.session });
+	// Community skills, about daily, in the background: many harnesses keep this server running.
+	const sync = () => syncCatalog({ due: true }).catch(() => undefined);
+	void sync();
+	setInterval(sync, 6 * 60 * 60 * 1000).unref();
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
 	// Connect lazily on the first call, but try once now so a missing extension is reported early.

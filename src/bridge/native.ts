@@ -18,6 +18,7 @@ import {
 	type SessionMeta,
 	sanitizeLabel,
 } from "../browser/session.js";
+import { COMMUNITY_STATUS_KEY } from "../community/status.js";
 import { handleThreads } from "../threads/bridge.js";
 import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
@@ -511,6 +512,9 @@ function onHostMessage(message: HostToExt): void {
 			void chrome.storage.local.set({ [UPDATE_STATUS_KEY]: message });
 			updateHandlers.status?.(message);
 			return;
+		case "community_status":
+			void chrome.storage.local.set({ [COMMUNITY_STATUS_KEY]: message });
+			return;
 		case "update_progress":
 			// A replay is for the worker to match against what it waits for, not news for the panel.
 			if (!message.replay) void chrome.storage.local.set({ [UPDATE_PROGRESS_KEY]: message });
@@ -884,6 +888,13 @@ let helloSent = false;
 export function sendUpdateAction(action: UpdateAction): boolean {
 	if (!port || !helloSent) return false;
 	send({ type: "update_action", action });
+	return true;
+}
+
+/** Ask the native host to turn community skills on or off, or sync now; false when no host is ready. */
+export function sendCommunityAction(action: "on" | "off" | "sync"): boolean {
+	if (!port || !helloSent) return false;
+	send({ type: "community_action", action });
 	return true;
 }
 

@@ -60,8 +60,10 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// Every agent pays for these on every turn. Main measured 26,460 bytes for 31 tools before the
 	// descriptions were cut (docs/benchmarks.md); 34 tools came to about 23,600, and the three
 	// thread tools add about 2,000. A change that grows it past the budget has to earn it.
+	// skill_manage (D25) adds 1,153: managing and submitting skills in one tool, not five
+	// (4,137 as five), so agents can do it without a shell.
 	const bytes = Buffer.byteLength(JSON.stringify(tools));
-	assert.ok(bytes <= 26000, `tools/list is ${bytes} bytes, over the 26,000 budget`);
+	assert.ok(bytes <= 26800, `tools/list is ${bytes} bytes, over the 26,800 budget`);
 	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
 });
 

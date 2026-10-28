@@ -149,7 +149,23 @@ export interface ExtThreadsMirror {
 	ids?: string[];
 }
 
-export type ExtToHost = ExtHello | ExtResponse | ExtEvent | ExtPong | ExtUpdateAction | ExtThreadsMirror;
+/**
+ * Community skills (docs/decisions.md D25): turn them on or off, or check now. Exactly these
+ * two fields; the host refuses anything more (cli/src/community-host.ts).
+ */
+export interface ExtCommunityAction {
+	type: "community_action";
+	action: "on" | "off" | "sync";
+}
+
+export type ExtToHost =
+	| ExtHello
+	| ExtResponse
+	| ExtEvent
+	| ExtPong
+	| ExtUpdateAction
+	| ExtThreadsMirror
+	| ExtCommunityAction;
 
 export interface HostClientConnected {
 	type: "client_connected";
@@ -196,6 +212,33 @@ export interface LastUpdate {
 	/** The extension build installed by this run: "What's new" shows once the browser runs it. */
 	extensionBuild?: string;
 	skills?: { refreshed: string[]; skipped: Array<{ skill: string; file: string; reason: string }>; error?: string };
+}
+
+/** A community skill in use, or the user's local copy of one, with the text in use. */
+export interface HostCommunitySkill {
+	name: string;
+	description: string;
+	version: string;
+	/** "community, catalog 42" or "local override of the community skill (...)". */
+	provenance: string;
+	sites: string[];
+	text: string;
+}
+
+/** Community skills as the native host has them: verified, synced, and the user's choice. */
+export interface HostCommunityStatus {
+	type: "community_status";
+	enabled: boolean;
+	/** The serial of the verified catalog in use. */
+	serial?: number;
+	lastCheck?: string;
+	/** Why the last check failed or the catalog was refused. */
+	error?: string;
+	skills: HostCommunitySkill[];
+	/** Skills the catalog pulled, newest last. */
+	removed: Array<{ name: string; reason: string }>;
+	/** What the last sync changed for the user (removals, kept local copies). */
+	notes: string[];
 }
 
 /** What the last check found, and everything Settings > Updates shows. */
@@ -276,7 +319,8 @@ export type HostToExt =
 	| HostForwardedRequest
 	| HostPing
 	| HostUpdateStatus
-	| HostUpdateProgress;
+	| HostUpdateProgress
+	| HostCommunityStatus;
 
 /** Error codes the extension returns. */
 export const ERR = {

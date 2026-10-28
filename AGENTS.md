@@ -60,6 +60,10 @@ Treat a skill change like a security change.
 - Skills describe attacks; they never quote them, not even in a code fence.
 - Personal skills (anything with the user's own data) are never committed, pushed or
   submitted (D6).
+- Community skills live in `community/skills/` with cases in `community/cases/`; they follow
+  `CONTRIBUTING-skills.md` and pass `node cli/dist/index.js skill lint --community community/skills`.
+  A community pull request changes nothing outside `community/`. Agents prepare a submission
+  (`tabkyra skill submit` without `--confirm`) and never send one without the user's yes (D25).
 
 ## Changelog
 Location: `CHANGELOG.md`

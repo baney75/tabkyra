@@ -1,13 +1,17 @@
 # Runs on every pull request and every push to main. Four jobs:
-#   skills:           the gate for skills/. Lints every skill for hidden text, prompt
-#                     injection, remote code, secret handling and structure, and runs the
-#                     red-team tests that prove the lint still catches each attack. No
+#   skills:           the gate for skills/ and community/skills/. Lints every skill for hidden
+#                     text, prompt injection, remote code, secret handling and structure, and
+#                     runs the red-team tests that prove the lint still catches each attack.
+#                     Community skills also get the community rules (scope to their sites, no
+#                     page scripts, no credential requests, no exfiltration, no personal data),
+#                     and a pull request that adds one changes nothing outside community/. No
 #                     install scripts run.
 #   skill-regression: the pull request's own skill router gates (docs/skill-platform.md):
 #                     the size budget, top-1 accuracy, false invokes, latency, the held-out
 #                     floors, and every skill measuring at least its value in
 #                     skills-eval/baseline.json, with no tolerance (a lower value needs an
-#                     accepted drop).
+#                     accepted drop). Community skills join the index as on a client, with
+#                     their cases from community/cases/, and must not move any of it.
 #   skill-judge:      pull requests only. The base branch's eval judges the pull request's
 #                     skills, cases and router. It checks out the base and reads the pull
 #                     request's files as data, so no pull request code runs before the judge
@@ -68,6 +72,33 @@ jobs:
         working-directory: cli
         run: node --test test/skill-lint.test.mjs
 
+      # Community skills (CONTRIBUTING-skills.md): the lint above plus the community rules.
+      - name: Lint community skills with the community rules
+        run: |
+          if [ ! -d community/skills ]; then
+            echo "No community skills."
+            exit 0
+          fi
+          if [ -n "$(find community -type l)" ]; then echo "::error::community/ holds a symbolic link."; exit 1; fi
+          node cli/dist/index.js skill lint --community community/skills
+
+      # A pull request that adds or changes a community skill changes nothing else, so its
+      # review is about the skill alone. Maintainers' own changes to the platform go separately.
+      - name: Community skill pull requests stay in community/
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth 1 origin "$BASE_SHA"
+          changed=$(git diff --name-only "$BASE_SHA" HEAD)
+          if echo "$changed" | grep -q '^community/'; then
+            outside=$(echo "$changed" | grep -v '^community/' || true)
+            if [ -n "$outside" ]; then
+              echo "::error::This pull request changes community/ and also: $(echo "$outside" | head -5 | tr '\n' ' '). A community skill pull request changes only community/skills/<name>/SKILL.md and community/cases/<name>.jsonl (CONTRIBUTING-skills.md)."
+              exit 1
+            fi
+          fi
+
       # A pull request that weakens the lint must still pass the base branch's lint.
       - name: Lint with the base branch's lint
         if: github.event_name == 'pull_request'
@@ -82,6 +113,10 @@ jobs:
           fi
           (cd ../base/cli && npm ci --ignore-scripts --no-audit --no-fund && node node_modules/esbuild/install.js && npm run build)
           node ../base/cli/dist/index.js skill lint skills
+          # The base branch's community rules too, once it has them.
+          if [ -d community/skills ] && [ -f ../base/cli/src/skill-community.ts ]; then
+            node ../base/cli/dist/index.js skill lint --community community/skills
+          fi
 
   skill-regression:
     runs-on: ubuntu-24.04
@@ -117,9 +152,9 @@ jobs:
       - name: Router eval and regression snapshot
         run: node cli/dist/index.js skill eval
 
-      - name: Router, version, rollback and editor tests
+      - name: Router, version, rollback, editor and community tests
         working-directory: cli
-        run: node --test test/skill-router.test.mjs test/skill-platform.test.mjs test/judge-label.test.mjs
+        run: node --test test/skill-router.test.mjs test/skill-platform.test.mjs test/judge-label.test.mjs test/community.test.mjs
 
   # The judge: the base branch's eval, run on the pull request's skills, cases and router. It
   # checks out the base only and reads the pull request's files as data (git show/archive);
@@ -195,6 +230,12 @@ jobs:
             if git cat-file -e "pr/head:skills-eval/$f" 2>/dev/null; then git show "pr/head:skills-eval/$f" > "$judge/head/skills-eval/$f"; fi
           done
           git show pr/head:cli/src/skill-eval.ts > "$judge/head/cli/src/skill-eval.ts"
+          # The pull request's community skills and their cases, as data beside its case files:
+          # the base eval judges them as a client routes them.
+          if git cat-file -e "pr/head:community" 2>/dev/null; then
+            git archive pr/head community | tar -x --no-same-owner -C "$judge/head"
+            if [ -n "$(find "$judge/head/community" -type l)" ]; then echo "::error::community/ holds a symbolic link."; exit 1; fi
+          fi
           rm -f skills-eval/*.jsonl
           # 1. The judge: the base CLI with the base router, bundling the pull request's skills
           #    (the catalog follows skills/, so new ones are indexed and removed ones don't break

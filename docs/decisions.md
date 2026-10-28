@@ -419,3 +419,65 @@ the mcp, and cli, and such." Defaults chosen:
   scope implies.
 - **Data, not instructions**: the tool descriptions, the MCP instructions and every rendered
   thread say so, since a past chat can hold page text an attacker wrote.
+
+## D25. Community skills: manage, contribute, review, sync (Claude, 2026-10-28)
+
+Owner, 2026-10-28: "make it so the skill system is easier for peoples llms to manage, and
+contrinute to the larger tabkyra community, ex if an llm finds a better way to navigate a site
+like notion, it should make said skill, review it, and submit it for review to be merged, and
+then synced amongst those who use tabkyra." Defaults chosen:
+
+- **Where they live.** `community/skills/<name>/SKILL.md` and `community/cases/<name>.jsonl` in
+  baney75/tabkyra, beside but apart from the built-in `skills/`. They are not compiled into the
+  CLI or the extension; they reach users only through the signed catalog. A community skill
+  can't take a built-in skill's name.
+- **Scope instead of new frontmatter.** A required `## Sites` section names the sites (D1 keeps
+  the frontmatter to name, description and license). Every link must point at one of them,
+  and agents read a one-line header that names them. Community skills may not use `run_js` or
+  page scripts, ask for credentials, or send page content anywhere: a navigation skill needs
+  none of these, and each is how a skill under the user's sign-in would do harm. The rules are
+  in `cli/src/skill-community.ts` and run in `skill lint --community`, `skill test`,
+  `skill submit`, CI, the catalog build and on every client before a synced skill is used.
+- **Second in line for routing.** Adding any skill changes every word's weight in the router,
+  so a strict "no built-in skill may drop" gate would refuse almost every new skill, and a
+  catalog that grew each day would move the built-in skills on every client. So the router
+  keeps its index of built-in and local skills exactly as CI measured it, and consults a second
+  index with the community skills added only when the first finds nothing, or when the task
+  names one of the community skill's sites and the community skill leads the second index.
+  The eval routes the same way (`twoStageRanker` in `cli/src/skill.ts`), and the baseline gate
+  (built-in skills and `none`) catches a community skill that takes their cases. Each community
+  skill needs 8 or more cases and must route 75% of them to itself (`COMMUNITY_TOP1_MIN`).
+  The 75% is Claude's number; the measured example (notion-navigation) routes 9 of 10, losing
+  one to the built-in `notes` skill, which also covers Notion.
+- **Submission is the user's.** `tabkyra skill submit` always shows a preview and exits 3; it
+  sends only with `--confirm <code>`, a hash of the target, the skill, its cases and the note,
+  so a yes covers exactly what the user saw. D14's `"auto"` setting for `/fix` doesn't apply
+  here: every community submission needs the user's yes. The MCP tool only prepares
+  (`skill_manage` action `prepare_submit`). It needs `gh` signed in and opens a fork pull request from the
+  user's account. Personal data refuses the submission (D6); the skill is never rewritten to
+  remove it. Lint and eval output in the pull request body is scrubbed of home paths, tokens,
+  emails and the user's names.
+- **Merging stays human.** CODEOWNERS covers `community/`, CI has no auto-merge, and a pull
+  request that changes `community/` changes nothing else.
+- **Signed catalog, release key, in CI.** `.github/workflows/community-catalog.yml` builds the
+  catalog on main (on a merge to `community/`, daily, and by hand) in a job with no secrets,
+  then signs it with minisign in the `release` environment in a job that runs no repo code,
+  verifies it against `keys/tabkyra-release.pub`, and uploads it to the `community-catalog`
+  release. No key is on a contributor's or user's machine. The signed trusted comment names
+  the catalog's serial (its build time); a client refuses a catalog whose comment and file
+  disagree, and any serial lower than the one it holds, so an old catalog can't be replayed to
+  bring back a pulled skill. The kept file is verified again whenever it changes on disk.
+- **Sync about daily.** The native host syncs on each hello and hourly when the last good check
+  is over a day old, and `tabkyra mcp` on start and every 6 hours on the same rule. A failed or
+  refused fetch keeps the catalog in use and doesn't count as a check. `tabkyra skill sync`
+  checks now; `--off` (or the switch in Settings > Skills) turns community skills off and stops
+  checking. The side panel gets the skills from the native host, never from the network.
+- **Local edits win.** Editing a community skill keeps a local copy (`skills-local`, base
+  `community`). A sync never touches it; `skill list` says it overrides the community version
+  and when that version changed. `skill revert` goes back.
+- **Pulling a skill.** Delete its folder and list it in `community/revoked.json` with a reason.
+  At the next sync the skill is no longer matched or read (`skill_read` gives the reason), the
+  copies Tabkyra installed into harnesses are deleted, and a local copy based on it is turned
+  off but left on disk.
+- **Built-in skills keep their path.** `skill submit` refuses a built-in skill's name; changes to
+  those still go through a pull request to `skills/` (the `fix` skill).

@@ -14,7 +14,8 @@ import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
 import { runThreads, ThreadsUsageError } from "./threads.ts";
-import { runSkill } from "./skill.ts";
+import { runSkill, runSkillSync } from "./skill.ts";
+import { runSubmit } from "./skill-submit.ts";
 import { banner, c, sym } from "./ui.ts";
 import { runUpdate, UpdateError } from "./update.ts";
 import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
@@ -340,13 +341,27 @@ async function main(): Promise<void> {
 			}
 			if (!sub || !spec) {
 				throw new UsageError(
-					'Usage: tabkyra skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] [--router <script>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only] | refresh [--json]',
+					'Usage: tabkyra skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] [--community] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] [--router <script>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only] | refresh [--json] | write <name> [--file <file>] [--yes] | test <name|folder> [--cases <file>] | remove <name> | enable <name> | sync [--on|--off] | submit <name|folder> [--cases <file>] [--dry-run] [--confirm <code>] | catalog <checkout> --out <file> --serial N',
 				);
 			}
 			for (const name of VALUE_FLAGS) {
 				if (spec.flags.includes(name) && flag(name) && option(name) === undefined) throw new UsageError(`${name} needs a value.`);
 			}
-			process.exitCode = runSkill(sub, rest, {
+			if (sub === "submit") {
+				if (rest.length !== 1) throw new UsageError("Usage: tabkyra skill submit <name|folder> [--cases <file>] [--note TEXT] [--dry-run] [--confirm <code>] [--repo owner/name] [--branch <branch>] [--json]");
+				process.exitCode = await runSubmit({
+					target: rest[0],
+					cases: option("--cases"),
+					repo: option("--repo"),
+					branch: option("--branch"),
+					note: option("--note"),
+					dryRun: flag("--dry-run"),
+					confirm: option("--confirm"),
+					json: flag("--json"),
+				});
+				return;
+			}
+			const skillFlags = {
 				force: flag("--force"),
 				all: flag("--all"),
 				raw: flag("--raw"),
@@ -359,7 +374,15 @@ async function main(): Promise<void> {
 				cases: option("--cases"),
 				base: option("--base"),
 				router: option("--router"),
-			});
+				file: option("--file"),
+				community: flag("--community"),
+				on: flag("--on"),
+				off: flag("--off"),
+				out: option("--out"),
+				serial: option("--serial"),
+				source: option("--source"),
+			};
+			process.exitCode = sub === "sync" ? await runSkillSync(rest, skillFlags) : runSkill(sub, rest, skillFlags);
 			return;
 		}
 		case "library": {
