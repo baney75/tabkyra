@@ -175,6 +175,26 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 	});
 }
 
+/**
+ * Put an error's code in its message: OpenAI's SDK (inside pi-ai) keeps only `error.message`, and
+ * the side panel needs the code (subscription_sharing_usage_limit_exceeded and the like) to show
+ * what to do. Returns the line unchanged when it holds no top-level error object.
+ */
+export function withErrorCode(json: string): string {
+	let data: { error?: { code?: unknown; message?: unknown } };
+	try {
+		data = JSON.parse(json);
+	} catch {
+		return json;
+	}
+	const error = data?.error;
+	if (!error || typeof error !== "object" || typeof error.code !== "string") return json;
+	const message = typeof error.message === "string" ? error.message : "";
+	if (message.includes(error.code)) return json;
+	error.message = message ? `${error.code}: ${message}` : error.code;
+	return JSON.stringify(data);
+}
+
 async function pipe(upstream: Response, res: ServerResponse): Promise<void> {
 	const type = upstream.headers.get("content-type") ?? "application/json";
 	const requestId = upstream.headers.get("x-request-id");
@@ -183,13 +203,31 @@ async function pipe(upstream: Response, res: ServerResponse): Promise<void> {
 		res.end();
 		return;
 	}
+	const write = async (text: string) => {
+		if (!res.write(text)) await new Promise((r) => res.once("drain", r));
+	};
+	// An error body before the stream: one JSON document.
+	if (!type.includes("text/event-stream")) {
+		await write(withErrorCode(await upstream.text().catch(() => "")));
+		res.end();
+		return;
+	}
+	// The event stream passes through line by line; only error events are touched.
 	const reader = upstream.body.getReader();
+	const decoder = new TextDecoder();
+	let pending = "";
 	try {
 		for (;;) {
 			const { done, value } = await reader.read();
 			if (done) break;
-			if (!res.write(value)) await new Promise((r) => res.once("drain", r));
+			pending += decoder.decode(value, { stream: true });
+			const cut = pending.lastIndexOf("\n");
+			if (cut < 0) continue;
+			const lines = pending.slice(0, cut + 1);
+			pending = pending.slice(cut + 1);
+			await write(lines.replace(/^data: (.*)$/gm, (line, json: string) => (json.includes('"error"') ? `data: ${withErrorCode(json)}` : line)));
 		}
+		if (pending) await write(pending);
 	} catch {
 		/* the side panel went away or the upstream dropped */
 	}

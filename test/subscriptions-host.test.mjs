@@ -13,6 +13,8 @@ import { CopilotAuth } from "../cli/src/subscriptions/copilot.ts";
 import { CopilotTurns } from "../cli/src/subscriptions/copilot-turns.ts";
 import { SubscriptionService } from "../cli/src/subscriptions/service.ts";
 import { Siwc } from "../cli/src/subscriptions/siwc.ts";
+import { streamSimple } from "@mariozechner/pi-ai";
+import { explainSubscriptionError, siwcRequestBody } from "../src/subscriptions/constants.ts";
 
 const dirs = [];
 function tempDir() {
@@ -62,7 +64,17 @@ function fakeOpenAI({ nonce, scope = "chatgpt.tokens.use.direct email offline_ac
 		}
 		if (u === "https://auth.openai.com/api/accounts/oauth/revoke") return new Response("", { status: 200 });
 		if (u === "https://api.openai.com/v1/models") return json({ models: [{ slug: "gpt-test", display_name: "GPT Test", visibility: "list" }] });
-		if (u === "https://api.openai.com/v1/responses") return new Response('data: {"type":"response.completed"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+		if (u === "https://api.openai.com/v1/responses") {
+			const model = JSON.parse(init.body).model;
+			// The event OpenAI sent in the live test of 2026-10-28 when the plan's limit was used up.
+			if (model === "gpt-limit")
+				return new Response(
+					'event: response.created\ndata: {"type":"response.created","sequence_number":0,"response":{"id":"resp_1"}}\n\nevent: error\ndata: {"type":"error","sequence_number":3,"error":{"message":"The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.","type":"invalid_request_error","param":null,"code":"subscription_sharing_usage_limit_exceeded"}}\n\n',
+					{ headers: { "Content-Type": "text/event-stream" } },
+				);
+			if (model === "gpt-forbidden") return json({ error: { message: "Not eligible", code: "subscription_sharing_user_not_eligible" } }, 403);
+			return new Response('data: {"type":"response.completed"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
+		}
 		return json({ error: "unexpected" }, 404);
 	};
 	return { fetch, calls, state };
@@ -453,4 +465,32 @@ test("Copilot: a turn through the proxy runs in an SDK session with the user's t
 	assert.deepEqual(JSON.parse(models.body), { models: [{ id: "gpt-x", name: "GPT X" }] });
 	await service.stop();
 	delete process.env.TABKYRA_COPILOT_SDK_DIR;
+});
+
+test("proxy: a usage-limit error keeps its code in the message, so the side panel can point to Manage usage", async () => {
+	const dir = tempDir();
+	const { pending } = await signedIn(dir);
+	await pending.result;
+	const openai = fakeOpenAI();
+	const service = new SubscriptionService({ fetch: openai.fetch, siwc: new Siwc({ fetch: openai.fetch, dir }), copilot: new CopilotAuth({ dir }) });
+	const { url, secret } = await service.startProxy();
+	const headers = { Authorization: `Bearer ${secret}` };
+	const limited = await post(`${url}/chatgpt/v1/responses`, { model: "gpt-limit", input: [] }, headers);
+	const error = limited.body
+		.split("\n")
+		.filter((l) => l.startsWith("data: "))
+		.map((l) => JSON.parse(l.slice(6)))
+		.find((e) => e.type === "error");
+	assert.match(error.error.message, /^subscription_sharing_usage_limit_exceeded: The ChatGPT user has reached/);
+	assert.match(limited.body, /^event: response\.created$/m, "other events pass through untouched");
+	// Through pi-ai's own OpenAI provider, as the side panel runs it: the user sees what to do.
+	const model = { id: "gpt-limit", name: "GPT", api: "openai-responses", provider: "chatgpt-plan", baseUrl: `${url}/chatgpt/v1`, reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 };
+	const run = streamSimple(model, { messages: [{ role: "user", content: "hi", timestamp: 1 }] }, { apiKey: secret, onPayload: (p) => siwcRequestBody(p) });
+	const failed = await run.result();
+	assert.equal(failed.stopReason, "error");
+	assert.match(explainSubscriptionError("chatgpt-plan", failed.errorMessage), /Usage limit reached\. .*https:\/\/chatgpt\.com\/settings\/usage/);
+	const forbidden = await post(`${url}/chatgpt/v1/responses`, { model: "gpt-forbidden", input: [] }, headers);
+	assert.equal(forbidden.status, 403);
+	assert.equal(JSON.parse(forbidden.body).error.message, "subscription_sharing_user_not_eligible: Not eligible");
+	await service.stop();
 });
