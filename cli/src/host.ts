@@ -83,7 +83,7 @@ function rememberSession(clientId: string, event: string, data: unknown): void {
 	const hello = clients.get(clientId)?.hello;
 	const session = (data as { session?: unknown } | undefined)?.session;
 	if (!hello || typeof session !== "string" || (event !== "session_assigned" && event !== "session_renamed")) return;
-	hello.client = { ...hello.client, session, ...(event === "session_renamed" ? { auto: false } : {}) };
+	hello.client = { ...hello.client, session, ...(event === "session_renamed" ? { auto: false, named: true } : {}) };
 }
 
 function onExtensionMessage(message: ExtToHost): void {

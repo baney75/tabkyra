@@ -224,8 +224,8 @@ test("two agents in one project at once get separate sessions, titled with the a
 
 test("a name the user chose is shared, not split", async () => {
 	const { fake, request, settle, connect } = await startBridge();
-	connect("c1", "research");
-	connect("c2", "research");
+	connect("c1", "research", { named: true });
+	connect("c2", "research", { named: true });
 	await request("c1", "tabs.create", {});
 	await request("c2", "tabs.create", {});
 	await settle();
@@ -328,4 +328,15 @@ test("releasing its current tab leaves the agent with no current tab, not silent
 	assert.equal(ctx.result.session.currentTabId, null, JSON.stringify(ctx.result));
 	assert.ok(!ctx.result.tabs.some((t) => t.current));
 	assert.deepEqual(ctx.result.tabs.map((t) => t.tabId), [a]);
+});
+
+test("a session id the user didn't choose (a remote session, an older CLI) stays out of the group title", async () => {
+	const { fake, request, settle, connect } = await startBridge();
+	connect("r1", "remote-3f9c01ab-ab12cd34", { name: "remote-phone" });
+	connect("o1", "6f1c2a9e-4b7d-4c1e-9a3f-1b2c3d4e5f60");
+	await request("r1", "tabs.create", {});
+	await request("o1", "tabs.create", {});
+	await settle();
+	assert.equal(fake.table()["bridge-remote-phone-remote-3f9c01ab-ab12cd34"].label, "remote-phone");
+	assert.equal(fake.table()["bridge-claude-6f1c2a9e-4b7d-4c1e-9a3f-1b2c3d4e5f60"].label, "claude");
 });

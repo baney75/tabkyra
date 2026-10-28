@@ -31,6 +31,11 @@ export interface ClientHello {
 		 * a second live client with the same default gets its own session ("-2") instead of sharing.
 		 */
 		auto?: boolean;
+		/**
+		 * True when the user chose `session` (--session, TABKYRA_SESSION, or a rename): only then
+		 * does it go in the group title. Ids from older CLIs and remote sessions never do.
+		 */
+		named?: boolean;
 		/** The project the agent works in (its git root or folder name), for the group title. */
 		project?: string;
 		version?: string;

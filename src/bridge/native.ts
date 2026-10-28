@@ -184,9 +184,13 @@ async function onClientConnected(msg: HostClientConnected): Promise<void> {
 	const name = msg.client.name || "harness";
 	const { key, name: sessionName } = sessionFor(msg.client, msg.clientId);
 	const project = msg.client.project ? sanitizeLabel(msg.client.project) : undefined;
-	// "claude · tabkyra" for the default session, "claude · research" for a named one; older
-	// clients that send neither keep the plain harness name.
-	const subject = msg.client.auto ? project : msg.client.session ? sanitizeLabel(msg.client.session) : undefined;
+	// "claude · tabkyra" for the default session, "claude · research" for one the user named;
+	// older clients and remote sessions (their session is an id) keep the plain harness name.
+	const subject = msg.client.auto
+		? project
+		: msg.client.named && msg.client.session
+			? sanitizeLabel(msg.client.session)
+			: undefined;
 	const state: ClientState = {
 		clientId: msg.clientId,
 		name,
