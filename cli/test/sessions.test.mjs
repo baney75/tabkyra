@@ -40,8 +40,8 @@ function repo(...parts) {
 
 test("a session name the user gives wins: --session, then TABKYRA_SESSION", () => {
 	const dir = repo("named");
-	assert.deepEqual(chooseSession({ flag: "research", env: { TABKYRA_SESSION: "other" }, cwd: dir }), { name: "research", auto: false });
-	assert.deepEqual(chooseSession({ env: { TABKYRA_SESSION: "other" }, cwd: dir }), { name: "other", auto: false });
+	assert.deepEqual(chooseSession({ flag: "research", env: { TABKYRA_SESSION: "other" }, cwd: dir }), { name: "research", auto: false, named: true });
+	assert.deepEqual(chooseSession({ env: { TABKYRA_SESSION: "other" }, cwd: dir }), { name: "other", auto: false, named: true });
 });
 
 test("otherwise the project decides: the same repo resumes, another folder of the same name doesn't", () => {
@@ -63,6 +63,21 @@ test("otherwise the project decides: the same repo resumes, another folder of th
 	const plain = join(root, "My Notes!");
 	mkdirSync(plain);
 	assert.match(chooseSession({ env: {}, cwd: plain }).name, /^my-notes-[0-9a-f]{4}$/);
+});
+
+test("outside a project (the disk root, the home folder, a home that is a git repo) each process gets its own session", () => {
+	const home = repo("dotfiles-home");
+	mkdirSync(join(home, "Downloads"), { recursive: true });
+	for (const cwd of ["/", home, join(home, "Downloads")]) {
+		const a = chooseSession({ env: {}, cwd, home, pid: 101 });
+		const b = chooseSession({ env: {}, cwd, home, pid: 202 });
+		assert.equal(a.auto, false, cwd);
+		assert.equal(a.named, undefined, cwd);
+		assert.notEqual(a.name, b.name, `two agents started in ${cwd} would share one session`);
+	}
+	// A real project under that home is still a project.
+	const shop = repo("dotfiles-home", "code", "shop");
+	assert.equal(chooseSession({ env: {}, cwd: shop, home }).project, "shop");
 });
 
 test("tabs_context is a few short lines: the session, news, then one line per tab", () => {

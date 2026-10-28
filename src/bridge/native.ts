@@ -222,15 +222,20 @@ async function onClientDisconnected(clientId: string): Promise<void> {
 	const state = clients.get(clientId);
 	clients.delete(clientId);
 	// A restarted harness can connect before its old process hangs up and get "<name>-2". If it
-	// hasn't opened that session yet, it gets the one it asked for, with the tabs it left.
+	// has no tabs there yet (a first status call opens the session, empty), it gets the one it
+	// asked for, with the tabs it left; the empty "-2" record goes.
 	if (state) {
 		for (const c of clients.values()) {
 			if (
 				c.wanted?.key !== state.sessionKey ||
-				c.session ||
+				(c.session && !c.session.ended && c.session.tabIds.length > 0) ||
 				[...clients.values()].some((o) => o.sessionKey === state.sessionKey)
 			)
 				continue;
+			const empty = c.session;
+			c.session = undefined;
+			if (empty && !empty.ended && ![...clients.values()].some((o) => o !== c && o.session === empty))
+				await empty.end().catch(() => undefined);
 			assign(c, c.wanted.key, c.wanted.name);
 			c.wanted = undefined;
 			break;

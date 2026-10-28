@@ -189,7 +189,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		session: choice.name,
 		auto: choice.auto,
 		// A name from --session or TABKYRA_SESSION; a remote session's id is not one.
-		named: !options.session && !choice.auto,
+		named: !options.session && choice.named === true,
 		project: "project" in choice ? choice.project : undefined,
 		onEvent: (event, data) => {
 			if (event === "permission_request") void handlePermission(data);

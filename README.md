@@ -203,6 +203,8 @@ and blank tabs left by an abandoned session are closed.
 folder the agent runs in (or the folder), as `<folder>-<4 hex>`. Restart Claude Code in the
 same repository and it finds the tabs it left; a different folder gets its own session. The
 harness is part of the session, so Claude Code and Codex in one project don't share tabs.
+An agent started outside any project (the disk root or your home folder, even when home is a
+git repository) gets a session of its own that isn't resumed.
 
 **Several agents at once.** Two agents in the same project at the same time each get their
 own session and group ("claude · shop" and "claude · shop 2") in distinct colors, and

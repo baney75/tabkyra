@@ -517,6 +517,35 @@ test("a tab still in its group isn't handed to the user when another record clai
 	assert.deepEqual(await takeNotices("bridge-claude-claim"), []);
 });
 
+test("when a new tab can't join the agent's group it waits outside, without splitting the group or handing tabs over", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, takeNotices } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-split", "claude", 1);
+	const a = (await s.createTab("https://example.com/a")).id;
+	const b = (await s.createTab("https://example.com/b")).id;
+	await s.tabs();
+	const groupId = fake.groupOf(a);
+	// The user holds a tab drag: joining an existing group fails for a while.
+	const group = chrome.tabs.group;
+	chrome.tabs.group = async (opts) => {
+		if (opts.groupId !== undefined) throw new Error("Tabs cannot be edited right now (user may be dragging a tab).");
+		return group(opts);
+	};
+	let c;
+	try {
+		c = (await s.createTab("https://example.com/c")).id;
+		await s.tabs();
+	} finally {
+		chrome.tabs.group = group;
+	}
+	assert.deepEqual([fake.groupOf(a), fake.groupOf(b)], [groupId, groupId], "the agent's tabs left their group");
+	assert.deepEqual([...s.tabIds].sort(), [a, b, c].sort(), "tabs nobody moved were handed to the user");
+	assert.deepEqual(await takeNotices("bridge-claude-split"), []);
+	// The drag is over: the next look puts the new tab in the group.
+	await s.tabs();
+	assert.equal(fake.groupOf(c), groupId);
+});
+
 test("a side panel chat's tab that leaves its group goes back: the agent rules are for agent sessions", async () => {
 	const fake = installFakeChrome();
 	const { BrowserSession } = await load("panel");

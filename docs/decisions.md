@@ -375,7 +375,9 @@ chosen:
   MCP server's working directory (or the directory), named `<folder>-<4 hex of its path>`.
   `--session` and `TABKYRA_SESSION` override it. Harness conversation ids
   (`CLAUDE_SESSION_ID`, `CODEX_THREAD_ID`) no longer pick it: each new conversation made a new
-  group and lost the old one's tabs.
+  group and lost the old one's tabs. Outside a project (the disk root or the home folder, even a
+  home that is a git repository, where GUI harnesses often start servers) each process gets its
+  own session, so unrelated agents never resume each other's tabs.
 - **A default is never shared by two live clients.** The second gets `<name>-2` and is told
   (`session_assigned`) so a reload can't swap it onto the first one's tabs. A restarted harness
   that connected before its old process hung up gets the base session back if it hasn't

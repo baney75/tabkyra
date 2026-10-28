@@ -247,6 +247,34 @@ test("a restarted harness that connected before its old process hung up gets its
 	assert.equal(fake.table()["bridge-claude-shop-1a2b-2"], undefined, "an empty -2 session was left behind");
 });
 
+test("a restarted harness whose first call (status) opened its empty -2 session still gets its project session back", async () => {
+	const { fake, request, settle, connect, disconnect, events } = await startBridge();
+	connect("old", "shop-1a2b", { auto: true, project: "shop" });
+	const tab = (await request("old", "tabs.create", {})).result.tabId;
+	connect("new", "shop-1a2b", { auto: true, project: "shop" });
+	// The instructions say to call status first; it opens the -2 session, which has no tabs.
+	await request("new", "status");
+	await settle();
+	disconnect("old");
+	await settle();
+	assert.deepEqual(events("new", "session_assigned").at(-1), { session: "shop-1a2b" });
+	const ctx = await request("new", "tabs.context");
+	assert.deepEqual(ctx.result.tabs.map((x) => x.tabId), [tab]);
+	assert.equal(fake.table()["bridge-claude-shop-1a2b-2"], undefined, "the empty -2 session was left behind");
+});
+
+test("a second agent that already has tabs of its own keeps its -2 session when the first one leaves", async () => {
+	const { fake, request, settle, connect, disconnect, events } = await startBridge();
+	connect("old", "shop-1a2b", { auto: true, project: "shop" });
+	await request("old", "tabs.create", {});
+	connect("new", "shop-1a2b", { auto: true, project: "shop" });
+	const mine = (await request("new", "tabs.create", {})).result.tabId;
+	disconnect("old");
+	await settle();
+	assert.deepEqual(events("new", "session_assigned").at(-1), { session: "shop-1a2b-2" });
+	assert.ok(fake.table()["bridge-claude-shop-1a2b-2"].tabIds.includes(mine));
+});
+
 test("tabs_release hands one tab to the user; session_end hands over the rest and the next call starts fresh", async () => {
 	const { fake, request, settle, connect } = await startBridge();
 	connect("c1", "work");

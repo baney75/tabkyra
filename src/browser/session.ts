@@ -833,7 +833,11 @@ export class BrowserSession {
 					await withGroupRetry(() => chrome.tabs.group({ tabIds: [tabId], groupId: group.id }));
 					return await this.markGrouped(tabId);
 				} catch (err) {
-					console.warn("[BrowserSession] joining group failed, starting a new one:", err);
+					// The group is still there with the agent's other tabs: a second group would split
+					// them (and the next reconcile would read the first group's tabs as moved out by
+					// the user). The tab stays owned and ungrouped; the next reconcile tries again.
+					console.warn("[BrowserSession] joining group failed, will retry:", err);
+					return;
 				}
 			}
 			if (tab.groupId !== undefined && tab.groupId !== -1) await chrome.tabs.ungroup(tabId).catch(() => undefined);

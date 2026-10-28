@@ -7,12 +7,16 @@
  *    as "<folder>-<4 hex of its path>", so two folders with one name stay apart. Restarting the
  *    harness in the same project resumes its tabs instead of growing a new group. A second agent
  *    in the same project at the same time gets its own session ("<name>-2"), never a shared one.
+ * 3. Not in a project (the root of the disk or the home folder, which a GUI harness often starts
+ *    servers in, or a home folder that is itself a git repository): a session of this process
+ *    alone, as before projects counted, so unrelated agents never resume each other's tabs.
  *
  * The extension prefixes the harness ("claude", "codex"), so Claude Code and Codex in one
  * project have separate sessions too.
  */
 
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
@@ -24,6 +28,8 @@ export interface SessionChoice {
 	auto: boolean;
 	/** The project's folder name, for the group title ("claude · tabkyra"). */
 	project?: string;
+	/** The user chose the name (rule 1): it goes in the group title. */
+	named?: boolean;
 }
 
 /** A name as the extension keys sessions: lowercase letters, digits, - and _, at most 64. */
@@ -49,12 +55,23 @@ export function projectRoot(cwd: string): string {
 	return resolve(cwd);
 }
 
-export function chooseSession(options: { flag?: string; env?: NodeJS.ProcessEnv; cwd?: string } = {}): SessionChoice {
+export function chooseSession(
+	options: { flag?: string; env?: NodeJS.ProcessEnv; cwd?: string; home?: string; pid?: number } = {},
+): SessionChoice {
 	const env = options.env ?? process.env;
 	const named = options.flag || env.TABKYRA_SESSION;
-	if (named) return { name: named, auto: false };
+	if (named) return { name: named, auto: false, named: true };
 	const root = projectRoot(options.cwd ?? process.cwd());
-	const project = root === resolve(homedir()) ? "home" : basename(root) || "root";
+	const real = (path: string) => {
+		try {
+			return realpathSync(path);
+		} catch {
+			return resolve(path);
+		}
+	};
+	if (real(root) === real(options.home ?? homedir()) || real(root) === real("/"))
+		return { name: `p${options.pid ?? process.pid}-${Date.now().toString(36)}`, auto: false };
+	const project = basename(root) || "root";
 	const hash = createHash("sha256").update(root).digest("hex").slice(0, 4);
 	return { name: `${slug(project)}-${hash}`, auto: true, project };
 }
