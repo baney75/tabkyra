@@ -54,6 +54,20 @@ test("a thread reads as compact text: tool calls and results short, attachments 
 	assert.doesNotMatch(render.renderPage(t, 4, 2), /More:/);
 });
 
+test("text is redacted before it is cut, so no part of a key survives at the cut", () => {
+	const hex32 = "0123456789abcdef".repeat(2);
+	const mixed = ["Zq9", "Xw8", "Vt7", "Ur6", "Ts5", "Sq4", "Rp3", "Qo2", "Pn1", "Om0", "Nl9", "Mk8", "Lj7", "Ki6"].join("");
+	const t = thread("cut1", {
+		messages: [
+			{ role: "toolResult", toolCallId: "a", toolName: "get_page_text", content: [{ type: "text", text: `${"ab ".repeat(89)}x ${hex32} tail` }], isError: false, timestamp: 1 },
+			{ role: "assistant", content: [{ type: "toolCall", id: "b", name: "fill", arguments: { pad: "z".repeat(170), value: mixed } }], timestamp: 2 },
+		],
+	});
+	const outputs = [render.renderPage(t, 0, 40), render.renderMarkdown(t), ...render.renderMessages(t.messages).map((m) => m.text)].join("\n");
+	assert.doesNotMatch(outputs, /0123456789abcdef0123456789abcde/, "31 digits of a hex key survived the cut");
+	assert.doesNotMatch(outputs, /Zq9Xw8Vt7/, "the start of a key survived the cut");
+});
+
 test("the JSON copy keeps the conversation and drops binary data, attachment bodies, reasoning and long results", () => {
 	const json = JSON.stringify(render.sanitizeJson(thread("abc")));
 	assert.doesNotMatch(json, /iVBORw0KGgo|BASE64DATA|secret plan|sk-ant-api03/);

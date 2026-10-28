@@ -42,8 +42,9 @@ const TEXT_CHARS = 4000;
 
 type Block = { type?: string; text?: string; thinking?: string; name?: string; arguments?: unknown; mimeType?: string };
 
+/** Redacted, then cut: cutting first could leave part of a key too short for the patterns to see. */
 function short(text: string, max: number): string {
-	const t = text.replace(/\s+$/g, "");
+	const t = redactSecrets(text).replace(/\s+$/g, "");
 	return t.length > max ? `${t.slice(0, max)}... [${t.length - max} more characters]` : t;
 }
 
