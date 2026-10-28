@@ -1,8 +1,10 @@
-# Daily check that the published community catalog is current (docs/decisions.md D27). It needs
-# no secrets and no approval, and runs no repo code: it reads the catalog's `source` commit from
-# the release and asks git whether any later commit on main changed what the catalog is built
-# or signed from. If so (a publish was rejected, failed or never triggered), it opens an issue,
-# or comments on the open one, so someone re-runs community-catalog.yml.
+# Daily check that the published community catalog is current and verifiable (docs/decisions.md
+# D27). Publishing needs a signing approval, so it runs only when its inputs change; this job
+# catches anything that slipped: a rejected or failed publish, a half-finished upload, or an
+# input change the publish triggers don't list. It needs no secrets and no approval. It rebuilds
+# the catalog from main and compares the skills and revoked list with the published file, and
+# verifies the published file and signature with the CLI's own sync code and the committed key.
+# On a mismatch it opens an issue (or comments on the open one) so someone re-runs the publish.
 name: Community catalog check
 
 on:
@@ -19,32 +21,57 @@ jobs:
     permissions:
       contents: read
       issues: write
+      actions: read
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install and build the CLI without install scripts
+        working-directory: cli
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node node_modules/esbuild/install.js
+          npm run build
 
       - name: Compare the published catalog with main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          inputs=(community cli/src/skill-lint.ts cli/src/skill-community.ts cli/src/community-catalog.ts keys)
-          latest=$(git log -1 --format=%H -- "${inputs[@]}")
-          if ! gh release download community-catalog --repo "$GITHUB_REPOSITORY" -p community-catalog.json -O "$RUNNER_TEMP/catalog.json" 2>/dev/null; then
-            reason="No community catalog is published."
+          # A publish waiting for approval or still running isn't a miss.
+          pending=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow community-catalog.yml --limit 20 --json status --jq '[.[] | select(.status != "completed")] | length')
+          if [ "$pending" != "0" ]; then echo "A publish run is in progress or awaiting approval; skipping."; exit 0; fi
+
+          pub="$RUNNER_TEMP/published"; mkdir -p "$pub"
+          reason=""
+          if ! gh release view community-catalog --repo "$GITHUB_REPOSITORY" >/dev/null 2>"$RUNNER_TEMP/view.err"; then
+            if grep -qi "not found" "$RUNNER_TEMP/view.err"; then reason="No community catalog release exists."
+            else cat "$RUNNER_TEMP/view.err"; echo "::error::Couldn't read the release (not a catalog problem)"; exit 1; fi
           else
-            source=$(jq -r '.source // empty' "$RUNNER_TEMP/catalog.json")
-            if [[ ! "$source" =~ ^[0-9a-f]{40}$ ]]; then
-              reason="The published catalog has no valid source commit."
-            elif ! git cat-file -e "$source^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$latest" "$source"; then
-              reason="The published catalog was built from $source, but $latest on main changed its inputs since."
+            # A download error fails this job rather than opening a misleading issue.
+            gh release download community-catalog --repo "$GITHUB_REPOSITORY" -D "$pub" -p community-catalog.json -p community-catalog.json.minisig || true
+            if [ ! -s "$pub/community-catalog.json" ] || [ ! -s "$pub/community-catalog.json.minisig" ]; then
+              reason="The release is missing community-catalog.json or its signature."
             else
-              echo "Current: built from $source, which includes $latest."; exit 0
+              cfg=$(mktemp -d)
+              if ! TABKYRA_CONFIG_DIR="$cfg" TABKYRA_COMMUNITY_URL="$pub" node cli/dist/index.js skill sync --json > "$RUNNER_TEMP/sync.json"; then
+                reason="The published catalog doesn't verify: $(jq -r .message "$RUNNER_TEMP/sync.json" 2>/dev/null || echo 'sync failed')"
+              else
+                node cli/dist/index.js skill catalog . --out "$RUNNER_TEMP/rebuilt.json" --serial 1 --source "$GITHUB_SHA"
+                if ! cmp -s <(jq -S '{skills, revoked}' "$RUNNER_TEMP/rebuilt.json") <(jq -S '{skills, revoked}' "$pub/community-catalog.json"); then
+                  reason="The published catalog (built from $(jq -r .source "$pub/community-catalog.json")) differs from a catalog built from main at $GITHUB_SHA."
+                fi
+              fi
             fi
           fi
+          if [ -z "$reason" ]; then echo "The published catalog verifies and matches main."; exit 0; fi
           echo "::warning::$reason"
           title="Community catalog is behind main"
           body="$reason Re-run the Community catalog workflow and approve its publish: \`gh workflow run community-catalog.yml --repo $GITHUB_REPOSITORY\`."
