@@ -25,7 +25,7 @@ import {
 	setTranscriptRenderer,
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
-import { Circle, Download, FileCode2, History, Link, Plus, Settings, Square } from "lucide";
+import { Circle, Copy, FileCode2, History, Link, Plus, Settings, Square } from "lucide";
 import { isBlockedModel, purgeRemovedSignIns, RemovedSignInError, resolveApiKey } from "./auth/policy.js";
 import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
@@ -81,7 +81,7 @@ import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
 import { createReplTool } from "./tools/repl/repl.js";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "./tools/repl/runtime-providers.js";
 import { syncCustomProviderCorsRules } from "./utils/custom-provider-cors.js";
-import { downloadChatMarkdown } from "./utils/export-chat.js";
+import { chatToMarkdown } from "./utils/export-chat.js";
 import * as port from "./utils/port.js";
 import "./utils/i18n-extension.js";
 import { createArtifactViewer } from "./artifacts/viewers.js";
@@ -451,14 +451,19 @@ async function toggleRecording() {
 	}
 }
 
-function downloadCurrentChat() {
+async function copyCurrentChat() {
 	if (!agent) return;
 	const messages = agent.state.messages.filter((m) => m.role !== "welcome");
 	if (messages.length === 0) {
-		Toast.error("Nothing to export yet");
+		Toast.error("Nothing to copy yet");
 		return;
 	}
-	downloadChatMarkdown(messages, currentTitle || "Tabkyra chat", agent.state.model);
+	try {
+		await navigator.clipboard.writeText(chatToMarkdown(messages, currentTitle || "Tabkyra chat", agent.state.model));
+		Toast.success("Chat copied as Markdown");
+	} catch {
+		Toast.error("Couldn't copy the chat");
+	}
 }
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -1195,9 +1200,9 @@ const renderApp = () => {
 					${Button({
 						variant: "ghost",
 						size: "sm",
-						children: icon(Download, "sm"),
-						onClick: downloadCurrentChat,
-						title: "Download chat (Markdown)",
+						children: icon(Copy, "sm"),
+						onClick: copyCurrentChat,
+						title: "Copy chat (Markdown)",
 					})}
 					<theme-toggle></theme-toggle>
 					${Button({
