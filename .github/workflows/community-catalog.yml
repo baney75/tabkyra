@@ -92,6 +92,21 @@ jobs:
           name: community-catalog
           path: catalog
 
+      # A re-run of an old publish (for example after a rejection) must never replace a newer
+      # catalog: clients would refuse it, and it could carry a skill pulled since.
+      - name: Refuse an older serial
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          serial=$(cat catalog/serial)
+          if gh release view community-catalog --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]' | jq -e 'index("community-catalog.json")' >/dev/null; then
+            current=$(gh release download community-catalog --repo "$GITHUB_REPOSITORY" -p community-catalog.json -O - | jq -r .serial)
+            if [[ "$current" =~ ^[0-9]+$ ]] && [ "$serial" -le "$current" ]; then
+              echo "::error::This catalog's serial $serial is not newer than the published $current. Start a new run instead of re-running an old one."; exit 1
+            fi
+          fi
+
       - name: Install minisign
         run: |
           sudo apt-get update -qq
