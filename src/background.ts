@@ -3,6 +3,7 @@ import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard
 import { startGroupGestures } from "./browser/group-gestures.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
 import { startCommunityWorker } from "./community/worker.js";
+import { startSubscriptionRelay } from "./subscriptions/relay.js";
 import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
 
 // Keep popups opened by agent-driven background tabs from stealing the user's focus.
@@ -21,6 +22,7 @@ chrome.webNavigation.onTabReplaced.addListener(({ replacedTabId, tabId }) => {
 // External harnesses (omp, pi, Claude Code, Codex) drive the browser through the
 // native-messaging bridge. Connects when the CLI has installed the host manifest.
 startBridge();
+startSubscriptionRelay();
 
 // "Update now", the reload after an update (only when no agent runs), automatic updates.
 startUpdateWorker();

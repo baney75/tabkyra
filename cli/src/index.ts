@@ -9,6 +9,8 @@ import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { parseSetupArgs, parseUpdateArgs } from "./parse-args.ts";
 import { runSetup } from "./setup.ts";
+import { sdkInstalled } from "./subscriptions/copilot.ts";
+import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
@@ -465,6 +467,18 @@ async function main(): Promise<void> {
 			if (flag("--public") && kind === "tailscale" && !flag("--off")) console.log(`${sym.warn} --public uses Tailscale Funnel: anyone on the internet can reach it, and the token is the only lock.`);
 			console.log(`${result.ok ? sym.ok : sym.fail} ${result.message}`);
 			process.exitCode = result.ok ? 0 : 1;
+			return;
+		}
+		case "copilot-sdk": {
+			const sub = argv[1] ?? "status";
+			if (sub === "install") {
+				const result = installCopilotSdk();
+				console.log(`${result.ok ? sym.ok : sym.fail} ${result.message}`);
+				process.exitCode = result.ok ? 0 : 1;
+				return;
+			}
+			if (sub !== "status") throw new UsageError("Usage: tabkyra copilot-sdk install|status");
+			console.log(sdkInstalled() ? `${sym.ok} GitHub's Copilot SDK is installed.` : `${sym.warn} Not installed. Run \`tabkyra copilot-sdk install\`.`);
 			return;
 		}
 		case "pi-extension":

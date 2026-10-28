@@ -80,6 +80,16 @@ import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { Recorder } from "./recording/recorder.js";
 import { TabkyraAppStorage } from "./storage/app-storage.js";
 import type { Skill } from "./storage/stores/skills-store.js";
+import { trySubscriptionStatus } from "./subscriptions/client.js";
+import { CHATGPT_PROVIDER } from "./subscriptions/constants.js";
+import { planBadge } from "./subscriptions/plan-badge.js";
+import {
+	explainErrors,
+	isSubscriptionProvider,
+	refreshSubscriptionModels,
+	registerSubscriptionApis,
+	routeSubscriptionModel,
+} from "./subscriptions/stream.js";
 import { DebuggerTool } from "./tools/debugger.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
@@ -787,6 +797,9 @@ function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(
 			);
 		}
 		if (privateMode) model = privateModel(model, trusted);
+		// ChatGPT and Copilot plans run through the native host's loopback proxy, which holds the tokens.
+		const routed = await routeSubscriptionModel(model, rest[1]);
+		if (routed) return explainErrors(await inner(routed.model, rest[0], routed.options), model.provider);
 		if (model.api === "openai-completions") {
 			const custom = await storage.customProviders.getAll().catch(() => []);
 			if (custom.some((p) => p.name === model.provider)) {
@@ -944,10 +957,20 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return chrome.runtime.getURL("sandbox.html");
 		},
 		onApiKeyRequired: async (provider: string) => {
+			// A subscription provider has no key: it is ready when its sign-in is.
+			if (isSubscriptionProvider(provider)) {
+				const status = await trySubscriptionStatus(true);
+				const ready =
+					provider === CHATGPT_PROVIDER
+						? Boolean(status?.chatgpt.signedIn && status.chatgpt.planUsage)
+						: Boolean(status?.copilot.signedIn && status.copilot.sdkInstalled);
+				if (!ready) openApiKeysDialog();
+				return ready;
+			}
 			return await ApiKeyDialog.prompt(provider, isFreeModeModel(agent.state.model) ? FREE_KEY_NOTE : undefined);
 		},
 		onModelSelect: async () => {
-			const providers = await getProvidersWithKeys();
+			const providers = [...(await getProvidersWithKeys()), ...(await refreshSubscriptionModels().catch(() => []))];
 			if (providers.length === 0) {
 				openApiKeysDialog();
 				return;
@@ -1297,6 +1320,7 @@ const renderApp = () => {
 
 			${updateNotice()}
 			${bridgeQuestions()}
+			${planBadge(agent?.state.model?.provider)}
 
 			<!-- Chat Panel -->
 			${chatPanel}
@@ -1483,6 +1507,9 @@ async function initApp() {
 			chatPanel.agentInterface?.requestUpdate();
 		},
 	});
+	// ChatGPT and Copilot plan models, when signed in (the native host knows; no token comes here).
+	registerSubscriptionApis();
+	refreshSubscriptionModels().catch((err) => console.warn("Subscription models unavailable:", err));
 
 	// TODO reenable Request persistent storage
 	// if (storage.sessions) {

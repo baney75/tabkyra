@@ -39,9 +39,11 @@ import {
 import {
 	BRIDGE_METHODS,
 	ERR,
+	type ExtSubscription,
 	type ExtToHost,
 	type HostClientConnected,
 	type HostForwardedRequest,
+	type HostSubscription,
 	type HostToExt,
 	type HostUpdateProgress,
 	type HostUpdateStatus,
@@ -496,8 +498,25 @@ async function userScriptsAvailable(): Promise<boolean> {
 	}
 }
 
+/** Subscription sign-in frames go to the relay (src/subscriptions/relay.ts); "disconnected" when the host goes. */
+let subscriptionHandler: ((message: HostSubscription | "disconnected") => void) | undefined;
+
+export function onSubscriptionMessage(handler: (message: HostSubscription | "disconnected") => void): void {
+	subscriptionHandler = handler;
+}
+
+/** Send a subscription request to the host; false when no host is connected. */
+export function sendSubscription(message: ExtSubscription): boolean {
+	if (!port) return false;
+	send(message);
+	return true;
+}
+
 function onHostMessage(message: HostToExt): void {
 	switch (message.type) {
+		case "subscription":
+			subscriptionHandler?.(message);
+			return;
 		case "ping":
 			send({ type: "pong" });
 			return;
@@ -796,6 +815,7 @@ function connect(): void {
 		// "Specified native messaging host not found" means the CLI installer has not run yet.
 		console.debug("[Bridge] native host disconnected:", reason);
 		if (port === next) port = undefined;
+		subscriptionHandler?.("disconnected");
 		// The host answered these "interrupted: it may have run" and the agent may repeat them
 		// after checking the page: the running handlers must send no more input.
 		for (const state of clients.values()) {

@@ -4,7 +4,9 @@
  *
  * Every subscription sign-in this fork inherited borrowed another product's identity
  * (Codex CLI's, VS Code Copilot Chat's and Gemini CLI's OAuth clients and headers).
- * Providers ban accounts for that, so they are gone: Tabkyra takes API keys only.
+ * Providers ban accounts for that, so they are gone. The only subscription sign-ins are the
+ * sanctioned ones in src/subscriptions (Sign in with ChatGPT, the Copilot SDK), under their
+ * own provider ids; everything here keeps the removed ones out.
  */
 
 /** Provider ids whose only route was a borrowed subscription sign-in. */

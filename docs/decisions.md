@@ -559,3 +559,30 @@ then synced amongst those who use tabkyra." Defaults chosen:
   off but left on disk.
 - **Built-in skills keep their path.** `skill submit` refuses a built-in skill's name; changes to
   those still go through a pull request to `skills/` (the `fix` skill).
+
+## D28. Subscription sign-ins: Sign in with ChatGPT and the Copilot SDK only (Claude, 2026-10-28)
+
+Owner, 2026-10-28: "Make it so people can LEGALLY connect to their coding subs like codex claude
+code ect ... follow the TOS exactly do none get banned." He approved registering a Tabkyra GitHub
+OAuth App under baney75 ("Yes, register it"), chose "Build it" for ChatGPT, and asked to "review
+and merge the codex login and copilot login thing". Sources and details: `docs/auth-policy.md`.
+
+- **Two sign-ins, each on the provider's documented third-party route.** OpenAI: Sign in with
+  ChatGPT for open-source and locally hosted apps (dynamic registration, no secret). GitHub: the
+  Copilot SDK with Tabkyra's own OAuth App (`Ov23li1qDiu9lRXbvcFh`, device flow, no secret).
+- **No sign-in for Anthropic or Google.** Their terms forbid it, including driving their CLIs.
+  Settings shows how to run Claude Code or Gemini CLI with Tabkyra's MCP server instead.
+- **No OpenAI interest form.** OpenAI's docs send open-source, locally hosted apps to the docs and
+  paid or hosted apps to the form; Tabkyra is AGPL-3.0 and local. The form itself says "If you're
+  an open source developer, explore our developer docs", and it asks for a commercial partner.
+  If Tabkyra ever ships a paid or hosted build, that build needs the form first.
+- **OAuth App, not a GitHub App.** GitHub's Copilot SDK setup page says both work and names the
+  OAuth App in its steps; the owner approved an OAuth App. Expiring tokens are on, and the device
+  flow refreshes them without a secret.
+- **Tokens only in the native host**, in 0600 files, never in browser storage, as OpenAI's docs
+  require. The side panel reaches the providers through the host's loopback proxy with a
+  per-process secret.
+- **The Copilot SDK is installed by the user** (`tabkyra copilot-sdk install`, pinned 1.0.28,
+  about 160 MB), not bundled: most users don't need it.
+- **The API-keys-only rule of AGENTS.md is replaced** by "API keys, plus sign-ins on a provider's
+  documented third-party route with Tabkyra's own registration".

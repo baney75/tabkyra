@@ -84,6 +84,17 @@ export const COMMANDS: CommandSpec[] = [
 	{ name: "setup", selfParsed: true, what: "Build, register, load, connect and add to your agents", group: "Get started", flags: SETUP_FLAGS },
 	{ name: "status", what: "Is the extension connected? Which sites are allowed?", group: "Get started", flags: ["--json"] },
 	{ name: "mcp", what: "MCP server on stdio (what Claude Code, Codex, OpenCode run)", group: "Agents", flags: ["--session"] },
+	{
+		name: "copilot-sdk",
+		summary: "GitHub's Copilot SDK, for the side panel's Copilot sign-in",
+		what: "GitHub's Copilot SDK",
+		group: "Agents",
+		defaultSubcommand: "status",
+		subcommands: [
+			{ name: "install", what: "Install the pinned SDK (about 160 MB) for Sign in with GitHub Copilot" },
+			{ name: "status", what: "Is the SDK installed?" },
+		],
+	},
 	{ name: "pi-extension", positional: 1, paths: true, args: "[dir]", what: "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts", group: "Agents" },
 	{
 		name: "skill",

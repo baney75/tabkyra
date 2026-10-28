@@ -133,10 +133,13 @@ edit the outputs by hand.
 - Agents don't merge unless the maintainer asked for it in the task.
 
 ## Sign-in policy
-API keys only. Never add a sign-in that sends another app's OAuth client id, originator,
-user agent or headers, and never route requests through a consumer subscription.
-`test/auth-policy.test.mjs` fails if the removed flows come back. Rules and sources:
-`docs/auth-policy.md`.
+API keys, plus subscription sign-ins only on a route the provider documents for third-party
+apps, with Tabkyra's own registration: Sign in with ChatGPT (open-source path) and GitHub
+Copilot through the Copilot SDK (D25). Tokens stay in the native host, never in browser
+storage. Never add a sign-in that sends another app's OAuth client id, originator, user agent
+or headers, never spawn a provider's CLI to borrow its sign-in, and never add a Claude or
+Google subscription sign-in (their terms forbid it). `test/auth-policy.test.mjs` fails if the
+removed flows come back. Rules and sources: `docs/auth-policy.md`.
 
 ## Project Structure
 ```
@@ -147,7 +150,8 @@ src/
   browser/              # Tab sessions (tab group per agent), CDP screenshots/input, page primitives
   bridge/               # Native-messaging bridge for external harnesses, site permissions
   models/               # Runtime model discovery per provider
-  auth/                 # Sign-in policy: API keys only (docs/auth-policy.md)
+  auth/                 # Sign-in policy (docs/auth-policy.md)
+  subscriptions/        # Sign in with ChatGPT and Copilot: settings, relay, streaming (tokens stay in cli/src/subscriptions)
   privacy/              # Private mode and opt-in, scrubbed bug reports
   dialogs/              # Settings tabs, API key dialogs, welcome setup
   tools/                # Agent tools (navigate, REPL, extract-image, skills, debugger)
