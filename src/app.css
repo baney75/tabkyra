@@ -18,9 +18,14 @@
 :root {
 	--tk-brass: #e3a93b;
 	--tk-brass-deep: #a8761c;
+	/* Brass text on light backgrounds: 4.5:1 or better on white and on the card. */
+	--tk-brass-text: #8a5f12;
 	--tk-ink: #0f1b24;
 	--tk-tide: #43b3a0;
 	--ring: var(--tk-brass-deep);
+	/* Hover is neutral. The theme's blue (light) and yellow (dark) accent text made a hovered
+	   icon look switched on; brass is kept for a real "on" state (aria-pressed, recording). */
+	--accent-foreground: var(--foreground);
 }
 
 .dark {
@@ -33,6 +38,8 @@
 	--border: oklch(0.29 0.018 240);
 	--input: oklch(0.33 0.018 240);
 	--ring: var(--tk-brass);
+	--accent-foreground: var(--foreground);
+	--tk-brass-text: var(--tk-brass);
 }
 
 body {
@@ -129,14 +136,23 @@ body {
 }
 
 .tutorial-pill:hover {
-	transform: translateY(-2px) scale(1.03);
-	background: linear-gradient(135deg, rgba(227, 169, 59, 0.25), rgba(227, 169, 59, 0.25), rgba(168, 118, 28, 0.25));
-	box-shadow: 0 8px 20px -4px rgba(227, 169, 59, 0.5);
-	border-color: rgba(227, 169, 59, 0.5);
+	transform: translateY(-1px);
+	background: linear-gradient(135deg, rgba(227, 169, 59, 0.22), rgba(227, 169, 59, 0.22), rgba(168, 118, 28, 0.22));
+	box-shadow: 0 6px 16px -6px rgba(227, 169, 59, 0.45);
+	border-color: rgba(227, 169, 59, 0.55);
 }
 
 .tutorial-pill:active {
-	transform: translateY(-1px) scale(1.01);
+	transform: none;
+}
+
+.tutorial-pill:focus-visible {
+	outline: 2px solid var(--color-ring);
+	outline-offset: 2px;
+}
+
+.tk-starter-icon {
+	color: var(--tk-brass-text);
 }
 
 /* User message with fancy pill styling */
@@ -315,4 +331,184 @@ body {
 .tk-ask-card *::before,
 .tk-ask-card *::after {
 	transition-duration: 0.08s;
+}
+
+/* ---- Side panel header (src/sidepanel.ts, src/components/HeaderMenu.ts) ---- */
+.tk-icon-btn {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 2rem;
+	height: 2rem;
+	flex-shrink: 0;
+	border-radius: calc(var(--radius) - 2px);
+	color: var(--color-muted-foreground);
+	cursor: pointer;
+}
+
+.tk-icon-btn:hover,
+.tk-icon-btn[aria-expanded="true"] {
+	color: var(--color-foreground);
+	background: var(--color-secondary);
+}
+
+.tk-icon-btn:focus-visible,
+.tk-menu-item:focus-visible,
+.tk-header-pill:focus-visible {
+	outline: 2px solid var(--color-ring);
+	outline-offset: 1px;
+}
+
+/* A tooltip on hover (after a short pause) and at once on keyboard focus. The native title
+   tooltip took a second, never showed on focus, and the icons had no other label. */
+[data-tip]::after {
+	content: attr(data-tip);
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 60;
+	width: max-content;
+	max-width: 14rem;
+	padding: 0.25rem 0.5rem;
+	border-radius: calc(var(--radius) - 4px);
+	font-size: 0.75rem;
+	font-weight: 500;
+	line-height: 1.25;
+	white-space: normal;
+	text-align: left;
+	color: var(--color-popover-foreground);
+	background: var(--color-popover);
+	border: 1px solid var(--color-border);
+	box-shadow: var(--shadow-md);
+	opacity: 0;
+	visibility: hidden;
+	pointer-events: none;
+	transition:
+		opacity 0.12s ease,
+		visibility 0s linear 0.12s;
+}
+
+[data-tip]:hover::after {
+	opacity: 1;
+	visibility: visible;
+	transition-delay: 0.45s;
+}
+
+[data-tip]:focus-visible::after {
+	opacity: 1;
+	visibility: visible;
+	transition-delay: 0s;
+}
+
+/* No tooltip over an open menu. */
+[data-tip][aria-expanded="true"]::after {
+	display: none;
+}
+
+/* Buttons at the panel's right edge open their tooltip leftward, so it never clips. */
+.tk-tips-end [data-tip]::after {
+	left: auto;
+	right: 0;
+	transform: none;
+}
+
+.tk-menu {
+	position: absolute;
+	top: calc(100% + 4px);
+	right: 0;
+	z-index: 70;
+	min-width: 15.5rem;
+	padding: 0.25rem;
+	border-radius: var(--radius);
+	color: var(--color-popover-foreground);
+	background: var(--color-popover);
+	border: 1px solid var(--color-border);
+	box-shadow: var(--shadow-lg);
+}
+
+.tk-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 0.625rem;
+	width: 100%;
+	min-height: 2rem;
+	padding: 0.375rem 0.5rem;
+	border-radius: calc(var(--radius) - 4px);
+	font-size: 0.875rem;
+	cursor: pointer;
+}
+
+.tk-menu-item:hover,
+.tk-menu-item:focus-visible {
+	background: var(--color-secondary);
+}
+
+/* Labeled header buttons: "Share this tab" (only when it would do something) and the
+   recording state. */
+.tk-header-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.375rem;
+	height: 1.75rem;
+	padding: 0 0.625rem;
+	border-radius: 999px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.tk-share-pill {
+	color: var(--tk-brass-text);
+	background: rgba(227, 169, 59, 0.14);
+	border: 1px solid rgba(227, 169, 59, 0.45);
+}
+
+.tk-share-pill:hover {
+	background: rgba(227, 169, 59, 0.24);
+}
+
+.tk-rec-pill {
+	color: #fff;
+	background: #c42b2b;
+}
+
+.tk-rec-pill:hover {
+	background: #a82222;
+}
+
+.tk-rec-dot {
+	width: 0.5rem;
+	height: 0.5rem;
+	border-radius: 999px;
+	background: #fff;
+	animation: tk-rec-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes tk-rec-blink {
+	50% {
+		opacity: 0.35;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition-duration: 0.01ms;
+	}
+	.welcome-container,
+	.tutorial-pill::before,
+	.tk-rec-dot {
+		animation: none;
+	}
+	.tutorial-pill:hover {
+		transform: none;
+	}
+	[data-tip]:hover::after {
+		transition-delay: 0.45s;
+		transition-duration: 0s;
+	}
 }

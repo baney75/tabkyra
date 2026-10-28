@@ -15,6 +15,7 @@ import { Brain, Check, ChevronRight, CircleAlert, Code, FileText, Globe, Loader2
 import { SkillPill } from "../components/SkillPill.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
+import { escapeCurrency } from "./currency.js";
 import {
 	type Block,
 	callInFlight,
@@ -119,7 +120,7 @@ export class StepList extends LitElement {
 					<span class="inline-flex shrink-0 transition-transform ${expanded ? "rotate-90" : ""}">${icon(ChevronRight, "xs")}</span>
 					${parts.lead}
 					<span class="truncate min-w-0">${parts.label}</span>
-					${parts.detail ? html`<span class="shrink-0 text-xs opacity-70">${parts.detail}</span>` : nothing}
+					${parts.detail ? html`<span class="shrink-0 text-xs">${parts.detail}</span>` : nothing}
 				</button>
 				${expanded ? html`<div class="pl-6 pr-1 pb-2 pt-1 flex flex-col gap-2">${body()}</div>` : nothing}
 			</li>
@@ -255,7 +256,7 @@ function hideImg(e: Event) {
 /** The agent's own words, full size. Its step usage is a tooltip; the run total stays below the composer. */
 function textBlock(text: string, usage?: string): TemplateResult {
 	return html`<div class="px-4" title=${usage || nothing}>
-		<markdown-block .content=${text}></markdown-block>
+		<markdown-block .content=${escapeCurrency(text)}></markdown-block>
 	</div>`;
 }
 

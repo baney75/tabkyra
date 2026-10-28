@@ -1,11 +1,15 @@
-import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
+import { icon } from "@mariozechner/mini-lit";
 import { DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.js";
 import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import i18n from "@mariozechner/mini-lit/dist/i18n.js";
-import { formatUsage, getAppStorage, type SessionData, type SessionMetadata } from "@mariozechner/pi-web-ui";
+import { getAppStorage, type SessionData, type SessionMetadata } from "@mariozechner/pi-web-ui";
 import Fuse from "fuse.js";
-import { html } from "lit";
+import { html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { Download, FileDown, FileUp, Pencil, Trash2 } from "lucide";
+import "../components/HeaderMenu.js";
+import type { HeaderMenuItem } from "../components/HeaderMenu.js";
+import { Toast } from "../components/Toast.js";
 
 type ExportedSession = {
 	session: SessionData;
@@ -17,40 +21,34 @@ export class TabkyraSessionListDialog extends DialogBase {
 	@state() private sessions: SessionMetadata[] = [];
 	@state() private loading = true;
 	@state() private searchQuery = "";
-	@state() private showDeleteMenu = false;
+	/** The row whose title is being edited in place. */
+	@state() private renamingId?: string;
 
 	private onSelectCallback?: (sessionId: string) => void;
 	private onDeleteCallback?: (sessionId: string) => void;
+	private onRenameCallback?: (sessionId: string, title: string) => void;
+	private currentId?: string;
 	private deletedSessions = new Set<string>();
 	private closedViaSelection = false;
 
 	protected modalWidth = "min(600px, 90vw)";
 	protected modalHeight = "min(700px, 90vh)";
 
-	connectedCallback(): void {
-		super.connectedCallback();
-		// Close delete menu when clicking outside
-		document.addEventListener("click", this.handleDocumentClick);
-	}
-
-	disconnectedCallback(): void {
-		super.disconnectedCallback();
-		document.removeEventListener("click", this.handleDocumentClick);
-	}
-
-	private handleDocumentClick = (e: MouseEvent) => {
-		const target = e.target as HTMLElement;
-		// Close menu if clicking outside the delete button and menu
-		if (!target.closest(".delete-menu-container")) {
-			this.showDeleteMenu = false;
-		}
-	};
-
-	static async open(onSelect: (sessionId: string) => void, onDelete?: (sessionId: string) => void) {
+	static async open(
+		onSelect: (sessionId: string) => void,
+		onDelete?: (sessionId: string) => void,
+		onRename?: (sessionId: string, title: string) => void,
+		currentId?: string,
+	) {
 		const dialog = new TabkyraSessionListDialog();
 		dialog.onSelectCallback = onSelect;
 		dialog.onDeleteCallback = onDelete;
+		dialog.onRenameCallback = onRename;
+		dialog.currentId = currentId;
 		dialog.open();
+		// Typing finds a chat at once; Enter opens the top match.
+		await dialog.updateComplete;
+		dialog.querySelector<HTMLInputElement>("input[type=search]")?.focus();
 		await dialog.loadSessions();
 	}
 
@@ -68,25 +66,59 @@ export class TabkyraSessionListDialog extends DialogBase {
 		}
 	}
 
-	private async handleDelete(sessionId: string, event: Event) {
-		event.stopPropagation();
-
-		if (!confirm(i18n("Delete this session?"))) {
-			return;
-		}
-
+	/** Deletes at once and offers Undo, instead of a browser confirm box for every chat. */
+	private async handleDelete(sessionId: string) {
 		try {
 			const storage = getAppStorage();
 			if (!storage.sessions) return;
-
+			const data = await storage.sessions.loadSession(sessionId);
+			const metadata = this.sessions.find((s) => s.id === sessionId);
 			await storage.sessions.deleteSession(sessionId);
-			await this.loadSessions();
-
-			// Track deleted session
 			this.deletedSessions.add(sessionId);
+			await this.loadSessions();
+			const title = metadata?.title || i18n("Untitled chat");
+			Toast.show(i18n("Deleted “{title}”").replace("{title}", title), "info", 8000, {
+				label: i18n("Undo"),
+				run: () => {
+					if (!data || !metadata) return;
+					void storage.sessions
+						.save(data, metadata)
+						.then(() => {
+							this.deletedSessions.delete(sessionId);
+							return this.loadSessions();
+						})
+						.catch((err) => console.error("Failed to restore session:", err));
+				},
+			});
 		} catch (err) {
 			console.error("Failed to delete session:", err);
+			Toast.error(i18n("Could not delete the chat"));
 		}
+	}
+
+	private async saveRename(sessionId: string, value: string) {
+		const title = value.trim();
+		this.renamingId = undefined;
+		const current = this.sessions.find((s) => s.id === sessionId);
+		if (!title || !current || title === current.title) return;
+		try {
+			await getAppStorage().sessions.updateTitle(sessionId, title);
+			await this.loadSessions();
+			this.onRenameCallback?.(sessionId, title);
+		} catch (err) {
+			console.error("Failed to rename session:", err);
+			Toast.error(i18n("Could not rename the chat"));
+		}
+	}
+
+	private async startRename(sessionId: string) {
+		this.renamingId = sessionId;
+		await this.updateComplete;
+		const input = this.querySelector<HTMLInputElement>(
+			`[data-session="${CSS.escape(sessionId)}"] input[data-rename]`,
+		);
+		input?.focus();
+		input?.select();
 	}
 
 	override close() {
@@ -184,15 +216,6 @@ export class TabkyraSessionListDialog extends DialogBase {
 
 		const results = fuse.search(this.searchQuery);
 		return results.map((result) => result.item);
-	}
-
-	private getTotalStats(): { totalCost: number; totalMessages: number; totalSessions: number } {
-		const filtered = this.getFilteredSessions();
-		return {
-			totalSessions: filtered.length,
-			totalCost: filtered.reduce((sum, s) => sum + s.usage.cost.total, 0),
-			totalMessages: filtered.reduce((sum, s) => sum + s.messageCount, 0),
-		};
 	}
 
 	private async handleDeleteAll() {
@@ -355,185 +378,133 @@ export class TabkyraSessionListDialog extends DialogBase {
 		}
 	}
 
+	private menuItems(): HeaderMenuItem[] {
+		return [
+			{ label: i18n("Import chats"), icon: FileUp, run: () => this.handleImport() },
+			{ label: i18n("Export all chats"), icon: FileDown, run: () => this.handleExport() },
+			{
+				label: i18n("Delete chats older than 30 days"),
+				icon: Trash2,
+				separator: true,
+				run: () => this.handleDeleteOlderThan(30),
+			},
+			{ label: i18n("Delete chats older than 90 days"), icon: Trash2, run: () => this.handleDeleteOlderThan(90) },
+			{ label: i18n("Delete all chats"), icon: Trash2, run: () => this.handleDeleteAll() },
+		];
+	}
+
+	private rowAction(label: string, iconNode: typeof Pencil, action: string, run: () => void, danger = false) {
+		return html`<button
+			type="button"
+			class="tk-icon-btn ${danger ? "hover:!text-destructive" : ""}"
+			aria-label=${label}
+			data-tip=${label}
+			data-action=${action}
+			@click=${run}
+		>
+			${icon(iconNode, "sm")}
+		</button>`;
+	}
+
+	private renderRow(session: SessionMetadata) {
+		const cost = session.usage.cost.total;
+		const current = session.id === this.currentId;
+		const meta = [
+			this.formatDate(session.lastModified),
+			`${session.messageCount} ${i18n("messages")}`,
+			cost > 0 ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}` : "",
+		]
+			.filter(Boolean)
+			.join(" · ");
+		const renaming = this.renamingId === session.id;
+		return html`
+			<li data-session=${session.id} class="flex items-start gap-1 rounded-lg border ${current ? "border-[var(--tk-brass)]/60" : "border-border"} hover:bg-secondary/50">
+				${
+					renaming
+						? html`<div class="flex-1 min-w-0 p-2">
+								<input
+									data-rename
+									type="text"
+									aria-label=${i18n("Chat name")}
+									.value=${session.title}
+									class="w-full h-9 px-2 text-sm rounded-md border border-input bg-background text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									@keydown=${(e: KeyboardEvent) => {
+										if (e.key === "Enter")
+											void this.saveRename(session.id, (e.target as HTMLInputElement).value);
+										else if (e.key === "Escape") {
+											e.preventDefault();
+											e.stopPropagation();
+											this.renamingId = undefined;
+										}
+									}}
+									@blur=${(e: FocusEvent) => void this.saveRename(session.id, (e.target as HTMLInputElement).value)}
+								/>
+							</div>`
+						: html`<button
+								type="button"
+								class="flex-1 min-w-0 text-left px-3 py-2.5 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+								@click=${() => this.handleSelect(session.id)}
+							>
+								<div class="flex items-center gap-2">
+									<span class="font-medium text-sm text-foreground truncate">${session.title || i18n("Untitled chat")}</span>
+									${current ? html`<span class="shrink-0 text-[11px] font-semibold text-[var(--tk-brass-text)]">${i18n("Open now")}</span>` : nothing}
+								</div>
+								<div class="text-xs text-muted-foreground mt-0.5">${meta}</div>
+								${session.preview ? html`<div class="text-xs text-muted-foreground mt-1 line-clamp-1">${session.preview}</div>` : nothing}
+							</button>`
+				}
+				<div class="flex shrink-0 gap-0.5 p-1.5 tk-tips-end">
+					${this.rowAction(i18n("Rename"), Pencil, "rename", () => void this.startRename(session.id))}
+					${this.rowAction(i18n("Export"), Download, "export", () => void this.handleExport(session.id))}
+					${this.rowAction(i18n("Delete"), Trash2, "delete", () => void this.handleDelete(session.id), true)}
+				</div>
+			</li>
+		`;
+	}
+
 	protected override renderContent() {
 		const filteredSessions = this.getFilteredSessions();
-		const stats = this.getTotalStats();
 
 		return html`
 			${DialogContent({
 				className: "h-full flex flex-col",
 				children: html`
-					${DialogHeader({
-						title: i18n("Sessions"),
-						description: i18n("Load a previous conversation"),
-					})}
+					${DialogHeader({ title: i18n("Past chats") })}
 
-					<!-- Action buttons -->
-					<div class="flex gap-2 mt-4">
-						<button
-							class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-border bg-background text-foreground hover:bg-secondary transition-colors"
-							@click=${() => this.handleImport()}
-						>
-							${i18n("Import")}
-						</button>
-						<button
-							class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-border bg-background text-foreground hover:bg-secondary transition-colors"
-							@click=${() => this.handleExport()}
-						>
-							${i18n("Export All")}
-						</button>
-						<div class="relative delete-menu-container">
-							<button
-								class="px-3 py-2 text-sm font-medium rounded-md border border-border bg-background text-foreground hover:bg-secondary transition-colors"
-								@click=${() => {
-									this.showDeleteMenu = !this.showDeleteMenu;
-								}}
-							>
-								${i18n("Delete Old")}
-							</button>
-							${
-								this.showDeleteMenu
-									? html`
-										<div class="absolute right-0 top-full mt-1 w-48 rounded-md border border-border bg-background shadow-lg z-50">
-											<button
-												class="w-full px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors rounded-t-md font-medium"
-												@click=${() => {
-													this.showDeleteMenu = false;
-													this.handleDeleteAll();
-												}}
-											>
-												${i18n("All sessions")}
-											</button>
-											<button
-												class="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-secondary transition-colors border-t border-border"
-												@click=${() => {
-													this.showDeleteMenu = false;
-													this.handleDeleteOlderThan(7);
-												}}
-											>
-												${i18n("Older than 7 days")}
-											</button>
-											<button
-												class="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-secondary transition-colors"
-												@click=${() => {
-													this.showDeleteMenu = false;
-													this.handleDeleteOlderThan(30);
-												}}
-											>
-												${i18n("Older than 30 days")}
-											</button>
-											<button
-												class="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-secondary transition-colors rounded-b-md"
-												@click=${() => {
-													this.showDeleteMenu = false;
-													this.handleDeleteOlderThan(90);
-												}}
-											>
-												${i18n("Older than 90 days")}
-											</button>
-										</div>
-									`
-									: ""
+					<div class="mt-3 flex items-center gap-1.5">
+					<input
+						type="search"
+						aria-label=${i18n("Search chats")}
+						placeholder=${i18n("Search chats")}
+						.value=${this.searchQuery}
+						@input=${(e: InputEvent) => {
+							this.searchQuery = (e.target as HTMLInputElement).value;
+						}}
+						@keydown=${(e: KeyboardEvent) => {
+							if (e.key === "Enter" && !e.isComposing) {
+								const top = this.getFilteredSessions()[0];
+								if (top) this.handleSelect(top.id);
+							} else if (e.key === "ArrowDown") {
+								e.preventDefault();
+								this.querySelector<HTMLElement>("li[data-session] button")?.focus();
 							}
-						</div>
+						}}
+						class="flex-1 min-w-0 h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					/>
+						<tk-header-menu .items=${this.menuItems()} label=${i18n("More actions")}></tk-header-menu>
 					</div>
 
-					<!-- Search bar -->
-					<div class="mt-3">
-						<input
-							type="text"
-							placeholder=${i18n("Search sessions...")}
-							.value=${this.searchQuery}
-							@input=${(e: InputEvent) => {
-								this.searchQuery = (e.target as HTMLInputElement).value;
-							}}
-							class="w-full px-3 py-2 text-sm rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-						/>
-					</div>
-
-					<!-- Stats pills -->
-					<div class="flex items-center gap-2 mt-3">
-						${Badge({ children: `${stats.totalSessions} ${i18n("Sessions").toLowerCase()}`, variant: "secondary" })}
-						${Badge({ children: `${stats.totalMessages} ${i18n("messages")}`, variant: "secondary" })}
-						${Badge({
-							children: `$${stats.totalCost.toFixed(4)}`,
-							variant: "secondary",
-							className: stats.totalCost > 0.01 ? "text-orange-500" : "text-green-600",
-						})}
-					</div>
-
-					<div class="flex-1 overflow-y-auto mt-4 space-y-2">
+					<ul class="flex-1 overflow-y-auto mt-3 space-y-2" aria-label=${i18n("Past chats")}>
 						${
 							this.loading
-								? html`<div class="text-center py-8 text-muted-foreground">${i18n("Loading...")}</div>`
+								? html`<li class="text-center py-8 text-sm text-muted-foreground">${i18n("Loading...")}</li>`
 								: filteredSessions.length === 0
-									? html`<div class="text-center py-8 text-muted-foreground">
-											${this.searchQuery ? "No matching sessions" : i18n("No sessions yet")}
-										</div>`
-									: filteredSessions.map((session) => {
-											const cost = session.usage.cost.total;
-											return html`
-											<div
-												class="group flex items-start gap-3 p-4 rounded-lg border border-border hover:bg-secondary/50 cursor-pointer transition-colors"
-												@click=${() => this.handleSelect(session.id)}
-											>
-												<div class="flex-1 min-w-0">
-													<!-- Title -->
-													<div class="flex items-center gap-2 mb-2">
-														<div class="font-semibold text-foreground truncate">${session.title}</div>
-													</div>
-
-													<!-- Stats row -->
-													<div class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-														<span class="font-medium">${this.formatDate(session.lastModified)}</span>
-														<span>${session.messageCount} ${i18n("messages")}</span>
-														<span>${formatUsage(session.usage)}</span>
-														<span class="font-semibold ${cost > 0.01 ? "text-orange-500" : "text-green-600"}">
-															$${cost.toFixed(4)}
-														</span>
-													</div>
-
-													<!-- Preview text - always show if available -->
-													${
-														session.preview
-															? html`<div class="text-xs text-muted-foreground mt-2 line-clamp-2">
-																	${session.preview}
-																</div>`
-															: ""
-													}
-												</div>
-												<div class="flex gap-1">
-													<button
-														class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-secondary text-foreground transition-opacity"
-														@click=${(e: Event) => {
-															e.stopPropagation();
-															this.handleExport(session.id);
-														}}
-														title=${i18n("Export")}
-													>
-														<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-															<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-															<polyline points="7 10 12 15 17 10"></polyline>
-															<line x1="12" y1="15" x2="12" y2="3"></line>
-														</svg>
-													</button>
-													<button
-														class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-destructive transition-opacity"
-														@click=${(e: Event) => this.handleDelete(session.id, e)}
-														title=${i18n("Delete")}
-													>
-														<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-															<path d="M3 6h18"></path>
-															<path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-															<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-														</svg>
-													</button>
-												</div>
-											</div>
-										`;
-										})
+									? html`<li class="text-center py-8 text-sm text-muted-foreground">
+											${this.searchQuery ? i18n("No matching chats") : i18n("No chats yet")}
+										</li>`
+									: filteredSessions.map((session) => this.renderRow(session))
 						}
-					</div>
+					</ul>
 				`,
 			})}
 		`;

@@ -105,11 +105,11 @@ index 2c76c391d..73792853a 100644
  								<button
  									class="absolute z-30 top-4 left-1/2 -translate-x-1/2 pointer-events-auto"
 diff --git a/packages/web-ui/src/components/AgentInterface.ts b/packages/web-ui/src/components/AgentInterface.ts
-index b8f6550ec..f95c50374 100644
+index b8f6550ec..34358cdd3 100644
 --- a/packages/web-ui/src/components/AgentInterface.ts
 +++ b/packages/web-ui/src/components/AgentInterface.ts
 @@ -1,3 +1,4 @@
-+import type { ComposerAccessory, SlashCommandProvider } from "./MessageEditor.js";
++import type { ComposerAccessory, ModelLabel, SlashCommandProvider } from "./MessageEditor.js";
  import { streamSimple, type ToolResultMessage, type Usage } from "@mariozechner/pi-ai";
  import { html, LitElement } from "lit";
  import { customElement, property, query } from "lit/decorators.js";
@@ -126,7 +126,7 @@ index b8f6550ec..f95c50374 100644
  import { createStreamFn } from "../utils/proxy-utils.js";
  import type { UserMessageWithAttachments } from "./Messages.js";
  import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
-@@ -28,12 +30,22 @@ export class AgentInterface extends LitElement {
+@@ -28,12 +30,24 @@ export class AgentInterface extends LitElement {
  	@property({ attribute: false }) onApiKeyRequired?: (provider: string) => Promise<boolean>;
  	// Optional callback called before sending a message
  	@property({ attribute: false }) onBeforeSend?: () => void | Promise<void>;
@@ -146,10 +146,12 @@ index b8f6550ec..f95c50374 100644
 +	@property({ attribute: false }) mentionProvider?: SlashCommandProvider;
 +	// Rendered above the composer's text box
 +	@property({ attribute: false }) composerAccessory?: ComposerAccessory;
++	/** Names the current model in the composer; the raw model id when unset. */
++	@property({ attribute: false }) modelLabel?: ModelLabel;
  
  	// References
  	@query("message-editor") private _messageEditor!: MessageEditor;
-@@ -46,6 +58,12 @@ export class AgentInterface extends LitElement {
+@@ -46,6 +60,12 @@ export class AgentInterface extends LitElement {
  	private _resizeObserver?: ResizeObserver;
  	private _unsubscribeSession?: () => void;
  
@@ -162,7 +164,7 @@ index b8f6550ec..f95c50374 100644
  	public setInput(text: string, attachments?: Attachment[]) {
  		const update = () => {
  			if (!this._messageEditor) requestAnimationFrame(update);
-@@ -150,12 +168,37 @@ export class AgentInterface extends LitElement {
+@@ -150,12 +170,37 @@ export class AgentInterface extends LitElement {
  			};
  		}
  
@@ -201,7 +203,7 @@ index b8f6550ec..f95c50374 100644
  					this.requestUpdate();
  					break;
  				case "message_end":
-@@ -166,14 +209,16 @@ export class AgentInterface extends LitElement {
+@@ -166,14 +211,16 @@ export class AgentInterface extends LitElement {
  					}
  					this.requestUpdate();
  					break;
@@ -219,7 +221,7 @@ index b8f6550ec..f95c50374 100644
  				case "message_update":
  					if (this._streamingContainer) {
  						const isStreaming = this.session?.state.isStreaming || false;
-@@ -213,52 +258,167 @@ export class AgentInterface extends LitElement {
+@@ -213,52 +260,167 @@ export class AgentInterface extends LitElement {
  	};
  
  	public async sendMessage(input: string, attachments?: Attachment[]) {
@@ -424,7 +426,7 @@ index b8f6550ec..f95c50374 100644
  	}
  
  	private renderMessages() {
-@@ -361,6 +521,7 @@ export class AgentInterface extends LitElement {
+@@ -361,6 +523,7 @@ export class AgentInterface extends LitElement {
  				<!-- Input Area -->
  				<div class="shrink-0">
  					<div class="max-w-3xl mx-auto px-2">
@@ -432,7 +434,7 @@ index b8f6550ec..f95c50374 100644
  						<message-editor
  							.isStreaming=${state.isStreaming}
  							.currentModel=${state.model}
-@@ -368,8 +529,12 @@ export class AgentInterface extends LitElement {
+@@ -368,8 +531,13 @@ export class AgentInterface extends LitElement {
  							.showAttachmentButton=${this.enableAttachments}
  							.showModelSelector=${this.enableModelSelector}
  							.showThinkingSelector=${this.enableThinkingSelector}
@@ -440,6 +442,7 @@ index b8f6550ec..f95c50374 100644
 +							.slashCommandProvider=${this.slashCommandProvider}
 +							.mentionProvider=${this.mentionProvider}
 +							.accessory=${this.composerAccessory}
++							.modelLabel=${this.modelLabel}
  							.onSend=${(input: string, attachments: Attachment[]) => {
 -								this.sendMessage(input, attachments);
 +								void this.startSend(input, attachments, "editor").then(({ run }) => run);
@@ -447,10 +450,10 @@ index b8f6550ec..f95c50374 100644
  							.onAbort=${() => session.abort()}
  							.onModelSelect=${() => {
 diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
-index f0987c4d1..c4eae5b18 100644
+index f0987c4d1..790cd3919 100644
 --- a/packages/web-ui/src/components/MessageEditor.ts
 +++ b/packages/web-ui/src/components/MessageEditor.ts
-@@ -11,6 +11,32 @@ import { i18n } from "../utils/i18n.js";
+@@ -11,6 +11,35 @@ import { i18n } from "../utils/i18n.js";
  import "./AttachmentTile.js";
  import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
  
@@ -473,6 +476,9 @@ index f0987c4d1..c4eae5b18 100644
 +/** Renders above the text box (reference chips); `setValue` replaces the composer text. */
 +export type ComposerAccessory = (value: string, setValue: (value: string) => void) => unknown;
 +
++/** How the composer names the current model: the button's content and its tooltip. */
++export type ModelLabel = (model: Model<any>) => { content: unknown; title: string };
++
 +/** Where the open menu came from and which text it replaces. */
 +interface MenuTrigger {
 +	kind: "slash" | "mention";
@@ -483,7 +489,7 @@ index f0987c4d1..c4eae5b18 100644
  @customElement("message-editor")
  export class MessageEditor extends LitElement {
  	private _value = "";
-@@ -38,6 +64,11 @@ export class MessageEditor extends LitElement {
+@@ -38,6 +67,12 @@ export class MessageEditor extends LitElement {
  	@property() onAbort?: () => void;
  	@property() onModelSelect?: () => void;
  	@property() onThinkingChange?: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
@@ -492,10 +498,11 @@ index f0987c4d1..c4eae5b18 100644
 +	/** Suggestions shown after an "@" that starts a word (tab references). */
 +	@property({ attribute: false }) mentionProvider?: SlashCommandProvider;
 +	@property({ attribute: false }) accessory?: ComposerAccessory;
++	@property({ attribute: false }) modelLabel?: ModelLabel;
  	@property() onFilesChange?: (files: Attachment[]) => void;
  	@property() attachments: Attachment[] = [];
  	@property() maxFiles = 10;
-@@ -47,6 +78,12 @@ export class MessageEditor extends LitElement {
+@@ -47,6 +82,12 @@ export class MessageEditor extends LitElement {
  
  	@state() processingFiles = false;
  	@state() isDragging = false;
@@ -508,7 +515,7 @@ index f0987c4d1..c4eae5b18 100644
  	private fileInputRef = createRef<HTMLInputElement>();
  
  	protected override createRenderRoot(): HTMLElement | DocumentFragment {
-@@ -57,12 +94,118 @@ export class MessageEditor extends LitElement {
+@@ -57,12 +98,118 @@ export class MessageEditor extends LitElement {
  		const textarea = e.target as HTMLTextAreaElement;
  		this.value = textarea.value;
  		this.onInput?.(this.value);
@@ -628,7 +635,7 @@ index f0987c4d1..c4eae5b18 100644
  				this.handleSend();
  			}
  		} else if (e.key === "Escape" && this.isStreaming) {
-@@ -225,6 +368,67 @@ export class MessageEditor extends LitElement {
+@@ -225,6 +372,67 @@ export class MessageEditor extends LitElement {
  		this.processingFiles = false;
  	};
  
@@ -696,7 +703,15 @@ index f0987c4d1..c4eae5b18 100644
  	override firstUpdated() {
  		const textarea = this.textareaRef.value;
  		if (textarea) {
-@@ -274,13 +478,25 @@ export class MessageEditor extends LitElement {
+@@ -236,6 +444,7 @@ export class MessageEditor extends LitElement {
+ 		// Check if current model supports thinking/reasoning
+ 		const model = this.currentModel;
+ 		const supportsThinking = model?.reasoning === true; // Models with reasoning:true support thinking
++		const modelLabel = model && this.modelLabel ? this.modelLabel(model) : undefined;
+ 
+ 		return html`
+ 			<div
+@@ -274,13 +483,25 @@ export class MessageEditor extends LitElement {
  						: ""
  				}
  
@@ -722,7 +737,29 @@ index f0987c4d1..c4eae5b18 100644
  					@keydown=${this.handleKeyDown}
  					@paste=${this.handlePaste}
  					${ref(this.textareaRef)}
-@@ -383,17 +599,17 @@ export class MessageEditor extends LitElement {
+@@ -348,7 +569,7 @@ export class MessageEditor extends LitElement {
+ 					</div>
+ 
+ 					<!-- Model selector and send on the right -->
+-					<div class="flex gap-2 items-center">
++					<div class="flex gap-2 items-center min-w-0">
+ 						${
+ 							this.showModelSelector && this.currentModel
+ 								? html`
+@@ -365,9 +586,10 @@ export class MessageEditor extends LitElement {
+ 										},
+ 										children: html`
+ 											${icon(Sparkles, "sm")}
+-											<span class="ml-1">${this.currentModel.id}</span>
++											<span class="ml-1 min-w-0 truncate">${modelLabel ? modelLabel.content : this.currentModel.id}</span>
+ 										`,
+-										className: "h-8 text-xs truncate",
++										title: modelLabel?.title ?? this.currentModel.id,
++										className: "h-8 text-xs min-w-0 max-w-full shrink!",
+ 									})}
+ 								`
+ 								: ""
+@@ -383,17 +605,17 @@ export class MessageEditor extends LitElement {
  										className: "h-8 w-8",
  									})}
  								`
@@ -778,6 +815,48 @@ index 75afda08c..881b06c65 100644
  		const items: Array<{ key: string; template: TemplateResult }> = [];
  		let index = 0;
  		for (const msg of this.messages) {
+diff --git a/packages/web-ui/src/components/ProviderKeyInput.ts b/packages/web-ui/src/components/ProviderKeyInput.ts
+index 61dac6068..0f0c0bf7f 100644
+--- a/packages/web-ui/src/components/ProviderKeyInput.ts
++++ b/packages/web-ui/src/components/ProviderKeyInput.ts
+@@ -24,6 +24,8 @@ const TEST_MODELS: Record<string, string> = {
+ @customElement("provider-key-input")
+ export class ProviderKeyInput extends LitElement {
+ 	@property() provider = "";
++	/** The provider's display name; the provider id when unset. */
++	@property() label = "";
+ 	@state() private keyInput = "";
+ 	@state() private testing = false;
+ 	@state() private failed = false;
+@@ -95,7 +97,9 @@ export class ProviderKeyInput extends LitElement {
+ 				await getAppStorage().providerKeys.set(this.provider, this.keyInput);
+ 				this.hasKey = true;
+ 				this.inputChanged = false;
++				this.keyInput = "";
+ 				this.requestUpdate();
++				this.dispatchEvent(new CustomEvent("provider-key-saved", { detail: this.provider, bubbles: true }));
+ 			} catch (error) {
+ 				console.error("Failed to save API key:", error);
+ 				this.failed = true;
+@@ -117,7 +121,7 @@ export class ProviderKeyInput extends LitElement {
+ 		return html`
+ 			<div class="space-y-3">
+ 				<div class="flex items-center gap-2">
+-					<span class="text-sm font-medium capitalize text-foreground">${this.provider}</span>
++					<span class="text-sm font-medium ${this.label ? "" : "capitalize"} text-foreground">${this.label || this.provider}</span>
+ 					${
+ 						this.testing
+ 							? Badge({ children: i18n("Testing..."), variant: "secondary" })
+@@ -137,6 +141,9 @@ export class ProviderKeyInput extends LitElement {
+ 							this.inputChanged = true;
+ 							this.requestUpdate();
+ 						},
++						onKeyDown: (e: KeyboardEvent) => {
++							if (e.key === "Enter" && this.keyInput && !this.testing) this.saveKey();
++						},
+ 						className: "flex-1",
+ 					})}
+ 					${Button({
 diff --git a/packages/web-ui/src/components/StreamingMessageContainer.ts b/packages/web-ui/src/components/StreamingMessageContainer.ts
 index 3d2693150..520034e64 100644
 --- a/packages/web-ui/src/components/StreamingMessageContainer.ts
@@ -922,38 +1001,58 @@ index 192c3c536..451f2f957 100644
  					placeholder: i18n("Search models..."),
  					value: this.searchQuery,
 diff --git a/packages/web-ui/src/dialogs/SettingsDialog.ts b/packages/web-ui/src/dialogs/SettingsDialog.ts
-index 71620552e..f0cce34c8 100644
+index 71620552e..db655ea6f 100644
 --- a/packages/web-ui/src/dialogs/SettingsDialog.ts
 +++ b/packages/web-ui/src/dialogs/SettingsDialog.ts
-@@ -156,7 +156,7 @@ export class SettingsDialog extends LitElement {
+@@ -152,12 +152,16 @@ export class SettingsDialog extends LitElement {
+ 		`;
+ 	}
+ 
++	/** Narrow layout (the side panel): every tab is a chip that wraps, none hidden off the edge. */
+ 	private renderMobileTab(tab: SettingsTab, index: number): TemplateResult {
  		const isActive = this.activeTabIndex === index;
  		return html`
  			<button
 -				class="px-3 py-2 text-sm font-medium transition-colors ${
-+				class="shrink-0 whitespace-nowrap px-3 py-2 text-sm font-medium transition-colors ${
- 					isActive ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground"
+-					isActive ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground"
++				type="button"
++				role="tab"
++				aria-selected=${isActive ? "true" : "false"}
++				class="whitespace-nowrap h-8 px-3 rounded-full text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
++					isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
  				}"
  				@click=${() => this.setActiveTab(index)}
-@@ -190,7 +190,7 @@ export class SettingsDialog extends LitElement {
- 							<div class="pb-4 flex-shrink-0">${DialogHeader({ title: i18n("Settings") })}</div>
+ 			>
+@@ -183,14 +187,14 @@ export class SettingsDialog extends LitElement {
+ 			backdropClassName: "bg-black/50 backdrop-blur-sm",
+ 			children: html`
+ 				${DialogContent({
+-					className: "h-full p-6",
++					className: "h-full p-4 md:p-6",
+ 					children: html`
+ 						<div class="flex flex-col h-full overflow-hidden">
+ 							<!-- Header -->
+-							<div class="pb-4 flex-shrink-0">${DialogHeader({ title: i18n("Settings") })}</div>
++							<div class="pb-3 flex-shrink-0">${DialogHeader({ title: i18n("Settings") })}</div>
  
  							<!-- Mobile Tabs -->
 -							<div class="md:hidden flex flex-shrink-0 pb-4">
-+							<div class="md:hidden flex flex-shrink-0 mb-4 overflow-x-auto overflow-y-hidden border-b border-border">
++							<div role="tablist" class="md:hidden flex flex-wrap gap-1 flex-shrink-0 mb-4 pb-3 border-b border-border">
  								${this.tabs.map((tab, index) => this.renderMobileTab(tab, index))}
  							</div>
  
 diff --git a/packages/web-ui/src/index.ts b/packages/web-ui/src/index.ts
-index 48284c742..ff8d0228f 100644
+index 48284c742..2a7fe1c0e 100644
 --- a/packages/web-ui/src/index.ts
 +++ b/packages/web-ui/src/index.ts
-@@ -10,7 +10,12 @@ export { ConsoleBlock } from "./components/ConsoleBlock.js";
+@@ -10,7 +10,13 @@ export { ConsoleBlock } from "./components/ConsoleBlock.js";
  export { CustomProviderCard } from "./components/CustomProviderCard.js";
  export { ExpandableSection } from "./components/ExpandableSection.js";
  export { Input } from "./components/Input.js";
 -export { MessageEditor } from "./components/MessageEditor.js";
 +export {
 +	type ComposerAccessory,
++	type ModelLabel,
 +	MessageEditor,
 +	type SlashCommand,
 +	type SlashCommandProvider,
@@ -961,7 +1060,7 @@ index 48284c742..ff8d0228f 100644
  export { MessageList } from "./components/MessageList.js";
  // Message components
  export type { ArtifactMessage, UserMessageWithAttachments } from "./components/Messages.js";
-@@ -41,6 +46,12 @@ export {
+@@ -41,6 +47,12 @@ export {
  	type SandboxUrlProvider,
  } from "./components/SandboxedIframe.js";
  export { StreamingMessageContainer } from "./components/StreamingMessageContainer.js";
@@ -974,7 +1073,7 @@ index 48284c742..ff8d0228f 100644
  // Sandbox Runtime Providers
  export { ArtifactsRuntimeProvider } from "./components/sandbox/ArtifactsRuntimeProvider.js";
  export { AttachmentsRuntimeProvider } from "./components/sandbox/AttachmentsRuntimeProvider.js";
-@@ -57,7 +68,7 @@ export { ApiKeyPromptDialog } from "./dialogs/ApiKeyPromptDialog.js";
+@@ -57,7 +69,7 @@ export { ApiKeyPromptDialog } from "./dialogs/ApiKeyPromptDialog.js";
  export { AttachmentOverlay } from "./dialogs/AttachmentOverlay.js";
  export { CustomProviderDialog } from "./dialogs/CustomProviderDialog.js";
  // Dialogs
@@ -983,7 +1082,7 @@ index 48284c742..ff8d0228f 100644
  export { PersistentStorageDialog } from "./dialogs/PersistentStorageDialog.js";
  export { ProvidersModelsTab } from "./dialogs/ProvidersModelsTab.js";
  export { SessionListDialog } from "./dialogs/SessionListDialog.js";
-@@ -93,7 +104,13 @@ export type {
+@@ -93,7 +105,13 @@ export type {
  // Artifacts
  export { ArtifactElement } from "./tools/artifacts/ArtifactElement.js";
  export { ArtifactPill } from "./tools/artifacts/ArtifactPill.js";
