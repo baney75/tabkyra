@@ -4,7 +4,8 @@
 //   tools     the tools/list payload and server instructions an agent pays for on every turn
 //             (bytes, and with --claude the real input-token cost measured through `claude -p`)
 //   launcher  `tabkyra mcp` started through the launcher harness configs run (~/.config/tabkyra/
-//             tabkyra), median of 7, with and without Node's compile cache
+//             tabkyra): 15 interleaved starts per arm, with and without Node's compile cache,
+//             median and interquartile range
 //   cold      cold start: spawn `tabkyra mcp` -> initialize -> first tool result
 //   reload    a read and a click sent while the extension reloads, and a read sent while the
 //             native host restarts: did each succeed, fail with a clear error, or hang, and did
@@ -14,7 +15,7 @@
 //   groups    tab group behavior: identity, colors, and what the user's gestures do (close the
 //             group, drag a tab out or in, collapse, ungroup), reloads, a tab cap, a closed window
 //
-//   node cli/eval/bridge-metrics.mjs [--only tools,cold,reload,multi] [--cycles 3] [--claude] [--out file.json]
+//   node cli/eval/bridge-metrics.mjs [--only tools,launcher,cold,reload,multi,groups] [--cycles 3] [--claude] [--out file.json]
 //
 // Needs the built extension (npm run build) and CLI (cd cli && npm run build) and Playwright's
 // Chromium. --claude also needs a signed-in `claude` CLI (subscription; no API key is used).
@@ -239,7 +240,8 @@ function hostPid() {
 
 /** Reload the extension and return once the old native host is gone (the bridge is down). */
 async function reloadAndWaitDown() {
-	const old = hostPid();
+	// A host must be up first: with no pid to watch, "gone" would be true at once.
+	const old = await until(async () => hostPid(), 30000, "a native host to watch");
 	await fx.reloadExtension({ wait: false });
 	await until(async () => {
 		try {

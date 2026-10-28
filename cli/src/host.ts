@@ -9,7 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import type { ClientToHost, ExtToHost, HostToClient, HostToExt } from "../../src/bridge/protocol.ts";
-import { MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
+import { ERR, MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { socketDir, socketPath } from "./paths.ts";
 import { handleUpdateAction, noteHello, sendStatus, startUpdateTimer } from "./update-host.ts";
@@ -21,16 +21,23 @@ interface Client {
 	hello?: ClientToHost & { type: "hello" };
 	/** Request ids forwarded to the extension and not answered yet. */
 	outstanding: Set<number>;
+	/** When this client last sent anything; a stopping host waits for it to go quiet. */
+	lastDataAt: number;
 }
 
 const clients = new Map<string, Client>();
 let extensionReady = false;
+/** The browser profile behind this host (from the extension's hello). */
+let browserId: string | undefined;
 let seq = 0;
 /** Set once the host has decided to exit; no request is forwarded after that. */
 let stopping = false;
 
 /** Write a frame to the extension; false when it was refused as oversized. */
 function toExtension(message: HostToExt): boolean {
+	// A stopping host says nothing more to the extension: its side may already be gone (a write
+	// then fails with EPIPE), and the extension must hear the port close, not more traffic.
+	if (stopping) return false;
 	const frame = encodeFrame(message);
 	if (frame.length > MAX_FRAME_TO_EXTENSION) {
 		// Never let one oversized frame kill the native port.
@@ -58,9 +65,10 @@ function onExtensionMessage(message: ExtToHost): void {
 	switch (message.type) {
 		case "hello":
 			extensionReady = true;
+			browserId = typeof message.browserId === "string" ? message.browserId.slice(0, 64) : undefined;
 			noteHello(message, toExtension);
 			void sendStatus(toExtension);
-			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true });
+			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true, ...(browserId ? { browserId } : {}) });
 			// The extension restarted; re-announce every live client so it recreates sessions.
 			for (const client of clients.values()) {
 				if (client.hello) toExtension({ type: "client_connected", clientId: client.id, client: client.hello.client });
@@ -86,7 +94,9 @@ function onExtensionMessage(message: ExtToHost): void {
 function onClientMessage(client: Client, message: ClientToHost): void {
 	if (message.type === "hello") {
 		client.hello = message;
-		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: extensionReady });
+		// A stopping host can't run anything: it doesn't present itself as ready to a new client.
+		const ready = extensionReady && !stopping;
+		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: ready, ...(ready && browserId ? { browserId } : {}) });
 		toExtension({ type: "client_connected", clientId: client.id, client: message.client });
 		return;
 	}
@@ -97,7 +107,7 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 		}
 		if (stopping) {
 			// Never forward now: the reply could not come back, and the client would retry it.
-			toClient(client.id, { type: "response", id: message.id, error: restartError("the bridge is restarting", false) });
+			toClient(client.id, { type: "response", id: message.id, error: restartError("the browser bridge is restarting", false) });
 			return;
 		}
 		if (toExtension({ type: "request", clientId: client.id, id: message.id, method: message.method, params: message.params }))
@@ -106,30 +116,27 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 }
 
 /**
- * The extension sent a frame we could not read, so one reply is lost and we can't tell whose.
- * Answer every unanswered request with an RPC error (clients never retry those, so nothing
- * runs twice), then restart: Chrome closes the port, the extension reconnects and spawns a
- * fresh host, and later calls dial the new socket.
+ * Answer every request the extension has not answered with an RPC error, so no client waits on
+ * a reply that can't come and none replays it blindly: `interrupted` says it may have run (a
+ * client repeats only reads on its own). Used when the host restarts after a bad frame and when
+ * the extension goes away (reload, worker restart). Chrome then spawns a fresh host and later
+ * calls dial the new socket.
  */
 function failOutstanding(reason: string): void {
 	for (const client of clients.values()) {
 		for (const id of client.outstanding) {
-			toClient(client.id, {
-				type: "response",
-				id,
-				error: restartError(`the browser's reply was lost (${reason}); the bridge is restarting`, true),
-			});
+			toClient(client.id, { type: "response", id, error: restartError(reason, true) });
 		}
 		client.outstanding.clear();
 	}
 }
 
-/** An RPC error, which clients never retry, so a request is not sent twice. */
+/** An RPC error naming whether the request may have run. */
 function restartError(what: string, mayHaveRun: boolean): { code: string; message: string } {
 	const next = mayHaveRun
-		? "The request may have run: check the page before repeating it."
-		: "The request was not sent; repeat it in a few seconds.";
-	return { code: "internal", message: `${what[0].toUpperCase()}${what.slice(1)}. ${next}` };
+		? "It may have run: check the page (read_page) before repeating it."
+		: "It was not sent; repeat it in a few seconds.";
+	return { code: mayHaveRun ? ERR.INTERRUPTED : ERR.NOT_SENT, message: `${what[0].toUpperCase()}${what.slice(1)}. ${next}` };
 }
 
 function sweepStaleSockets(dir: string): void {
@@ -145,7 +152,23 @@ function sweepStaleSockets(dir: string): void {
 	}
 }
 
+/**
+ * Close the extension's side at once when the host stops on its own (a bad frame, a signal):
+ * the extension sees its port disconnect and stops the requests this host just answered
+ * "interrupted", instead of running them while the host lingers for its clients.
+ */
+function dropExtension(): void {
+	try {
+		process.stdout.end();
+		process.stdin.destroy();
+	} catch {
+		/* already closed */
+	}
+}
+
 export function runNativeHost(): void {
+	// A closed pipe to the browser must not crash the host while it answers its clients.
+	process.stdout.on("error", () => undefined);
 	const dir = socketDir();
 	if (process.platform !== "win32") {
 		if (!existsSync(dir)) mkdirSync(dir, { mode: 0o700 });
@@ -162,10 +185,11 @@ export function runNativeHost(): void {
 
 	const server = createServer((socket) => {
 		const id = `c${++seq}-${process.pid}`;
-		const client: Client = { id, socket, outstanding: new Set() };
+		const client: Client = { id, socket, outstanding: new Set(), lastDataAt: Date.now() };
 		clients.set(id, client);
 		const parser = new FrameParser(MAX_FRAME_TO_EXTENSION);
 		socket.on("data", (chunk) => {
+			client.lastDataAt = Date.now();
 			const { messages, error } = parser.push(chunk);
 			for (const m of messages) onClientMessage(client, m as ClientToHost);
 			if (error) {
@@ -193,38 +217,70 @@ export function runNativeHost(): void {
 		if (error) {
 			process.stderr.write(`[tabkyra-host] bad frame from extension, restarting: ${String(error)}\n`);
 			stopping = true;
-			failOutstanding(error.message);
+			failOutstanding(`the browser's reply was lost (${error.message}); the bridge is restarting`);
+			dropExtension();
 			shutdown(1);
 		}
 	});
 
 	let exiting = false;
+	/** A stopping host closes a client only after it has sent nothing for this long (at most MAX_LINGER_MS). */
+	const LINGER_MS = 250;
+	const MAX_LINGER_MS = 2000;
 	const shutdown = (code = 0) => {
 		if (exiting) return;
 		exiting = true;
 		stopping = true;
+		// No new clients. The connected ones keep their sockets until they go quiet, and anything
+		// they send meanwhile is answered not_sent (onClientMessage), which they resend to the next host.
 		server.close();
 		rmSync(path, { force: true });
-		// end() flushes what is queued (the answers above) before closing; destroy() would drop it.
-		for (const client of clients.values()) client.socket.end();
-		const exit = setTimeout(() => process.exit(code), 500);
-		const open = [...clients.values()].filter((c) => !c.socket.destroyed);
-		if (open.length === 0) {
-			clearTimeout(exit);
-			process.exit(code);
-		}
-		let left = open.length;
-		for (const c of open)
-			c.socket.once("close", () => {
-				if (--left === 0) {
-					clearTimeout(exit);
-					process.exit(code);
+		const started = Date.now();
+		const ended = new Set<Client>();
+		const exitWhenClosed = () => {
+			const open = [...clients.values()].filter((c) => !c.socket.destroyed);
+			if (open.length === 0) process.exit(code);
+			const exit = setTimeout(() => process.exit(code), 500);
+			let left = open.length;
+			for (const c of open)
+				c.socket.once("close", () => {
+					if (--left === 0) {
+						clearTimeout(exit);
+						process.exit(code);
+					}
+				});
+		};
+		const sweep = () => {
+			const now = Date.now();
+			for (const client of clients.values()) {
+				if (ended.has(client)) continue;
+				// end() flushes what is queued (the answers above) before closing; destroy() would drop it.
+				// Quiet for LINGER_MS since the stop at the earliest: an idle client gets the full grace too.
+				if (now - Math.max(client.lastDataAt, started) >= LINGER_MS || now - started >= MAX_LINGER_MS) {
+					ended.add(client);
+					client.socket.end();
 				}
-			});
+			}
+			if ([...clients.values()].every((c) => ended.has(c))) exitWhenClosed();
+			else setTimeout(sweep, 25);
+		};
+		sweep();
 	};
-	process.stdin.on("end", () => shutdown());
-	process.on("SIGINT", () => shutdown());
-	process.on("SIGTERM", () => shutdown());
+	// The extension went away (reloaded, updated, worker restarted): what it had not answered
+	// never will be.
+	process.stdin.on("end", () => {
+		stopping = true;
+		failOutstanding("the browser connection dropped while this ran (the Tabkyra extension reloaded or restarted)");
+		shutdown();
+	});
+	const killed = () => {
+		stopping = true;
+		failOutstanding("the browser bridge was stopped while this ran");
+		dropExtension();
+		shutdown();
+	};
+	process.on("SIGINT", killed);
+	process.on("SIGTERM", killed);
 
 	const ping = setInterval(() => toExtension({ type: "ping" }), 20000);
 	ping.unref();

@@ -325,3 +325,43 @@ The owner asked to clean up the side panel chat, remove the in-chat Artifacts pi
 - **References that fail to resolve are frozen as unusable**, with a toast, so a chip never
   looks shared when nothing was.
 
+## D22. A dropped bridge: reads are resent, input is never replayed (Claude, 2026-10-27)
+
+Owner, 2026-10-27: a tool call during an extension reload or native host restart "retries
+safely or fails with a clear retryable error, never a hang". Defaults chosen:
+
+- **What counts as a read** is a fixed list in `src/bridge/protocol.ts` (`isIdempotent`):
+  status, tab listing and selection, snapshot, text, HTML, find, screenshot, wait, console
+  and network reads, and `navigate` to a URL (loading the same URL again repeats a GET).
+  Everything else, including `navigate` back or forward, `tabs.create` and `actions`, is
+  input and is sent at most once.
+- **The host answers for the extension.** When the extension goes away with requests out
+  (reload, update, worker restart, a bad frame), the native host answers each one with
+  `interrupted` before it exits, so no client waits on a reply that can't come. A stopping
+  host keeps each client's socket open until that client has been quiet for 250 ms (2 s at
+  most), and a request that arrives then gets `not_sent`. A request the extension refuses
+  during an update install gets `not_sent` too: it never ran.
+- **The client resends** a read cut off in flight and anything that never left (no socket, or
+  `not_sent`), after the bridge is back, up to three sends in all. A cut-off input request
+  fails with `interrupted` at once, without waiting for the bridge, telling the agent it may
+  have run and to check the page before repeating it; the next call reconnects. This replaces
+  the one blind retry, which ran a click twice when a reload cut off its reply.
+- **A refusal is waited out, not counted as a drop.** A live host's `not_sent` (an update
+  installing, a host stopping) is resent after 250 ms, 500 ms, 1 s, 2 s... within the budget.
+  A half-closed socket takes no request; one an answer showed is retiring is no longer used
+  but not cut under the requests still waiting on it.
+- **Same browser, for a resend.** Each profile keeps a random id (`tabkyra.browserId`) that
+  the host passes on. A call's resends go only to the browser it started in, never to another
+  browser or to a host that hasn't said which it is; when that browser doesn't come back within
+  the budget the call fails, and the next call takes whatever browser is up. A reconnect on a
+  host whose extension never answers keeps looking, without redialing its own host; nothing is
+  written to a host whose extension isn't there.
+- **No new waits.** From its first drop, one call waits at most 40 s in all for the bridge,
+  however many times it drops (time the request itself ran isn't charged); concurrent calls
+  share one reconnect and one connect, a socket is used only once it is welcomed and chosen,
+  and a client never holds more than one.
+- **Cut off means stopped.** When the native host goes away while the extension lives (a host
+  crash or restart), the extension stops the running request from sending more input, a
+  request still in its preamble (update gate, session open) never reaches its handler, and
+  nothing queued for that client starts, so the agent's "check the page, then repeat" can't
+  race a handler still running.

@@ -141,12 +141,157 @@ test("on a bad extension frame the host answers waiting requests with a non-retr
 		const lost = responses.find((m) => m.id === 2);
 		assert.ok(lost?.error, `request 2 got an RPC error, not just a closed socket: ${JSON.stringify(responses)}`);
 		assert.match(lost.error.message, /may have run/);
+		assert.equal(lost.error.code, "interrupted");
 		// A request that reaches the host after that is never forwarded (it could only be lost).
 		late.write(encodeFrame({ type: "request", id: 3, method: "click", params: {} }));
 		await new Promise((r) => setTimeout(r, 300));
 		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 3).length, 0, "request 3 was forwarded");
 		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
 	} finally {
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("when the extension goes away, the host answers every waiting request as interrupted before it exits", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const exited = new Promise((r) => host.once("exit", (c) => r(c)));
+	const toExt = new FrameParser(64 * 1024 * 1024);
+	const forwarded = [];
+	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		const client = connect({ path: sock, allowHalfOpen: true });
+		const fromHost = new FrameParser(64 * 1024 * 1024);
+		const received = [];
+		client.on("data", (chunk) => received.push(...fromHost.push(chunk).messages));
+		client.on("error", () => undefined);
+		client.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } }));
+		client.write(encodeFrame({ type: "request", id: 1, method: "click", params: {} }));
+		for (let i = 0; i < 100 && !forwarded.some((m) => m.type === "request"); i++) await new Promise((r) => setTimeout(r, 20));
+		// The extension reloads: Chrome closes the port, so the host's stdin ends.
+		host.stdin.end();
+		for (let i = 0; i < 100 && !received.some((m) => m.id === 1); i++) await new Promise((r) => setTimeout(r, 5));
+		// The host now knows it is stopping (it answered the click). A request sent right then is
+		// still answered, as not_sent, however long the client had been idle before.
+		client.write(encodeFrame({ type: "request", id: 2, method: "click", params: {} }));
+		const answer = received.find((m) => m.type === "response" && m.id === 1);
+		assert.ok(answer?.error, `the click got an answer, not just a closed socket: ${JSON.stringify(received)}`);
+		assert.equal(answer.error.code, "interrupted");
+		assert.match(answer.error.message, /may have run: check the page \(read_page\) before repeating it/);
+		// The request that arrived while the host was stopping is answered not_sent, never dropped.
+		for (let i = 0; i < 50 && !received.some((m) => m.id === 2); i++) await new Promise((r) => setTimeout(r, 10));
+		const late = received.find((m) => m.type === "response" && m.id === 2);
+		assert.equal(late?.error?.code, "not_sent", `the late request got no not_sent answer: ${JSON.stringify(received)}`);
+		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 2).length, 0, "a late request was forwarded");
+		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
+	} finally {
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a host stopped by a signal drops the extension's side at once, answers its clients, and survives a closed pipe", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const exited = new Promise((r) => host.once("exit", (c) => r(c)));
+	const toExt = new FrameParser(64 * 1024 * 1024);
+	const forwarded = [];
+	let extensionSideEnded = 0;
+	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
+	host.stdout.on("end", () => {
+		extensionSideEnded = Date.now();
+	});
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		const open = () => {
+			const c = connect({ path: sock, allowHalfOpen: true });
+			const parser = new FrameParser(64 * 1024 * 1024);
+			const got = [];
+			c.on("data", (chunk) => got.push(...parser.push(chunk).messages));
+			c.on("error", () => undefined);
+			c.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } }));
+			return { c, got };
+		};
+		const one = open();
+		const two = open();
+		one.c.write(encodeFrame({ type: "request", id: 1, method: "click", params: {} }));
+		for (let i = 0; i < 100 && !forwarded.some((m) => m.type === "request"); i++) await new Promise((r) => setTimeout(r, 20));
+		const signalled = Date.now();
+		host.kill("SIGTERM");
+		for (let i = 0; i < 100 && !one.got.some((m) => m.id === 1); i++) await new Promise((r) => setTimeout(r, 5));
+		assert.equal(one.got.find((m) => m.id === 1)?.error?.code, "interrupted");
+		// The extension's side closes right away, before the host lingers for its clients.
+		for (let i = 0; i < 100 && !extensionSideEnded; i++) await new Promise((r) => setTimeout(r, 5));
+		assert.ok(extensionSideEnded && extensionSideEnded - signalled < 200, "the extension's side stayed open while the host lingered");
+		// The pipe is gone; a client leaving (which used to write to it) must not crash the host.
+		host.stdout.destroy();
+		two.c.destroy();
+		await new Promise((r) => setTimeout(r, 30));
+		one.c.write(encodeFrame({ type: "request", id: 2, method: "press", params: {} }));
+		for (let i = 0; i < 100 && !one.got.some((m) => m.id === 2); i++) await new Promise((r) => setTimeout(r, 5));
+		assert.equal(one.got.find((m) => m.id === 2)?.error?.code, "not_sent");
+		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 2).length, 0);
+		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
+	} finally {
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a host that is stopping doesn't welcome a new client as ready", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	host.stdout.on("data", () => undefined);
+	const sockets = [];
+	const open = (sock) => {
+		const s = connect({ path: sock });
+		sockets.push(s);
+		s.on("error", () => undefined);
+		const parser = new FrameParser(64 * 1024 * 1024);
+		const welcome = new Promise((resolve) => {
+			s.on("data", (chunk) => {
+				const w = parser.push(chunk).messages.find((m) => m.type === "welcome");
+				if (w) resolve(w);
+			});
+			s.on("close", () => resolve(undefined));
+		});
+		return { hello: () => s.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } })), welcome };
+	};
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		host.stdin.write(encodeFrame({ type: "hello", version: "1", protocol: 1, methods: [], browserId: "b1" }));
+		const first = open(sock);
+		first.hello();
+		assert.equal((await first.welcome).extensionConnected, true);
+		// A connection accepted just before the extension goes away says hello just after.
+		const late = open(sock);
+		await new Promise((r) => setTimeout(r, 100));
+		host.stdin.end();
+		await new Promise((r) => setTimeout(r, 50));
+		late.hello();
+		const w = await late.welcome;
+		assert.ok(w, "the lingering host closed the connection without a welcome");
+		assert.equal(w.extensionConnected, false, "a stopping host welcomed a client as ready");
+		assert.equal(w.browserId, undefined);
+	} finally {
+		for (const s of sockets) s.destroy();
 		host.kill();
 		rmSync(dir, { recursive: true, force: true });
 	}

@@ -7,13 +7,14 @@ import { hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
-import { runSetup, type SetupOptions } from "./setup.ts";
+import { parseSetupArgs, parseUpdateArgs } from "./parse-args.ts";
+import { runSetup } from "./setup.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
-import { type Channel, runUpdate, UpdateError, type UpdateOptions } from "./update.ts";
+import { runUpdate, UpdateError } from "./update.ts";
 import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
 import { type HostRunAction, runHostAction } from "./update-run.ts";
 import { BUILD } from "../../src/update/build.ts";
@@ -100,23 +101,6 @@ async function withBridge<T>(name: string, fn: (client: BridgeClient) => Promise
 	}
 }
 
-/** Parse `setup` flags strictly: a typo should not silently change what setup does. */
-function parseSetupArgs(args: string[]): SetupOptions | string {
-	const options: SetupOptions = { yes: false, wait: true, timeoutS: 0 };
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		if (arg === "--yes" || arg === "-y") options.yes = true;
-		else if (arg === "--no-wait") options.wait = false;
-		else if (arg === "--timeout" || arg.startsWith("--timeout=")) {
-			const raw = arg === "--timeout" ? args[++i] : arg.slice("--timeout=".length);
-			const seconds = Number(raw);
-			if (!raw || !Number.isFinite(seconds) || seconds <= 0) return `--timeout needs a number of seconds above 0, got "${raw ?? ""}".`;
-			options.timeoutS = seconds;
-		} else return `Unknown option "${arg}".`;
-	}
-	return options;
-}
-
 interface StatusReport {
 	connected: boolean;
 	hosts: Array<{ browser: string; state: string; file: string }>;
@@ -196,31 +180,6 @@ const HOST_UPDATE_ACTIONS: Record<string, HostRunAction> = {
 	"--host --rollback": "rollback",
 	"--host --reinstall": "reinstall",
 };
-
-/** Parse `update` flags strictly, like setup. */
-function parseUpdateArgs(args: string[]): UpdateOptions | string {
-	const options: UpdateOptions = { check: false, rollback: false, json: false, yes: false };
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		const value = (name: string) => (arg === name ? args[++i] : arg.slice(name.length + 1));
-		if (arg === "--check") options.check = true;
-		else if (arg === "--rollback") options.rollback = true;
-		else if (arg === "--json") options.json = true;
-		else if (arg === "--yes" || arg === "-y") options.yes = true;
-		else if (arg === "--channel" || arg.startsWith("--channel=")) {
-			const channel = value("--channel");
-			if (channel !== "stable" && channel !== "nightly") return `--channel is stable or nightly, got "${channel ?? ""}".`;
-			options.channel = channel as Channel;
-		} else if (arg === "--auto-check" || arg.startsWith("--auto-check=")) {
-			const v = value("--auto-check");
-			if (v !== "on" && v !== "off") return `--auto-check is on or off, got "${v ?? ""}".`;
-			options.autoCheck = v === "on";
-		} else return `Unknown option "${arg}".`;
-	}
-	if (options.rollback && options.check) return "--rollback and --check don't go together.";
-	if (options.json && !options.check) return "--json goes with --check.";
-	return options;
-}
 
 function checkArgs(command: string, args: string[]): void {
 	const problem = argsProblem(command, args);

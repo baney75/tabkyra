@@ -4,6 +4,8 @@
  * help, completions and the parser can't disagree.
  */
 
+import { SETUP_FLAGS, UPDATE_FLAGS } from "./parse-args.ts";
+
 export interface SubcommandSpec {
 	name: string;
 	/** Its positional arguments as help shows them ("<name>", "[path...]"). Flags are added from `flags`. */
@@ -68,7 +70,7 @@ export const VALUE_FLAGS = new Set(Object.keys(VALUE_HINTS));
 const PATH_VALUES = new Set(["--cases", "--base", "--router", "--out"]);
 
 export const COMMANDS: CommandSpec[] = [
-	{ name: "setup", selfParsed: true, what: "Build, register, load, connect and add to your agents", group: "Get started", flags: ["--yes", "--no-wait", "--timeout"] },
+	{ name: "setup", selfParsed: true, what: "Build, register, load, connect and add to your agents", group: "Get started", flags: SETUP_FLAGS },
 	{ name: "status", what: "Is the extension connected? Which sites are allowed?", group: "Get started", flags: ["--json"] },
 	{ name: "mcp", what: "MCP server on stdio (what Claude Code, Codex, OpenCode run)", group: "Agents" },
 	{ name: "pi-extension", positional: 1, paths: true, args: "[dir]", what: "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts", group: "Agents" },
@@ -143,7 +145,7 @@ export const COMMANDS: CommandSpec[] = [
 		selfParsed: true,
 		what: "Install the latest signed release",
 		group: "Troubleshoot",
-		flags: ["--check", "--json", "--rollback", "--yes", "--channel", "--auto-check"],
+		flags: UPDATE_FLAGS,
 	},
 	{ name: "install", what: "Re-register the native host with every browser", group: "Troubleshoot", flags: ["--force"] },
 	{ name: "reload", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot" },
@@ -293,17 +295,29 @@ export function completionScript(shell: string): string | undefined {
 		return lines.join("\n");
 	}
 	if (shell === "bash") {
+		const valueCases = Object.entries(VALUE_HINTS)
+			.filter(([f]) => !PATH_VALUES.has(f))
+			.map(([f, hint]) => {
+				// A hint like "stable|nightly" lists the values; anything else is free text.
+				const values = /^[a-z0-9]+(\|[a-z0-9]+)+$/.test(hint) ? hint.split("|").join(" ") : "";
+				return `    ${sh(f)}) ${values ? `COMPREPLY=( $(compgen -W "${values}" -- "$cur") ); ` : ""}compopt +o default 2>/dev/null; return ;;`;
+			});
 		const lines = [
 			'# tabkyra completion for bash. Load it with: eval "$(tabkyra completion bash)"',
 			"_tabkyra() {",
-			'  local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}"',
+			'  local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" paths=0',
 			"  COMPREPLY=()",
 			'  if [ "$COMP_CWORD" -eq 1 ]; then',
 			`    COMPREPLY=( $(compgen -W "${cmds.map((c) => sh(c.name)).join(" ")}" -- "$cur") )`,
+			"    compopt +o default 2>/dev/null",
 			"    return",
 			"  fi",
-			"  # A path after --out and friends: leave it to file completion (-o default).",
-			`  case "$prev" in ${[...PATH_VALUES].map(sh).join("|")}) return ;; esac`,
+			'  case "$prev" in',
+			"    # A path after --out and friends: file completion (-o default).",
+			`    ${[...PATH_VALUES].map(sh).join("|")}) return ;;`,
+			"    # Any other value: its values when they are a fixed list, never the flags.",
+			...valueCases,
+			"  esac",
 			'  local words=""',
 			'  case "${COMP_WORDS[1]}" in',
 		];
@@ -313,19 +327,22 @@ export function completionScript(shell: string): string | undefined {
 				lines.push(`    ${sh(c.name)})`);
 				lines.push(`      if [ "$COMP_CWORD" -eq 2 ]; then words="${subs.map((s) => sh(s.name)).join(" ")}"; else`);
 				lines.push('        case "${COMP_WORDS[2]}" in');
-				for (const s of subs) if (s.flags?.length) lines.push(`          ${sh(s.name)}) words="${s.flags.map(sh).join(" ")}" ;;`);
+				for (const s of subs) if (s.flags?.length || s.paths) lines.push(`          ${sh(s.name)}) words="${(s.flags ?? []).map(sh).join(" ")}"${s.paths ? "; paths=1" : ""} ;;`);
 				lines.push("        esac");
 				lines.push("      fi ;;");
 			} else {
 				const all = [...(c.values ?? []), ...(c.flags ?? [])];
-				if (all.length) lines.push(`    ${sh(c.name)}) words="${all.map(sh).join(" ")}" ;;`);
+				if (all.length || c.paths) lines.push(`    ${sh(c.name)}) words="${all.map(sh).join(" ")}"${c.paths ? "; paths=1" : ""} ;;`);
 			}
 		}
 		lines.push(
 			"  esac",
+			"  # Where a path goes, a word without a dash completes as a file name, not as a flag.",
+			'  if [ "$paths" = 1 ] && [[ "$cur" != -* ]]; then return; fi',
 			'  COMPREPLY=( $(compgen -W "$words" -- "$cur") )',
+			"  # File names only where the command takes a path (compopt needs bash 4; older bash keeps them).",
+			'  [ "$paths" = 1 ] || compopt +o default 2>/dev/null',
 			"}",
-			"# -o default: where nothing above matches (a path argument), bash completes file names.",
 			"complete -o bashdefault -o default -F _tabkyra tabkyra",
 			"",
 		);
