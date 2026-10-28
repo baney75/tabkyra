@@ -47,16 +47,17 @@ export function redactSecrets(text: string): string {
  * keep only the file name, which is what a maintainer needs from a stack trace.
  */
 export function redact(text: string): string {
-	// Tabkyra's own script paths are set aside before any rule runs: the long-token and home-path
-	// rules would otherwise eat a file name ("assets/components/ThreadListView.js", "pages/home").
-	// The query and fragment stay in place until the secret rules have read them, then go.
-	const paths: string[] = [];
-	const marked = text.replace(/\u0000/g, "").replace(
-		/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)/gi,
-		(_m, path: string) =>
-			// Each segment still goes through the secret rules: a key can't hide as a "file name".
-			`\u0000${paths.push(path.split("/").map(redactSecrets).join("/")) - 1}\u0000`,
-	);
+	// Tabkyra's own script URLs keep only a short file name, set aside before any rule runs: the
+	// long-token and home-path rules would otherwise eat it. Directories go, since a path can carry
+	// anything (a key, an address). The query and fragment stay in place until the secret rules
+	// have read them, then go.
+	const files: string[] = [];
+	const marked = text
+		.replace(/\u0000/g, "")
+		.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)/gi, (_m, path: string) => {
+			const name = path.slice(path.lastIndexOf("/") + 1);
+			return `\u0000${files.push(/^[\w.-]{1,31}$/.test(name) ? redactSecrets(name) : "[file]") - 1}\u0000`;
+		});
 	return (
 		redactSecrets(marked)
 			.replace(/(\u0000\d+\u0000)[?#][^\s"'<>)]*/g, "$1")
@@ -75,7 +76,7 @@ export function redact(text: string): string {
 			.replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, "[long-token]")
 			.replace(/\/(Users|home)\/[^/\s]+/g, "/$1/[user]")
 			.replace(/[A-Z]:\\Users\\[^\\\s]+/g, "C:\\Users\\[user]")
-			.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => `ext:/${paths[Number(i)]}`)
+			.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => `ext:/${files[Number(i)]}`)
 			.slice(0, 2000)
 	);
 }
