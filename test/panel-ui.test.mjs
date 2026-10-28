@@ -133,6 +133,8 @@ test("the Claude and Gemini MCP setup commands render as readable command blocks
 	assert.match(source, /this\.command\("Claude Code", CLI_MCP_SETUP\.claude\)/);
 	assert.match(source, /this\.command\("Gemini CLI", CLI_MCP_SETUP\.gemini\)/);
 	const block = source.slice(source.indexOf("private command("), source.indexOf("private row("));
-	assert.match(block, /<code class="[^"]*\btext-foreground\b[^"]*\bfont-mono\b/);
+	const codeClass = block.match(/<code class="([^"]*)"/)?.[1] ?? "";
+	assert.match(codeClass, /\btext-foreground\b/);
+	assert.match(codeClass, /\bfont-mono\b/);
 	assert.match(block, /@click=\$\{\(\) => this\.copy\(text\)\}/);
 });

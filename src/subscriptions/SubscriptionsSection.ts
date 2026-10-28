@@ -22,6 +22,7 @@ export class SubscriptionsSection extends LitElement {
 	@state() private welcome = false;
 	@state() private notice?: string;
 	@state() private copied?: string;
+	private copiedTimer?: ReturnType<typeof setTimeout>;
 
 	protected override createRenderRoot(): HTMLElement {
 		return this;
@@ -117,12 +118,18 @@ export class SubscriptionsSection extends LitElement {
 	}
 
 	private copy(text: string): void {
-		void navigator.clipboard.writeText(text).then(() => {
-			this.copied = text;
-			setTimeout(() => {
-				if (this.copied === text) this.copied = undefined;
-			}, 1500);
-		});
+		navigator.clipboard.writeText(text).then(
+			() => {
+				clearTimeout(this.copiedTimer);
+				this.copied = text;
+				this.copiedTimer = setTimeout(() => {
+					this.copied = undefined;
+				}, 1500);
+			},
+			() => {
+				this.notice = "Couldn't copy. Select the command and copy it by hand.";
+			},
+		);
 	}
 
 	/** One shell command the user pastes into a terminal: labeled, monospace, with its own copy button. */
@@ -137,8 +144,9 @@ export class SubscriptionsSection extends LitElement {
 						aria-label=${`Copy the ${label} command`}
 						@click=${() => this.copy(text)}
 					>
-						${this.copied === text ? "Copied" : "Copy"}
+						<span aria-hidden="true">${this.copied === text ? "Copied" : "Copy"}</span>
 					</button>
+					<span class="sr-only" role="status">${this.copied === text ? `Copied the ${label} command` : ""}</span>
 				</div>
 				<code class="block rounded-md border border-border bg-muted px-2.5 py-2 text-foreground font-mono text-xs leading-5 break-words select-all">${text}</code>
 			</div>
