@@ -36,6 +36,8 @@ export interface CommandSpec {
 	paths?: boolean;
 	/** The command parses its own arguments (setup, update, library, skill); argsProblem leaves it alone. */
 	selfParsed?: boolean;
+	/** The subcommand a bare `tabkyra <name>` runs (`tabkyra sessions` lists). */
+	defaultSubcommand?: string;
 	/** Values completed for the first argument (`completion zsh`). */
 	values?: string[];
 	/** Hidden from help and completions (aliases, internal entry points). */
@@ -44,6 +46,7 @@ export interface CommandSpec {
 
 /** Options that take a value (`--top 3` or `--top=3`), with the placeholder help shows. */
 export const VALUE_HINTS: Record<string, string> = {
+	"--session": "<name>",
 	"--top": "N",
 	"--to": "<version>",
 	"--cases": "<file>",
@@ -72,7 +75,7 @@ const PATH_VALUES = new Set(["--cases", "--base", "--router", "--out"]);
 export const COMMANDS: CommandSpec[] = [
 	{ name: "setup", selfParsed: true, what: "Build, register, load, connect and add to your agents", group: "Get started", flags: SETUP_FLAGS },
 	{ name: "status", what: "Is the extension connected? Which sites are allowed?", group: "Get started", flags: ["--json"] },
-	{ name: "mcp", what: "MCP server on stdio (what Claude Code, Codex, OpenCode run)", group: "Agents" },
+	{ name: "mcp", what: "MCP server on stdio (what Claude Code, Codex, OpenCode run)", group: "Agents", flags: ["--session"] },
 	{ name: "pi-extension", positional: 1, paths: true, args: "[dir]", what: "Write a pi extension to ~/.pi/agent/extensions/tabkyra.ts", group: "Agents" },
 	{
 		name: "skill",
@@ -95,6 +98,24 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "refresh", what: "Refresh installed bundled skills you haven't edited", flags: ["--json"] },
 		],
 	},
+	{
+		name: "sessions",
+		summary: "Agent sessions and their tab groups",
+		what: "Agent sessions",
+		group: "Sessions",
+		defaultSubcommand: "list",
+		subcommands: [
+			{ name: "list", what: "Every agent session: group, tabs, connected or idle", flags: ["--all", "--json"] },
+			{ name: "show", args: "<name>", what: "One session: its group, tabs, times, and how to resume it", flags: ["--json"], max: 1 },
+			{ name: "rename", args: "<old> <new>", what: "Rename; resume it later with tabkyra mcp --session <new>", flags: ["--json"], max: 2 },
+			{ name: "end", args: "<name>", what: "End it: its tabs become yours (or close, with --close)", flags: ["--close", "--json"], max: 1 },
+			{ name: "release", args: "<name>", what: "Hand all its tabs to you, out of the group, and end it", flags: ["--json"], max: 1 },
+			{ name: "focus", args: "<name>", what: "Show its group to you", flags: ["--json"], max: 1 },
+			{ name: "collapse", args: "<name>", what: "Fold its group", flags: ["--json"], max: 1 },
+			{ name: "expand", args: "<name>", what: "Unfold its group", flags: ["--json"], max: 1 },
+		],
+	},
+	{ name: "tabs", positional: 1, args: "[session]", what: "Every agent tab, by session", group: "Sessions", flags: ["--json"] },
 	{ name: "serve", what: "MCP over HTTP on loopback, for tunnels; every request needs a token", group: "Remote", flags: ["--port"] },
 	{
 		name: "token",
@@ -190,11 +211,11 @@ export function argsProblem(command: string, args: string[]): string | undefined
 	let max = spec.positional ?? 0;
 	let usage = `Usage: tabkyra ${helpRows(spec)[0][0]}`;
 	if (spec.subcommands) {
-		const sub = spec.subcommands.find((x) => x.name === positional[0]);
+		const sub = spec.subcommands.find((x) => x.name === (positional[0] ?? spec.defaultSubcommand));
 		// An unknown or missing subcommand is the command's own usage error, with its list.
 		if (!sub) return undefined;
 		flags = sub.flags ?? [];
-		max = 1 + (sub.max ?? 0);
+		max = (positional[0] === undefined ? 0 : 1) + (sub.max ?? 0);
 		usage = `Usage: tabkyra ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(flags)}`;
 	}
 	for (let i = 0; i < args.length; i++) {

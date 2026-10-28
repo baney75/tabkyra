@@ -1,11 +1,13 @@
 import { startBridge, trace } from "./bridge/native.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
+import { startGroupGestures } from "./browser/group-gestures.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
 import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
 
 // Keep popups opened by agent-driven background tabs from stealing the user's focus.
 startForegroundGuard();
 setGuardLogger(trace);
+startGroupGestures(trace);
 
 // Groups from before an extension reload have no owning session any more; give the tabs back.
 cleanupOrphanGroups().catch(() => undefined);

@@ -8,7 +8,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
-import type { ClientToHost, ExtToHost, HostToClient, HostToExt } from "../../src/bridge/protocol.ts";
+import type { ClientToHost, ExtToHost, HostClientConnected, HostToClient, HostToExt } from "../../src/bridge/protocol.ts";
 import { ERR, MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { socketDir, socketPath } from "./paths.ts";
@@ -61,17 +61,43 @@ function toClient(clientId: string, message: HostToClient): void {
 	client.socket.write(encodeFrame(message));
 }
 
+/** What the connected extension said it implements (its hello); undefined before that. */
+let extensionMethods: string[] | undefined;
+
+/**
+ * A client as the extension should see it. An extension from before project sessions ignores
+ * `auto` and would put every agent in one project on one session (one group, each other's
+ * current tab), so for it a default session is made unique per client, as harness ids made it.
+ */
+function forExtension(clientId: string, client: HostClientConnected["client"]): HostClientConnected["client"] {
+	if (!client.auto || !client.session || !extensionMethods || extensionMethods.includes("sessions.list")) return client;
+	return { ...client, session: `${client.session}-${clientId}` };
+}
+
+/**
+ * The extension gave a client another session (a second agent in one project gets "<name>-2",
+ * or the user renamed it): keep that in the hello this host re-announces when the extension's
+ * worker restarts, or the client would be put back on its old name, and maybe another's tabs.
+ */
+function rememberSession(clientId: string, event: string, data: unknown): void {
+	const hello = clients.get(clientId)?.hello;
+	const session = (data as { session?: unknown } | undefined)?.session;
+	if (!hello || typeof session !== "string" || (event !== "session_assigned" && event !== "session_renamed")) return;
+	hello.client = { ...hello.client, session, ...(event === "session_renamed" ? { auto: false, named: true } : {}) };
+}
+
 function onExtensionMessage(message: ExtToHost): void {
 	switch (message.type) {
 		case "hello":
 			extensionReady = true;
 			browserId = typeof message.browserId === "string" ? message.browserId.slice(0, 64) : undefined;
+			extensionMethods = Array.isArray(message.methods) ? message.methods : undefined;
 			noteHello(message, toExtension);
 			void sendStatus(toExtension);
 			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true, ...(browserId ? { browserId } : {}) });
 			// The extension restarted; re-announce every live client so it recreates sessions.
 			for (const client of clients.values()) {
-				if (client.hello) toExtension({ type: "client_connected", clientId: client.id, client: client.hello.client });
+				if (client.hello) toExtension({ type: "client_connected", clientId: client.id, client: forExtension(client.id, client.hello.client) });
 			}
 			return;
 		case "response":
@@ -79,6 +105,7 @@ function onExtensionMessage(message: ExtToHost): void {
 			toClient(message.clientId, { type: "response", id: message.id, result: message.result, error: message.error });
 			return;
 		case "event":
+			if (message.clientId) rememberSession(message.clientId, message.event, message.data);
 			if (message.clientId) toClient(message.clientId, { type: "event", event: message.event, data: message.data });
 			else for (const id of clients.keys()) toClient(id, { type: "event", event: message.event, data: message.data });
 			return;
@@ -97,7 +124,7 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 		// A stopping host can't run anything: it doesn't present itself as ready to a new client.
 		const ready = extensionReady && !stopping;
 		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: ready, ...(ready && browserId ? { browserId } : {}) });
-		toExtension({ type: "client_connected", clientId: client.id, client: message.client });
+		toExtension({ type: "client_connected", clientId: client.id, client: forExtension(client.id, message.client) });
 		return;
 	}
 	if (message.type === "request") {

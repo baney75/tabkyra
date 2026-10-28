@@ -12,6 +12,7 @@ import { runSetup } from "./setup.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
+import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
 import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
 import { runUpdate, UpdateError } from "./update.ts";
@@ -245,8 +246,22 @@ async function main(): Promise<void> {
 			runNativeHost();
 			return;
 		case "mcp":
-			await runMcpServer();
+			await runMcpServer({ session: option("--session") });
 			return;
+		case "sessions":
+		case "tabs": {
+			const rest = argv.slice(1).filter((a) => !a.startsWith("-"));
+			try {
+				process.exitCode =
+					command === "tabs"
+						? await runTabs(rest, { json: flag("--json") })
+						: await runSessions(rest, { json: flag("--json"), all: flag("--all"), close: flag("--close") });
+			} catch (err) {
+				if (err instanceof SessionsUsageError) throw new UsageError(err.message);
+				throw err;
+			}
+			return;
+		}
 		case "install": {
 			const result = install({ force: flag("--force") });
 			console.log(`${sym.ok} Launcher ${c.dim(result.launcher)}`);

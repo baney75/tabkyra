@@ -362,3 +362,217 @@ test("adoptIfFree takes an unowned tab and makes it current", async () => {
 	assert.deepEqual(fake.table()["chat-2"].tabIds, [tab], "the first chat keeps it");
 	assert.deepEqual(fake.table()["chat-3"].tabIds, []);
 });
+
+// ---- agent sessions and their tab groups (bridge sessions; ids start with "bridge-") ----
+
+const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
+
+test("an agent session stores who and what it serves, and when it began", async () => {
+	installFakeChrome();
+	const { BrowserSession } = await load("worker");
+	const before = Date.now();
+	const s = await BrowserSession.open("bridge-claude-shop-1a2b", "claude · shop", 1, { agent: "claude", project: "shop", name: "shop-1a2b" });
+	assert.equal(s.record.agent, "claude");
+	assert.equal(s.record.project, "shop");
+	assert.equal(s.record.name, "shop-1a2b");
+	assert.ok(s.record.createdAt >= before);
+	assert.equal(s.groupName, "Tabkyra · claude · shop");
+	await s.createTab("https://example.com/");
+	assert.equal(s.record.createdAt, (await BrowserSession.open("bridge-claude-shop-1a2b", "claude · shop")).record.createdAt, "a resumed session keeps its start time");
+});
+
+test("labels an agent picks are plain text: no controls, no bidi, no Tabkyra prefix, 32 characters", async () => {
+	installFakeChrome();
+	const { sanitizeLabel, BrowserSession } = await load("worker");
+	assert.equal(sanitizeLabel("  Flight\n\tsearch  "), "Flight search");
+	assert.equal(sanitizeLabel("Tabkyra · claude · bank"), "claude · bank");
+	assert.equal(sanitizeLabel("evil‮gnp.exe"), "evilgnp.exe");
+	assert.equal(sanitizeLabel("x".repeat(80)).length, 32);
+	const s = await BrowserSession.open("bridge-claude-x", "claude · x", 1);
+	await s.createTab("https://example.com/");
+	assert.equal(await s.setAgentLabel("Tabkyra: \u0007Shop"), "Tabkyra · claude · x · Shop");
+});
+
+test("an agent session holds at most 15 tabs, and the 16th is refused with what to do", async () => {
+	installFakeChrome();
+	const { BrowserSession, MAX_SESSION_TABS, TabLimitError } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-cap", "claude", 1);
+	for (let i = 0; i < MAX_SESSION_TABS; i++) await s.createTab(`https://example.com/${i}`, { capped: true });
+	await assert.rejects(() => s.createTab("https://example.com/x", { capped: true }), (err) => err instanceof TabLimitError && /tabs_close/.test(err.message));
+	assert.equal(s.tabIds.length, MAX_SESSION_TABS);
+});
+
+test("two clients sharing a session can't open past the cap at once", async () => {
+	installFakeChrome();
+	const { BrowserSession, MAX_SESSION_TABS } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-cap2", "claude", 1);
+	for (let i = 0; i < MAX_SESSION_TABS - 1; i++) await s.createTab(`https://example.com/${i}`, { capped: true });
+	const both = await Promise.allSettled([s.createTab("https://example.com/x", { capped: true }), s.createTab("https://example.com/y", { capped: true })]);
+	assert.deepEqual(both.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
+	assert.equal(s.tabIds.length, MAX_SESSION_TABS);
+});
+
+test("a tab the user drags out of an agent's group becomes theirs, and the agent is told", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, takeNotices } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-out", "claude", 1);
+	const a = (await s.createTab("https://example.com/a")).id;
+	const b = (await s.createTab("https://example.com/b")).id;
+	assert.equal(s.currentTabId, b);
+	// The worker slept through the drag: reconcile is what notices.
+	fake.userSetGroup(b, -1);
+	await settle();
+	await s.reconcile();
+	assert.deepEqual(s.tabIds, [a]);
+	assert.equal(fake.groupOf(b), -1, "the tab was pulled back into the group");
+	assert.equal(s.currentTabId, undefined, "the agent was moved onto another page it didn't choose");
+	const [notice] = await takeNotices(s.id);
+	assert.match(notice, /The user took tab \d+ .* out of your group; it's theirs now/);
+	// Taken means taken: a later reconcile doesn't re-adopt it.
+	await s.reconcile();
+	assert.deepEqual(s.tabIds, [a]);
+});
+
+test("a new tab still on its way into the group is grouped, not handed to the user", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-new", "claude", 1);
+	await s.createTab("https://example.com/a");
+	// A tab adopted but never seen in the group (grouping failed or hasn't run).
+	const loose = fake.addTab({ url: "https://example.com/loose" });
+	await s.adopt(loose, false);
+	fake.userSetGroup(loose, -1);
+	await settle();
+	// It was grouped once by adopt; a tab that never made it in is put back.
+	const never = fake.addTab({ url: "https://example.com/never" });
+	await BrowserSession.open("bridge-claude-new", "claude");
+	const table = fake.table();
+	table["bridge-claude-new"].tabIds.push(never);
+	await chrome.storage.local.set({ browser_sessions: table });
+	await s.reconcile();
+	assert.ok(s.tabIds.includes(never));
+	assert.notEqual(fake.groupOf(never), -1, "a tab that never made it into the group must be grouped");
+});
+
+test("a tab the user drags into an agent's group is the agent's", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, takeNotices } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-in", "claude", 1);
+	await s.createTab("https://example.com/a");
+	const mine = fake.addTab({ url: "https://example.com/user" });
+	fake.userSetGroup(mine, fake.table()["bridge-claude-in"].groupId);
+	await settle();
+	await s.userGave(mine, await chrome.tabs.get(mine));
+	assert.ok(s.tabIds.includes(mine));
+	assert.match((await takeNotices(s.id))[0], /The user gave you tab \d+/);
+});
+
+test("ending a session hands its tabs to the user or closes them, and forgets it", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, takeNotices } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-end", "claude", 1);
+	const a = (await s.createTab("https://example.com/a")).id;
+	const r = await s.end({ notice: "ended by test" });
+	assert.deepEqual(r, { tabs: [a], closed: false });
+	assert.equal(s.ended, true);
+	assert.equal(fake.table()["bridge-claude-end"], undefined);
+	assert.ok(fake.hasTab(a), "handing over must not close the tab");
+	assert.equal(fake.groupOf(a), -1);
+	assert.deepEqual(await takeNotices("bridge-claude-end"), ["ended by test"]);
+	const t = await BrowserSession.open("bridge-claude-end2", "claude", 1);
+	const b = (await t.createTab("https://example.com/b")).id;
+	await t.end({ close: true });
+	assert.equal(fake.hasTab(b), false);
+});
+
+test("a write still in flight when a session ends doesn't bring it back with the user's tabs", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-late", "claude", 1);
+	const a = (await s.createTab("https://example.com/a")).id;
+	const reading = s.tabs();
+	await s.end();
+	await reading.catch(() => undefined);
+	// A request that held this instance before the end writes after it.
+	await s.setAgentLabel("late");
+	assert.equal(fake.table()["bridge-claude-late"], undefined, "the ended session's record came back");
+	const again = await BrowserSession.open("bridge-claude-late", "claude", 1);
+	assert.deepEqual(again.tabIds, [], "the next call got the tabs handed to the user");
+	assert.ok(fake.hasTab(a));
+});
+
+test("a tab still in its group isn't handed to the user when another record claims that group", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, takeNotices } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-claim", "claude", 1);
+	const a = (await s.createTab("https://example.com/a")).id;
+	await s.tabs();
+	const groupId = fake.groupOf(a);
+	assert.notEqual(groupId, -1);
+	const table = fake.table();
+	table["bridge-claude-other"] = { ...table["bridge-claude-claim"], id: "bridge-claude-other", tabIds: [], grouped: [] };
+	await chrome.storage.local.set({ browser_sessions: table });
+	await s.tabs();
+	assert.ok(s.tabIds.includes(a), "a tab nobody moved was handed to the user");
+	assert.deepEqual(await takeNotices("bridge-claude-claim"), []);
+});
+
+test("when a new tab can't join the agent's group it waits outside, without splitting the group or handing tabs over", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, takeNotices } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-split", "claude", 1);
+	const a = (await s.createTab("https://example.com/a")).id;
+	const b = (await s.createTab("https://example.com/b")).id;
+	await s.tabs();
+	const groupId = fake.groupOf(a);
+	// The user holds a tab drag: joining an existing group fails for a while.
+	const group = chrome.tabs.group;
+	chrome.tabs.group = async (opts) => {
+		if (opts.groupId !== undefined) throw new Error("Tabs cannot be edited right now (user may be dragging a tab).");
+		return group(opts);
+	};
+	let c;
+	try {
+		c = (await s.createTab("https://example.com/c")).id;
+		await s.tabs();
+	} finally {
+		chrome.tabs.group = group;
+	}
+	assert.deepEqual([fake.groupOf(a), fake.groupOf(b)], [groupId, groupId], "the agent's tabs left their group");
+	assert.deepEqual([...s.tabIds].sort(), [a, b, c].sort(), "tabs nobody moved were handed to the user");
+	assert.deepEqual(await takeNotices("bridge-claude-split"), []);
+	// The drag is over: the next look puts the new tab in the group.
+	await s.tabs();
+	assert.equal(fake.groupOf(c), groupId);
+});
+
+test("a side panel chat's tab that leaves its group goes back: the agent rules are for agent sessions", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("panel");
+	const home = fake.addTab({ active: true });
+	const s = await BrowserSession.open("saved-chat", "chat", 1);
+	await s.adopt(home, true);
+	const other = (await s.createTab("https://example.com/x")).id;
+	fake.userSetGroup(other, -1);
+	await settle();
+	await s.reconcile();
+	assert.ok(s.tabIds.includes(other));
+	assert.notEqual(fake.groupOf(other), -1);
+});
+
+test("an idle agent group collapses; one in use, or one the user is looking at, doesn't", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, pruneSessions } = await load("worker");
+	const idle = await BrowserSession.open("bridge-claude-idle", "claude · idle", 1);
+	await idle.createTab("https://example.com/idle");
+	const live = await BrowserSession.open("bridge-claude-live", "claude · live", 1);
+	await live.createTab("https://example.com/live");
+	const watched = await BrowserSession.open("bridge-claude-watched", "claude · watched", 1);
+	const w = (await watched.createTab("https://example.com/watched")).id;
+	await chrome.tabs.update(w, { active: true });
+	await pruneSessions(new Set(["bridge-claude-live"]), 0);
+	const t = fake.table();
+	assert.equal(fake.group(t["bridge-claude-idle"].groupId).collapsed, true);
+	assert.equal(fake.group(t["bridge-claude-live"].groupId).collapsed, false, "a connected agent's group was folded");
+	assert.equal(fake.group(t["bridge-claude-watched"].groupId).collapsed, false, "the group the user is looking at was folded");
+});

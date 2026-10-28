@@ -48,6 +48,12 @@ export function interruptedMessage(method: string): string {
 export interface ClientOptions {
 	name: string;
 	session?: string;
+	/** The session is the CLI's project default, not a name the user chose (see session-name.ts). */
+	auto?: boolean;
+	/** The user chose the session's name (it goes in the group title). */
+	named?: boolean;
+	/** The project's folder name, for the group title. */
+	project?: string;
 	/** Fires for permission prompts and other pushed events. */
 	onEvent?: (event: string, data: Record<string, unknown>) => void;
 	onExtensionStatus?: (connected: boolean) => void;
@@ -287,7 +293,14 @@ export class BridgeClient {
 			});
 			const hello: ClientToHost = {
 				type: "hello",
-				client: { name: this.options.name, session: this.options.session, version: VERSION },
+				client: {
+					name: this.options.name,
+					session: this.options.session,
+					...(this.options.auto ? { auto: true } : {}),
+					...(this.options.named ? { named: true } : {}),
+					...(this.options.project ? { project: this.options.project } : {}),
+					version: VERSION,
+				},
 			};
 			socket.write(encodeFrame(hello));
 		});
@@ -309,6 +322,15 @@ export class BridgeClient {
 			else p.resolve(msg.result);
 			this.dropIfIdle(p.socket);
 		} else if (msg.type === "event") {
+			// The session's name changed: reconnect with the new one. A rename makes it a chosen name;
+			// an assignment ("<name>-2" for a second agent in one project) keeps it a default.
+			if ((msg.event === "session_renamed" || msg.event === "session_assigned") && typeof msg.data.session === "string") {
+				this.options.session = msg.data.session;
+				if (msg.event === "session_renamed") {
+					this.options.auto = false;
+					this.options.named = true;
+				}
+			}
 			this.options.onEvent?.(msg.event, msg.data);
 		} else if (msg.type === "extension_status") {
 			this.socketExtension.set(from, msg.connected);

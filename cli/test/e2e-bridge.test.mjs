@@ -394,3 +394,115 @@ test("a read after the native host is killed reconnects to the host the browser 
 	assert.match(text, /Hit/);
 	assert.ok(Date.now() - started < 30_000, `took ${Date.now() - started} ms`);
 });
+
+async function sw(expression) {
+	const target = await until(
+		async () => (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "service_worker" && t.url === `chrome-extension://${EXTENSION_ID}/background.js`),
+		20_000,
+		"the service worker",
+	);
+	const r = await cdp(target.webSocketDebuggerUrl, "Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+	if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? "evaluate threw");
+	return r.result.value;
+}
+
+const groupsOf = () =>
+	sw(`(async () => { const g = new Map((await chrome.tabGroups.query({})).map((x) => [x.id, x])); return (await chrome.tabs.query({})).map((t) => ({ id: t.id, url: t.url, group: t.groupId === -1 ? null : g.get(t.groupId)?.title, color: t.groupId === -1 ? null : g.get(t.groupId)?.color })); })()`);
+
+/** An MCP client the way a harness starts one: no session configured, in a project folder. */
+async function agentIn(project) {
+	const e = { ...env(), TABKYRA_CLIENT_NAME: "claude" };
+	delete e.TABKYRA_SESSION;
+	const client = new Client({ name: "e2e-agent", version: "0.0.0" });
+	await client.connect(new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env: e, cwd: project, stderr: "ignore" }));
+	return client;
+}
+
+async function on(client, name, args = {}) {
+	const result = await client.callTool({ name, arguments: args });
+	const text = result.content.map((c) => c.text).join("\n");
+	assert.ok(!result.isError, `${name} failed: ${text}`);
+	return text;
+}
+
+const tk = (...args) => execFileSync(process.execPath, [cli, ...args], { env: env(), encoding: "utf8" });
+
+test("three agents in one project at once: a group each, titled with agent and project, no cross-talk", async () => {
+	await connected();
+	const project = join(home, "projects", "demo-shop");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agents = await Promise.all([0, 1, 2].map(() => agentIn(project)));
+	try {
+		await Promise.all(agents.map((a, i) => on(a, "navigate", { url: `${pageUrl}?agent=${i}` })));
+		const contexts = await Promise.all(agents.map((a) => on(a, "tabs_context")));
+		contexts.forEach((ctx, i) => {
+			assert.match(ctx, new RegExp(`agent=${i}`));
+			for (const j of [0, 1, 2].filter((x) => x !== i)) assert.doesNotMatch(ctx, new RegExp(`agent=${j}\\b`), `agent ${i} sees agent ${j}'s tab`);
+		});
+		const tabs = (await groupsOf()).filter((t) => /\?agent=\d/.test(t.url));
+		const titles = new Set(tabs.map((t) => t.group));
+		assert.equal(titles.size, 3, JSON.stringify(tabs));
+		for (const title of titles) assert.match(title, /^Tabkyra · claude · demo-shop( \d)?$/);
+		assert.equal(new Set(tabs.map((t) => t.color)).size, 3, "two concurrent sessions share a color");
+		// The CLI sees all three, connected.
+		const listed = JSON.parse(tk("sessions", "--json")).filter((s) => s.project === "demo-shop");
+		assert.equal(listed.length, 3);
+		assert.ok(listed.every((s) => s.connected === 1 && s.tabCount === 1));
+	} finally {
+		await Promise.all(agents.map((a) => a.close()));
+	}
+	// A new harness process in the same project resumes the first session's tab.
+	const again = await agentIn(project);
+	try {
+		assert.match(await on(again, "tabs_context"), /agent=\d/);
+	} finally {
+		await again.close();
+	}
+});
+
+test("the user drags a tab out of the agent's group: it's theirs, and the agent is told", async () => {
+	const project = join(home, "projects", "drag");
+	mkdirSync(project, { recursive: true });
+	const agent = await agentIn(project);
+	try {
+		await on(agent, "navigate", { url: `${pageUrl}?drag=1` });
+		const second = JSON.parse(await on(agent, "tabs_create", { url: `${pageUrl}?drag=2` })).tabId;
+		await sw(`chrome.tabs.ungroup(${second})`);
+		await new Promise((r) => setTimeout(r, 800));
+		const ctx = await on(agent, "tabs_context");
+		assert.match(ctx, /News: The user took tab \d+ .*out of your group; it's theirs now/);
+		assert.doesNotMatch(ctx, /drag=2/);
+		assert.equal((await groupsOf()).find((t) => t.id === second)?.group, null, "the tab was pulled back into the group");
+		// The current tab was the one taken: the agent must pick, not land on another page.
+		const read = await agent.callTool({ name: "read_page", arguments: {} });
+		assert.equal(read.isError, true);
+		assert.match(read.content[0].text, /You have no current tab/);
+	} finally {
+		await agent.close();
+	}
+});
+
+test("tabs_release, a capped group, and ending and renaming a session from the CLI", async () => {
+	const project = join(home, "projects", "release");
+	mkdirSync(project, { recursive: true });
+	const agent = await agentIn(project);
+	try {
+		const first = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}?r=0` })).tabId;
+		const released = JSON.parse(await on(agent, "tabs_release", { tabId: first }));
+		assert.equal(released.released, first);
+		assert.equal((await groupsOf()).find((t) => t.id === first)?.group, null);
+		// The 16th tab is refused, with what to do.
+		for (let i = 1; i <= 15; i++) await on(agent, "tabs_create", { url: `${pageUrl}?r=${i}` });
+		const over = await agent.callTool({ name: "tabs_create", arguments: { url: `${pageUrl}?r=16` } });
+		assert.equal(over.isError, true);
+		assert.match(over.content[0].text, /^tab_limit: Your tab group already has 15 tabs.*tabs_close/);
+		const name = JSON.parse(tk("sessions", "--json")).find((s) => s.project === "release").name;
+		assert.match(tk("sessions", "rename", name, "release-demo"), /is now release-demo/);
+		assert.match(await on(agent, "tabs_context"), /^Session release-demo \| group "Tabkyra · claude · release-demo"/);
+		assert.match(tk("sessions", "end", "release-demo", "--close"), /Ended release-demo: 15 tabs closed/);
+		assert.match(await on(agent, "tabs_context"), /News: The user ended your session from the terminal and closed its tabs/);
+	} finally {
+		await agent.close();
+	}
+});

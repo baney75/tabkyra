@@ -36,7 +36,9 @@ it needs no extra step. Reload the extension once after the first install.
 | `tabkyra setup [--yes] [--no-wait] [--timeout <s>]` | first-time setup, end to end |
 | `tabkyra status [--json]` | is the extension connected, which sites are allowed, which browsers have the host |
 | `tabkyra doctor [--json]` | check Node, the build, host manifests, the connection and harness configs; exits 1 on a failure |
-| `tabkyra mcp` | stdio MCP server exposing the browser tools |
+| `tabkyra mcp [--session <name>]` | stdio MCP server exposing the browser tools; without `--session` (or `TABKYRA_SESSION`) the session is the project's (git root), so a restarted harness resumes its tabs |
+| `tabkyra sessions [list\|show\|rename\|end\|release\|focus\|collapse\|expand] [--json]` | agent sessions and their tab groups (see the main README, "Sessions and tab groups") |
+| `tabkyra tabs [session] [--json]` | every agent tab, by session |
 | `tabkyra allow <host>` | let agents open a site without a prompt (subdomains included) |
 | `tabkyra ask` | agents ask before opening a site not yet allowed (the default) |
 | `tabkyra allow-all` | agents may open any site without asking (`yolo` still works) |
@@ -61,7 +63,7 @@ it needs no extra step. Reload the extension once after the first install.
 | `tabkyra version [--json]` | the CLI's version, which is the extension's (`static/manifest.chrome.json`) |
 
 Output is colored only on a terminal; `NO_COLOR` turns it off. Read commands take `--json`
-(`status`, `doctor`, `skill list`, `skill match`, `skill versions`, `library list`,
+(`status`, `doctor`, `sessions`, `tabs`, `skill list`, `skill match`, `skill versions`, `library list`,
 `library search`, `token list`, `token scopes`, `update --check`, `version`); `debug`
 always prints JSON.
 

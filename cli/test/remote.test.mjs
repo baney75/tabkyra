@@ -113,6 +113,17 @@ test("skills.read grants skill_match and skill_read, and only that scope does", 
 	}
 });
 
+test("a read-only session can't rename its tab group through session_info", async () => {
+	const reader = await connect(token("reader-label", "browser.read"));
+	try {
+		const r = await reader.callTool({ name: "session_info", arguments: { label: "Totally legit" } });
+		assert.equal(r.isError, true);
+		assert.match(r.content[0].text, /^permission_denied: .*without label/);
+	} finally {
+		await reader.close();
+	}
+});
+
 test("a revoked token is refused at once, and another token can't reuse a session", async () => {
 	const a = token("alpha", "browser.read");
 	const b = token("beta", "library.read");

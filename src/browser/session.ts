@@ -60,6 +60,91 @@ interface PersistedSession {
 	 * re-adopt one that is still in the group while release ungroups it.
 	 */
 	released?: Record<number, number>;
+	/** When the session was first stored (ms since epoch). Absent on records from before 1.2. */
+	createdAt?: number;
+	/** Bridge sessions: the harness ("claude", "codex"), the project it works in, and its name. */
+	agent?: string;
+	project?: string;
+	name?: string;
+	/** A label the agent chose for its group (session_info), shown after the agent's name. */
+	agentLabel?: string;
+	/**
+	 * Tabs seen inside the session's group at least once. A tab on this list that is now outside
+	 * the group was moved by the user (dragged out, ungrouped) and is theirs; a tab not on it is
+	 * still being grouped and goes (back) in.
+	 */
+	grouped?: number[];
+}
+
+/** Who and what a bridge session serves, for its group title and `tabkyra sessions`. */
+export interface SessionMeta {
+	agent?: string;
+	project?: string;
+	name?: string;
+}
+
+/** The most tabs one agent session may hold; tabs_create past it fails with what to do. */
+export const MAX_SESSION_TABS = 15;
+
+export class TabLimitError extends Error {
+	constructor() {
+		super(
+			`Your tab group already has ${MAX_SESSION_TABS} tabs, the most a session may hold. Close tabs you're done with (tabs_close; tabs_context lists them), then try again.`,
+		);
+	}
+}
+
+/** Sessions an agent drives through the bridge, as opposed to side panel chats. */
+export function isAgentSession(id: string): boolean {
+	return id.startsWith("bridge-");
+}
+
+/**
+ * Tabs this context is closing or releasing for an agent right now. The worker's gesture
+ * listeners skip them: only a change the user made is news to the agent.
+ */
+const agentTouching = new Set<number>();
+
+export function isAgentTouching(tabId: number): boolean {
+	return agentTouching.has(tabId);
+}
+
+function touch(tabId: number): () => void {
+	agentTouching.add(tabId);
+	// Events for the change can arrive after the call returns.
+	return () => setTimeout(() => agentTouching.delete(tabId), 2000);
+}
+
+const NOTICES_KEY = "browser_session_notices";
+const MAX_NOTICES = 10;
+
+/** Something the agent should hear on its next tabs_context or session_info (the user moved a tab, ...). */
+export async function addNotice(sessionId: string, text: string): Promise<void> {
+	await withTableLock(async () => {
+		const data = await chrome.storage.local.get(NOTICES_KEY);
+		const all = (data[NOTICES_KEY] as Record<string, Array<{ at: number; text: string }>> | undefined) ?? {};
+		all[sessionId] = [...(all[sessionId] ?? []), { at: Date.now(), text }].slice(-MAX_NOTICES);
+		await chrome.storage.local.set({ [NOTICES_KEY]: all });
+	});
+}
+
+/** The session's notices, oldest first, removed as they are read. */
+export async function takeNotices(sessionId: string): Promise<string[]> {
+	return withTableLock(async () => {
+		const data = await chrome.storage.local.get(NOTICES_KEY);
+		const all = (data[NOTICES_KEY] as Record<string, Array<{ at: number; text: string }>> | undefined) ?? {};
+		const mine = all[sessionId] ?? [];
+		if (!mine.length) return [];
+		delete all[sessionId];
+		await chrome.storage.local.set({ [NOTICES_KEY]: all });
+		return mine.map((n) => n.text);
+	});
+}
+
+/** A tab's title for a notice: quoted, one line, short. */
+function tabName(tab: chrome.tabs.Tab | undefined, tabId: number): string {
+	const title = (tab?.title || tab?.url || "").replace(/\s+/g, " ").slice(0, 60);
+	return title ? `tab ${tabId} (${JSON.stringify(title)})` : `tab ${tabId}`;
 }
 
 type SessionTable = Record<string, PersistedSession>;
@@ -272,7 +357,10 @@ export async function pruneSessions(
 		for (const id of s.tabIds) {
 			const tab = liveTabs.get(id);
 			if (!tab || !isBlankUrl(tab.url ?? tab.pendingUrl) || tab.active) continue;
+			// Tabkyra's own cleanup, not the user closing the group.
+			const done = touch(id);
 			await chrome.tabs.remove(id).catch(() => undefined);
+			done();
 			dead.add(id);
 			closedTabs++;
 		}
@@ -332,9 +420,27 @@ async function tabExists(tabId: number): Promise<chrome.tabs.Tab | undefined> {
 	}
 }
 
+/**
+ * A label as plain text: no control, format or bidi characters, single spaces, at most 32
+ * characters, and never the "Tabkyra ·" prefix, so an agent can't pose as another group.
+ */
+export function sanitizeLabel(label: string): string {
+	return label
+		.normalize("NFKC")
+		.replace(/[\t\n\r\v\f\u2028\u2029]/g, " ")
+		.replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cn}]/gu, "")
+		.replace(/\s+/g, " ")
+		.replace(/^(tabkyra\s*[·:|-]\s*)+/i, "")
+		.trim()
+		.slice(0, 32)
+		.trim();
+}
+
 export class NoTabError extends Error {
 	constructor() {
-		super("This session has no tab yet. Call navigate with a URL first (it opens a tab in your group).");
+		super(
+			"You have no current tab. navigate with a URL opens one in your group; if you had tabs, tabs_context lists them (and says if the user took or closed one) and tabs_select picks one.",
+		);
 	}
 }
 
@@ -383,6 +489,18 @@ export class BrowserSession {
 		return this.state.homeTabId;
 	}
 
+	get groupId(): number | undefined {
+		return this.state.groupId;
+	}
+
+	/** A copy of the stored record, for session_info and `tabkyra sessions`. */
+	get record(): Readonly<PersistedSession> {
+		return structuredClone(this.state);
+	}
+
+	/** True once the session was ended (by the user, the CLI or the agent); a client opens a fresh one. */
+	ended = false;
+
 	/** The tab group title this session uses ("Tabkyra · claude"), whether or not it exists yet. */
 	get groupName(): string {
 		return this.groupTitle();
@@ -395,6 +513,9 @@ export class BrowserSession {
 	 */
 	private async update(fn: (s: PersistedSession, table: SessionTable) => unknown): Promise<void> {
 		await mutateTable(({ table, renames }) => {
+			// Ended: a write still in flight from before must not bring the record (and the tabs
+			// just handed to the user) back.
+			if (this.ended) return;
 			let id = this.state.id;
 			for (let hops = 0; !table[id] && renames[id] && hops < 8; hops++) id = renames[id].to;
 			if (id !== this.state.id) {
@@ -449,7 +570,7 @@ export class BrowserSession {
 	 * Open (or re-adopt) a session. `windowId` is where new tabs go; for the sidepanel
 	 * that is its own window, for the bridge the last focused normal window.
 	 */
-	static async open(id: string, label: string, windowId?: number): Promise<BrowserSession> {
+	static async open(id: string, label: string, windowId?: number, meta?: SessionMeta): Promise<BrowserSession> {
 		const existing = instances.get(id);
 		const fallbackWindow =
 			windowId === undefined && !existing && !(await readTable())[id] ? await lastFocusedWindowId() : undefined;
@@ -465,9 +586,12 @@ export class BrowserSession {
 					color: existing?.state.color ?? pickColor(table),
 					windowId: windowId ?? fallbackWindow ?? existing?.windowId ?? 0,
 					tabIds: [],
+					createdAt: Date.now(),
+					...meta,
 				};
 				table[id] = s;
 			} else {
+				if (meta) Object.assign(s, meta);
 				if (!existing && s.label !== label && !s.label.startsWith(`${label} `))
 					s.label = uniqueLabel(table, label, id);
 				if (windowId !== undefined) s.windowId = windowId;
@@ -579,23 +703,87 @@ export class BrowserSession {
 			}
 		}
 		await this.update((s, stored) => {
+			// An agent whose current tab is gone gets none, rather than silently another page.
+			if (isAgentSession(s.id) && s.currentTabId !== undefined && dead.has(s.currentTabId))
+				s.currentTabId = undefined;
 			s.tabIds = s.tabIds.filter((id) => !dead.has(id));
 			for (const id of found)
-				if (!s.tabIds.includes(id) && !s.released?.[id] && !ownedElsewhere(stored, s.id, id)) s.tabIds.push(id);
+				if (!s.tabIds.includes(id) && !s.released?.[id] && !ownedElsewhere(stored, s.id, id)) {
+					s.tabIds.push(id);
+					s.grouped = [...(s.grouped ?? []), id];
+				}
 			fixCurrent(s);
 			if (homeDead && s.homeTabId === seen.homeTabId) s.homeTabId = undefined;
 			if (lostGroup !== undefined && s.groupId === lostGroup) s.groupId = undefined;
 		});
-		// Tabs that fell out of the group (or never made it in) go back, so the user always sees
-		// an agent's tabs together.
+		// Tabs that never made it into the group go in, so the user sees an agent's tabs together.
+		// A tab of an agent session that was in the group and is now outside it was moved by the
+		// user (dragged out, ungrouped, even the last one, which deletes the group): it is theirs.
 		for (const id of this.state.tabIds) {
 			const tab = await tabExists(id);
-			if (tab && (this.state.groupId === undefined || tab.groupId !== this.state.groupId)) await this.groupTab(id);
+			if (!tab || (this.state.groupId !== undefined && tab.groupId === this.state.groupId)) continue;
+			// Still in the group this session just lost track of (another record claims it, or
+			// the lookup failed): nobody moved it, so it is neither handed over nor regrouped.
+			if (lostGroup !== undefined && tab.groupId === lostGroup) continue;
+			if (isAgentSession(this.state.id) && this.state.grouped?.includes(id) && !agentTouching.has(id)) {
+				await this.userTook(id, tab);
+				continue;
+			}
+			await this.groupTab(id);
 		}
 	}
 
+	/** The user moved one of this agent's tabs out of its group: hand it over and tell the agent. */
+	async userTook(tabId: number, tab?: chrome.tabs.Tab): Promise<void> {
+		await this.refresh();
+		if (!this.state.tabIds.includes(tabId)) return;
+		await this.update((s) => {
+			s.tabIds = s.tabIds.filter((id) => id !== tabId);
+			s.grouped = (s.grouped ?? []).filter((id) => id !== tabId);
+			// Never slide the agent onto another page it didn't choose: it has no current tab until
+			// it picks one (tabs_select) or navigates.
+			if (s.currentTabId === tabId) s.currentTabId = undefined;
+			s.released = { ...(s.released ?? {}), [tabId]: Date.now() };
+		});
+		await detachTab(tabId, true);
+		await addNotice(
+			this.state.id,
+			`The user took ${tabName(tab, tabId)} out of your group; it's theirs now and you can't use it.`,
+		);
+	}
+
+	/** The user put one of their tabs into this agent's group: it's the agent's now. */
+	async userGave(tabId: number, tab?: chrome.tabs.Tab): Promise<void> {
+		await this.refresh();
+		if (this.state.tabIds.includes(tabId)) return;
+		await this.adopt(tabId, false);
+		await addNotice(
+			this.state.id,
+			`The user gave you ${tabName(tab, tabId)} by moving it into your group; you can use it now.`,
+		);
+	}
+
 	private groupTitle(): string {
-		return `${GROUP_PREFIX} · ${this.state.label}`;
+		return `${GROUP_PREFIX} · ${this.state.label}${this.state.agentLabel ? ` · ${this.state.agentLabel}` : ""}`;
+	}
+
+	/** Record who and what the session serves (agent, project, name). */
+	async setMeta(meta: SessionMeta): Promise<void> {
+		await this.update((s) => {
+			Object.assign(s, meta);
+			return false;
+		});
+	}
+
+	/** Name the group from the agent's side (session_info label); "" clears it. Sanitized as text. */
+	async setAgentLabel(label: string): Promise<string> {
+		const clean = sanitizeLabel(label);
+		await this.update((s) => {
+			s.agentLabel = clean || undefined;
+		});
+		if (this.state.groupId !== undefined)
+			await chrome.tabGroups.update(this.state.groupId, { title: this.groupTitle() }).catch(() => undefined);
+		return this.groupTitle();
 	}
 
 	/** Change the label; updates the tab group title. */
@@ -635,7 +823,7 @@ export class BrowserSession {
 			if (win && win.type !== "normal") return; // popups and app windows have no tab strip
 			const group = await this.liveGroup();
 			const seenGroupId = this.state.groupId;
-			if (group && tab.groupId === group.id) return;
+			if (group && tab.groupId === group.id) return await this.markGrouped(tabId);
 			if (group) {
 				try {
 					if (group.windowId !== tab.windowId) {
@@ -643,9 +831,13 @@ export class BrowserSession {
 						tab = await chrome.tabs.get(tabId);
 					}
 					await withGroupRetry(() => chrome.tabs.group({ tabIds: [tabId], groupId: group.id }));
-					return;
+					return await this.markGrouped(tabId);
 				} catch (err) {
-					console.warn("[BrowserSession] joining group failed, starting a new one:", err);
+					// The group is still there with the agent's other tabs: a second group would split
+					// them (and the next reconcile would read the first group's tabs as moved out by
+					// the user). The tab stays owned and ungrouped; the next reconcile tries again.
+					console.warn("[BrowserSession] joining group failed, will retry:", err);
+					return;
 				}
 			}
 			if (tab.groupId !== undefined && tab.groupId !== -1) await chrome.tabs.ungroup(tabId).catch(() => undefined);
@@ -668,7 +860,7 @@ export class BrowserSession {
 				const target = theirs;
 				try {
 					await withGroupRetry(() => chrome.tabs.group({ tabIds: [tabId], groupId: target }));
-					return;
+					return await this.markGrouped(tabId);
 				} catch {
 					await this.update((s) => {
 						if (s.groupId === target) {
@@ -679,10 +871,21 @@ export class BrowserSession {
 				}
 			}
 			await chrome.tabGroups.update(groupId, { title: this.groupTitle(), color: this.state.color });
+			await this.markGrouped(tabId);
 		} catch (err) {
 			// A closing window or a tab being dragged must not fail the tool; the tab stays owned.
 			console.warn("[BrowserSession] group failed:", err);
 		}
+	}
+
+	/** Record that a tab made it into the group, so a later move out of it reads as the user's. */
+	private async markGrouped(tabId: number): Promise<void> {
+		if (!isAgentSession(this.state.id) || this.state.grouped?.includes(tabId)) return;
+		await this.update((s) => {
+			if (!s.tabIds.includes(tabId)) return false;
+			s.grouped = [...(s.grouped ?? []).filter((id) => s.tabIds.includes(id)), tabId];
+			return false;
+		});
 	}
 
 	/** Window for new tabs: the group's window when it exists, else the session window. */
@@ -707,7 +910,23 @@ export class BrowserSession {
 	 * Create a new inactive tab in the session's group and make it current. With a url the
 	 * tab loads it directly (callers wait for the load); without one it starts blank.
 	 */
-	async createTab(url?: string): Promise<chrome.tabs.Tab> {
+	async createTab(url?: string, options: { capped?: boolean } = {}): Promise<chrome.tabs.Tab> {
+		if (!options.capped) return this.openTab(url);
+		await this.refresh();
+		// Clients sharing a session share this instance: count the tabs still being opened too.
+		if (this.state.tabIds.length + this.opening >= MAX_SESSION_TABS) throw new TabLimitError();
+		this.opening++;
+		try {
+			return await this.openTab(url);
+		} finally {
+			this.opening--;
+		}
+	}
+
+	/** Tabs being opened for a capped create and not adopted yet. */
+	private opening = 0;
+
+	private async openTab(url?: string): Promise<chrome.tabs.Tab> {
 		const windowId = await this.targetWindowId();
 		const tab = await chrome.tabs.create({ url: url ?? "about:blank", windowId, active: false });
 		if (tab.id === undefined) throw new Error("Failed to create tab");
@@ -753,9 +972,13 @@ export class BrowserSession {
 	}
 
 	/** Release a tab without closing it. */
-	async release(tabId: number): Promise<void> {
+	async release(tabId: number, options: { clearCurrent?: boolean } = {}): Promise<void> {
+		const done = touch(tabId);
 		await this.update((s) => {
+			s.grouped = (s.grouped ?? []).filter((id) => id !== tabId);
 			s.tabIds = s.tabIds.filter((id) => id !== tabId);
+			// An agent that gave its current tab away picks the next page itself.
+			if (options.clearCurrent && s.currentTabId === tabId) s.currentTabId = undefined;
 			fixCurrent(s);
 			const now = Date.now();
 			const released: Record<number, number> = {};
@@ -770,17 +993,62 @@ export class BrowserSession {
 		} catch {
 			/* tab gone */
 		}
+		done();
 	}
 
 	async closeTab(tabId: number): Promise<void> {
 		await this.refresh();
 		if (!this.state.tabIds.includes(tabId)) throw new Error(`Tab ${tabId} is not owned by this session`);
+		const done = touch(tabId);
 		await this.release(tabId);
 		try {
 			await chrome.tabs.remove(tabId);
 		} catch {
 			/* already closed */
 		}
+		done();
+	}
+
+	/**
+	 * End the session: close its tabs (`close`) or hand them to the user, and forget it. A client
+	 * still holding it opens a fresh one on its next call; `notice` tells that agent why.
+	 */
+	async end(options: { close?: boolean; notice?: string } = {}): Promise<{ tabs: number[]; closed: boolean }> {
+		await this.refresh();
+		const tabs = [...this.state.tabIds];
+		for (const id of tabs) {
+			const done = touch(id);
+			await detachTab(id, true);
+			if (options.close) await chrome.tabs.remove(id).catch(() => undefined);
+			else await chrome.tabs.ungroup(id).catch(() => undefined);
+			done();
+		}
+		await mutateTable(({ table }) => {
+			delete table[this.state.id];
+			this.ended = true;
+		});
+		this.forget();
+		if (options.notice) await addNotice(this.state.id, options.notice);
+		return { tabs, closed: Boolean(options.close) };
+	}
+
+	/** The stored session with this id, without creating one; undefined when there is none. */
+	static async existing(id: string): Promise<BrowserSession | undefined> {
+		const state = await readTableLocked((table) => table[id]);
+		if (!state) return undefined;
+		let session = instances.get(id);
+		if (session) session.state = state;
+		else {
+			session = new BrowserSession(state);
+			instances.set(id, session);
+		}
+		live.add(session);
+		return session;
+	}
+
+	/** Every instance in this context for `id`, so a rename or end reaches whoever holds one. */
+	static instance(id: string): BrowserSession | undefined {
+		return instances.get(id);
 	}
 
 	/** Make an owned tab the one tools act on. Does not focus anything. */
