@@ -92,19 +92,29 @@ jobs:
           name: community-catalog
           path: catalog
 
-      # A re-run of an old publish (for example after a rejection) must never replace a newer
-      # catalog: clients would refuse it, and it could carry a skill pulled since.
-      - name: Refuse an older serial
+      # A re-run of an old run (for example after a rejection) rebuilds an old commit with a fresh
+      # serial, and could bring back a skill pulled since. Refuse unless this catalog's source still
+      # matches main for every catalog input, and unless its serial is newer than the published one.
+      # Any error reading GitHub refuses too.
+      - name: Refuse a stale or older catalog
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           serial=$(cat catalog/serial)
-          if gh release view community-catalog --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]' | jq -e 'index("community-catalog.json")' >/dev/null; then
+          source=$(jq -r .source catalog/community-catalog.json)
+          if ! [[ "$source" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::The catalog has no valid source commit."; exit 1; fi
+          compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/$source...main")
+          if [ "$(jq '.files | length' <<<"$compare")" -ge 300 ]; then echo "::error::Too many changes since $source to check; start a new run."; exit 1; fi
+          changed=$(jq -r '.files[].filename' <<<"$compare" | grep -E '^(community/|keys/|cli/src/(skill-lint|skill-community|community-catalog)\.ts$)' || true)
+          if [ -n "$changed" ]; then echo "::error::main has changed catalog inputs since $source; start a new run instead:"; echo "$changed"; exit 1; fi
+          if ! assets=$(gh release view community-catalog --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]' 2> "$RUNNER_TEMP/view.err"); then
+            if grep -qi "release not found" "$RUNNER_TEMP/view.err"; then assets='[]'; else cat "$RUNNER_TEMP/view.err"; exit 1; fi
+          fi
+          if jq -e 'index("community-catalog.json")' <<<"$assets" >/dev/null; then
             current=$(gh release download community-catalog --repo "$GITHUB_REPOSITORY" -p community-catalog.json -O - | jq -r .serial)
-            if [[ "$current" =~ ^[0-9]+$ ]] && [ "$serial" -le "$current" ]; then
-              echo "::error::This catalog's serial $serial is not newer than the published $current. Start a new run instead of re-running an old one."; exit 1
-            fi
+            if ! [[ "$current" =~ ^[0-9]{1,15}$ ]]; then echo "::error::The published catalog's serial ($current) is unreadable."; exit 1; fi
+            if [ "$serial" -le "$current" ]; then echo "::error::This catalog's serial $serial is not newer than the published $current."; exit 1; fi
           fi
 
       - name: Install minisign
