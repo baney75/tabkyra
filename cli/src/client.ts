@@ -342,8 +342,12 @@ export class BridgeClient {
 		// One budget for the call's waits, however many times the bridge drops or refuses. It starts
 		// at the first trouble: the time the request itself ran (a long wait) isn't charged to it.
 		let deadline: number | undefined;
-		/** The browser this call started in, once known: its resends go there and nowhere else. */
-		let want: string | undefined;
+		/**
+		 * The browser this call is held to: its resends go there and nowhere else. A call made while
+		 * the client's browser is away (just cut off, reloading) waits for that browser too, so an
+		 * agent checking the page after `interrupted` never reads, or clicks in, another browser.
+		 */
+		let want: string | undefined = this.connected ? undefined : this.lastBrowser;
 		let drops = 0;
 		let refusals = 0;
 		for (;;) {

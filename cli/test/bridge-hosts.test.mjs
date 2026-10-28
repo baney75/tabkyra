@@ -301,3 +301,24 @@ test("a call made while a reconnect is dialing joins that dial: one hello, no se
 		client.close();
 	}
 });
+
+test("after input is cut off in browser A, the agent's next call waits for A instead of going to browser B", async () => {
+	const b = await host({ browserId: "browser-b" });
+	await new Promise((r) => setTimeout(r, 20));
+	await host({ browserId: "browser-a", dropFirst: ["click"] });
+	const client = new BridgeClient({ name: "after-cut", session: "after-cut" });
+	try {
+		assert.deepEqual(await client.call("tabs.context"), { from: "browser-a" });
+		await assert.rejects(() => client.call("click", { ref: "e1" }), (err) => err.rpc?.code === "interrupted");
+		// As told, the agent checks the page; then repeats the click.
+		const reading = client.call("text");
+		await new Promise((r) => setTimeout(r, 700));
+		const a2 = await host({ browserId: "browser-a" });
+		assert.deepEqual(await reading, { from: "browser-a" });
+		assert.deepEqual(await client.call("click", { ref: "e1" }), { from: "browser-a" });
+		assert.deepEqual(b.got, [], "a call after the cut-off went to the other browser");
+		assert.deepEqual(a2.got, ["text", "click"]);
+	} finally {
+		client.close();
+	}
+});
