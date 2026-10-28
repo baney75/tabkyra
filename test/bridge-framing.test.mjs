@@ -296,3 +296,107 @@ test("a host that is stopping doesn't welcome a new client as ready", async () =
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("a session the extension assigned or renamed is the one the host re-announces after a worker restart", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const toExt = new FrameParser(64 * 1024 * 1024);
+	const forwarded = [];
+	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
+	const wait = async (fn, what) => {
+		for (let i = 0; i < 150; i++) {
+			const v = fn();
+			if (v) return v;
+			await new Promise((r) => setTimeout(r, 20));
+		}
+		throw new Error(`timed out waiting for ${what}`);
+	};
+	const sockets = [];
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		const hello = (client) => {
+			const s = connect({ path: sock });
+			s.on("error", () => undefined);
+			sockets.push(s);
+			s.write(encodeFrame({ type: "hello", client }));
+		};
+		hello({ name: "claude", session: "shop-1a2b", auto: true, project: "shop" });
+		hello({ name: "claude", session: "shop-1a2b", auto: true, project: "shop" });
+		hello({ name: "claude", session: "notes", auto: true, project: "notes" });
+		const ids = await wait(() => {
+			const c = forwarded.filter((m) => m.type === "client_connected");
+			return c.length === 3 ? c.map((m) => m.clientId) : undefined;
+		}, "three clients announced");
+		// The second agent in the project is moved to "-2"; the user renames the third.
+		host.stdin.write(encodeFrame({ type: "event", clientId: ids[1], event: "session_assigned", data: { session: "shop-1a2b-2" } }));
+		host.stdin.write(encodeFrame({ type: "event", clientId: ids[2], event: "session_renamed", data: { session: "trip" } }));
+		await new Promise((r) => setTimeout(r, 200));
+		forwarded.length = 0;
+		// The extension's worker restarts and says hello: every live client is announced again.
+		host.stdin.write(encodeFrame({ type: "hello", extensionVersion: "0.0.0" }));
+		const again = await wait(() => {
+			const c = forwarded.filter((m) => m.type === "client_connected");
+			return c.length === 3 ? c : undefined;
+		}, "clients re-announced");
+		const by = Object.fromEntries(again.map((m) => [m.clientId, m.client]));
+		assert.equal(by[ids[0]].session, "shop-1a2b");
+		assert.equal(by[ids[1]].session, "shop-1a2b-2", "the second agent would be put back on the first one's session");
+		assert.equal(by[ids[1]].auto, true);
+		assert.equal(by[ids[2]].session, "trip");
+		assert.equal(by[ids[2]].auto, false, "a renamed session is the user's choice, not a default");
+	} finally {
+		for (const s of sockets) s.destroy();
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("an extension from before project sessions gets a separate session per agent, a current one the shared default", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const toExt = new FrameParser(64 * 1024 * 1024);
+	const forwarded = [];
+	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
+	const announced = async (n) => {
+		for (let i = 0; i < 150; i++) {
+			const c = forwarded.filter((m) => m.type === "client_connected");
+			if (c.length >= n) return c.slice(0, n);
+			await new Promise((r) => setTimeout(r, 20));
+		}
+		throw new Error("clients not announced");
+	};
+	const sockets = [];
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		for (const client of [{ name: "claude", session: "shop-1a2b", auto: true }, { name: "claude", session: "shop-1a2b", auto: true }, { name: "claude", session: "mine" }]) {
+			const s = connect({ path: sock });
+			s.on("error", () => undefined);
+			sockets.push(s);
+			s.write(encodeFrame({ type: "hello", client }));
+		}
+		await announced(3);
+		forwarded.length = 0;
+		host.stdin.write(encodeFrame({ type: "hello", version: "1.1.0", protocol: 1, methods: ["status", "tabs.context", "navigate"] }));
+		const old = (await announced(3)).map((m) => m.client.session);
+		assert.equal(new Set(old.slice(0, 2)).size, 2, `two agents in one project would share a session on an old extension: ${old}`);
+		assert.ok(old[0].startsWith("shop-1a2b-"));
+		assert.equal(old[2], "mine", "a name the user chose is passed as is");
+		forwarded.length = 0;
+		host.stdin.write(encodeFrame({ type: "hello", version: "1.2.0", protocol: 1, methods: ["status", "tabs.context", "navigate", "sessions.list"] }));
+		assert.deepEqual((await announced(3)).map((m) => m.client.session), ["shop-1a2b", "shop-1a2b", "mine"]);
+	} finally {
+		for (const s of sockets) s.destroy();
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

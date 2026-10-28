@@ -300,3 +300,32 @@ test("the CLI's admin methods list, rename and end sessions without opening one 
 	assert.ok(!Object.keys(fake.table()).some((k) => k.includes("cli")), JSON.stringify(Object.keys(fake.table())));
 	assert.equal(port.sent.filter((m) => m.clientId === "cli" && m.error).length, 1, "only the bad rename failed");
 });
+
+test("tabkyra sessions focus shows a tab that still exists, even when the current one is gone", async () => {
+	const { fake, request, settle, connect } = await startBridge();
+	connect("agent", "focus-1a2b", { auto: true, project: "focus" });
+	const first = (await request("agent", "tabs.create", {})).result.tabId;
+	const second = (await request("agent", "tabs.create", {})).result.tabId;
+	await request("agent", "tabs.context");
+	await settle();
+	// The current tab vanished without the worker hearing of it yet.
+	fake.removeTab(second);
+	connect("cli", undefined);
+	const focused = await request("cli", "sessions.group", { name: "focus", action: "focus" });
+	assert.equal(focused.error, undefined, JSON.stringify(focused.error));
+	assert.equal(focused.result.tabId, first);
+	assert.equal((await chrome.tabs.get(first)).active, true);
+});
+
+test("releasing its current tab leaves the agent with no current tab, not silently on another page", async () => {
+	const { request, connect } = await startBridge();
+	connect("c1", "rel");
+	const a = (await request("c1", "tabs.create", {})).result.tabId;
+	const b = (await request("c1", "tabs.create", {})).result.tabId;
+	const released = await request("c1", "tabs.release", { tabId: b });
+	assert.match(released.result.note, /It was your current tab/);
+	const ctx = await request("c1", "tabs.context");
+	assert.equal(ctx.result.session.currentTabId, null, JSON.stringify(ctx.result));
+	assert.ok(!ctx.result.tabs.some((t) => t.current));
+	assert.deepEqual(ctx.result.tabs.map((t) => t.tabId), [a]);
+});

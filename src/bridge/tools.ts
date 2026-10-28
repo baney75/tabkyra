@@ -247,12 +247,13 @@ export const handlers: Record<string, Handler> = {
 		if (!ctx.session.tabIds.includes(tabId))
 			throw new BridgeError(ERR.NOT_FOUND, `Tab ${tabId} is not one of your tabs. tabs_context lists them.`);
 		const summary = await tabSummary(tabId);
-		await ctx.session.release(tabId);
+		const wasCurrent = ctx.session.currentTabId === tabId;
+		await ctx.session.release(tabId, { clearCurrent: true });
 		return {
 			released: tabId,
 			url: summary.url,
 			title: summary.title,
-			note: "The tab is the user's now, outside your group; you can't use it any more.",
+			note: `The tab is the user's now, outside your group; you can't use it any more.${wasCurrent ? " It was your current tab: tabs_select another or navigate." : ""}`,
 		};
 	},
 

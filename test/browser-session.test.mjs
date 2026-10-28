@@ -402,6 +402,16 @@ test("an agent session holds at most 15 tabs, and the 16th is refused with what 
 	assert.equal(s.tabIds.length, MAX_SESSION_TABS);
 });
 
+test("two clients sharing a session can't open past the cap at once", async () => {
+	installFakeChrome();
+	const { BrowserSession, MAX_SESSION_TABS } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-cap2", "claude", 1);
+	for (let i = 0; i < MAX_SESSION_TABS - 1; i++) await s.createTab(`https://example.com/${i}`, { capped: true });
+	const both = await Promise.allSettled([s.createTab("https://example.com/x", { capped: true }), s.createTab("https://example.com/y", { capped: true })]);
+	assert.deepEqual(both.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
+	assert.equal(s.tabIds.length, MAX_SESSION_TABS);
+});
+
 test("a tab the user drags out of an agent's group becomes theirs, and the agent is told", async () => {
 	const fake = installFakeChrome();
 	const { BrowserSession, takeNotices } = await load("worker");
@@ -473,6 +483,38 @@ test("ending a session hands its tabs to the user or closes them, and forgets it
 	const b = (await t.createTab("https://example.com/b")).id;
 	await t.end({ close: true });
 	assert.equal(fake.hasTab(b), false);
+});
+
+test("a write still in flight when a session ends doesn't bring it back with the user's tabs", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-late", "claude", 1);
+	const a = (await s.createTab("https://example.com/a")).id;
+	const reading = s.tabs();
+	await s.end();
+	await reading.catch(() => undefined);
+	// A request that held this instance before the end writes after it.
+	await s.setAgentLabel("late");
+	assert.equal(fake.table()["bridge-claude-late"], undefined, "the ended session's record came back");
+	const again = await BrowserSession.open("bridge-claude-late", "claude", 1);
+	assert.deepEqual(again.tabIds, [], "the next call got the tabs handed to the user");
+	assert.ok(fake.hasTab(a));
+});
+
+test("a tab still in its group isn't handed to the user when another record claims that group", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession, takeNotices } = await load("worker");
+	const s = await BrowserSession.open("bridge-claude-claim", "claude", 1);
+	const a = (await s.createTab("https://example.com/a")).id;
+	await s.tabs();
+	const groupId = fake.groupOf(a);
+	assert.notEqual(groupId, -1);
+	const table = fake.table();
+	table["bridge-claude-other"] = { ...table["bridge-claude-claim"], id: "bridge-claude-other", tabIds: [], grouped: [] };
+	await chrome.storage.local.set({ browser_sessions: table });
+	await s.tabs();
+	assert.ok(s.tabIds.includes(a), "a tab nobody moved was handed to the user");
+	assert.deepEqual(await takeNotices("bridge-claude-claim"), []);
 });
 
 test("a side panel chat's tab that leaves its group goes back: the agent rules are for agent sessions", async () => {

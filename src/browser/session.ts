@@ -513,6 +513,9 @@ export class BrowserSession {
 	 */
 	private async update(fn: (s: PersistedSession, table: SessionTable) => unknown): Promise<void> {
 		await mutateTable(({ table, renames }) => {
+			// Ended: a write still in flight from before must not bring the record (and the tabs
+			// just handed to the user) back.
+			if (this.ended) return;
 			let id = this.state.id;
 			for (let hops = 0; !table[id] && renames[id] && hops < 8; hops++) id = renames[id].to;
 			if (id !== this.state.id) {
@@ -719,6 +722,9 @@ export class BrowserSession {
 		for (const id of this.state.tabIds) {
 			const tab = await tabExists(id);
 			if (!tab || (this.state.groupId !== undefined && tab.groupId === this.state.groupId)) continue;
+			// Still in the group this session just lost track of (another record claims it, or
+			// the lookup failed): nobody moved it, so it is neither handed over nor regrouped.
+			if (lostGroup !== undefined && tab.groupId === lostGroup) continue;
 			if (isAgentSession(this.state.id) && this.state.grouped?.includes(id) && !agentTouching.has(id)) {
 				await this.userTook(id, tab);
 				continue;
@@ -901,10 +907,22 @@ export class BrowserSession {
 	 * tab loads it directly (callers wait for the load); without one it starts blank.
 	 */
 	async createTab(url?: string, options: { capped?: boolean } = {}): Promise<chrome.tabs.Tab> {
-		if (options.capped) {
-			await this.refresh();
-			if (this.state.tabIds.length >= MAX_SESSION_TABS) throw new TabLimitError();
+		if (!options.capped) return this.openTab(url);
+		await this.refresh();
+		// Clients sharing a session share this instance: count the tabs still being opened too.
+		if (this.state.tabIds.length + this.opening >= MAX_SESSION_TABS) throw new TabLimitError();
+		this.opening++;
+		try {
+			return await this.openTab(url);
+		} finally {
+			this.opening--;
 		}
+	}
+
+	/** Tabs being opened for a capped create and not adopted yet. */
+	private opening = 0;
+
+	private async openTab(url?: string): Promise<chrome.tabs.Tab> {
 		const windowId = await this.targetWindowId();
 		const tab = await chrome.tabs.create({ url: url ?? "about:blank", windowId, active: false });
 		if (tab.id === undefined) throw new Error("Failed to create tab");
@@ -950,11 +968,13 @@ export class BrowserSession {
 	}
 
 	/** Release a tab without closing it. */
-	async release(tabId: number): Promise<void> {
+	async release(tabId: number, options: { clearCurrent?: boolean } = {}): Promise<void> {
 		const done = touch(tabId);
 		await this.update((s) => {
 			s.grouped = (s.grouped ?? []).filter((id) => id !== tabId);
 			s.tabIds = s.tabIds.filter((id) => id !== tabId);
+			// An agent that gave its current tab away picks the next page itself.
+			if (options.clearCurrent && s.currentTabId === tabId) s.currentTabId = undefined;
 			fixCurrent(s);
 			const now = Date.now();
 			const released: Record<number, number> = {};
@@ -1001,8 +1021,8 @@ export class BrowserSession {
 		}
 		await mutateTable(({ table }) => {
 			delete table[this.state.id];
+			this.ended = true;
 		});
-		this.ended = true;
 		this.forget();
 		if (options.notice) await addNotice(this.state.id, options.notice);
 		return { tabs, closed: Boolean(options.close) };

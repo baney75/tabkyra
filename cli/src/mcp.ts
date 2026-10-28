@@ -305,7 +305,11 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				'Pass label to name your group for the user, e.g. {"label":"Flight search"} (plain text, up to 32 characters). Example: {}',
 			inputSchema: { label: z.string().max(200).optional().describe('A name for your tab group, shown after your agent name; "" clears it') },
 		},
-		(args) => call("session.info", args),
+		(args) =>
+			// Naming the group changes what the user sees: a read-only remote session may look, not rename.
+			args.label !== undefined && allowedTools && !allowedTools.has("navigate")
+				? { content: [{ type: "text" as const, text: "permission_denied: This session may read only, so it can't name its tab group. Call session_info without label." }], isError: true }
+				: call("session.info", args),
 	);
 	server.registerTool(
 		"session_end",

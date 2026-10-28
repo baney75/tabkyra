@@ -205,7 +205,7 @@ test("the worker turns the user's gestures on an agent's group into hand-overs, 
 	fake.userCloseTab(a);
 	await settle(300);
 	assert.equal(fake.table()["bridge-claude-shop"], undefined);
-	assert.ok((await notices())["bridge-claude-shop"].some((n) => /closed your tab group, which ended your session/.test(n.text)));
+	assert.ok((await notices())["bridge-claude-shop"].some((n) => /Your tab group was closed \(its last tab too\), which ended your session/.test(n.text)));
 
 	// A side panel chat is left alone.
 	const home = fake.addTab({ active: true });

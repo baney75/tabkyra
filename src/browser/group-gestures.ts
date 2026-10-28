@@ -49,14 +49,15 @@ async function onTabRemoved(tabId: number, windowClosing: boolean): Promise<void
 	if (!session) return;
 	await session.reconcile();
 	if (session.tabIds.length > 0) {
-		await addNotice(owner.id, `The user closed your tab ${tabId}.`);
+		await addNotice(owner.id, `Your tab ${tabId} was closed (by the user, or by the page itself).`);
 		return;
 	}
-	// The user closed the agent's last tab or its whole group: the session is over.
-	log(`gesture: ${owner.id} ended (the user closed its group)`);
+	// The agent's last tab or its whole group was closed (a page closing itself looks the same):
+	// the group is gone, so the session is over.
+	log(`gesture: ${owner.id} ended (its group was closed)`);
 	await session.end({
 		notice:
-			"The user closed your tab group, which ended your session. navigate opens a new tab in a new group if the task needs one.",
+			"Your tab group was closed (its last tab too), which ended your session. navigate opens a new tab in a new group if the task needs one.",
 	});
 }
 

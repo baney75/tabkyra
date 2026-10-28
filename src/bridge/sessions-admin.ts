@@ -145,11 +145,18 @@ export async function handleSessionsAdmin(method: string, params: Params, host: 
 				return { group: nameOf(s), collapsed: action === "collapse" };
 			}
 			if (action === "focus") {
-				const tabId = s.currentTabId ?? s.tabIds[0];
-				if (tabId === undefined) throw new BridgeError(ERR.NO_TAB, `${nameOf(s)} has no tabs.`);
+				// The current tab, else the first that still exists; shown the way tabs_show shows one
+				// (the agent's viewport override released first, so the user sees the real page).
+				let tabId: number | undefined;
+				for (const id of [...(s.currentTabId !== undefined ? [s.currentTabId] : []), ...s.tabIds])
+					if (await chrome.tabs.get(id).catch(() => undefined)) {
+						tabId = id;
+						break;
+					}
+				const session = await BrowserSession.existing(s.id);
+				if (tabId === undefined || !session) throw new BridgeError(ERR.NO_TAB, `${nameOf(s)} has no tabs.`);
 				await chrome.tabGroups.update(s.groupId, { collapsed: false });
-				const tab = await chrome.tabs.update(tabId, { active: true });
-				if (tab?.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
+				await session.show(tabId);
 				return { focused: nameOf(s), tabId };
 			}
 			throw new BridgeError(ERR.BAD_PARAMS, "action is focus, collapse or expand");
