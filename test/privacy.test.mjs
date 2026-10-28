@@ -87,6 +87,11 @@ test("bug reports drop web addresses, emails, keys and home paths, and never tra
 	assert.doesNotMatch(text, /mail\.example|patient-records|ada@example|ABCDEFGHIJKLMNOP|donovan|\\ada\\|kenehmggpggpiolepbjojeenmeapgfoc/);
 	assert.match(text, /\[url\]/);
 	assert.match(text, /ext:\/sidepanel\.js/);
+	assert.match(
+		redact("at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/assets/chunk-4f2a.js:3:9"),
+		/ext:\/assets\/chunk-4f2a\.js:3:9/,
+		"a stack line keeps its file name when the path has digits",
+	);
 	const more = redact(
 		"chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/sidepanel.html?session=abc&q=jdoe data:image/png;base64,iVBORw0K/a+b blob:https://x.example/1 at 203.0.113.9:8080",
 	);

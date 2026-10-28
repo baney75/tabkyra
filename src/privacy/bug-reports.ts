@@ -18,11 +18,6 @@ export interface BugEntry {
 }
 
 /**
- * Strip what could identify the user or leak a secret. Web addresses become `[url]`
- * (paths and hosts can name people, records or accounts); Tabkyra's own extension scripts
- * keep only the file name, which is what a maintainer needs from a stack trace.
- */
-/**
  * Strip secrets only: API keys and tokens by their known prefixes, bearer headers, JWTs and
  * private key blocks. Unlike `redact`, it keeps addresses and names: a chat transcript an
  * agent reads back still needs its URLs, but never a key someone pasted into it.
@@ -46,10 +41,16 @@ export function redactSecrets(text: string): string {
 	);
 }
 
+/**
+ * Strip what could identify the user or leak a secret. Web addresses become `[url]`
+ * (paths and hosts can name people, records or accounts); Tabkyra's own extension scripts
+ * keep only the file name, which is what a maintainer needs from a stack trace.
+ */
 export function redact(text: string): string {
 	return (
-		redactSecrets(text)
-			.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)(?:[?#][^\s"'<>)]*)?/gi, "ext:/$1")
+		// Shorten Tabkyra's own script URLs first: the secret rule would read the extension id
+		// plus a path with digits as one long token and eat the file name.
+		redactSecrets(text.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)(?:[?#][^\s"'<>)]*)?/gi, "ext:/$1"))
 			// A URL may contain ")" (wiki paths); only trailing punctuation belongs to the sentence.
 			.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>]+/gi, (m) => `[url]${/[).,;:!?]+$/.exec(m)?.[0] ?? ""}`)
 			// Addresses without "//": data, blob, about and javascript URLs carry page content.
