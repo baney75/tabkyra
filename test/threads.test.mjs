@@ -130,6 +130,11 @@ test("the mirror writes a changed thread once it has been quiet, deletes private
 		assert.match(sent[0].md, /^---\nid: live1\ntitle: "Trip to Lisbon live1"/);
 		assert.doesNotMatch(sent[0].md + sent[0].json, /sk-ant-api03/);
 		assert.equal(sent[0].meta.messageCount, 6);
+		// A key in the title (an auto-title from the first message) stays out of the index too.
+		t.title = `debug ${KEY}`;
+		await mirror.mirrorThread("live1");
+		assert.equal(sent.at(-1).meta.title, "debug [secret]", "a key in the title reached the mirror's index");
+		t.title = "Trip to Lisbon live1";
 		// Private now: its copy goes.
 		isPrivate = true;
 		await mirror.mirrorThread("live1");

@@ -68,6 +68,14 @@ test("the CLI reads threads from the mirror when no browser is connected", () =>
 	assert.match(list.stdout, /2 threads, newest first \(from the local mirror/);
 	assert.match(list.stdout, /t2 \| "Taxes"/);
 	assert.deepEqual(JSON.parse(run("threads", "list", "--json").stdout).threads.map((t) => t.id), ["t2", "t1"]);
+	// A title an older build wrote with a key in it is redacted on the way out.
+	const index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8"));
+	const key = ["sk-ant", "api03", "AbCdEf0123456789AbCdEf0123456789"].join("-");
+	index.threads[0].title = `Taxes ${key}`;
+	writeFileSync(join(dir, "index.json"), JSON.stringify(index));
+	const listed = run("threads", "list", "--json").stdout;
+	assert.doesNotMatch(listed, /sk-ant-api03/);
+	assert.match(listed, /Taxes \[secret\]/);
 	const show = run("threads", "show", "t1");
 	assert.equal(show.status, 0, show.stderr);
 	assert.match(show.stdout, /Thread t1: "Lisbon trip"/);

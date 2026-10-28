@@ -9,6 +9,7 @@
  */
 
 import type { ExtThreadsMirror } from "../bridge/protocol.js";
+import { redactSecrets } from "../privacy/bug-reports.js";
 import { THREAD_CHANGED } from "./events.js";
 import { MIRROR_KEY } from "./keys.js";
 import { modelOf, renderMarkdown, sanitizeJson, validThreadId } from "./render.js";
@@ -46,7 +47,7 @@ export async function mirrorThread(id: string): Promise<void> {
 		json: `${JSON.stringify(sanitizeJson(data), null, 2)}\n`,
 		meta: {
 			id,
-			title: data.title,
+			title: redactSecrets(data.title ?? ""),
 			createdAt: data.createdAt,
 			lastModified: data.lastModified,
 			messageCount: data.messages.length,

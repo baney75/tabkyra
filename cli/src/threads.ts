@@ -11,6 +11,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { redactSecrets } from "../../src/privacy/bug-reports.ts";
 import { matches, renderMarkdown, renderMessages, renderPage, snippets, type ThreadData, validThreadId } from "../../src/threads/render.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { readIndex, threadsDir } from "./threads-mirror.ts";
@@ -52,7 +53,10 @@ export function fromMirror(method: string, params: Record<string, unknown>): Rep
 		const query = typeof params.query === "string" ? params.query : "";
 		const offset = Number(params.offset ?? 0) || 0;
 		const limit = Math.min(Number(params.limit ?? 20) || 20, 100);
-		const all = readIndex(dir).filter((t) => !query || matches(t.title, query));
+		// Titles are redacted when written; again here, for files an older build wrote.
+		const all = readIndex(dir)
+			.map((t) => ({ ...t, title: redactSecrets(String(t.title ?? "")) }))
+			.filter((t) => !query || matches(t.title, query));
 		const page = all.slice(offset, offset + limit);
 		return {
 			total: all.length,
