@@ -92,6 +92,19 @@ test("bug reports drop web addresses, emails, keys and home paths, and never tra
 		/ext:\/assets\/chunk-4f2a\.js:3:9/,
 		"a stack line keeps its file name when the path has digits",
 	);
+	assert.match(
+		redact("at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/assets/components/ThreadListView.js:3:9"),
+		/ext:\/assets\/components\/ThreadListView\.js:3:9/,
+		"a long path keeps its file name",
+	);
+	assert.match(redact("at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/pages/home/view.js:3:9"), /ext:\/pages\/home\/view\.js:3:9/);
+	const tokenAfterQuery = ["a1b2c3d4", "e5f6g7h8i9"].join("");
+	const leaked = redact(`at chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/api.js?auth=Bearer ${tokenAfterQuery}`);
+	assert.doesNotMatch(leaked, new RegExp(tokenAfterQuery), "the query is read by the secret rules before it is dropped");
+	assert.doesNotMatch(leaked, /auth=/);
+	assert.match(redact("a \u00000\u0000 b"), /^a 0 b$/, "a planted marker can't pull in a path");
+	const pathKey = ["Zx9", "Qw8".repeat(10)].join("");
+	assert.doesNotMatch(redact(`chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/${pathKey}/a.js`), new RegExp(pathKey), "a key in the path is still redacted");
 	const more = redact(
 		"chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/sidepanel.html?session=abc&q=jdoe data:image/png;base64,iVBORw0K/a+b blob:https://x.example/1 at 203.0.113.9:8080",
 	);

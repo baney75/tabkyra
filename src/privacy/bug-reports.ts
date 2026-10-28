@@ -47,10 +47,19 @@ export function redactSecrets(text: string): string {
  * keep only the file name, which is what a maintainer needs from a stack trace.
  */
 export function redact(text: string): string {
+	// Tabkyra's own script paths are set aside before any rule runs: the long-token and home-path
+	// rules would otherwise eat a file name ("assets/components/ThreadListView.js", "pages/home").
+	// The query and fragment stay in place until the secret rules have read them, then go.
+	const paths: string[] = [];
+	const marked = text.replace(/\u0000/g, "").replace(
+		/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)/gi,
+		(_m, path: string) =>
+			// Each segment still goes through the secret rules: a key can't hide as a "file name".
+			`\u0000${paths.push(path.split("/").map(redactSecrets).join("/")) - 1}\u0000`,
+	);
 	return (
-		// Shorten Tabkyra's own script URLs first: the secret rule would read the extension id
-		// plus a path with digits as one long token and eat the file name.
-		redactSecrets(text.replace(/\bchrome-extension:\/\/[a-p]{32}\/([\w./-]*)(?:[?#][^\s"'<>)]*)?/gi, "ext:/$1"))
+		redactSecrets(marked)
+			.replace(/(\u0000\d+\u0000)[?#][^\s"'<>)]*/g, "$1")
 			// A URL may contain ")" (wiki paths); only trailing punctuation belongs to the sentence.
 			.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>]+/gi, (m) => `[url]${/[).,;:!?]+$/.exec(m)?.[0] ?? ""}`)
 			// Addresses without "//": data, blob, about and javascript URLs carry page content.
@@ -66,6 +75,7 @@ export function redact(text: string): string {
 			.replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, "[long-token]")
 			.replace(/\/(Users|home)\/[^/\s]+/g, "/$1/[user]")
 			.replace(/[A-Z]:\\Users\\[^\\\s]+/g, "C:\\Users\\[user]")
+			.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => `ext:/${paths[Number(i)]}`)
 			.slice(0, 2000)
 	);
 }
