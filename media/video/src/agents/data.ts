@@ -15,7 +15,7 @@ const compute = () => {
 		raw: c,
 		team,
 		resume: checkResume(c, titles[0]),
-		handoff: checkHandoff(c),
+		handoff: checkHandoff(c, titles[0]),
 		ask: checkAsk(c),
 		composer: checkComposer(c, titles),
 		cli: checkCli(c, titles, SEARCH_WORD),

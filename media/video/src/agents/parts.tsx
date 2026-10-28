@@ -7,7 +7,8 @@ import { hex } from "./data";
 
 /**
  * The shot's caption: one line of claim on an ink plate, low in the frame, readable with the
- * sound off. It lands on `at` (rise, scale and blur together) and then holds still.
+ * sound off. It lands on `at` (rise, scale and blur together) and then holds still. A "\n" in
+ * `text` is where the vertical cut breaks the line; the wide cut shows it as a space.
  */
 export const Caption: React.FC<{ text: string; at: number; until?: number; color?: string }> = ({ text, at, until, color = C.paper }) => {
 	const frame = useCurrentFrame();
@@ -38,10 +39,10 @@ export const Caption: React.FC<{ text: string; at: number; until?: number; color
 					scale: String(1.08 - 0.08 * s),
 					filter: s < 0.85 ? `blur(${(1 - s) * 8}px)` : undefined,
 					boxShadow: "0 30px 60px -20px rgba(0,0,0,0.8)",
-					whiteSpace: vertical ? "normal" : "nowrap",
+					whiteSpace: vertical ? "pre-line" : "nowrap",
 				}}
 			>
-				{text}
+				{vertical ? text : text.replace(/\n/g, " ")}
 			</div>
 		</AbsoluteFill>
 	);

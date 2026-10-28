@@ -161,13 +161,18 @@ small shop ("Fernhill Goods") is served on 127.0.0.1 by the script, and a git re
    no-thinking branch always on, served by a separate Ollama on 127.0.0.1:11555 started with
    `OLLAMA_ORIGINS='chrome-extension://*' OLLAMA_CONTEXT_LENGTH=32768` (the user's own Ollama was
    not changed). No API key or paid service was used. Set `TABKYRA_DEMO_MODEL_URL` and
-   `TABKYRA_DEMO_MODEL` to use another model. A model this small doesn't always finish: when its
-   reply doesn't use the teapot page, or it stalls, the whole run is thrown away and starts over
-   in a fresh browser (up to `TABKYRA_DEMO_ATTEMPTS`, default 3). `agents.json` records which
+   `TABKYRA_DEMO_MODEL` to use another model. A model this small doesn't always finish. The run
+   counts only when the chat's own record (`tabkyra threads show`, kept as `threadShown`) has a
+   tool result with the page body and a last reply that states at least two facts the page body
+   has and its tab title doesn't ("1 L", "$36", "infuser", "speckled", "glazed"). Otherwise, or
+   when it stalls, the whole run is thrown away with its folder and starts over in a fresh
+   browser and folder (up to `TABKYRA_DEMO_ATTEMPTS`, a whole number, default 3). `agents.json` records which
    attempt passed; the committed capture is attempt 2. If the model asks the user to pick an
    element, the run clicks the product description in that tab, as the user would, and records
    it (`composer.picked`); the committed run didn't ask. In the committed run the model opened
-   the referenced page in a new tab rather than switching to it, then read it with its REPL.
+   the referenced tab's page in a new tab rather than switching to that tab, then read it with
+   its REPL. That is why the caption says `@` "points it at a tab", not that it hands the tab
+   over.
 6. `tabkyra sessions`, `tabkyra tabs` and `tabkyra threads search teapot` run against the same
    browser, with their output and exit codes recorded (`NO_COLOR=1`).
 7. Agent 3 clicks "Place order" inside an `actions` call that then waits 3 s; 800 ms in, the
@@ -175,7 +180,8 @@ small shop ("Fernhill Goods") is served on 127.0.0.1 by the script, and a git re
    count (one POST) are recorded.
 
 The capture saves nothing unless every step and check passes; a failed run leaves its
-partial frames in a temp folder and the old capture in place.
+partial frames in a temp folder (copied when the repo is on another volume) and the old capture
+in place.
 
 **What is recorded and what is drawn.** Recorded: every page screenshot (each agent's own
 `screenshot` call), the side panel screenshots and the boxes the crops use, group titles and
@@ -191,9 +197,13 @@ shop", "… shop 2", "… shop 3" with distinct colors, each `tabs_context` list
 the refusal and agent 1's tab staying put, the restarted agent getting the same tab ids, the
 hand-off news naming the tab that left with the tab now ungrouped, the answer the agent got being
 the option clicked and the one it filled, the `@` menu showing the agents' tabs in use and the
-teapot tab free, the side panel reply using something only the page says, the three commands
-exiting 0 and showing the three groups and the chat, and the order running exactly once.
-`npm test` runs them on the real capture and on doctored copies, which must fail.
+teapot tab free (each agent's label matched whole, so "claude · shop" can't match the "shop 2"
+row), the side panel agent going to the referenced tab's page, reading its body and stating two
+of its facts in the last reply, the three commands exiting 0 and showing the three groups
+(whole titles) and the chat, the hand-off happening to agent 1's group and session, and the
+order running exactly once. `npm test` runs them on the real capture and on doctored copies,
+which must fail. The tests import TypeScript directly, so they need Node 22.13 or newer
+(`npm test` passes `--experimental-strip-types`, which Node 22.13 to 22.17 need).
 
 ```bash
 cd media/video && npm install

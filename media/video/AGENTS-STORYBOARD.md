@@ -122,7 +122,7 @@ one that asks the user and the one whose click a reload cuts off.
   filtered to `writing` (B75), `@` menu listing the tabs with the agents' tabs "used by agent …"
   (B78), the message with the skill and tab chips (B81.5), the side panel agent's reply (B84).
 - **Camera**: each crop slides in from the right with a short blur.
-- **Text**: caption "/ runs a skill. @ hands it a tab." then on B84 "It runs right in the side
+- **Text**: caption "/ runs a skill. @ points it at a tab." (the vertical cut breaks the line after "skill.") then on B84 "It runs right in the side
   panel."
 - **Transition out**: the panel shrinks into a terminal window.
 

@@ -115,7 +115,7 @@ export const Composer: React.FC = () => {
 					<PanelCrop src={k.shots[current.key]} crop={crop} scale={scale} />
 				</div>
 			</Center>
-			<Caption text="/ runs a skill. @ hands it a tab." at={at(72) + 4} until={at(84)} />
+			<Caption text={"/ runs a skill.\n@ points it at a tab."} at={at(72) + 4} until={at(84)} />
 			<Caption text="It runs right in the side panel." at={at(84)} />
 		</AbsoluteFill>
 	);

@@ -38,7 +38,21 @@ export type AgentsCapture = {
 	cli: { sessions: Run; tabs: Run; threads: Run };
 	reload: { call: Entry; ordersBefore: number; ordersAfter: number; page: string; shot: string };
 	panelErrors: string[];
+	threadShown?: string;
+	attempt?: number;
 };
+
+/** Facts the teapot page's body states and its tab title doesn't (scripts/demo/capture-agents.mjs). */
+export const PAGE_FACTS = ["1 L", "$36", "infuser", "speckled", "glazed"];
+
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The messages of a `tabkyra threads show` record: "[n] role: text", text running to the next one. */
+export const threadMessages = (shown: string) =>
+	[...shown.matchAll(/^\[\d+\] (user|assistant|toolResult): ([\s\S]*?)(?=^\[\d+\] (?:user|assistant|toolResult): |(?![\s\S]))/gm)].map((m) => ({
+		role: m[1],
+		text: m[2].trim(),
+	}));
 
 const fail = (what: string): never => {
 	throw new Error(`agents.json: ${what}`);
@@ -92,8 +106,8 @@ export function checkResume(c: AgentsCapture, title: string) {
 	const after = tabLines(r.after);
 	if (before.length < 2) fail("agent 1 had fewer than two tabs before it quit");
 	const kept = c.resume.groupsWhileClosed.find((g) => g.title === title) ?? fail("agent 1's group was gone while it was closed");
-	if (kept.tabs.length !== before.length) fail("agent 1's group lost tabs while it was closed");
-	const ids = (l: typeof before) => l.map((t) => t.id).join(",");
+	const ids = (l: { id: number }[]) => l.map((t) => t.id).join(",");
+	if (ids(kept.tabs) !== ids(before)) fail(`agent 1's group held ${ids(kept.tabs)} while it was closed, not ${ids(before)}`);
 	if (ids(before) !== ids(after)) fail(`the restarted agent got ${ids(after)}, not ${ids(before)}`);
 	if (r.groupAfter.title !== title) fail("the resumed tabs are in another group");
 	if (!r.after.split("\n")[0].includes(`group "${title}"`)) fail("the resumed session names another group");
@@ -101,8 +115,12 @@ export function checkResume(c: AgentsCapture, title: string) {
 }
 
 /** "Hand-off": the tab left the group, and the agent's next tabs_context said it's the user's now. */
-export function checkHandoff(c: AgentsCapture) {
+export function checkHandoff(c: AgentsCapture, title: string) {
 	const h = c.handoff;
+	// Agent 1's: the group the tab left, and the session whose next tabs_context is shown.
+	if (h.groupBefore.title !== title) fail(`the tab left "${h.groupBefore.title}", not agent 1's "${title}"`);
+	if (!h.context.split("\n")[0].includes(`group "${title}"`)) fail("the hand-off news went to another agent's session");
+	if (h.tabAfter.id !== h.tabId) fail("the tab read after the hand-off isn't the one handed off");
 	const news = c.handoff.context.split("\n").find((l) => l.startsWith("News: ")) ?? fail("no News line after the hand-off");
 	const m = news.match(/^News: The user took tab (\d+) \("(.*)"\) out of your group; it's theirs now/);
 	if (!m || Number(m[1]) !== h.tabId) return fail(`the news isn't about tab ${h.tabId}: ${news}`);
@@ -136,14 +154,26 @@ export function checkComposer(c: AgentsCapture, agentTitles: string[]) {
 	if (k.teapotTab !== c.handoff.tabId) fail("the referenced tab isn't the one the user took back");
 	for (const t of agentTitles) {
 		const label = t.replace(/^Tabkyra · /, "");
-		if (!k.atAll.some((row) => row.includes(`used by agent ${label} `))) fail(`the @ menu doesn't show ${label}'s tab as in use`);
+		// The whole label, then the host: "claude · shop" must not match the "claude · shop 2" row.
+		const row = new RegExp(` used by agent ${escapeRe(label)} 127\\.0\\.0\\.1$`);
+		if (!k.atAll.some((r) => row.test(r))) fail(`the @ menu doesn't show ${label}'s tab as in use`);
 	}
 	const free = k.atAll.find((row) => row.startsWith("Stoneware Teapot")) ?? fail("the teapot tab isn't in the @ menu");
 	if (free.includes("used by")) fail("the user's teapot tab shows as in use");
-	// The reply came after reading the tab: it names something only the page says.
-	const reply = k.transcript.split(k.task).slice(1).join(k.task);
-	if (!/stoneware|infuser|speckled|glazed/i.test(reply)) fail("the side panel's agent never read the teapot page");
-	return { skill, task: k.task, free };
+	// From the chat's own record (tabkyra threads show): the agent went to the referenced tab's
+	// page, a tool result carried the page body, and the final reply states facts only the page
+	// body has (not the tab title "Stoneware Teapot · Fernhill Goods" the chip shows).
+	const messages = threadMessages(c.threadShown ?? "");
+	const teapotUrl = String(c.resume.tabsCreate.args.url);
+	const went = messages.some(
+		(m) => m.role === "assistant" && /^-> navigate\(/.test(m.text) && (m.text.includes(`"url":"${teapotUrl}"`) || m.text.includes(`"switchToTab":${k.teapotTab}`)),
+	);
+	if (!went) fail("the side panel's agent never went to the referenced tab's page");
+	if (!messages.some((m) => m.role === "toolResult" && m.text.includes("steel infuser"))) fail("the side panel's agent never read the teapot page");
+	const final = [...messages].reverse().find((m) => m.role === "assistant" && !m.text.startsWith("->"))?.text ?? "";
+	const stated = PAGE_FACTS.filter((f) => final.includes(f));
+	if (stated.length < 2) fail(`the side panel's agent never read the teapot page: its reply states ${stated.length} of its facts`);
+	return { skill, task: k.task, free, reply: final, stated };
 }
 
 /** "Terminal": the three commands ran, exited 0, and show the three groups and the chat. */
@@ -157,7 +187,11 @@ export function checkCli(c: AgentsCapture, agentTitles: string[], word: string) 
 		if (r.args.join(" ") !== args.join(" ") || r.shown !== `tabkyra ${args.join(" ")}`) fail(`expected "tabkyra ${args.join(" ")}", got "${r.shown}"`);
 		if (r.code !== 0) fail(`${r.shown} exited ${r.code}`);
 	}
-	for (const t of agentTitles) if (!sessions.out.includes(t) || !tabs.out.includes(t)) fail(`sessions or tabs doesn't show ${t}`);
+	for (const t of agentTitles) {
+		// The whole title: "Tabkyra · claude · shop" must not match a "… shop 2" row.
+		const whole = new RegExp(`${escapeRe(t)}(?! \\d)`);
+		if (!whole.test(sessions.out) || !whole.test(tabs.out)) fail(`sessions or tabs doesn't show ${t}`);
+	}
 	if (!new RegExp(`^[1-9]\\d* threads? mentions? "${word}"`, "m").test(threads.out)) fail(`threads search didn't find "${word}"`);
 	return { sessions, tabs, threads };
 }

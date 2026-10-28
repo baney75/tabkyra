@@ -23,7 +23,7 @@
 // chrome.tabs.ungroup on the tab, which fires the same tabs.onUpdated (groupId -1) event a drag
 // out of the group does.
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -101,40 +101,60 @@ const PAGES = {
 
 // ---- the run ------------------------------------------------------------------------------
 
-const ATTEMPTS = Number(process.env.TABKYRA_DEMO_ATTEMPTS ?? 3);
+const ATTEMPTS = Number.parseInt(process.env.TABKYRA_DEMO_ATTEMPTS ?? "3", 10);
+if (!(ATTEMPTS >= 1) || String(ATTEMPTS) !== (process.env.TABKYRA_DEMO_ATTEMPTS ?? "3").trim())
+	throw new Error(
+		`TABKYRA_DEMO_ATTEMPTS must be a whole number of 1 or more, not "${process.env.TABKYRA_DEMO_ATTEMPTS}"`,
+	);
 /** The side panel's model ended without doing the task: worth a fresh attempt. */
 class ModelMissed extends Error {}
 
+/** Facts the teapot page's body states and its tab title doesn't (media/video/src/agents/claims.ts, PAGE_FACTS). */
+const PAGE_FACTS = ["1 L", "$36", "infuser", "speckled", "glazed"];
+
 let out;
 async function main() {
-	out = mkdtempSync(join(repo, "media", "video", "public", "capture", ".agents-new-"));
-	try {
-		// A small local model doesn't always finish the side panel task (it may guess a selector
-		// and give up). Such a run is thrown away whole and the capture starts over in a fresh
-		// browser; agents.json records which attempt passed.
-		let capture;
-		for (let attempt = 1; ; attempt++) {
-			try {
-				orders = 0;
-				capture = await record();
-				capture.attempt = attempt;
-				break;
-			} catch (err) {
-				if (!(err instanceof ModelMissed) || attempt >= ATTEMPTS) throw err;
+	// A small local model doesn't always finish the side panel task (it may guess a selector
+	// and give up). Such a run is thrown away whole, its folder included, and the capture starts
+	// over in a fresh browser and a fresh folder; agents.json records which attempt passed.
+	for (let attempt = 1; ; attempt++) {
+		out = mkdtempSync(join(repo, "media", "video", "public", "capture", ".agents-new-"));
+		try {
+			orders = 0;
+			const capture = await record();
+			capture.attempt = attempt;
+			writeFileSync(join(out, "agents.json"), `${JSON.stringify(capture, null, "\t")}\n`);
+			swapIn(out, target);
+			console.log(`wrote ${target}`);
+			return;
+		} catch (err) {
+			if (err instanceof ModelMissed && attempt < ATTEMPTS) {
 				console.error(`attempt ${attempt}: ${err.message}; starting over`);
+				continue;
 			}
+			keepFailed(out);
+			throw err;
+		} finally {
+			rmSync(out, { recursive: true, force: true });
 		}
-		writeFileSync(join(out, "agents.json"), `${JSON.stringify(capture, null, "\t")}\n`);
-		swapIn(out, target);
-		console.log(`wrote ${target}`);
-	} catch (err) {
-		// Keep what was recorded so far for a look; it never replaces the real capture.
-		const kept = join(tmpdir(), `tabkyra-agents-failed-${process.pid}`);
-		renameSync(out, kept);
+	}
+}
+
+/** Moves a failed run's frames to the temp folder for a look; never hides the run's own error. */
+function keepFailed(dir) {
+	const kept = join(tmpdir(), `tabkyra-agents-failed-${process.pid}`);
+	try {
+		try {
+			renameSync(dir, kept);
+		} catch (err) {
+			// The repo can sit on another volume than the temp folder: copy, then remove.
+			if (err.code !== "EXDEV") throw err;
+			cpSync(dir, kept, { recursive: true });
+			rmSync(dir, { recursive: true, force: true });
+		}
 		console.error(`partial capture kept in ${kept}`);
-		throw err;
-	} finally {
-		rmSync(out, { recursive: true, force: true });
+	} catch (err) {
+		console.error(`couldn't keep the partial capture: ${err.message}`);
 	}
 }
 
@@ -434,9 +454,18 @@ async function record() {
 		if (threadId) capture.threadShown = (await run(["threads", "show", threadId])).out.slice(0, 8000);
 		for (const [k, r] of Object.entries(capture.cli))
 			if (r.code !== 0) throw new Error(`tabkyra ${k} failed (${r.code}): ${r.out}`);
+		// Whole titles: "Tabkyra · claude · shop" must not match the "… shop 2" row.
 		for (const t of titles)
-			if (!capture.cli.sessions.out.includes(t.replace(/^Tabkyra · /, "")))
+			if (!new RegExp(`${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?! \\d)`).test(capture.cli.sessions.out))
 				throw new Error(`tabkyra sessions doesn't show ${t}:\n${capture.cli.sessions.out}`);
+		// The side panel run counts only if its record shows the page was read and the last reply
+		// states facts from the page body (the @ chip only shows the tab title).
+		const finalReply = capture.threadShown?.split(/^\[\d+\] assistant: (?!->)/m).at(-1) ?? "";
+		if (
+			!capture.threadShown?.includes("steel infuser") ||
+			PAGE_FACTS.filter((f) => finalReply.includes(f)).length < 2
+		)
+			throw new ModelMissed(`the side panel's model ended without using the page: ${finalReply.slice(0, 300)}`);
 		if (!/teapot/i.test(capture.cli.threads.out))
 			throw new Error(`threads search found nothing:\n${capture.cli.threads.out}`);
 
@@ -661,10 +690,7 @@ async function composerBeat(fx, panel, dir, teapotTab) {
 	const transcript = await panel.eval(
 		`document.querySelector("agent-interface, pi-chat-panel, main")?.innerText ?? document.body.innerText`,
 	);
-	// The reply must use the page: something only the teapot page says (the video's check too).
-	const reply = transcript.split(task).slice(1).join(task);
-	if (!/stoneware|infuser|speckled|glazed/i.test(reply))
-		throw new ModelMissed(`the side panel's model ended without reading the page: ${reply.slice(-300)}`);
+	// Whether the reply used the page is checked from the chat's record after the CLI beat.
 	return {
 		slashAll,
 		slashFiltered,

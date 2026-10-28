@@ -4,7 +4,7 @@
   "description": "The Tabkyra demo video (media/demo.mp4), composed in Remotion from a real recorded run",
   "license": "AGPL-3.0",
   "engines": {
-    "node": "^20.19.0 || ^22.13.0 || >=24"
+    "node": "^22.13.0 || >=24"
   },
   "private": true,
   "dependencies": {
@@ -23,7 +23,7 @@
   "scripts": {
     "dev": "remotion studio",
     "check": "tsc",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
     "render": "remotion render Demo out/demo.mp4 --codec=h264 --crf=20 && remotion still Poster out/demo-poster.jpg --image-format=jpeg --jpeg-quality=90",
     "publish-media": "cp out/demo.mp4 ../demo.mp4 && cp out/demo-poster.jpg ../demo-poster.jpg",
     "render:hero": "remotion render Hero out/hero.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion render HeroVertical out/hero-vertical.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion still HeroPoster out/hero-poster.jpg --image-format=jpeg --jpeg-quality=90",

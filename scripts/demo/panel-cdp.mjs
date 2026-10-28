@@ -24,7 +24,7 @@ export function surface(element) {
 	return `(() => { let e = ${element}; while (e && getComputedStyle(e).backgroundColor === "rgba(0, 0, 0, 0)") e = e.parentElement; return e; })()`;
 }
 
-const KEY_CODES = { Escape: 27, Enter: 13, Tab: 9, ArrowDown: 40, ArrowUp: 38, Backspace: 8 };
+const KEY_CODES = { Escape: 27, Enter: 13 };
 
 /** The few CDP calls the side panel needs, on one attached target and nothing else. */
 export async function connectCdp(wsUrl) {
@@ -95,11 +95,25 @@ export async function connectCdp(wsUrl) {
 					const { data } = await s("Page.captureScreenshot", { format: "png" });
 					writeFileSync(path, Buffer.from(data, "base64"));
 				},
+				/**
+				 * Presses a key. Escape sends the same keyDown/keyUp pair capture-video.mjs always sent.
+				 * Enter is a rawKeyDown, a char and a keyUp, so a keydown handler that sends the message
+				 * sees it. Any other key throws rather than sending something else.
+				 */
 				async key(key) {
-					const code = KEY_CODES[key] ?? 27;
-					await s("Input.dispatchKeyEvent", { type: "rawKeyDown", key, code: key, windowsVirtualKeyCode: code });
-					if (key === "Enter")
+					const code = KEY_CODES[key];
+					if (code === undefined) throw new Error(`panel.key: no key code for "${key}"; add it to KEY_CODES`);
+					if (key === "Enter") {
+						await s("Input.dispatchKeyEvent", {
+							type: "rawKeyDown",
+							key,
+							code: key,
+							windowsVirtualKeyCode: code,
+						});
 						await s("Input.dispatchKeyEvent", { type: "char", key, text: "\r", windowsVirtualKeyCode: code });
+					} else {
+						await s("Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode: code });
+					}
 					await s("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode: code });
 				},
 				/** Types into the focused element the way an IME commit does (one input event). */
