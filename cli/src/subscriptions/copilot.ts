@@ -122,17 +122,27 @@ export class CopilotAuth {
 		const deviceCode = device.device_code;
 		let cancelled = false;
 		let interval = Math.max(5, device.interval ?? 5) * 1000;
+		let networkErrors = 0;
 		const deadline = this.now() + (device.expires_in ?? 900) * 1000;
 		const result = (async (): Promise<CopilotStatus> => {
 			for (;;) {
 				await this.sleep(interval);
 				if (cancelled) throw new SubscriptionError("cancelled", "Sign-in cancelled.");
 				if (this.now() > deadline) throw new SubscriptionError("expired_token", "The GitHub code expired. Start the sign-in again.");
-				const tokens = (await this.post(COPILOT.tokenUrl, [
-					["client_id", COPILOT.clientId],
-					["device_code", deviceCode],
-					["grant_type", "urn:ietf:params:oauth:grant-type:device_code"],
-				])) as GitHubTokenResponse;
+				let tokens: GitHubTokenResponse;
+				try {
+					tokens = (await this.post(COPILOT.tokenUrl, [
+						["client_id", COPILOT.clientId],
+						["device_code", deviceCode],
+						["grant_type", "urn:ietf:params:oauth:grant-type:device_code"],
+					])) as GitHubTokenResponse;
+					networkErrors = 0;
+				} catch (err) {
+					// A dropped connection while the user is still on GitHub's page is not a failed
+					// sign-in: keep polling until the code expires, unless the network stays down.
+					if (++networkErrors >= 6) throw new SubscriptionError("network", `Can't reach GitHub (${err instanceof Error ? err.message : String(err)}).`);
+					continue;
+				}
 				if (tokens.error === "authorization_pending") continue;
 				if (tokens.error === "slow_down") {
 					interval = (tokens.interval ?? interval / 1000 + 5) * 1000;

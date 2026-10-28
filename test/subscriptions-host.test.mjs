@@ -494,3 +494,27 @@ test("proxy: a usage-limit error keeps its code in the message, so the side pane
 	assert.equal(JSON.parse(forbidden.body).error.message, "subscription_sharing_user_not_eligible: Not eligible");
 	await service.stop();
 });
+
+test("Copilot: a dropped connection while polling doesn't end the sign-in", async () => {
+	const dir = tempDir();
+	const gh = fakeGitHub();
+	let failures = 2;
+	const flaky = async (url, init) => {
+		if (String(url).endsWith("/login/oauth/access_token") && failures-- > 0) throw new TypeError("fetch failed");
+		return gh.fetch(url, init);
+	};
+	const auth = new CopilotAuth({ fetch: flaky, dir, sleep: async () => undefined });
+	const status = await (await auth.startSignIn()).result;
+	assert.equal(status.signedIn, true);
+	assert.equal(await auth.token(), "ghu_first");
+	// A network that stays down still ends the attempt with a clear error.
+	const down = new CopilotAuth({
+		fetch: async (url, init) => {
+			if (String(url).endsWith("/login/oauth/access_token")) throw new TypeError("fetch failed");
+			return gh.fetch(url, init);
+		},
+		dir: tempDir(),
+		sleep: async () => undefined,
+	});
+	await assert.rejects((await down.startSignIn()).result, /Can't reach GitHub/);
+});
