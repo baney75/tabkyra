@@ -7,7 +7,7 @@
 // directory, so it never touches an installed browser or a running bridge.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -505,4 +505,56 @@ test("tabs_release, a capped group, and ending and renaming a session from the C
 	} finally {
 		await agent.close();
 	}
+});
+
+// ---- threads: past side panel chats, live ---------------------------------------------------
+
+test("a side panel chat is readable live through the CLI and MCP, and as files; a private-mode one nowhere", async () => {
+	await connected();
+	// The real side panel page creates its database, as it does for the user.
+	const version = await (await fetch(`http://${devtools}/json/version`)).json();
+	const { targetId } = await cdp(version.webSocketDebuggerUrl, "Target.createTarget", { url: `chrome-extension://${EXTENSION_ID}/sidepanel.html` });
+	const panel = await until(async () => (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.id === targetId && t.url.includes("sidepanel.html")), 15_000, "the side panel page");
+	const inPanel = async (expression) => {
+		const r = await cdp(panel.webSocketDebuggerUrl, "Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+		if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? "evaluate threw");
+		return r.result.value;
+	};
+	await until(() => inPanel(`indexedDB.databases().then((d) => d.some((x) => x.name === "tabkyra-storage"))`), 20_000, "the panel's database");
+	// A finished chat with a scripted model, stored the way the panel's session store stores it.
+	const now = new Date().toISOString();
+	const chat = (id, title, extra) => ({
+		data: { id, title, model: { provider: "mock", id: "scripted-model" }, thinkingLevel: "off", createdAt: now, lastModified: now, ...extra, messages: [
+			{ role: "user", content: "What is the cheapest flight to Lisbon in May?", timestamp: 1 },
+			{ role: "assistant", content: [{ type: "text", text: "The cheapest I found is 212 euros on May 14." }, { type: "toolCall", id: "c1", name: "navigate", arguments: { url: "https://flights.example/lis" } }], timestamp: 2 },
+			{ role: "toolResult", toolCallId: "c1", toolName: "navigate", content: [{ type: "text", text: "Flights to LIS" }], isError: false, timestamp: 3 },
+		] },
+		meta: { id, title, createdAt: now, lastModified: now, messageCount: 3, usage: {}, thinkingLevel: "off", preview: "", ...extra },
+	});
+	const store = (c) =>
+		inPanel(`new Promise((resolve, reject) => { const r = indexedDB.open("tabkyra-storage"); r.onsuccess = () => { const tx = r.result.transaction(["sessions", "sessions-metadata"], "readwrite"); tx.objectStore("sessions").put(${JSON.stringify(c.data)}); tx.objectStore("sessions-metadata").put(${JSON.stringify(c.meta)}); tx.oncomplete = () => { chrome.runtime.sendMessage({ type: "tabkyra-thread-changed", id: ${JSON.stringify(c.data.id)} }).catch(() => {}); resolve(true); }; tx.onerror = () => reject(tx.error); }; r.onerror = () => reject(r.error); })`);
+	await store(chat("e2e-flights", "Flights to Lisbon"));
+	await store(chat("e2e-private", "Private medical question", { tabkyraPrivate: true }));
+	// The mirror writes after the debounce; the file is under the test's HOME.
+	const root = join(home, ".local", "share", "tabkyra", "threads");
+	// One folder per browser profile, named by its browser id.
+	const files = await until(() => (existsSync(root) ? readdirSync(root).map((n) => join(root, n)).find((d) => existsSync(join(d, "e2e-flights.md"))) : undefined), 15_000, "the mirrored file");
+	const md = readFileSync(join(files, "e2e-flights.md"), "utf8");
+	assert.equal(statSync(root).mode & 0o777, 0o700);
+	assert.match(md, /^---\nid: e2e-flights\ntitle: "Flights to Lisbon"/);
+	assert.match(md, /212 euros on May 14/);
+	assert.equal(statSync(files).mode & 0o777, 0o700);
+	assert.equal(statSync(join(files, "e2e-flights.md")).mode & 0o777, 0o600);
+	assert.equal(existsSync(join(files, "e2e-private.md")), false, "a private-mode chat was mirrored");
+	// Live through the bridge: the CLI and MCP.
+	const list = execFileSync(process.execPath, [cli, "threads", "--json"], { env: env(), encoding: "utf8" });
+	assert.deepEqual(JSON.parse(list).threads.map((t) => t.id), ["e2e-flights"]);
+	assert.match(execFileSync(process.execPath, [cli, "threads", "show", "e2e-flights"], { env: env(), encoding: "utf8" }), /\[2\] assistant: The cheapest I found is 212 euros on May 14\./);
+	const read = await tool("thread_read", { id: "e2e-flights" });
+	assert.match(read, /Thread e2e-flights: "Flights to Lisbon"/);
+	assert.match(read, /<- navigate: Flights to LIS/);
+	const hidden = await mcp.callTool({ name: "thread_read", arguments: { id: "e2e-private" } });
+	assert.equal(hidden.isError, true);
+	assert.match(await tool("thread_search", { query: "lisbon flight" }), /e2e-flights/);
+	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
 });

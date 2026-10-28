@@ -13,6 +13,7 @@ import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
+import { runThreads, ThreadsUsageError } from "./threads.ts";
 import { runSkill } from "./skill.ts";
 import { banner, c, sym } from "./ui.ts";
 import { runUpdate, UpdateError } from "./update.ts";
@@ -248,6 +249,16 @@ async function main(): Promise<void> {
 		case "mcp":
 			await runMcpServer({ session: option("--session") });
 			return;
+		case "threads": {
+			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !VALUE_FLAGS.has(all[i - 1] ?? ""));
+			try {
+				process.exitCode = await runThreads(rest, { json: flag("--json"), offset: option("--offset"), limit: option("--limit"), format: option("--format"), out: option("--out") });
+			} catch (err) {
+				if (err instanceof ThreadsUsageError) throw new UsageError(err.message);
+				throw err;
+			}
+			return;
+		}
 		case "sessions":
 		case "tabs": {
 			const rest = argv.slice(1).filter((a) => !a.startsWith("-"));

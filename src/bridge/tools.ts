@@ -72,7 +72,11 @@ export interface HandlerContext {
 }
 
 function stopIfAborted(ctx: HandlerContext): void {
-	if (ctx.aborted()) throw new BridgeError(ERR.DIALOG_OPEN, "Stopped: a dialog interrupted this call");
+	if (ctx.aborted())
+		throw new BridgeError(
+			ERR.DIALOG_OPEN,
+			"Stopped: a dialog opened during this call. Answer it with handle_dialog, then read_page to see what ran.",
+		);
 }
 
 type Handler = (ctx: HandlerContext, params: Params) => Promise<unknown>;
@@ -101,12 +105,12 @@ async function resolveTab(ctx: HandlerContext, params: Params, attach: boolean):
 	const tabId = num(params, "tabId");
 	if (tabId !== undefined) {
 		if (!ctx.session.tabIds.includes(tabId)) {
-			throw new BridgeError(ERR.NOT_FOUND, `Tab ${tabId} is not owned by this session. Call tabs.context.`);
+			throw new BridgeError(ERR.NOT_FOUND, `Tab ${tabId} is not one of your tabs. tabs_context lists them.`);
 		}
 		await ctx.session.setCurrent(tabId);
 	}
 	const tab = attach ? await ctx.session.attachedCurrentTab() : await ctx.session.requireCurrentTab();
-	if (tab.id === undefined) throw new BridgeError(ERR.NO_TAB, "No tab available");
+	if (tab.id === undefined) throw new BridgeError(ERR.NO_TAB, "You have no tab yet: navigate opens one.");
 	return tab.id;
 }
 
@@ -157,7 +161,11 @@ async function pointFor(_ctx: HandlerContext, params: Params, tabId: number): Pr
 	const y = num(params, "y");
 	if (x !== undefined && y !== undefined) return screenshotToCss(tabId, { x, y });
 	const t = target(params);
-	if (!t.ref && !t.selector) throw new BridgeError(ERR.BAD_PARAMS, "Provide ref, selector, or x and y");
+	if (!t.ref && !t.selector)
+		throw new BridgeError(
+			ERR.BAD_PARAMS,
+			"Give a ref from read_page (best), a selector, or x and y from your latest screenshot.",
+		);
 	const rect = await locate(tabId, t);
 	return { x: rect.x, y: rect.y };
 }
@@ -227,14 +235,16 @@ export const handlers: Record<string, Handler> = {
 
 	"tabs.close": async (ctx, params) => {
 		const tabId = num(params, "tabId");
-		if (tabId === undefined) throw new BridgeError(ERR.BAD_PARAMS, "tabId is required");
+		if (tabId === undefined)
+			throw new BridgeError(ERR.BAD_PARAMS, "tabId is required (tabs_context lists your tabs)");
 		await ctx.session.closeTab(tabId);
 		return { closed: tabId };
 	},
 
 	"tabs.select": async (ctx, params) => {
 		const tabId = num(params, "tabId");
-		if (tabId === undefined) throw new BridgeError(ERR.BAD_PARAMS, "tabId is required");
+		if (tabId === undefined)
+			throw new BridgeError(ERR.BAD_PARAMS, "tabId is required (tabs_context lists your tabs)");
 		const tab = await ctx.session.setCurrent(tabId);
 		return tabSummary(tab.id!);
 	},
@@ -278,7 +288,7 @@ export const handlers: Record<string, Handler> = {
 
 	"tabs.show": async (ctx, params) => {
 		const tabId = num(params, "tabId") ?? ctx.session.currentTabId;
-		if (tabId === undefined) throw new BridgeError(ERR.NO_TAB, "No tab to show");
+		if (tabId === undefined) throw new BridgeError(ERR.NO_TAB, "You have no tab to show yet: navigate opens one.");
 		await ctx.session.show(tabId);
 		return tabSummary(tabId);
 	},
@@ -405,7 +415,11 @@ export const handlers: Record<string, Handler> = {
 		const tabId = await resolveTab(ctx, params, true);
 		const from = params.from as { x: number; y: number } | undefined;
 		const to = params.to as { x: number; y: number } | undefined;
-		if (!from || !to) throw new BridgeError(ERR.BAD_PARAMS, "from and to are required");
+		if (!from || !to)
+			throw new BridgeError(
+				ERR.BAD_PARAMS,
+				'from and to are required, e.g. {"from":{"x":200,"y":200},"to":{"x":360,"y":300}}',
+			);
 		await drag(tabId, screenshotToCss(tabId, from), screenshotToCss(tabId, to));
 		return { dragged: { from, to } };
 	},
@@ -462,7 +476,8 @@ export const handlers: Record<string, Handler> = {
 		const value = str(params, "value") ?? "";
 		const tabId = await resolveTab(ctx, params, false);
 		const t = target(params);
-		if (!t.ref && !t.selector) throw new BridgeError(ERR.BAD_PARAMS, "ref or selector is required");
+		if (!t.ref && !t.selector)
+			throw new BridgeError(ERR.BAD_PARAMS, "fill needs a ref from read_page, or a selector.");
 		await fillElement(tabId, t, value);
 		return { filled: t };
 	},
@@ -490,7 +505,11 @@ export const handlers: Record<string, Handler> = {
 			{ selector: str(params, "selector"), text: str(params, "text"), urlIncludes: str(params, "urlIncludes") },
 			num(params, "timeoutMs") ?? 10000,
 		);
-		if (!ok) throw new BridgeError(ERR.TIMEOUT, "Condition not met before timeout");
+		if (!ok)
+			throw new BridgeError(
+				ERR.TIMEOUT,
+				`Waited ${num(params, "timeoutMs") ?? 10000} ms and the condition wasn't met. read_page shows the page now; wait again with a longer timeoutMs or for something else.`,
+			);
 		return { ...(await tabSummary(tabId)), matched: true };
 	},
 
@@ -499,14 +518,18 @@ export const handlers: Record<string, Handler> = {
 		const requested = num(params, "tabId");
 		const open = ctx.session.tabIds.filter((id) => !!openDialog(id));
 		if (requested !== undefined && !open.includes(requested))
-			throw new BridgeError(ERR.NOT_FOUND, `No dialog is open on tab ${requested}.`);
+			throw new BridgeError(ERR.NOT_FOUND, `No dialog is open on tab ${requested}; nothing to answer there.`);
 		// Never guess between two boxes: OK on the wrong one could delete or send something.
 		if (requested === undefined && open.length > 1) {
 			const list = open.map((id) => `tab ${id}: ${JSON.stringify(openDialog(id)?.message)}`).join("; ");
 			throw new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab (${list}). Pass tabId.`);
 		}
 		const tabId = requested ?? open[0];
-		if (tabId === undefined) throw new BridgeError(ERR.NOT_FOUND, "No dialog is open on your tabs.");
+		if (tabId === undefined)
+			throw new BridgeError(
+				ERR.NOT_FOUND,
+				"No dialog is open on your tabs; nothing to answer. Carry on with read_page.",
+			);
 		if (typeof params.accept !== "boolean")
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
 		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"));

@@ -54,6 +54,17 @@ test("lists every tool with a description and documented parameters", async () =
 	}
 });
 
+test("tools/list stays small: no schema dialect line, and a byte budget", async () => {
+	const { tools } = await mcp.listTools();
+	for (const tool of tools) assert.equal(tool.inputSchema.$schema, undefined, `${tool.name} still carries $schema`);
+	// Every agent pays for these on every turn. Main measured 26,460 bytes for 31 tools before the
+	// descriptions were cut (docs/benchmarks.md); 34 tools came to about 23,600, and the three
+	// thread tools add about 2,000. A change that grows it past the budget has to earn it.
+	const bytes = Buffer.byteLength(JSON.stringify(tools));
+	assert.ok(bytes <= 26000, `tools/list is ${bytes} bytes, over the 26,000 budget`);
+	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
+});
+
 test("instructions state the safety rules", () => {
 	const instructions = mcp.getInstructions() ?? "";
 	assert.match(instructions, /untrusted data/);
@@ -65,8 +76,8 @@ test("skill_match routes a task to one skill, or none, and skill_read returns th
 	assert.match(instructions, /First call skill_match with the user's task \(it needs no browser\)/);
 	// One first step: matching a skill needs no browser, so a missing browser can't stop it.
 	assert.deepEqual(instructions.match(/\bfirst\b/gi), ["First"], "only one step is called first");
-	assert.ok(instructions.indexOf("skill_match") < instructions.indexOf("Call status"), "skill_match comes before status");
-	assert.match(instructions, /Call status before any browser tool; if it is not connected, tell the user and stop browser work/);
+	assert.ok(instructions.indexOf("skill_match") < instructions.indexOf("Call tabs_context"), "skill_match comes before tabs_context");
+	assert.match(instructions, /Call tabs_context before any browser tool: .* If it says Tabkyra isn't connected, tell the user and stop browser work/);
 	const match = await mcp.callTool({ name: "skill_match", arguments: { task: "find peer-reviewed studies on sleep and memory" } });
 	assert.notEqual(match.isError, true);
 	const lines = match.content[0].text.split("\n");

@@ -12,6 +12,7 @@ import type { ClientToHost, ExtToHost, HostClientConnected, HostToClient, HostTo
 import { ERR, MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { socketDir, socketPath } from "./paths.ts";
+import { applyMirror } from "./threads-mirror.ts";
 import { handleUpdateAction, noteHello, sendStatus, startUpdateTimer } from "./update-host.ts";
 import { VERSION } from "./version.ts";
 
@@ -110,6 +111,15 @@ function onExtensionMessage(message: ExtToHost): void {
 			else for (const id of clients.keys()) toClient(id, { type: "event", event: message.event, data: message.data });
 			return;
 		case "pong":
+			return;
+		case "threads_mirror":
+			// The local thread mirror; every field is checked in applyMirror.
+			try {
+				const what = applyMirror(message as unknown as Record<string, unknown>, browserId);
+				if (what.startsWith("refused")) process.stderr.write(`[tabkyra-host] thread mirror ${what}\n`);
+			} catch (err) {
+				process.stderr.write(`[tabkyra-host] thread mirror failed: ${err instanceof Error ? err.message : String(err)}\n`);
+			}
 			return;
 		case "update_action":
 			// Parsed again strictly inside: only {type, action} with a known action runs anything.

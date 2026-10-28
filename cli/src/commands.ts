@@ -46,6 +46,8 @@ export interface CommandSpec {
 
 /** Options that take a value (`--top 3` or `--top=3`), with the placeholder help shows. */
 export const VALUE_HINTS: Record<string, string> = {
+	"--offset": "N",
+	"--limit": "N",
 	"--session": "<name>",
 	"--top": "N",
 	"--to": "<version>",
@@ -62,7 +64,7 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--note": "TEXT",
 	"--tag": "TAG",
 	"--style": "apa|mla|...",
-	"--format": "bibtex|ris|csl",
+	"--format": "<format>",
 	"--out": "FILE",
 	"--folder": "NAME",
 };
@@ -113,6 +115,19 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "focus", args: "<name>", what: "Show its group to you", flags: ["--json"], max: 1 },
 			{ name: "collapse", args: "<name>", what: "Fold its group", flags: ["--json"], max: 1 },
 			{ name: "expand", args: "<name>", what: "Unfold its group", flags: ["--json"], max: 1 },
+		],
+	},
+	{
+		name: "threads",
+		summary: "Past side panel chats, for you and your agents",
+		what: "Past side panel chats",
+		group: "Sessions",
+		defaultSubcommand: "list",
+		subcommands: [
+			{ name: "list", args: "[words]", what: "Past chats, newest first (live, or from the local mirror)", flags: ["--json", "--offset", "--limit"], max: 64 },
+			{ name: "show", args: "<id>", what: "One chat as text, 40 messages a page", flags: ["--json", "--offset", "--limit"], max: 1 },
+			{ name: "search", args: "<words>", what: "Chats that mention all the words, with snippets", flags: ["--json", "--limit"], max: 64 },
+			{ name: "export", args: "<id>", what: "One chat as Markdown or JSON", flags: ["--format", "--out"], max: 1 },
 		],
 	},
 	{ name: "tabs", positional: 1, args: "[session]", what: "Every agent tab, by session", group: "Sessions", flags: ["--json"] },
