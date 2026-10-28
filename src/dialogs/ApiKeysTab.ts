@@ -8,8 +8,8 @@ import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { providerDisplayName } from "../models/display.js";
 import { FREE_PRIVACY_NOTE } from "../models/free-mode.js";
 import { isFreeModeOn, setFreeMode } from "../models/free-panel.js";
-import { CustomProvidersTab } from "./CustomProvidersTab.js";
 import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/constants.js";
+import { CustomProvidersTab } from "./CustomProvidersTab.js";
 import "../subscriptions/SubscriptionsSection.js";
 
 // Providers to hide from the API key list: removed sign-ins, and clouds that need more than a key.

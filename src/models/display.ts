@@ -6,6 +6,9 @@
 const PROVIDER_NAMES: Record<string, string> = {
 	anthropic: "Anthropic",
 	cerebras: "Cerebras",
+	// Subscription sign-ins (src/subscriptions): the name says whose plan pays.
+	"chatgpt-plan": "ChatGPT plan",
+	"copilot-plan": "GitHub Copilot plan",
 	deepseek: "DeepSeek",
 	"github-copilot": "GitHub Copilot",
 	google: "Google",

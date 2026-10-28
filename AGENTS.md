@@ -135,7 +135,7 @@ edit the outputs by hand.
 ## Sign-in policy
 API keys, plus subscription sign-ins only on a route the provider documents for third-party
 apps, with Tabkyra's own registration: Sign in with ChatGPT (open-source path) and GitHub
-Copilot through the Copilot SDK (D25). Tokens stay in the native host, never in browser
+Copilot through the Copilot SDK (D26). Tokens stay in the native host, never in browser
 storage. Never add a sign-in that sends another app's OAuth client id, originator, user agent
 or headers, never spawn a provider's CLI to borrow its sign-in, and never add a Claude or
 Google subscription sign-in (their terms forbid it). `test/auth-policy.test.mjs` fails if the
