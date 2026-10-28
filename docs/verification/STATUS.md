@@ -19,7 +19,7 @@ item until that item's own Check runs. Review records are in each PR's Review bl
 | DC-2 | MCP parity, least privilege, scoped revocable per-client tokens | prepared (partial) | `tabkyra serve` + `tabkyra token` (D9). Narrow tests pass ([dc-2-dc-9.md](dc-2-dc-9.md)); CLI/MCP parity contract tests not written |
 | DC-3 | One schema (SKILL.md + skill.toml per D1, tools/, tests/) | none | Lint currently allows SKILL.md + license only |
 | DC-3 | Router: top-1 >= 90%, false-invoke <= 5% on 200 tasks | none | |
-| DC-3 | Agent skill creation into skills/local as prepared | prepared | `skill write` and MCP `skill_manage` (lint on every write, saved only with `--yes`/`apply:true`), `skill test`, `skill remove` (D25); `cli/test/community.test.mjs`, dry run in [community-skills.md](community-skills.md) |
+| DC-3 | Agent skill creation into skills/local as prepared | prepared | `skill write` and MCP `skill_manage` (lint on every write, saved only with `--yes`/`apply:true`), `skill test`, `skill remove` (D26); `cli/test/community.test.mjs`, dry run in [community-skills.md](community-skills.md) |
 | DC-3 | Friction journal, improver, apply only if tests and eval hold, rollback | prepared (partial) | `skill revert` exists (tested); no journal, eval gate |
 | DC-3 | `skill add <path|git-url|db-id>` with scan + tests | none | |
 | DC-3 | Sandboxed skill tools with declared permissions | none | |
@@ -27,9 +27,9 @@ item until that item's own Check runs. Review records are in each PR's Review bl
 | DC-4 | `/rsi` loop on demand and on schedule, written report | prepared | skills/rsi; no schedule, no report file |
 | DC-4 | Adversarial review toggle, equal-or-stronger reviewer, failure blocks | prepared | Prose in skills/rsi; not enforced in code |
 | DC-4 | Policy, CI, permission manifests, review gate read-only to agents | prepared (partial) | `skill apply` refuses rsi and kyraskillmaker (tested); no policy-file guard |
-| DC-5 | Submission queue with per-submission confirmation | prepared | `skill submit`: preview, then `--confirm <code>` per submission; refused without `gh` and with personal data (D25). Tests and a dry run with no push ([community-skills.md](community-skills.md)); no real community pull request opened yet |
+| DC-5 | Submission queue with per-submission confirmation | prepared | `skill submit`: preview, then `--confirm <code>` per submission; refused without `gh` and with personal data (D26). Tests and a dry run with no push ([community-skills.md](community-skills.md)); no real community pull request opened yet |
 | DC-5 | CI gates 1-5 | prepared (partial) | Gate 2 (static scan) in CI with 105 red-team tests; gates 1, 3, 4, 5 missing |
-| DC-5 | Auto-update with signature check, pinning, revoke list | prepared | Community catalog signed with the release key in CI, serial pinning against replay, `community/revoked.json` (D25). Verify and reject tested with a throwaway key; the release-environment signing job has not run yet |
+| DC-5 | Auto-update with signature check, pinning, revoke list | prepared | Community catalog signed with the release key in CI, serial pinning against replay, `community/revoked.json` (D26). Verify and reject tested with a throwaway key; the release-environment signing job has not run yet |
 | DC-5 | Check: >= 50 malicious blocked 100%, <= 5% false positives on >= 50 benign | none | Current corpus is synthetic single-line cases |
 | DC-6 | Untrusted tagging, quarantined planner | none | MCP instructions only |
 | DC-6 | Outbound actions need policy check + user confirmation | none | Prose rule in MCP instructions |

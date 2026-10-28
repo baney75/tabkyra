@@ -1,4 +1,4 @@
-// The community skill loop end to end, in a throwaway browser (docs/decisions.md D25,
+// The community skill loop end to end, in a throwaway browser (docs/decisions.md D26,
 // CONTRIBUTING-skills.md). Nothing here touches an installed browser, the user's Tabkyra
 // config, their gh sign-in or the network beyond a read-only clone of the target repository.
 //

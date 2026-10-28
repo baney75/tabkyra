@@ -1,5 +1,5 @@
 /**
- * Rules for community skills (docs/decisions.md D25, CONTRIBUTING-skills.md), on top of the
+ * Rules for community skills (docs/decisions.md D26, CONTRIBUTING-skills.md), on top of the
  * skill lint every skill passes (skill-lint.ts):
  *
  * - scope: a community skill names its sites in a `## Sites` section, and every link in it

@@ -14,7 +14,7 @@ import { encodeFrame, FrameParser } from "../cli/src/framing.ts";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // The hosts here keep community skill state in a folder of their own and never fetch a catalog
-// (the host syncs on every hello, D25).
+// (the host syncs on every hello, D26).
 process.env.TABKYRA_CONFIG_DIR = mkdtempSync(join(tmpdir(), "tabkyra-host-config-"));
 process.env.TABKYRA_COMMUNITY_URL = join(process.env.TABKYRA_CONFIG_DIR, "no-catalog");
 

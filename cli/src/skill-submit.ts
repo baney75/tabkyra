@@ -1,6 +1,6 @@
 /**
  * `tabkyra skill submit`: propose a skill to the community library as a pull request from the
- * user's own GitHub account (docs/decisions.md D25, CONTRIBUTING-skills.md).
+ * user's own GitHub account (docs/decisions.md D26, CONTRIBUTING-skills.md).
  *
  * 1. Refuse without a signed-in `gh` (one-line fix), and refuse any personal data in the skill,
  *    its cases or the note (D6). Nothing is rewritten behind the user's back.

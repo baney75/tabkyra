@@ -350,7 +350,7 @@ rules on sections apply to edits of built-in and community skills.
 ## Community skills
 
 Community skills are in `community/skills/` and reach clients in a signed catalog
-(D25, [CONTRIBUTING-skills.md](../CONTRIBUTING-skills.md)). The router keeps its index of
+(D26, [CONTRIBUTING-skills.md](../CONTRIBUTING-skills.md)). The router keeps its index of
 built-in and local skills as measured above and adds a second index with the community skills.
 A community skill is the answer only when it leads that second index and either the first finds
 nothing or the task names one of the skill's sites (its word, like "notion" for notion.so, or its

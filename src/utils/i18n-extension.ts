@@ -152,6 +152,24 @@ declare module "@mariozechner/mini-lit" {
 		"1 slide": string;
 		"{rows} rows": string;
 		"columns after {count} not shown": string;
+		"Chat name": string;
+		"Could not delete the chat": string;
+		"Could not rename the chat": string;
+		"Delete all chats": string;
+		"Delete chats older than 30 days": string;
+		"Delete chats older than 90 days": string;
+		"Deleted “{title}”": string;
+		"Export all chats": string;
+		"Import chats": string;
+		"More actions": string;
+		"No chats yet": string;
+		"No matching chats": string;
+		"Open now": string;
+		"Past chats": string;
+		Rename: string;
+		"Search chats": string;
+		Undo: string;
+		"Untitled chat": string;
 	}
 }
 
@@ -302,6 +320,24 @@ const tabkyraTranslations = {
 		"1 slide": "1 slide",
 		"{rows} rows": "{rows} rows",
 		"columns after {count} not shown": "columns after {count} not shown",
+		"Chat name": "Chat name",
+		"Could not delete the chat": "Could not delete the chat",
+		"Could not rename the chat": "Could not rename the chat",
+		"Delete all chats": "Delete all chats",
+		"Delete chats older than 30 days": "Delete chats older than 30 days",
+		"Delete chats older than 90 days": "Delete chats older than 90 days",
+		"Deleted “{title}”": "Deleted “{title}”",
+		"Export all chats": "Export all chats",
+		"Import chats": "Import chats",
+		"More actions": "More actions",
+		"No chats yet": "No chats yet",
+		"No matching chats": "No matching chats",
+		"Open now": "Open now",
+		"Past chats": "Past chats",
+		Rename: "Rename",
+		"Search chats": "Search chats",
+		Undo: "Undo",
+		"Untitled chat": "Untitled chat",
 	},
 	de: {
 		"A custom provider with that name already exists": "A custom provider with that name already exists",
@@ -451,6 +487,24 @@ const tabkyraTranslations = {
 		"1 slide": "1 Folie",
 		"{rows} rows": "{rows} Zeilen",
 		"columns after {count} not shown": "Spalten nach {count} nicht angezeigt",
+		"Chat name": "Chat-Name",
+		"Could not delete the chat": "Der Chat konnte nicht gelöscht werden",
+		"Could not rename the chat": "Der Chat konnte nicht umbenannt werden",
+		"Delete all chats": "Alle Chats löschen",
+		"Delete chats older than 30 days": "Chats älter als 30 Tage löschen",
+		"Delete chats older than 90 days": "Chats älter als 90 Tage löschen",
+		"Deleted “{title}”": "„{title}“ gelöscht",
+		"Export all chats": "Alle Chats exportieren",
+		"Import chats": "Chats importieren",
+		"More actions": "Weitere Aktionen",
+		"No chats yet": "Noch keine Chats",
+		"No matching chats": "Keine passenden Chats",
+		"Open now": "Geöffnet",
+		"Past chats": "Frühere Chats",
+		Rename: "Umbenennen",
+		"Search chats": "Chats durchsuchen",
+		Undo: "Rückgängig",
+		"Untitled chat": "Chat ohne Titel",
 	},
 };
 

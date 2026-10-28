@@ -1,5 +1,5 @@
 /**
- * The community skill catalog (docs/decisions.md D25): every skill merged into community/skills
+ * The community skill catalog (docs/decisions.md D26): every skill merged into community/skills
  * in baney75/tabkyra, published as one JSON file signed with the release key, and synced to
  * each client about once a day.
  *

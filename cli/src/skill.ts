@@ -715,7 +715,7 @@ function localStateKey(): string {
  * exactly as before community skills existed. The full one adds the community skills (and local
  * copies of them). A community skill is picked only when the primary index finds nothing, so a
  * community skill never takes a task from a built-in or local skill, and the built-in skills
- * route exactly as CI measured them (D25).
+ * route exactly as CI measured them (D26).
  */
 function routerIndexes(): { primary: RouterIndex; full?: RouterIndex; community: Set<string> } {
 	const key = `${localStateKey()}#${communityKey()}`;

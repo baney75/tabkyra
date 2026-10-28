@@ -1,6 +1,6 @@
 /**
  * Community skills in the extension: where the host's status frame is kept and how its skills join
- * the bundled library. The host does the verifying and syncing (docs/decisions.md D25).
+ * the bundled library. The host does the verifying and syncing (docs/decisions.md D26).
  */
 
 import type { HostCommunityStatus } from "../bridge/protocol.js";

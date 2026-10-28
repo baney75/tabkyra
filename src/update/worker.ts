@@ -291,7 +291,7 @@ async function giveUpOnSent(at: number): Promise<void> {
 	await setProgress(
 		pending.action,
 		"failed",
-		"No result from the native host. Open Settings > Updates to see the state and try again.",
+		"No result from the native host. Open Settings > About to see the update state and try again.",
 	);
 }
 

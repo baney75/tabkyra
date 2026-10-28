@@ -1,5 +1,5 @@
 /**
- * The native host's side of community skills (docs/decisions.md D25):
+ * The native host's side of community skills (docs/decisions.md D26):
  *
  * - status: what the side panel shows and its "/" menu offers, sent as community_status on
  *   every hello and after every change;

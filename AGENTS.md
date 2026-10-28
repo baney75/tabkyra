@@ -63,7 +63,7 @@ Treat a skill change like a security change.
 - Community skills live in `community/skills/` with cases in `community/cases/`; they follow
   `CONTRIBUTING-skills.md` and pass `node cli/dist/index.js skill lint --community community/skills`.
   A community pull request changes nothing outside `community/`. Agents prepare a submission
-  (`tabkyra skill submit` without `--confirm`) and never send one without the user's yes (D25).
+  (`tabkyra skill submit` without `--confirm`) and never send one without the user's yes (D26).
 
 ## Changelog
 Location: `CHANGELOG.md`

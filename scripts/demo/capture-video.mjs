@@ -367,7 +367,7 @@ async function browserBeats(work, capture) {
 		);
 		await new Promise((r) => setTimeout(r, 800));
 		if (!(await panel.eval(`!!${findText("Bridge")}`)))
-			await panel.click(`document.querySelector('button[title="Settings"]')`);
+			await panel.click(`document.querySelector('button[aria-label="Settings"]')`);
 		await until(() => panel.eval(`!!${findText("Bridge")}`), 5000, "the settings tabs");
 		await panel.click(findText("Bridge"));
 		await until(

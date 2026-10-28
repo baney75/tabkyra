@@ -2,7 +2,7 @@
 
 Found a better way to get around a site? Turn it into a community skill. Every Tabkyra user
 gets it once a maintainer merges it. This page is for you and for your agent. The design is
-decision D25 in [docs/decisions.md](docs/decisions.md).
+decision D26 in [docs/decisions.md](docs/decisions.md).
 
 ## What a community skill is
 

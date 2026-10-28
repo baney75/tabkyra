@@ -2,7 +2,7 @@
 
 Tabkyra updates from the side panel. The native host checks once a day; the panel shows
 "Update available" with an **Update now** button; the update runs, and Tabkyra reloads
-itself once no agent is running. Settings > Updates shows what runs and offers Check now,
+itself once no agent is running. Settings > About (Updates) shows what runs and offers Check now,
 Update now and Roll back. `tabkyra update` does the release install from a terminal.
 
 What "update" does depends on how Tabkyra runs (the install mode):
@@ -15,7 +15,7 @@ What "update" does depends on how Tabkyra runs (the install mode):
 
 ## The side panel
 
-- **Update now** (under the header, and in Settings > Updates) sends the native host one
+- **Update now** (under the header, and in Settings > About (Updates)) sends the native host one
   of a fixed set of action names. The host runs the matching fixed command
   (`tabkyra update --host`, `--host --activate`, `--host --rollback` or `--host --reinstall`)
   as a child process of the CLI it runs from, and streams each step to the panel: checking,
@@ -69,7 +69,7 @@ What "update" does depends on how Tabkyra runs (the install mode):
   different commits (an update stopped partway), the panel offers **Re-run install**. If the
   browser or the native host still runs an older build than the one installed, it offers
   **Reload Tabkyra**.
-- **Settings > Updates** shows the running build, the installed one, the mode, the folder,
+- **Settings > About (Updates)** shows the running build, the installed one, the mode, the folder,
   the channel (`main` in a checkout), the last and next check, why an update would refuse,
   and the updates choice:
   - **Off**: no checks at all.
@@ -145,7 +145,7 @@ worker for an action; a content script can't.
 | `tabkyra update --yes` | Also answers yes to "install the release" when you run from a git checkout | |
 | `tabkyra update --rollback` | Swaps back to the release before this one (run it again to undo). From a git checkout it asks first (`--yes` skips the question) | 0, 1 when there is none or you said no |
 | `--channel stable\|nightly` | Picks the channel. An update (not `--check`) remembers it in `~/.config/tabkyra/update.json` | |
-| `tabkyra update --auto-check off` | Turns the daily check off, the same as Settings > Updates > Off (`on` turns it back on). `TABKYRA_NO_UPDATE_CHECK=1` also turns it off | |
+| `tabkyra update --auto-check off` | Turns the daily check off, the same as Settings > About (Updates) > Off (`on` turns it back on). `TABKYRA_NO_UPDATE_CHECK=1` also turns it off | |
 | `tabkyra skill refresh [--json]` | Refreshes the installed skills you haven't edited (the update runs it) | 0 |
 
 Stable takes releases tagged `vX.Y.Z`. Nightly also takes prereleases such as

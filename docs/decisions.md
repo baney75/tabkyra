@@ -420,7 +420,33 @@ the mcp, and cli, and such." Defaults chosen:
 - **Data, not instructions**: the tool descriptions, the MCP instructions and every rendered
   thread say so, since a past chat can hold page text an attacker wrote.
 
-## D25. Community skills: manage, contribute, review, sync (Claude, 2026-10-28)
+## D25. Side panel polish: fewer header buttons, Share only when it acts, six settings tabs (Claude, 2026-10-28)
+
+Owner, 2026-10-28: "also work on the UI a bit", then "fix this button, and improve speed
+provider, session, and setting management and UI making it less cluttered and easy to use".
+Defaults chosen:
+
+- **Header**: chat title, then Past chats, New chat, More, Settings. Copy chat, Record a skill
+  and the theme moved under More. Every icon has a name that shows as a tooltip on hover and on
+  keyboard focus. Recording shows a red "Recording" pill that stops it.
+- **Share this tab shows only when it would do something.** The panel shows on its own task's
+  tabs, so the tab in front was nearly always the agent's already and the old link button did
+  nothing, silently. The pill appears when the active tab is not one of the session's tabs (a
+  run keeps the panel open while the user looks elsewhere) and goes away once shared. Other tabs
+  are referenced with `@`.
+- **Hover is neutral, brass means on.** The theme's accent text (blue in light, yellow in dark)
+  made a hovered icon look switched on.
+- **Settings has six tabs** that all show at the panel's width: Providers (API keys, then custom
+  providers), Skills, Bridge, Privacy (with the CORS proxy), Costs, About (with updates). The
+  provider list has a search box, lists providers with a key first, saves on Enter and offers
+  "Choose a model" after a save.
+- **Past chats**: the search box has focus when the list opens and Enter opens the top match;
+  each row renames in place and deletes with Undo instead of a confirm box. Bulk import, export
+  and delete are under the list's More menu (bulk delete still asks).
+- **Starter chips**: Summarize this page (runs), Research with sources, Fill a form and Compare
+  tabs (each fills the chat input for the user to finish; Compare tabs opens the `@` tab menu).
+
+## D26. Community skills: manage, contribute, review, sync (Claude, 2026-10-28)
 
 Owner, 2026-10-28: "make it so the skill system is easier for peoples llms to manage, and
 contrinute to the larger tabkyra community, ex if an llm finds a better way to navigate a site
