@@ -54,9 +54,13 @@ test("a thread reads as compact text: tool calls and results short, attachments 
 	assert.doesNotMatch(render.renderPage(t, 4, 2), /More:/);
 });
 
-test("the JSON copy keeps the conversation and drops binary data and attachment bodies", () => {
+test("the JSON copy keeps the conversation and drops binary data, attachment bodies, reasoning and long results", () => {
 	const json = JSON.stringify(render.sanitizeJson(thread("abc")));
 	assert.doesNotMatch(json, /iVBORw0KGgo|BASE64DATA|secret plan|sk-ant-api03/);
+	assert.doesNotMatch(json, /long private reasoning/, "the JSON copy kept the model's reasoning");
+	assert.doesNotMatch(json, /x{301}/, "the JSON copy kept a tool result in full");
+	assert.match(json, /x{300}\.\.\. \[1700 more characters\]/);
+	assert.match(json, /Here are three options\./);
 	assert.match(json, /itinerary\.pdf/);
 	assert.match(json, /"type":"image","mimeType":"image\/png"/);
 	assert.match(json, /"model":"openrouter\/anthropic\/claude-sonnet"/);
@@ -72,6 +76,12 @@ test("redaction removes keys, tokens and private keys but keeps commit ids and U
 	assert.match(out, /Bearer \[secret\]/);
 	assert.match(out, /\[private-key\]/);
 	assert.match(out, /9e37df3ef79b6c0e4cf95a8c30f4f272d913e9e0/);
+	// Keys written only in hex: 32 digits (Datadog, Twilio) and 64 (a private key or signing secret).
+	const hex32 = "0123456789abcdef".repeat(2);
+	const hex64 = "fedcba9876543210".repeat(4);
+	const hexOut = redactSecrets(`DD_API_KEY=${hex32} and seed ${hex64}`);
+	assert.doesNotMatch(hexOut, new RegExp(`${hex32}|${hex64}`), "a key written in hex was kept");
+	assert.match(hexOut, /DD_API_KEY=\[secret\] and seed \[secret\]/);
 	assert.match(out, /https:\/\/github\.com\/baney75\/tabkyra\/pull\/40/);
 });
 

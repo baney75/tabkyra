@@ -409,8 +409,12 @@ the mcp, and cli, and such." Defaults chosen:
   agent already has over the user's other files.
 - **Never private-mode chats.** A chat saved while private mode is on is marked private for
   good; turning private mode off later doesn't expose it.
-- **Redacted and trimmed.** Keys and tokens are removed; reasoning is left out; tool results are
-  cut to 300 characters; images and attachment contents appear by name only.
+- **Redacted and trimmed, in every form** (text, Markdown and JSON). Keys and tokens are removed,
+  including keys written only in hex (32 or 64 digits; a 40-digit commit id stays); reasoning is
+  left out; tool results are cut to 300 characters; images and attachment contents appear by
+  name only.
+- **One folder per browser profile** (`threads/<browserId>/`), so two browsers never delete or
+  overwrite each other's copy; the CLI and MCP read all of them.
 - **Local stdio MCP may read threads; remote sessions need `threads.read`**, a scope no other
   scope implies.
 - **Data, not instructions**: the tool descriptions, the MCP instructions and every rendered

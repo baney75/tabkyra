@@ -236,7 +236,7 @@ or Codex can answer "what did I ask Tabkyra yesterday about Lisbon flights?":
 | --- | --- |
 | MCP (`tabkyra mcp`) | `threads_list`, `thread_search`, `thread_read` (40 messages a page) |
 | Terminal | `tabkyra threads [list] [words]`, `show <id>`, `search <words>`, `export <id> --format md\|json [--out FILE]`, each with `--json` |
-| Files | `~/.local/share/tabkyra/threads/<id>.md` and `<id>.json`, plus `index.json` |
+| Files | `~/.local/share/tabkyra/threads/<browser>/<id>.md` and `<id>.json`, plus `index.json`; one folder per browser profile |
 
 Live answers come from the extension; when the browser is closed, the CLI and MCP read the
 files. The files are written by the native host (folder 0700, files 0600, each write atomic) a

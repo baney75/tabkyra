@@ -7,14 +7,14 @@
  * never instructions.
  */
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { redactSecrets } from "../../src/privacy/bug-reports.ts";
 import { matches, renderMarkdown, renderMessages, renderPage, snippets, type ThreadData, validThreadId } from "../../src/threads/render.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
-import { readIndex, threadsDir } from "./threads-mirror.ts";
+import { readAllIndexes, threadsDir } from "./threads-mirror.ts";
 import { banner, c, sym } from "./ui.ts";
 
 /** The line the server instructions add (dropped when a session lacks these tools). */
@@ -39,23 +39,23 @@ async function ask(client: BridgeClient | undefined, method: string, params: Rec
 }
 
 function mirrored(id: string): ThreadData {
-	const file = join(threadsDir(), `${id}.json`);
-	if (!validThreadId(id) || !existsSync(file)) throw new MirrorMiss(`No thread ${id}. threads_list shows the ones you can read.`);
+	const entry = validThreadId(id) ? readAllIndexes().find((t) => t.id === id) : undefined;
+	const file = entry ? join(entry.dir, `${id}.json`) : "";
+	if (!entry || !existsSync(file)) throw new MirrorMiss(`No thread ${id}. threads_list shows the ones you can read.`);
 	const t = JSON.parse(readFileSync(file, "utf8")) as ThreadData;
 	return { ...t, messages: Array.isArray(t.messages) ? t.messages : [], model: typeof t.model === "string" ? { id: t.model } : t.model };
 }
 
 /** The same answers as the bridge methods, from the files the host wrote. */
 export function fromMirror(method: string, params: Record<string, unknown>): Reply {
-	const dir = threadsDir();
 	const note = "(from the local mirror; the browser isn't connected)";
 	if (method === "threads.list") {
 		const query = typeof params.query === "string" ? params.query : "";
 		const offset = Number(params.offset ?? 0) || 0;
 		const limit = Math.min(Number(params.limit ?? 20) || 20, 100);
 		// Titles are redacted when written; again here, for files an older build wrote.
-		const all = readIndex(dir)
-			.map((t) => ({ ...t, title: redactSecrets(String(t.title ?? "")) }))
+		const all = readAllIndexes()
+			.map(({ dir: _dir, ...t }) => ({ ...t, title: redactSecrets(String(t.title ?? "")) }))
 			.filter((t) => !query || matches(t.title, query));
 		const page = all.slice(offset, offset + limit);
 		return {
@@ -73,11 +73,14 @@ export function fromMirror(method: string, params: Record<string, unknown>): Rep
 		const query = String(params.query ?? "").trim();
 		if (!query) throw new MirrorMiss('query is required, e.g. {"query":"flight prices"}');
 		const hits: Array<{ id: string; title: string; snippets: string[] }> = [];
-		const files = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith(".json") && n !== "index.json") : [];
-		for (const name of files) {
-			const id = name.slice(0, -5);
+		for (const { id } of readAllIndexes()) {
 			if (!validThreadId(id)) continue;
-			const data = mirrored(id);
+			let data: ThreadData;
+			try {
+				data = mirrored(id);
+			} catch {
+				continue;
+			}
 			const found = snippets(data, query);
 			if (found.length || matches(redactSecrets(String(data.title ?? "")), query)) hits.push({ id, title: redactSecrets(String(data.title ?? "")), snippets: found });
 		}

@@ -115,7 +115,7 @@ function onExtensionMessage(message: ExtToHost): void {
 		case "threads_mirror":
 			// The local thread mirror; every field is checked in applyMirror.
 			try {
-				const what = applyMirror(message as unknown as Record<string, unknown>);
+				const what = applyMirror(message as unknown as Record<string, unknown>, browserId);
 				if (what.startsWith("refused")) process.stderr.write(`[tabkyra-host] thread mirror ${what}\n`);
 			} catch (err) {
 				process.stderr.write(`[tabkyra-host] thread mirror failed: ${err instanceof Error ? err.message : String(err)}\n`);

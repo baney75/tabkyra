@@ -15,6 +15,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
 const root = mkdtempSync(join(tmpdir(), "tabkyra-threads-"));
 const dir = join(root, "threads");
+/** This test's browser profile's folder in the mirror. */
+const bdir = join(dir, "b1");
 const sock = join(root, "sock");
 mkdirSync(sock, { mode: 0o700 });
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -38,12 +40,13 @@ const put = (id, title = `Thread ${id}`, lastModified = "2026-10-27T10:00:00.000
 });
 
 test("the host writes a thread as 0600 files in a 0700 folder, with an index, atomically", () => {
-	assert.equal(applyMirror(put("t1", "Lisbon trip", "2026-10-27T10:00:00.000Z")), "wrote t1");
-	assert.equal(applyMirror(put("t2", "Taxes", "2026-10-27T11:00:00.000Z")), "wrote t2");
+	assert.equal(applyMirror(put("t1", "Lisbon trip", "2026-10-27T10:00:00.000Z"), "b1"), "wrote t1");
+	assert.equal(applyMirror(put("t2", "Taxes", "2026-10-27T11:00:00.000Z"), "b1"), "wrote t2");
 	assert.equal(statSync(dir).mode & 0o777, 0o700);
-	for (const f of ["t1.md", "t1.json", "index.json"]) assert.equal(statSync(join(dir, f)).mode & 0o777, 0o600, f);
-	assert.ok(!readdirSync(dir).some((n) => n.endsWith(".tmp")), "a temporary file was left behind");
-	const index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8"));
+	assert.equal(statSync(bdir).mode & 0o777, 0o700);
+	for (const f of ["t1.md", "t1.json", "index.json"]) assert.equal(statSync(join(bdir, f)).mode & 0o777, 0o600, f);
+	assert.ok(!readdirSync(bdir).some((n) => n.endsWith(".tmp")), "a temporary file was left behind");
+	const index = JSON.parse(readFileSync(join(bdir, "index.json"), "utf8"));
 	assert.deepEqual(index.threads.map((t) => t.id), ["t2", "t1"], "newest first");
 	assert.equal(index.threads[1].title, "Lisbon trip");
 });
@@ -51,12 +54,12 @@ test("the host writes a thread as 0600 files in a 0700 folder, with an index, at
 test("ids that could leave the folder, or name the index, are refused and write nothing", () => {
 	const before = readdirSync(dir).sort();
 	for (const id of ["../escape", "a/b", "..", ".hidden", "index", "x".repeat(200), "", 7]) {
-		assert.match(applyMirror({ ...put("ok"), id, meta: { ...put("ok").meta, id } }), /^refused/, String(id));
-		assert.match(applyMirror({ op: "delete", id }), /^refused/, String(id));
+		assert.match(applyMirror({ ...put("ok"), id, meta: { ...put("ok").meta, id } }, "b1"), /^refused/, String(id));
+		assert.match(applyMirror({ op: "delete", id }, "b1"), /^refused/, String(id));
 	}
-	assert.match(applyMirror({ op: "sync", ids: ["t1", "../x"] }), /^refused/);
-	assert.match(applyMirror({ op: "put", id: "t3", md: 5, json: "{}", meta: { id: "t3" } }), /^refused/);
-	assert.match(applyMirror({ op: "rm -rf" }), /^refused/);
+	assert.match(applyMirror({ op: "sync", ids: ["t1", "../x"] }, "b1"), /^refused/);
+	assert.match(applyMirror({ op: "put", id: "t3", md: 5, json: "{}", meta: { id: "t3" } }, "b1"), /^refused/);
+	assert.match(applyMirror({ op: "rm -rf" }, "b1"), /^refused/);
 	assert.deepEqual(readdirSync(dir).sort(), before);
 	assert.equal(existsSync(join(root, "escape.md")), false);
 });
@@ -69,10 +72,10 @@ test("the CLI reads threads from the mirror when no browser is connected", () =>
 	assert.match(list.stdout, /t2 \| "Taxes"/);
 	assert.deepEqual(JSON.parse(run("threads", "list", "--json").stdout).threads.map((t) => t.id), ["t2", "t1"]);
 	// A title an older build wrote with a key in it is redacted on the way out.
-	const index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8"));
+	const index = JSON.parse(readFileSync(join(bdir, "index.json"), "utf8"));
 	const key = ["sk-ant", "api03", "AbCdEf0123456789AbCdEf0123456789"].join("-");
 	index.threads[0].title = `Taxes ${key}`;
-	writeFileSync(join(dir, "index.json"), JSON.stringify(index));
+	writeFileSync(join(bdir, "index.json"), JSON.stringify(index));
 	const listed = run("threads", "list", "--json").stdout;
 	assert.doesNotMatch(listed, /sk-ant-api03/);
 	assert.match(listed, /Taxes \[secret\]/);
@@ -114,17 +117,17 @@ test("MCP: the three thread tools are listed with a data-not-instructions warnin
 
 test("turning the mirror off clears it; deleting and syncing remove only the right files", () => {
 	writeFileSync(join(dir, "notes-of-mine.txt"), "not ours");
-	assert.equal(applyMirror({ op: "delete", id: "t2" }), "deleted");
-	assert.equal(existsSync(join(dir, "t2.md")), false);
-	assert.deepEqual(JSON.parse(readFileSync(join(dir, "index.json"), "utf8")).threads.map((t) => t.id), ["t1"]);
-	applyMirror(put("t4"));
-	assert.equal(applyMirror({ op: "sync", ids: ["t4"] }), "synced 1");
-	assert.equal(existsSync(join(dir, "t1.json")), false, "a thread deleted while the host was away keeps its files");
-	assert.ok(existsSync(join(dir, "t4.json")));
-	assert.equal(applyMirror({ op: "clear" }), "cleared");
+	assert.equal(applyMirror({ op: "delete", id: "t2" }, "b1"), "deleted");
+	assert.equal(existsSync(join(bdir, "t2.md")), false);
+	assert.deepEqual(JSON.parse(readFileSync(join(bdir, "index.json"), "utf8")).threads.map((t) => t.id), ["t1"]);
+	applyMirror(put("t4"), "b1");
+	assert.equal(applyMirror({ op: "sync", ids: ["t4"] }, "b1"), "synced 1");
+	assert.equal(existsSync(join(bdir, "t1.json")), false, "a thread deleted while the host was away keeps its files");
+	assert.ok(existsSync(join(bdir, "t4.json")));
+	assert.equal(applyMirror({ op: "clear" }, "b1"), "cleared");
 	assert.deepEqual(readdirSync(dir), ["notes-of-mine.txt"], "clear removes the mirror's files, never the user's");
 	rmSync(join(dir, "notes-of-mine.txt"));
-	assert.equal(applyMirror({ op: "clear" }), "cleared");
+	assert.equal(applyMirror({ op: "clear" }, "b1"), "cleared");
 	assert.equal(existsSync(dir), false);
 });
 
@@ -134,4 +137,21 @@ test("remote sessions read threads only with the threads.read scope", () => {
 	assert.deepEqual(scopes["threads.read"].tools.sort(), ["thread_read", "thread_search", "threads_list"]);
 	for (const [name, s] of Object.entries(scopes))
 		if (name !== "threads.read") assert.ok(!s.tools.some((t) => /^threads?_/.test(t)), `${name} grants a thread tool`);
+});
+
+test("two browsers keep separate copies: one's sync or clear never removes the other's chats, and readers see both", () => {
+	const run = (...args) => spawnSync(process.execPath, [cli, ...args], { env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: sock, TABKYRA_THREADS_DIR: dir, NO_COLOR: "1" }, encoding: "utf8", timeout: 20000 });
+	applyMirror(put("helium1", "Helium chat", "2026-10-27T10:00:00.000Z"), "helium");
+	applyMirror(put("chrome1", "Chrome chat", "2026-10-27T11:00:00.000Z"), "chrome");
+	// Chrome's host connects and syncs the ids it has: Helium's chat stays.
+	assert.equal(applyMirror({ op: "sync", ids: ["chrome1"] }, "chrome"), "synced 1");
+	assert.ok(existsSync(join(dir, "helium", "helium1.json")), "one browser's sync deleted the other's chat");
+	assert.deepEqual(JSON.parse(run("threads", "list", "--json").stdout).threads.map((t) => t.id), ["chrome1", "helium1"]);
+	assert.match(run("threads", "show", "helium1").stdout, /Thread helium1: "Helium chat"/);
+	// Chrome's switch off clears Chrome's copy only.
+	applyMirror({ op: "clear" }, "chrome");
+	assert.equal(existsSync(join(dir, "chrome")), false);
+	assert.ok(existsSync(join(dir, "helium", "helium1.md")));
+	applyMirror({ op: "clear" }, "helium");
+	assert.equal(existsSync(dir), false);
 });

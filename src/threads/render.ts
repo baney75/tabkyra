@@ -145,20 +145,35 @@ export function renderMarkdown(data: ThreadData): string {
 	return `${[...fm, ...body].join("\n")}\n`;
 }
 
-/** The thread as JSON without binary data: images and attachment contents become names and types. */
+/**
+ * The thread as JSON without binary data or reasoning: images and attachment contents become
+ * names and types, thinking blocks are left out, and tool results are cut to RESULT_CHARS (as in
+ * the text form), so a page an agent read in full isn't copied to disk.
+ */
 export function sanitizeJson(data: ThreadData): Record<string, unknown> {
-	const strip = (value: unknown): unknown => {
-		if (typeof value === "string") return redactSecrets(value);
-		if (Array.isArray(value)) return value.map(strip);
+	const DROP = Symbol("drop");
+	const strip = (value: unknown, inResult = false): unknown => {
+		// Redact before cutting: a key cut in half would slip past the patterns.
+		if (typeof value === "string") return inResult ? short(redactSecrets(value), RESULT_CHARS) : redactSecrets(value);
+		if (Array.isArray(value)) return value.map((v) => strip(v, inResult)).filter((v) => v !== DROP);
 		if (!value || typeof value !== "object") return value;
 		const o = value as Record<string, unknown>;
+		if (o.type === "thinking" || o.type === "redacted_thinking") return DROP;
 		if (o.type === "image") return { type: "image", mimeType: o.mimeType };
+		if (o.role === "toolResult") {
+			const out: Record<string, unknown> = {};
+			for (const [k, v] of Object.entries(o)) {
+				if (k === "details") continue;
+				out[k] = strip(v, k === "content");
+			}
+			return out;
+		}
 		const out: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(o)) {
 			// Attachment bodies and inline previews carry the file itself; keep the name.
 			if ((k === "content" || k === "preview" || k === "extractedText") && "fileName" in o) continue;
 			if (k === "thoughtSignature" || k === "thinkingSignature" || k === "data") continue;
-			out[k] = strip(v);
+			out[k] = strip(v, inResult);
 		}
 		return out;
 	};

@@ -36,11 +36,13 @@ export function redactSecrets(text: string): string {
 				/\b(sk|pk|rk|ghp|gho|ghu|ghs|github_pat|glpat|xox[abprs]|AKIA|ASIA|AIza|ya29|eyJ|npm_|hf_|sk-ant|sk-proj|sk-or)[\w-]{10,}/g,
 				"[secret]",
 			)
-			// Long mixed-case or mixed letter-and-digit tokens (keys without a known prefix); plain
-			// hex such as git commit ids stays, since a transcript about code needs it.
-			.replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, (m) =>
-				/^[0-9a-f]+$/i.test(m) || !/[0-9]/.test(m) || !/[A-Za-z]/.test(m) ? m : "[secret]",
-			)
+			// Long mixed-case or mixed letter-and-digit tokens (keys without a known prefix). Plain
+			// hex stays only at a git commit id's length (40): 32 and 64 hex digits are the shapes of
+			// API keys, auth tokens and private keys (Datadog, Twilio, ed25519), so those go.
+			.replace(/[A-Za-z0-9_+/-]{32,}={0,2}/g, (m) => {
+				if (/^[0-9a-f]+$/i.test(m)) return m.length === 40 ? m : "[secret]";
+				return !/[0-9]/.test(m) || !/[A-Za-z]/.test(m) ? m : "[secret]";
+			})
 	);
 }
 
