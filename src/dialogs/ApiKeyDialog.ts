@@ -12,15 +12,18 @@ import "@mariozechner/pi-web-ui";
  */
 export class ApiKeyDialog extends DialogBase {
 	private provider = "";
+	/** One line shown in place of the default description (Free mode explains its free key). */
+	private note?: string;
 	private resolvePromise?: (success: boolean) => void;
 	private checkInterval?: ReturnType<typeof setInterval>;
 
 	protected modalWidth = "min(500px, 90vw)";
 	protected modalHeight = "auto";
 
-	static async prompt(provider: string): Promise<boolean> {
+	static async prompt(provider: string, note?: string): Promise<boolean> {
 		const dialog = new ApiKeyDialog();
 		dialog.provider = provider;
+		dialog.note = note;
 		dialog.open();
 
 		return new Promise((resolve) => {
@@ -65,7 +68,7 @@ export class ApiKeyDialog extends DialogBase {
 						title: `Connect to ${this.provider}`,
 						description: removed
 							? "Subscription sign-in for this provider was removed. Pick a provider that takes an API key in Settings."
-							: "Add an API key to use this provider's models.",
+							: (this.note ?? "Add an API key to use this provider's models."),
 					})}
 					${
 						removed

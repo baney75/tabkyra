@@ -1,4 +1,4 @@
-// The community skill loop end to end, in a throwaway browser (docs/decisions.md D26,
+// The community skill loop end to end, in a throwaway browser (docs/decisions.md D27,
 // CONTRIBUTING-skills.md). Nothing here touches an installed browser, the user's Tabkyra
 // config, their gh sign-in or the network beyond a read-only clone of the target repository.
 //
@@ -109,7 +109,17 @@ writeFileSync(pubFile, key.publicText);
 const catalogDir = join(work, "catalog");
 mkdirSync(catalogDir);
 const fb = await launchFixtureBrowser({
-	extraEnv: { TABKYRA_UPDATE_PUBKEY: pubFile, TABKYRA_COMMUNITY_URL: catalogDir, TABKYRA_CLIENT_NAME: "community-loop", TABKYRA_SESSION: "community-loop" },
+	extraEnv: {
+		TABKYRA_UPDATE_PUBKEY: pubFile,
+		TABKYRA_COMMUNITY_URL: catalogDir,
+		TABKYRA_CLIENT_NAME: "community-loop",
+		TABKYRA_SESSION: "community-loop",
+		// Harness folders a saved skill is installed into: inside the throwaway home, whatever the
+		// caller's environment points at (a CLAUDE_CONFIG_DIR would otherwise be the real one).
+		CLAUDE_CONFIG_DIR: join(work, "home-claude"),
+		CODEX_HOME: join(work, "home-codex"),
+		XDG_CONFIG_HOME: join(work, "home-xdg"),
+	},
 });
 let mcp;
 try {

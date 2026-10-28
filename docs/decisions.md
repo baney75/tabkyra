@@ -447,7 +447,50 @@ Defaults chosen:
 - **Starter chips**: Summarize this page (runs), Research with sources, Fill a form and Compare
   tabs (each fills the chat input for the user to finish; Compare tabs opens the `@` tab menu).
 
-## D26. Community skills: manage, contribute, review, sync (Claude, 2026-10-28)
+## D26. Free mode: the best free OpenRouter model, measured (Claude, 2026-10-28)
+
+Owner, 2026-10-28: "Add a free mode so through openrouter it provides the best free model for
+usage in tabkyra." Defaults chosen:
+
+- **One step to turn on.** "Free (best available)" is the first entry in the model selector,
+  and Settings > Providers has a Free mode switch. Free mode is a model choice
+  (`openrouter/tabkyra-free`), so it persists like any other model. OpenRouter has no model by
+  that id, so a request that somehow skipped the gate fails instead of reaching a paid model.
+- **Best is measured, not guessed.** `cli/eval/free-models.mjs` runs every free, tool-capable
+  model on four fixture tasks (shop, contact form with a confirm dialog, a forum thread with a
+  planted instruction, two-store price comparison) through Tabkyra's MCP tools in a headless
+  Chromium, scored by the fixture site's own state. `cli/eval/free-ranking.mjs` writes the
+  result to `src/models/free-ranking.json` with its date and method; `test/free-mode.test.mjs`
+  fails if the shipped order doesn't match the recorded scores. The eval drives the MCP tools,
+  not the side panel's own tool set; the two are close in kind (navigate, read, click, fill),
+  and one real side panel turn (`cli/eval/free-mode-turn.mjs`) checks the panel end to end.
+- **Live list, refreshed daily.** The panel reads OpenRouter's `/models` and `/endpoints/zdr`
+  (no key needed) at most once a day and keeps only `:free` ids (or `openrouter/free`) whose
+  every price is zero and that list `tools`. A zero-priced model without the `:free` suffix
+  is not trusted, since its price can change under the same id. Measured models keep their
+  measured order; a measured model that passed nothing is left out; a model rate-limited on
+  every run was never measured and ranks with the unmeasured ones; unmeasured new free
+  models follow, longest context first, then newest; `openrouter/free` is always last.
+- **Fallbacks, free only.** Each request sends OpenRouter's `models` list: the two best models
+  and `openrouter/free` (OpenRouter takes at most three, checked live). Every id is checked
+  free against the live list before sending, and the request carries `provider.max_price` of
+  zero as a second guard. If the whole list is rate-limited, overloaded, pulled or gated, the
+  panel tries the next two models once more; then the turn ends with the free daily limit
+  (50 requests a day, 1,000 after buying 10 credits, 20 a minute) and what to do.
+- **Gated free models are not worked around.** Some free models answer only for apps on
+  OpenRouter's app list (`thinkingmachines/inkling:free` and `inkling-small:free` returned 403 "only available on
+  agentic harnesses"). Tabkyra sends its own identity and never borrows another app's (D16);
+  such a model scores 0 and is skipped.
+- **Private mode still wins.** In private mode Free mode uses only free models with a free
+  zero-data-retention endpoint, never `openrouter/free` (it picks its model on OpenRouter's
+  side), and each request carries private mode's ZDR routing. With none available it refuses
+  and sends nothing. The selector entry and the switch say free providers may log prompts.
+- **No key.** Picking Free mode without an OpenRouter key opens the key prompt with one line on
+  getting a free key; Free mode stays off unless a key is added.
+- **Which model answered.** pi-ai records the model a router reports (`responseModel`, through
+  `patches/pi-mono.patch`), and the composer's model button reads "Free · <model>".
+
+## D27. Community skills: manage, contribute, review, sync (Claude, 2026-10-28)
 
 Owner, 2026-10-28: "make it so the skill system is easier for peoples llms to manage, and
 contrinute to the larger tabkyra community, ex if an llm finds a better way to navigate a site

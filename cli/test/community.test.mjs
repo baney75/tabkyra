@@ -1,4 +1,4 @@
-// Community skills (docs/decisions.md D26, CONTRIBUTING-skills.md): manage skills without
+// Community skills (docs/decisions.md D27, CONTRIBUTING-skills.md): manage skills without
 // hand-editing files (lint on every write), submit one with a preview and the user's code
 // (refused without gh and with personal data), and sync a signed catalog: verified with the
 // release key, tampered, unsigned, mis-signed and replayed catalogs refused, local overrides

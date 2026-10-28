@@ -1,4 +1,4 @@
-# Community skills: the loop, end to end (D26)
+# Community skills: the loop, end to end (D27)
 
 Run 2026-10-28 by Claude on a Mac (Apple silicon), from branch `community-skills`, with
 `node cli/eval/community-loop.mjs`. Everything ran in a throwaway Playwright Chromium with its

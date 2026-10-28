@@ -64,8 +64,8 @@ export async function cdp(wsUrl, method, params = {}) {
 	}
 }
 
-/** `extraArgs`: more Chromium switches (window size, language). */
-export async function launchFixtureBrowser({ extraEnv = {}, extraArgs = [] } = {}) {
+/** `extraArgs`: more Chromium switches (window size, language). `extensionDir`: a build other than dist-chrome. */
+export async function launchFixtureBrowser({ extraEnv = {}, extraArgs = [], extensionDir } = {}) {
 	const home = mkdtempSync(join(tmpdir(), "tk-eval-home-"));
 	// Unix socket paths are capped near 104 bytes on macOS, so keep this one short.
 	const socketDir = mkdtempSync("/tmp/tkev-");
@@ -76,7 +76,7 @@ export async function launchFixtureBrowser({ extraEnv = {}, extraArgs = [] } = {
 	// session the measured clients share.
 	for (const k of HARNESS_SESSION_VARS) if (!(k in extraEnv)) delete env[k];
 	execFileSync(process.execPath, [cli, "install"], { env, stdio: "ignore" });
-	const ext = join(repo, "dist-chrome");
+	const ext = extensionDir ?? join(repo, "dist-chrome");
 	const browser = spawn(
 		chromium.executablePath(),
 		[

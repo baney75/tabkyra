@@ -1,4 +1,4 @@
-# Publishes the community skill catalog (docs/decisions.md D26): every skill merged into
+# Publishes the community skill catalog (docs/decisions.md D27): every skill merged into
 # community/skills on main, built into one JSON file, signed with the release key, and
 # attached to the `community-catalog` release, where clients fetch it about once a day and
 # refuse it unless the signature verifies against keys/tabkyra-release.pub.

@@ -150,7 +150,7 @@ export interface ExtThreadsMirror {
 }
 
 /**
- * Community skills (docs/decisions.md D26): turn them on or off, or check now. Exactly these
+ * Community skills (docs/decisions.md D27): turn them on or off, or check now. Exactly these
  * two fields; the host refuses anything more (cli/src/community-host.ts).
  */
 export interface ExtCommunityAction {

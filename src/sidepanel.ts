@@ -70,6 +70,9 @@ import {
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { modelLabelParts } from "./models/display.js";
+import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE } from "./models/free-mode.js";
+import { freeComposerText, installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
+import { isFreeModeModel } from "./models/free-runtime.js";
 import { refreshDiscoveredModels } from "./models/registry.js";
 import { installBugCapture } from "./privacy/capture.js";
 import { assertPrivateProxy, PRIVATE_MODE_KEY, privateModel, TRUSTED_HOSTS_KEY } from "./privacy/private-mode.js";
@@ -573,6 +576,27 @@ async function getProvidersWithKeys(): Promise<string[]> {
 	return result;
 }
 
+/** The composer's model button text; Free mode names the model that answered last. */
+let modelLabelKey: string | undefined;
+function refreshModelLabel(force = false) {
+	const ai = chatPanel?.agentInterface;
+	if (!ai || !agent) return;
+	const free = freeComposerText(agent.state.model, agent.state.messages);
+	const key = free ?? "";
+	if (!force && key === modelLabelKey) return;
+	modelLabelKey = key;
+	// A new function each time: the composer re-renders only when the property changes.
+	ai.modelLabel = (model) => {
+		const text = freeComposerText(model, agent.state.messages);
+		if (text) return { content: text, title: `${text}. ${FREE_PRIVACY_NOTE}` };
+		const parts = modelLabelParts(model);
+		return {
+			content: html`${parts.name}<span class="text-muted-foreground font-normal"> · ${parts.provider}</span>`,
+			title: parts.title,
+		};
+	};
+}
+
 async function hasAnyApiKey(): Promise<boolean> {
 	const providers = await storage.providerKeys.list();
 	return providers.length > 0;
@@ -739,16 +763,30 @@ function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(
 		// A removed subscription sign-in must not run, whatever left the model selected.
 		if (isBlockedModel(model)) throw new RemovedSignInError(model.provider);
 		// Private mode: only zero-data-retention OpenRouter routes and local models.
-		if (await storage.settings.get<boolean>(PRIVATE_MODE_KEY)) {
-			const trusted = (await storage.settings.get<string[]>(TRUSTED_HOSTS_KEY)) ?? [];
+		const privateMode = (await storage.settings.get<boolean>(PRIVATE_MODE_KEY)) === true;
+		const trusted = privateMode ? ((await storage.settings.get<string[]>(TRUSTED_HOSTS_KEY)) ?? []) : [];
+		if (privateMode) {
 			// The CORS proxy would see every prompt, so it must be on the user's own machines too.
 			assertPrivateProxy(
 				await storage.settings.get<boolean>("proxy.enabled"),
 				await storage.settings.get<string>("proxy.url"),
 				trusted,
 			);
-			model = privateModel(model, trusted);
 		}
+		// Free mode: the best free OpenRouter models, every one checked free; private mode still applies to each.
+		if (isFreeModeModel(model)) {
+			const [context, options] = rest;
+			return streamFree(
+				model,
+				context,
+				options,
+				privateMode,
+				inner as never,
+				(m) => (privateMode ? privateModel(m, trusted) : m),
+				storage.settings,
+			);
+		}
+		if (privateMode) model = privateModel(model, trusted);
 		if (model.api === "openai-completions") {
 			const custom = await storage.customProviders.getAll().catch(() => []);
 			if (custom.some((p) => p.name === model.provider)) {
@@ -896,6 +934,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				saveSession();
 			}
 
+			refreshModelLabel();
 			renderApp();
 		});
 	}
@@ -905,7 +944,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return chrome.runtime.getURL("sandbox.html");
 		},
 		onApiKeyRequired: async (provider: string) => {
-			return await ApiKeyDialog.prompt(provider);
+			return await ApiKeyDialog.prompt(provider, isFreeModeModel(agent.state.model) ? FREE_KEY_NOTE : undefined);
 		},
 		onModelSelect: async () => {
 			const providers = await getProvidersWithKeys();
@@ -918,6 +957,11 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			ModelSelector.open(
 				agent.state.model,
 				(model) => {
+					// Free mode checks for an OpenRouter key first and explains how to get a free one.
+					if (isFreeModeModel(model)) {
+						void setFreeMode(true);
+						return;
+					}
 					agent.setModel(model);
 					chatPanel.agentInterface?.requestUpdate();
 					renderApp();
@@ -1027,13 +1071,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		// "@" lists the window's tabs; a chosen one is shared with the agent on send.
 		chatPanel.agentInterface.mentionProvider = buildTabMentionProvider();
 		chatPanel.agentInterface.composerAccessory = composerChips;
-		chatPanel.agentInterface.modelLabel = (model) => {
-			const parts = modelLabelParts(model);
-			return {
-				content: html`${parts.name}<span class="text-muted-foreground font-normal"> · ${parts.provider}</span>`,
-				title: parts.title,
-			};
-		};
+		refreshModelLabel(true);
 		// ArrowUp in an empty composer recalls the last prompt for editing or resending.
 		chatPanel.agentInterface.historyProvider = () => {
 			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
@@ -1426,6 +1464,25 @@ async function initApp() {
 
 	// Register cached provider model lists now; refresh stale ones in the background.
 	refreshDiscoveredModels(storage).catch((err) => console.warn("Model discovery failed:", err));
+	installFreeMode({
+		settings: storage.settings,
+		hasOpenRouterKey: async () => Boolean(await storage.providerKeys.get("openrouter")),
+		currentModel: () => agent?.state.model,
+		setModel: async (model) => {
+			agent?.setModel(model);
+			await storage.settings.set("lastUsedModel", model);
+			chatPanel.agentInterface?.requestUpdate();
+			renderApp();
+		},
+		leaveFreeMode: async (previous) => {
+			if (previous) {
+				agent?.setModel(previous);
+				await storage.settings.set("lastUsedModel", previous);
+				renderApp();
+			} else await selectDefaultModelForAvailableProvider();
+			chatPanel.agentInterface?.requestUpdate();
+		},
+	});
 
 	// TODO reenable Request persistent storage
 	// if (storage.sessions) {

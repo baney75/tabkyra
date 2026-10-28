@@ -767,7 +767,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	);
 
 	// Managing skills changes what the user's agents load, so it's for the local server only:
-	// never a remote or scoped session (D9, D26).
+	// never a remote or scoped session (D9, D27).
 	if (!bundledOnly) registerSkillManagement(server, library);
 
 	// ask_user (cli/src/ask.ts): questions for the user, answered in the side panel.
@@ -826,7 +826,7 @@ async function previewSubmission(name: string, note?: string): Promise<string> {
 
 /**
  * skill_manage: list, write, test, remove and prepare_submit in one tool, so agents that never
- * manage skills pay for one tool definition, not five (docs/skill-platform.md, D26).
+ * manage skills pay for one tool definition, not five (docs/skill-platform.md, D27).
  */
 function registerSkillManagement(server: McpServer, library: <T>(fn: () => Promise<T> | T) => Promise<ToolResult>): void {
 	server.registerTool(
