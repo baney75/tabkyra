@@ -21,6 +21,8 @@ export class SubscriptionsSection extends LitElement {
 	@state() private deviceCode?: { userCode: string; verificationUri: string };
 	@state() private welcome = false;
 	@state() private notice?: string;
+	@state() private copied?: string;
+	private copiedTimer?: ReturnType<typeof setTimeout>;
 
 	protected override createRenderRoot(): HTMLElement {
 		return this;
@@ -116,7 +118,39 @@ export class SubscriptionsSection extends LitElement {
 	}
 
 	private copy(text: string): void {
-		void navigator.clipboard.writeText(text);
+		navigator.clipboard.writeText(text).then(
+			() => {
+				clearTimeout(this.copiedTimer);
+				this.copied = text;
+				this.copiedTimer = setTimeout(() => {
+					this.copied = undefined;
+				}, 1500);
+			},
+			() => {
+				this.notice = "Couldn't copy. Select the command and copy it by hand.";
+			},
+		);
+	}
+
+	/** One shell command the user pastes into a terminal: labeled, monospace, with its own copy button. */
+	private command(label: string, text: string): TemplateResult {
+		return html`
+			<div class="flex flex-col gap-1">
+				<div class="flex items-center justify-between gap-2">
+					<span class="text-xs font-medium text-muted-foreground">${label}</span>
+					<button
+						type="button"
+						class="rounded px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+						aria-label=${`Copy the ${label} command`}
+						@click=${() => this.copy(text)}
+					>
+						<span aria-hidden="true">${this.copied === text ? "Copied" : "Copy"}</span>
+					</button>
+					<span class="sr-only" role="status">${this.copied === text ? `Copied the ${label} command` : ""}</span>
+				</div>
+				<code class="block rounded-md border border-border bg-muted px-2.5 py-2 text-foreground font-mono text-xs leading-5 break-words select-all">${text}</code>
+			</div>
+		`;
 	}
 
 	private row(opts: {
@@ -229,14 +263,14 @@ export class SubscriptionsSection extends LitElement {
 							: nothing
 					}`,
 				})}
-				<div class="flex flex-col gap-1 rounded-md border border-border p-3" data-subscription="cli">
+				<div class="flex flex-col gap-2 rounded-md border border-border p-3" data-subscription="cli">
 					<span class="text-sm font-medium text-foreground">Claude and Gemini</span>
 					<p class="text-xs text-muted-foreground">
 						Use your Claude Code or Gemini CLI subscription by running it with Tabkyra's MCP server. Anthropic's and Google's
 						terms don't allow other apps to sign in with those plans, so Tabkyra doesn't.
 					</p>
-					<code class="text-xs break-all">${CLI_MCP_SETUP.claude}</code>
-					<code class="text-xs break-all">${CLI_MCP_SETUP.gemini}</code>
+					${this.command("Claude Code", CLI_MCP_SETUP.claude)}
+					${this.command("Gemini CLI", CLI_MCP_SETUP.gemini)}
 				</div>
 				${this.notice ? html`<p class="text-xs text-muted-foreground" role="status">${this.notice}</p>` : nothing}
 			</div>

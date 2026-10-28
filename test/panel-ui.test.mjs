@@ -117,3 +117,24 @@ test("starter chips: four, each a task that runs, none of the old odd ones", asy
 	// "Compare tabs" ends in "@" so the composer opens its tab menu.
 	assert.match(starters.find((s) => s.label === "Compare tabs").prompt, /@$/);
 });
+
+test("pages that paint the theme background also set the theme text color, so dialogs on <body> stay readable", () => {
+	// Dialogs mount on <body>, outside the panel's own text-foreground wrapper. Without a body
+	// color, unstyled text fell back to black: near-invisible on the dark theme's ink.
+	for (const page of ["static/sidepanel.html", "static/debug.html"]) {
+		const body = readFileSync(new URL(`../${page}`, import.meta.url), "utf8").match(/<body class="([^"]*)"/)?.[1] ?? "";
+		assert.match(body, /\bbg-background\b/, page);
+		assert.match(body, /\btext-foreground\b/, page);
+	}
+});
+
+test("the Claude and Gemini MCP setup commands render as readable command blocks with a copy button", () => {
+	const source = readFileSync(new URL("../src/subscriptions/SubscriptionsSection.ts", import.meta.url), "utf8");
+	assert.match(source, /this\.command\("Claude Code", CLI_MCP_SETUP\.claude\)/);
+	assert.match(source, /this\.command\("Gemini CLI", CLI_MCP_SETUP\.gemini\)/);
+	const block = source.slice(source.indexOf("private command("), source.indexOf("private row("));
+	const codeClass = block.match(/<code class="([^"]*)"/)?.[1] ?? "";
+	assert.match(codeClass, /\btext-foreground\b/);
+	assert.match(codeClass, /\bfont-mono\b/);
+	assert.match(block, /@click=\$\{\(\) => this\.copy\(text\)\}/);
+});
