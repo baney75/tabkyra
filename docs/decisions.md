@@ -530,7 +530,7 @@ then synced amongst those who use tabkyra." Defaults chosen:
 - **Merging stays human.** CODEOWNERS covers `community/`, CI has no auto-merge, and a pull
   request that changes `community/` changes nothing else.
 - **Signed catalog, release key, in CI.** `.github/workflows/community-catalog.yml` builds the
-  catalog on main (on a merge to `community/`, daily, and by hand) in a job with no secrets,
+  catalog on main (on a merge that changes `community/`, the lint or community rules, or the release key, and by hand; no scheduled publish, owner 2026-10-28; a daily check with no signing key rebuilds the catalog, verifies the published file and signature, and opens an issue when they differ or the check can't run; a publish refuses a catalog whose source predates a change to its inputs or whose serial isn't newer; a takedown still waits for a person to approve its publish) in a job with no secrets,
   then signs it with minisign in the `release` environment in a job that runs no repo code,
   verifies it against `keys/tabkyra-release.pub`, and uploads it to the `community-catalog`
   release. No key is on a contributor's or user's machine. The signed trusted comment names
