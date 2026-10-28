@@ -32,6 +32,8 @@ export class SubscriptionService {
 	readonly turns: CopilotTurns;
 	private readonly fetch: Fetch;
 	private proxy?: Promise<{ server: Server; url: string; secret: string }>;
+	/** ChatGPT requests in flight; sign-out stops them first, as OpenAI's docs say. */
+	private readonly forwards = new Set<AbortController>();
 
 	constructor(options: ServiceOptions = {}) {
 		this.fetch = options.fetch ?? fetch;
@@ -69,6 +71,7 @@ export class SubscriptionService {
 				this.siwc.cancelSignIn();
 				return { cancelled: true };
 			case "chatgpt.signout":
+				for (const forward of this.forwards) forward.abort();
 				return await this.siwc.signOut();
 			case "copilot.signin": {
 				const pending = await this.copilot.startSignIn();
@@ -80,7 +83,7 @@ export class SubscriptionService {
 				return { cancelled: true };
 			case "copilot.signout":
 				await this.turns.reset();
-				return this.copilot.signOut();
+				return await this.copilot.signOut();
 			default:
 				throw new SubscriptionError("bad_params", `Unknown subscription method ${method}`);
 		}
@@ -125,14 +128,19 @@ export class SubscriptionService {
 			const body = siwcRequestBody(JSON.parse((await readBody(req)).toString("utf8")) as Record<string, unknown>);
 			const token = await this.siwc.accessToken();
 			const abort = new AbortController();
+			this.forwards.add(abort);
 			res.on("close", () => abort.abort());
-			const upstream = await this.fetch(`${SIWC.apiBase}/responses`, {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "text/event-stream" },
-				body: JSON.stringify(body),
-				signal: abort.signal,
-			});
-			return pipe(upstream, res);
+			try {
+				const upstream = await this.fetch(`${SIWC.apiBase}/responses`, {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "text/event-stream" },
+					body: JSON.stringify(body),
+					signal: abort.signal,
+				});
+				return await pipe(upstream, res, abort.signal);
+			} finally {
+				this.forwards.delete(abort);
+			}
 		}
 		if (req.method === "GET" && path === "/copilot/models") {
 			return sendJson(res, 200, { models: await this.turns.listModels() });
@@ -195,7 +203,7 @@ export function withErrorCode(json: string): string {
 	return JSON.stringify(data);
 }
 
-async function pipe(upstream: Response, res: ServerResponse): Promise<void> {
+async function pipe(upstream: Response, res: ServerResponse, signal?: AbortSignal): Promise<void> {
 	const type = upstream.headers.get("content-type") ?? "application/json";
 	const requestId = upstream.headers.get("x-request-id");
 	res.writeHead(upstream.status, { "Content-Type": type, "Cache-Control": "no-store", ...(requestId ? { "x-request-id": requestId } : {}) });
@@ -218,6 +226,7 @@ async function pipe(upstream: Response, res: ServerResponse): Promise<void> {
 	let pending = "";
 	try {
 		for (;;) {
+			if (signal?.aborted) break;
 			const { done, value } = await reader.read();
 			if (done) break;
 			pending += decoder.decode(value, { stream: true });

@@ -42,6 +42,8 @@ function connect(): chrome.runtime.Port {
 		if (!w) return;
 		if (reply.progress) w.onProgress?.(reply.progress);
 		if (reply.error) {
+			// The host went away: its proxy address and secret went with it.
+			if (reply.error.code === "no_host") cached = undefined;
 			waiters.delete(reply.id);
 			w.reject(new SubscriptionRequestError(reply.error.code, reply.error.message));
 		} else if (reply.result !== undefined) {
@@ -51,6 +53,7 @@ function connect(): chrome.runtime.Port {
 	});
 	next.onDisconnect.addListener(() => {
 		if (port === next) port = undefined;
+		cached = undefined;
 		for (const w of waiters.values())
 			w.reject(new SubscriptionRequestError("no_host", "Lost the connection to Tabkyra's background worker."));
 		waiters.clear();

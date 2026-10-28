@@ -78,6 +78,8 @@ export class CopilotAuth {
 	private readonly sleep: (ms: number) => Promise<void>;
 	private pending?: PendingDeviceSignIn;
 	private refreshing?: Promise<CopilotRecord>;
+	/** Bumped by sign-out: a sign-in or refresh that started before it must not write a token back. */
+	private generation = 0;
 
 	constructor(options: CopilotAuthOptions = {}) {
 		this.fetch = options.fetch ?? fetch;
@@ -105,6 +107,7 @@ export class CopilotAuth {
 			method: "POST",
 			headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams(form).toString(),
+			signal: AbortSignal.timeout(15_000),
 		});
 		const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
 		if (!response.ok && !body.error) body.error = `http_${response.status}`;
@@ -120,6 +123,7 @@ export class CopilotAuth {
 		if (device.error || !device.device_code || !device.user_code || !device.verification_uri)
 			throw new SubscriptionError(device.error ?? "device_code_failed", `GitHub didn't start the sign-in (${device.error ?? "no code"}).`);
 		const deviceCode = device.device_code;
+		const generation = this.generation;
 		let cancelled = false;
 		let interval = Math.max(5, device.interval ?? 5) * 1000;
 		let networkErrors = 0;
@@ -152,7 +156,7 @@ export class CopilotAuth {
 				if (tokens.error === "expired_token") throw new SubscriptionError("expired_token", "The GitHub code expired. Start the sign-in again.");
 				if (tokens.error || !tokens.access_token) throw new SubscriptionError(tokens.error ?? "no_token", `GitHub sign-in failed (${tokens.error ?? "no token"}).`);
 				if (cancelled) throw new SubscriptionError("cancelled", "Sign-in cancelled.");
-				await this.save(tokens);
+				await this.save(tokens, undefined, () => !cancelled && generation === this.generation);
 				return this.status();
 			}
 		})();
@@ -177,7 +181,7 @@ export class CopilotAuth {
 		this.pending?.cancel();
 	}
 
-	private async save(tokens: GitHubTokenResponse, previous?: CopilotRecord): Promise<CopilotRecord> {
+	private async save(tokens: GitHubTokenResponse, previous: CopilotRecord | undefined, current: () => boolean): Promise<CopilotRecord> {
 		const record: CopilotRecord = { saved_at: new Date(this.now()).toISOString() };
 		if (tokens.access_token) record.access_token = tokens.access_token;
 		const renewable = tokens.refresh_token ?? previous?.refresh_token;
@@ -191,12 +195,15 @@ export class CopilotAuth {
 			type GitHubUser = { login?: string; id?: number };
 			const user: GitHubUser = await this.fetch(COPILOT.userUrl, {
 				headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: "application/vnd.github+json" },
+				signal: AbortSignal.timeout(15_000),
 			})
 				.then((r) => (r.ok ? (r.json() as Promise<GitHubUser>) : {}))
 				.catch(() => ({}));
 			if (user.login) record.login = user.login;
 			if (user.id) record.user_id = user.id;
 		}
+		// Signed out or cancelled while this ran: the token is dropped, never written back.
+		if (!current()) throw new SubscriptionError("signed_out", "Signed out.");
 		writePrivateJson(this.path, record);
 		return record;
 	}
@@ -222,6 +229,7 @@ export class CopilotAuth {
 	 */
 	refresh(): Promise<CopilotRecord> {
 		if (!this.refreshing) {
+			const generation = this.generation;
 			this.refreshing = withFileLock(`${this.path}.lock`, async () => {
 				const record = this.record();
 				if (!record?.access_token) throw new SubscriptionError("not_signed_in", "Sign in with GitHub Copilot first.");
@@ -241,7 +249,7 @@ export class CopilotAuth {
 					}
 					throw new SubscriptionError(tokens.error ?? "refresh_failed", `Refreshing the GitHub sign-in failed (${tokens.error ?? "no token"}).`);
 				}
-				return this.save(tokens, record);
+				return this.save(tokens, record, () => generation === this.generation);
 			}).finally(() => {
 				this.refreshing = undefined;
 			});
@@ -253,9 +261,12 @@ export class CopilotAuth {
 	 * Sign out deletes the token file. Revoking the grant on GitHub's side takes the app's client
 	 * secret, which Tabkyra deliberately doesn't have, so the user is pointed to their settings.
 	 */
-	signOut(): { revoked: false; revokeUrl: string } {
+	async signOut(): Promise<{ revoked: false; revokeUrl: string }> {
+		this.generation++;
 		this.pending?.cancel();
-		removeFile(this.path);
+		await this.refreshing?.catch(() => undefined);
+		// Under the refresh lock, so another host's refresh can't write the token back meanwhile.
+		await withFileLock(`${this.path}.lock`, async () => removeFile(this.path));
 		return { revoked: false, revokeUrl: COPILOT.revokeUrl };
 	}
 }
@@ -315,13 +326,20 @@ export interface SdkModule {
  * SDK carries a 160 MB runtime per platform that only Copilot users install.
  */
 export function loadSdk(): SdkModule {
+	let failure: unknown;
 	for (const root of sdkSearchRoots()) {
 		try {
 			return createRequire(root)(COPILOT.sdkPackage) as SdkModule;
-		} catch {
-			/* try the next root */
+		} catch (err) {
+			failure ??= (err as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND" ? undefined : err;
 		}
 	}
+	// Installed but broken (a partial install, a missing platform runtime) is not "not installed".
+	if (sdkInstalled() || failure)
+		throw new SubscriptionError(
+			"sdk_load_failed",
+			`GitHub's Copilot SDK is installed but didn't load (${failure instanceof Error ? failure.message : "unknown error"}). Run \`tabkyra copilot-sdk install\` again.`,
+		);
 	throw new SubscriptionError(
 		"sdk_missing",
 		`GitHub's Copilot SDK isn't installed. Run \`tabkyra copilot-sdk install\` (installs ${COPILOT.sdkPackage}@${COPILOT.sdkVersion}, about 160 MB).`,

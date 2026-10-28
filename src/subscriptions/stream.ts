@@ -123,7 +123,8 @@ export async function routeSubscriptionModel(
 	options: SimpleStreamOptions | undefined,
 ): Promise<{ model: Model<Api>; options: SimpleStreamOptions } | undefined> {
 	if (!isSubscriptionProvider(model.provider)) return undefined;
-	const status = await trySubscriptionStatus();
+	// Fresh every turn: a restarted host has a new proxy port and secret, and a sign-out stops use at once.
+	const status = await trySubscriptionStatus(true);
 	if (!status)
 		throw new Error(
 			"Tabkyra's native host isn't connected, so subscription sign-ins can't run. Run `tabkyra doctor`.",

@@ -45,7 +45,9 @@ memory. The proxy checks the secret and its own `Host` header, and forwards only
 
 - First sign-in: `client_id=dynamic_agent_client`, `agent_name_hint=Tabkyra`, and the host's
   `ext_agent_host_id` (`urn:uuid:...`, made once and kept). Later sign-ins reuse the issued
-  `oaiapp_...` client id, with `id_token_hint` and `login_hint` while a sign-in is retained.
+  `oaiapp_...` client id with `login_hint`. Tabkyra never sends the optional `id_token_hint`: the
+  authorization URL passes through the extension and the browser's history, which must hold no
+  token.
 - The listener on `http://127.0.0.1:<port>/auth/callback` starts before the browser opens.
   Port 1455 first, any free port when it's taken; the path never changes. A fresh state, nonce
   and PKCE verifier (S256) per attempt. A callback with another state is answered and ignored.
@@ -56,10 +58,14 @@ memory. The proxy checks the secret and its own `Host` header, and forwards only
   same account. Plan usage needs `chatgpt.tokens.use.direct` in the granted scopes; without it
   the sign-in is kept and inference is refused with a clear choice (allow it, or use a key).
 - Refresh: near expiry (5 minutes), one at a time per process and per credential file (a lock
-  file, since two browsers mean two hosts). The rotating refresh token is replaced with the
-  access token. A dead refresh token clears the tokens and asks for a new sign-in.
-- Sign-out: revoke the refresh token at the `revocation_endpoint` (retried on network errors and
-  5xx), then delete the access, refresh and ID tokens. The registration and host id stay.
+  file holding an owner token, since two browsers mean two hosts; every request under it times
+  out after 15 seconds). The rotating refresh token is replaced with the access token, and the
+  plan scope is checked again on the refreshed grant. A dead refresh token clears the tokens and
+  asks for a new sign-in.
+- Sign-out: stop requests in flight, then, under the same lock and after any refresh or sign-in
+  already running has settled (neither can write tokens back afterwards), revoke the refresh
+  token at the `revocation_endpoint` (retried on network errors and 5xx) and delete the access,
+  refresh and ID tokens. The registration and host id stay.
 - Requests: `store: false`, `stream: true`, no unsupported fields, developer instead of system
   items, function tools in a `tabkyra` namespace. The side panel shapes the body and the host
   shapes it again before forwarding (`siwcRequestBody` in `src/subscriptions/constants.ts`).
@@ -72,9 +78,11 @@ memory. The proxy checks the secret and its own `Host` header, and forwards only
 - Device flow with Tabkyra's own OAuth App: `github.com/login/device/code`, then polling
   `github.com/login/oauth/access_token`. The user enters the code at `github.com/login/device`.
   No scopes are requested.
-- The app issues expiring user tokens (8 hours) with a refresh token. GitHub: `client_secret` is
-  "Required unless the user access token was generated using the device flow", so the refresh
-  sends none. No client secret was ever generated for the app.
+- The app was registered with "Expire user access tokens" on, so GitHub issues 8-hour tokens with
+  a refresh token. GitHub: `client_secret` is "Required unless the user access token was generated
+  using the device flow", so the refresh sends none. No client secret was ever generated for the
+  app. The refresh path is tested against a fake GitHub; a token that never expires simply never
+  refreshes.
 - Sign-out deletes the token file. Revoking the grant on GitHub's side needs the app's secret,
   so Settings points the user to `github.com/settings/applications`.
 - Inference uses GitHub's Copilot SDK (`@github/copilot-sdk`, pinned to 1.0.28), installed by the

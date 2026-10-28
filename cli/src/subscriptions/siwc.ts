@@ -54,6 +54,7 @@ export class SubscriptionError extends Error {
 const b64url = (buf: Buffer) => buf.toString("base64url");
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 15_000;
 /** Refresh errors that mean the token set is dead (errors-and-recovery page). */
 const DEAD_REFRESH_CODES = new Set([
 	"invalid_grant",
@@ -108,6 +109,8 @@ export class Siwc {
 	private jwks?: { keys: Jwk[]; at: number };
 	private refreshing?: Promise<ChatGptRecord>;
 	private pending?: PendingSignIn;
+	/** Bumped by sign-out: a refresh or sign-in that started before it must not write tokens back. */
+	private generation = 0;
 
 	constructor(options: SiwcOptions = {}) {
 		this.fetch = options.fetch ?? fetch;
@@ -171,6 +174,7 @@ export class Siwc {
 		const state = b64url(randomBytes(32));
 		const nonce = b64url(randomBytes(32));
 		const verifier = b64url(randomBytes(48));
+		const generation = this.generation;
 		const challenge = b64url(createHash("sha256").update(verifier).digest());
 
 		const { server, port } = await this.listen();
@@ -179,7 +183,8 @@ export class Siwc {
 		params.set("client_id", saved ? saved.client_id : SIWC.dynamicClient);
 		if (!saved) params.set("agent_name_hint", SIWC.agentName);
 		params.set("ext_agent_host_id", hostId);
-		if (saved?.id_token) params.set("id_token_hint", saved.id_token);
+		// No id_token_hint: it is optional, and this URL passes through the extension and the
+		// browser's history, which must never hold a token. The saved email pre-selects the account.
 		if (saved?.email) params.set("login_hint", saved.email);
 		params.set("response_type", "code");
 		params.set("redirect_uri", redirectUri);
@@ -203,7 +208,7 @@ export class Siwc {
 			done = true;
 			clearTimeout(timer);
 			server.close();
-			server.closeAllConnections?.();
+			server.closeIdleConnections?.();
 			if (this.pending?.result === result) this.pending = undefined;
 			if (error) settle?.reject(error);
 			else if (status) settle?.resolve(status);
@@ -262,7 +267,7 @@ export class Siwc {
 				finish(new SubscriptionError("no_code", "No authorization code in the callback."));
 				return;
 			}
-			this.complete({ code, clientId, verifier, redirectUri, nonce, hostId, saved }).then(
+			this.complete({ code, clientId, verifier, redirectUri, nonce, hostId, saved, current: () => !done && generation === this.generation }).then(
 				(status) => {
 					page(200, "Tabkyra is signed in with ChatGPT. You can close this tab.");
 					finish(undefined, status);
@@ -309,6 +314,8 @@ export class Siwc {
 		nonce: string;
 		hostId: string;
 		saved?: ChatGptRecord;
+		/** False once the attempt was cancelled or the user signed out meanwhile. */
+		current: () => boolean;
 	}): Promise<ChatGptStatus> {
 		const tokens = await this.tokenRequest([
 			["grant_type", "authorization_code"],
@@ -344,6 +351,7 @@ export class Siwc {
 		Object.assign(record, pickTokens(tokens));
 		if (claims.email) record.email = claims.email;
 		if (tokens.earliest_refresh_at) record.earliest_refresh_at = tokens.earliest_refresh_at;
+		if (!args.current()) throw new SubscriptionError("cancelled", "Sign-in cancelled.");
 		writePrivateJson(this.recordPath(args.clientId), record);
 		writePrivateJson(join(this.accountsDir, "active.json"), { client_id: args.clientId });
 		return this.status();
@@ -354,6 +362,8 @@ export class Siwc {
 			method: "POST",
 			headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
 			body: new URLSearchParams(form).toString(),
+			// Well under the refresh lock's stale age, so a hung request can't outlive its lock.
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 		});
 		const body = (await response.json().catch(() => ({}))) as Omit<TokenResponse, "error"> & {
 			error?: string | { code?: string };
@@ -446,6 +456,9 @@ export class Siwc {
 			);
 		if (!record.access_token || this.now() > this.expiresAt(record) - REFRESH_MARGIN_MS) record = await this.refresh();
 		if (!record.access_token) throw new SubscriptionError("not_signed_in", "Sign in with ChatGPT again.");
+		// A refresh can return a narrower grant; check the token actually being handed out.
+		if (!record.scopes.includes(SIWC.planScope))
+			throw new SubscriptionError("plan_usage_disabled", "ChatGPT plan usage is no longer enabled for this sign-in. Choose Continue with ChatGPT again, or use an API key.");
 		return record.access_token;
 	}
 
@@ -460,6 +473,7 @@ export class Siwc {
 	}
 
 	private async refreshLocked(): Promise<ChatGptRecord> {
+		const generation = this.generation;
 		const first = this.activeRecord();
 		if (!first) throw new SubscriptionError("not_signed_in", "Sign in with ChatGPT first.");
 		return withFileLock(`${this.recordPath(first.client_id)}.lock`, async () => {
@@ -493,6 +507,8 @@ export class Siwc {
 			};
 			Object.assign(next, pickTokens(tokens));
 			if (tokens.earliest_refresh_at) next.earliest_refresh_at = tokens.earliest_refresh_at;
+			// Signed out while this ran: the new tokens are dropped, never written back.
+			if (generation !== this.generation) throw new SubscriptionError("signed_out", "Signed out.");
 			writePrivateJson(this.recordPath(record.client_id), next);
 			return next;
 		});
@@ -509,8 +525,17 @@ export class Siwc {
 	 * The account-to-client mapping and the host id stay for a later sign-in.
 	 */
 	async signOut(): Promise<{ revoked: boolean }> {
+		this.generation++;
 		this.pending?.cancel();
-		const record = this.activeRecord();
+		await this.refreshing?.catch(() => undefined);
+		const first = this.activeRecord();
+		if (!first) return { revoked: true };
+		// Under the refresh lock, so another host can't rotate the token while it is revoked and cleared.
+		return withFileLock(`${this.recordPath(first.client_id)}.lock`, () => this.revokeAndClear(first.client_id));
+	}
+
+	private async revokeAndClear(clientId: string): Promise<{ revoked: boolean }> {
+		const record = readPrivateJson<ChatGptRecord>(this.recordPath(clientId));
 		if (!record) return { revoked: true };
 		const renewable = record.refresh_token;
 		let revoked = !renewable;
@@ -528,6 +553,7 @@ export class Siwc {
 						method: "POST",
 						headers: { "Content-Type": "application/x-www-form-urlencoded" },
 						body: new URLSearchParams(form).toString(),
+						signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 					});
 					if (response.ok) revoked = true;
 					else if (response.status < 500) break;

@@ -79,26 +79,36 @@ export function listJson(dir: string): string[] {
 const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 20_000;
 
+function readLock(path: string): { owner: string; mtimeMs: number } | undefined {
+	try {
+		return { owner: readFileSync(path, "utf8"), mtimeMs: statSync(path).mtimeMs };
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Run `work` while holding a lock file, so two hosts (one per browser) never refresh the same
- * rotating refresh token at once. A lock older than LOCK_STALE_MS is a crashed holder's.
+ * rotating refresh token at once. The file holds a random owner token: a holder removes only its
+ * own lock, and a lock older than LOCK_STALE_MS (a crashed holder's; every request under it times
+ * out well before that) is reclaimed only if it is still the same lock that was found stale.
  */
 export async function withFileLock<T>(path: string, work: () => Promise<T>): Promise<T> {
 	ensurePrivateDir(dirname(path));
+	const owner = randomBytes(16).toString("hex");
 	const started = Date.now();
 	for (;;) {
 		try {
 			const fd = openSync(path, "wx", 0o600);
+			writeFileSync(fd, owner);
 			closeSync(fd);
 			break;
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-			try {
-				if (Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS) {
-					rmSync(path, { force: true });
-					continue;
-				}
-			} catch {
+			const held = readLock(path);
+			if (held && Date.now() - held.mtimeMs > LOCK_STALE_MS) {
+				const again = readLock(path);
+				if (again && again.owner === held.owner && again.mtimeMs === held.mtimeMs) rmSync(path, { force: true });
 				continue;
 			}
 			if (Date.now() - started > LOCK_WAIT_MS) throw new Error("Another Tabkyra process is refreshing the sign-in; try again.");
@@ -108,6 +118,6 @@ export async function withFileLock<T>(path: string, work: () => Promise<T>): Pro
 	try {
 		return await work();
 	} finally {
-		rmSync(path, { force: true });
+		if (readLock(path)?.owner === owner) rmSync(path, { force: true });
 	}
 }
