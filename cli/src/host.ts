@@ -94,7 +94,9 @@ function onExtensionMessage(message: ExtToHost): void {
 function onClientMessage(client: Client, message: ClientToHost): void {
 	if (message.type === "hello") {
 		client.hello = message;
-		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: extensionReady, ...(browserId ? { browserId } : {}) });
+		// A stopping host can't run anything: it doesn't present itself as ready to a new client.
+		const ready = extensionReady && !stopping;
+		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: ready, ...(ready && browserId ? { browserId } : {}) });
 		toExtension({ type: "client_connected", clientId: client.id, client: message.client });
 		return;
 	}

@@ -249,3 +249,50 @@ test("a host stopped by a signal drops the extension's side at once, answers its
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("a host that is stopping doesn't welcome a new client as ready", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "tabkyra-host-"));
+	const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", HOST_ENTRY], {
+		cwd: repo,
+		env: { ...process.env, TABKYRA_SOCKET_DIR: join(dir, "s") },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	host.stdout.on("data", () => undefined);
+	const sockets = [];
+	const open = (sock) => {
+		const s = connect({ path: sock });
+		sockets.push(s);
+		s.on("error", () => undefined);
+		const parser = new FrameParser(64 * 1024 * 1024);
+		const welcome = new Promise((resolve) => {
+			s.on("data", (chunk) => {
+				const w = parser.push(chunk).messages.find((m) => m.type === "welcome");
+				if (w) resolve(w);
+			});
+			s.on("close", () => resolve(undefined));
+		});
+		return { hello: () => s.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } })), welcome };
+	};
+	try {
+		const sock = join(dir, "s", `${host.pid}.sock`);
+		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		host.stdin.write(encodeFrame({ type: "hello", version: "1", protocol: 1, methods: [], browserId: "b1" }));
+		const first = open(sock);
+		first.hello();
+		assert.equal((await first.welcome).extensionConnected, true);
+		// A connection accepted just before the extension goes away says hello just after.
+		const late = open(sock);
+		await new Promise((r) => setTimeout(r, 100));
+		host.stdin.end();
+		await new Promise((r) => setTimeout(r, 50));
+		late.hello();
+		const w = await late.welcome;
+		assert.ok(w, "the lingering host closed the connection without a welcome");
+		assert.equal(w.extensionConnected, false, "a stopping host welcomed a client as ready");
+		assert.equal(w.browserId, undefined);
+	} finally {
+		for (const s of sockets) s.destroy();
+		host.kill();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

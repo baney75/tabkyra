@@ -150,7 +150,17 @@ export class BridgeClient {
 	 * socket that is about to be dropped. Concurrent connects share one attempt.
 	 */
 	connect(path?: string, timeoutMs = 5000): Promise<void> {
-		this.connecting ??= this.connectNow({ path, timeoutMs }).finally(() => {
+		return this.connectShared({ path, timeoutMs });
+	}
+
+	/**
+	 * The one dial in progress, whoever started it (a call, a reconnect for some browser): a
+	 * client never dials twice at once, so it never holds two sockets to one host. A caller
+	 * that wanted something else checks the result and tries again.
+	 */
+	private connectShared(o: { path?: string; timeoutMs?: number; want?: string; rescan?: boolean }): Promise<void> {
+		if (this.connecting) return this.connecting;
+		this.connecting = this.connectNow(o).finally(() => {
 			this.connecting = undefined;
 		});
 		return this.connecting;
@@ -214,14 +224,22 @@ export class BridgeClient {
 	}
 
 	/**
-	 * Stop using a socket without cutting off what is still waiting on it: replies (or the host's
-	 * own close) settle those; the socket is destroyed once nothing waits, or after 5 s.
+	 * Stop using a socket without cutting off what is still waiting on it: a request running in
+	 * another browser (a long wait, input) gets its reply. The socket is destroyed once nothing
+	 * waits on it; each request's own timeout bounds that.
 	 */
 	private retire(socket: Socket): void {
 		if (this.socket === socket) this.socket = undefined;
-		const waiting = [...this.pending.values()].some((p) => p.socket === socket);
-		if (!waiting) socket.destroy();
-		else setTimeout(() => socket.destroy(), 5000).unref();
+		this.retiring.add(socket);
+		this.dropIfIdle(socket);
+	}
+
+	/** Sockets no longer used for new requests, kept open for the replies still owed on them. */
+	private retiring = new WeakSet<Socket>();
+
+	private dropIfIdle(socket: Socket): void {
+		if (!this.retiring.has(socket) || socket === this.socket) return;
+		if (![...this.pending.values()].some((p) => p.socket === socket)) socket.destroy();
 	}
 
 	private async dial(target: string, timeoutMs: number): Promise<Dialed> {
@@ -289,6 +307,7 @@ export class BridgeClient {
 			clearTimeout(p.timer);
 			if (msg.error) p.reject(new BridgeRpcError(msg.error));
 			else p.resolve(msg.result);
+			this.dropIfIdle(p.socket);
 		} else if (msg.type === "event") {
 			this.options.onEvent?.(msg.event, msg.data);
 		} else if (msg.type === "extension_status") {
@@ -330,7 +349,7 @@ export class BridgeClient {
 		for (;;) {
 			const sent: { socket?: Socket } = {};
 			try {
-				return await this.callOnce<T>(method, params, timeoutMs, sent);
+				return await this.callOnce<T>(method, params, timeoutMs, sent, want);
 			} catch (err) {
 				const refused = err instanceof BridgeRpcError && err.rpc.code === ERR.NOT_SENT;
 				const unsent = err instanceof NotSentError;
@@ -400,11 +419,11 @@ export class BridgeClient {
 		const deadline = Date.now() + Math.max(0, budgetMs);
 		while (Date.now() < deadline) {
 			try {
-				if (!this.connected) await this.connectNow({ want });
+				if (!this.connected) await this.connectShared({ want });
 				else if (!this.socket || !this.ready(this.socket, want)) {
 					// On a host that isn't ready (a stale one, or another browser's): look at the others,
 					// without redialing this one or hosts known to serve another browser.
-					await this.connectNow({ want, rescan: true });
+					await this.connectShared({ want, rescan: true });
 				}
 				if (this.connected && this.socket && this.ready(this.socket, want)) return;
 			} catch {
@@ -415,15 +434,23 @@ export class BridgeClient {
 		throw new Error("Bridge unavailable");
 	}
 
-	private async callOnce<T>(method: string, params: Record<string, unknown>, timeoutMs?: number, sent: { socket?: Socket } = {}): Promise<T> {
+	private async callOnce<T>(
+		method: string,
+		params: Record<string, unknown>,
+		timeoutMs?: number,
+		sent: { socket?: Socket } = {},
+		want?: string,
+	): Promise<T> {
 		if (!this.connected) {
 			try {
-				await this.connect();
+				await this.connectShared({ want });
 			} catch (err) {
 				throw isConnectionError(err) ? new NotSentError(err) : err;
 			}
 		}
 		const socket = this.socket;
+		// A resend goes to the browser its call started in, never to whichever host is newest.
+		if (want !== undefined && socket && !this.ready(socket, want)) throw new NotSentError(new Error("Not connected"));
 		// A half-closed socket (the host ended it) can't take a request: it was never sent. Nor
 		// can a host whose extension isn't there once one has been: it couldn't run it.
 		if (!socket || socket.destroyed || !socket.writable) throw new NotSentError(new Error("Not connected"));
@@ -435,6 +462,7 @@ export class BridgeClient {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
 				reject(new Error(`${method} timed out after ${timeout} ms`));
+				this.dropIfIdle(socket);
 			}, timeout);
 			this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer, socket });
 			const req: ClientToHost = { type: "request", id, method, params };

@@ -30,13 +30,14 @@ const frame = (m) => {
  * A fake native host: welcomes, answers requests, counts what it got. `helloLateMs`: its
  * extension says hello (and which browser it is) that long after a client connects.
  */
-async function host({ browserId, extension = true, dropFirst = [], helloLateMs }) {
+async function host({ browserId, extension = true, dropFirst = [], helloLateMs, refuseFirst = [], slow = {}, welcomeLateMs }) {
 	const sleeper = spawn("sleep", ["600"], { stdio: "ignore" });
 	sleepers.push(sleeper);
 	const path = join(dir, `${sleeper.pid}.sock`);
 	const got = [];
 	let hellos = 0;
 	const drop = new Set(dropFirst);
+	const refuse = new Set(refuseFirst);
 	const sockets = new Set();
 	const server = createServer((socket) => {
 		sockets.add(socket);
@@ -54,10 +55,23 @@ async function host({ browserId, extension = true, dropFirst = [], helloLateMs }
 						setTimeout(() => !socket.destroyed && socket.write(frame({ type: "extension_status", connected: true, browserId })), helloLateMs);
 						continue;
 					}
-					socket.write(frame({ type: "welcome", clientId: "c", hostVersion: "0", extensionConnected: extension, ...(extension && browserId ? { browserId } : {}) }));
+					const welcome = frame({ type: "welcome", clientId: "c", hostVersion: "0", extensionConnected: extension, ...(extension && browserId ? { browserId } : {}) });
+					if (welcomeLateMs) setTimeout(() => !socket.destroyed && socket.write(welcome), welcomeLateMs);
+					else socket.write(welcome);
 					continue;
 				}
 				got.push(msg.method);
+				if (refuse.delete(msg.method)) {
+					// An update installing: refused, never run; then the host goes away, as a stopping one does.
+					socket.write(frame({ type: "response", id: msg.id, error: { code: "not_sent", message: "the bridge is restarting" } }));
+					setTimeout(() => void h.stop(), 100);
+					return;
+				}
+				if (slow[msg.method]) {
+					const id = msg.id;
+					setTimeout(() => !socket.destroyed && socket.write(frame({ type: "response", id, result: { from: browserId } })), slow[msg.method]);
+					continue;
+				}
 				if (drop.delete(msg.method)) {
 					// Cut off, and gone: the socket file and process vanish with it (a reload).
 					void h.stop();
@@ -71,6 +85,7 @@ async function host({ browserId, extension = true, dropFirst = [], helloLateMs }
 	chmodSync(path, 0o600);
 	const h = {
 		got,
+		path,
 		hellos: () => hellos,
 		/** The host goes away: its socket file and process vanish, as when a browser's extension reloads. */
 		async stop() {
@@ -228,6 +243,60 @@ test("a call made while only a host without its extension is up waits for a read
 		assert.deepEqual(await reading, { from: "browser-g" });
 		assert.deepEqual(stale.got, [], "a request went to a host whose extension wasn't there");
 		assert.ok(back.got.includes("click"));
+	} finally {
+		client.close();
+	}
+});
+
+test("a request refused as not_sent in browser A is resent to A when it comes back, never to browser B", async () => {
+	const b = await host({ browserId: "browser-b" });
+	await new Promise((r) => setTimeout(r, 20));
+	await host({ browserId: "browser-a", refuseFirst: ["click"] });
+	const client = new BridgeClient({ name: "refused", session: "refused" });
+	try {
+		assert.deepEqual(await client.call("tabs.context"), { from: "browser-a" });
+		const clicking = client.call("click", { ref: "e1" });
+		await new Promise((r) => setTimeout(r, 700));
+		const a2 = await host({ browserId: "browser-a" });
+		assert.deepEqual(await clicking, { from: "browser-a" });
+		assert.deepEqual(b.got, [], "the refused click went to the other browser");
+		assert.deepEqual(a2.got, ["click"]);
+	} finally {
+		client.close();
+	}
+});
+
+test("a request still running on a socket the client moves away from gets its reply, however long it takes", async () => {
+	const b = await host({ browserId: "browser-b", slow: { click: 6500 } });
+	const client = new BridgeClient({ name: "retire", session: "retire" });
+	try {
+		await client.call("tabs.context");
+		const clicking = client.call("click", { ref: "e1" });
+		await new Promise((r) => setTimeout(r, 200));
+		// The client moves to another host (a resend in another browser adopting it) while the click runs.
+		const a = await host({ browserId: "browser-a" });
+		await client.connect(a.path);
+		assert.deepEqual(await clicking, { from: "browser-b" }, "a request running in another browser was cut off");
+		assert.deepEqual(b.got, ["tabs.context", "click"]);
+	} finally {
+		client.close();
+	}
+});
+
+test("a call made while a reconnect is dialing joins that dial: one hello, no second socket", async () => {
+	await host({ browserId: "browser-x", dropFirst: ["text"] });
+	const client = new BridgeClient({ name: "onedial", session: "onedial" });
+	try {
+		await client.call("tabs.context");
+		const reading = client.call("text");
+		await new Promise((r) => setTimeout(r, 300));
+		// The new host takes a while to welcome: the reconnect's dial is open meanwhile.
+		const back = await host({ browserId: "browser-x", welcomeLateMs: 800 });
+		await new Promise((r) => setTimeout(r, 350));
+		const clicking = client.call("click", { ref: "e1" });
+		assert.deepEqual(await reading, { from: "browser-x" });
+		assert.deepEqual(await clicking, { from: "browser-x" });
+		assert.equal(back.hellos(), 1, `the new host was dialed ${back.hellos()} times`);
 	} finally {
 		client.close();
 	}
