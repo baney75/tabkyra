@@ -121,4 +121,4 @@ memory. The proxy checks the secret and its own `Host` header, and forwards only
   documented endpoint. `test/subscriptions-extension.test.mjs` checks that no token field or
   browser storage appears in the extension's source, the relay's guard, and request shaping.
 
-The decision record is D27 in `docs/decisions.md`.
+The decision record is D28 in `docs/decisions.md`.
