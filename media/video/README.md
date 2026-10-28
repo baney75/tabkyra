@@ -127,3 +127,91 @@ a millisecond at p95": the figure is the match itself, not a whole `tabkyra` com
 starts Node. A caption under the rows gives the recorded wall time of each whole command. `node scripts/demo/capture-router.mjs` (after `cd cli && npm run build`) records it
 into `public/capture/router.json` (stdout only; a `skill match` that writes to stderr fails it), and fails if a task routes anywhere other than its expected
 skill, if the eval's gates fail, or if p95 is not under a millisecond.
+
+## Agents video
+
+`media/agents.mp4` (1920×1080) and `media/agents-vertical.mp4` (1080×1920), both H.264 with AAC
+at 30 fps and 57.6 s, plus `media/agents-poster.jpg` (1280×720): what changed for agents
+(several at once, resume, hand-off, ask_user, the side panel's `/` and `@` menus, the terminal,
+reload safety). The shot plan is in [AGENTS-STORYBOARD.md](AGENTS-STORYBOARD.md); the source is
+`src/agents/`, registered as `Agents`, `AgentsVertical` and `AgentsPoster`.
+
+**The run.** `node scripts/demo/capture-agents.mjs` (after `npm run build` and `cd cli && npm run
+build`) records one run into `public/capture/agents/` and `agents.json`. It needs no network: a
+small shop ("Fernhill Goods") is served on 127.0.0.1 by the script, and a git repository named
+`shop` stands in for the project. In a throwaway headless Chromium with the built extension:
+
+1. Three `tabkyra mcp` processes start in `shop` with no session set, the way three Claude Code
+   agents would, and each navigates to its page (product, cart, checkout). Their first calls go
+   300 ms apart so agent 1 opens the first group. Group titles and colors are read from
+   `chrome.tabGroups` in the browser, not from Tabkyra's records. Agent 2 then calls
+   `tabs_select` on agent 1's tab and is refused.
+2. Agent 1 opens a second tab, its MCP client closes (the agent quits), the group is read while
+   it is gone, a new client starts in the same folder, and its `tabs_context` is recorded.
+3. **The hand-off is not a mouse drag.** Headless Chromium has no tab strip, so the run calls
+   `chrome.tabs.ungroup` on agent 1's second tab, which fires the same `tabs.onUpdated`
+   (`groupId: -1`) event a drag out of the group does. The video draws the drag. Agent 1's next
+   `tabs_context` is recorded as returned.
+4. Agent 3 calls `ask_user`; the question appears in the side panel (`sidepanel.html` in a tab of
+   the same browser), and the run clicks "Test card (Recommended)" and Submit there with real CDP
+   mouse events. Agent 3 then fills the checkout form with that answer.
+5. In the side panel composer: `/`, `writ`, Enter (the `writing` skill), `@`, `Teapot`, Enter
+   (the tab the user took back), the task, Enter. The side panel's own agent runs on a **local
+   model**: `qwen3-8b-nothink`, which is Ollama's `qwen3:8b` with its chat template's
+   no-thinking branch always on, served by a separate Ollama on 127.0.0.1:11555 started with
+   `OLLAMA_ORIGINS='chrome-extension://*' OLLAMA_CONTEXT_LENGTH=32768` (the user's own Ollama was
+   not changed). No API key or paid service was used. Set `TABKYRA_DEMO_MODEL_URL` and
+   `TABKYRA_DEMO_MODEL` to use another model. A model this small doesn't always finish. The run
+   counts only when the chat's own record (`tabkyra threads show`, kept as `threadShown`) has a
+   tool result with the page body and a last reply that states at least two facts the page body
+   has and its tab title doesn't ("1 L", "$36", "infuser", "speckled", "glazed"). Otherwise, or
+   when it stalls, the whole run is thrown away with its folder and starts over in a fresh
+   browser and folder (up to `TABKYRA_DEMO_ATTEMPTS`, a whole number, default 3). `agents.json` records which
+   attempt passed; the committed capture is attempt 2. If the model asks the user to pick an
+   element, the run clicks the product description in that tab, as the user would, and records
+   it (`composer.picked`); the committed run didn't ask. In the committed run the model opened
+   the referenced tab's page in a new tab rather than switching to that tab, then read it with
+   its REPL. That is why the caption says `@` "points it at a tab", not that it hands the tab
+   over.
+6. `tabkyra sessions`, `tabkyra tabs` and `tabkyra threads search teapot` run against the same
+   browser, with their output and exit codes recorded (`NO_COLOR=1`).
+7. Agent 3 clicks "Place order" inside an `actions` call that then waits 3 s; 800 ms in, the
+   extension is reloaded. The result (`interrupted: ... Check the page`) and the shop's own order
+   count (one POST) are recorded.
+
+The capture saves nothing unless every step and check passes; a failed run leaves its
+partial frames in a temp folder (copied when the repo is on another volume) and the old capture
+in place.
+
+**What is recorded and what is drawn.** Recorded: every page screenshot (each agent's own
+`screenshot` call), the side panel screenshots and the boxes the crops use, group titles and
+colors, tab ids, titles and URLs, every call's arguments and result text, the CLI output, and the
+order count. Drawn: the address bar and tab strip around the screenshots (their text is the
+recorded title and URL), the drag of the hand-off, the panels that hold call and terminal text,
+the "NOT YOURS" stamp, the "agent 1 quit" and "the extension reloads" labels (each says what the
+script did at that point), the count-up, and the captions.
+
+**Checks.** `src/agents/claims.ts` checks every caption against `agents.json` before render
+(`Agents`, `AgentsVertical` and `AgentsPoster` call it): three groups titled "Tabkyra · claude ·
+shop", "… shop 2", "… shop 3" with distinct colors, each `tabs_context` listing only its own tab,
+the refusal and agent 1's tab staying put, the restarted agent getting the same tab ids, the
+hand-off news naming the tab that left with the tab now ungrouped, the answer the agent got being
+the option clicked and the one it filled, the `@` menu showing the agents' tabs in use and the
+teapot tab free (each agent's label matched whole, so "claude · shop" can't match the "shop 2"
+row), the side panel agent going to the referenced tab's page, reading its body and stating two
+of its facts in the last reply, the three commands exiting 0 and showing the three groups
+(whole titles) and the chat, the hand-off happening to agent 1's group and session, and the
+order running exactly once. `npm test` runs them on the real capture and on doctored copies,
+which must fail. The tests import TypeScript directly, so they need Node 22.13 or newer
+(`npm test` passes `--experimental-strip-types`, which Node 22.13 to 22.17 need).
+
+```bash
+cd media/video && npm install
+npm test                 # hero and agents checks
+npm run render:agents    # out/agents.mp4, out/agents-vertical.mp4, out/agents-poster.jpg
+npm run publish-agents   # copies all three to media/
+```
+
+**Music.** The hero's track and beat map (`public/hero/music.m4a`, `src/hero/music.json`), the
+same file under the same terms (see **Music** above and `public/hero/NOTICE.md`). Every cut is a
+beat index into the map. The end card is the hero's.
