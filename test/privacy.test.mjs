@@ -116,6 +116,10 @@ test("bug reports drop web addresses, emails, keys and home paths, and never tra
 		["home/ada", "x ext:/[file]"],
 		["Zq8xW3mN7pL2vR9tY4kB6cH1dF5gJ0s+Ab3Cd4Ef5Gh6", "x ext:/[file]"],
 		["a.js@example.com", "x ext:/[file]"],
+		[`${["Zx9", "Qw8".repeat(10)].join("")}.js:3:9`, "x ext:/[file]"],
+		[`${["ghp", "_", "a1".repeat(18)].join("")}.js`, "x ext:/[file]"],
+		["a.js:3?q=patient-records-jdoe", "x ext:/a.js:3"],
+		["a.js#frag-jdoe", "x ext:/a.js"],
 	]) {
 		assert.equal(redact(`x chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/${input}`), out, input);
 	}

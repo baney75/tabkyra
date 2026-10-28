@@ -48,7 +48,7 @@ export function redactSecrets(text: string): string {
  */
 export function redact(text: string): string {
 	// Tabkyra's own script URLs keep only the file name, and only when it looks like one of its
-	// build files ("chunk-4f2a.js") followed by a line number or a break; anything else in the
+	// build files ("chunk-4f2a.js", at most 24 characters before the extension) followed by a line number or a break; anything else in the
 	// path (a key, an address, a user name) becomes "[file]". The name is set aside so the
 	// long-token rule can't eat it. The query and fragment stay until the secret rules have read
 	// them, then go.
@@ -56,13 +56,13 @@ export function redact(text: string): string {
 	const marked = text
 		.replace(/\u0000/g, "")
 		.replace(/\bchrome-extension:\/\/[a-p]{32}\/([^\s"'<>?#)]*)/gi, (_m, path: string) => {
-			const name = /^(?:.*\/)?([A-Za-z][\w-]{0,40}\.(?:m?js|html|css|wasm|json))(?::\d+){0,2}$/.exec(path)?.[1];
+			const name = /^(?:.*\/)?([A-Za-z][\w-]{0,23}\.(?:m?js|html|css|wasm|json))(?::\d+){0,2}$/.exec(path)?.[1];
 			const tail = name ? path.slice(path.lastIndexOf(name) + name.length) : "";
-			return `\u0000${files.push(name ?? "[file]") - 1}\u0000${tail}`;
+			return `\u0000${files.push(name ? redactSecrets(name) : "[file]") - 1}\u0000${tail}`;
 		});
 	return (
 		redactSecrets(marked)
-			.replace(/(\u0000\d+\u0000)[?#][^\s"'<>)]*/g, "$1")
+			.replace(/(\u0000\d+\u0000(?::\d+){0,2})[?#][^\s"'<>)]*/g, "$1")
 			// A URL may contain ")" (wiki paths); only trailing punctuation belongs to the sentence.
 			.replace(/\b[a-z][\w+.-]*:\/\/[^\s"'<>]+/gi, (m) => `[url]${/[).,;:!?]+$/.exec(m)?.[0] ?? ""}`)
 			// Addresses without "//": data, blob, about and javascript URLs carry page content.
