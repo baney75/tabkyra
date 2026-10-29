@@ -4,13 +4,14 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parsePublicKey, verifyMinisign } from "../src/minisign.ts";
+import { fitNotes } from "../src/release-notes.ts";
 import { createZip } from "../../scripts/release/zip.mjs";
 import { signMinisign, throwawayKey } from "./helpers/minisign-sign.mjs";
 
@@ -471,4 +472,32 @@ test("release mode from the side panel: the same signed install, streamed as ste
 
 	const usage = await run(appCli(), "update", "--host", "--channel", "nightly");
 	assert.equal(usage.code, 2, "the host's command lines are fixed; nothing else is accepted");
+});
+
+test("long release notes keep every section: bullets are shortened before anything is cut", () => {
+	const long = (n) => `- Entry ${n}. ${"Detail that only the full notes need. ".repeat(20)}`;
+	const body = ["### Added", ...Array.from({ length: 30 }, (_, i) => long(i)), "", "### Fixed", "- The tabs fit. More detail."].join("\n");
+	assert.ok(body.length > 8000);
+	const notes = fitNotes(body);
+	assert.ok(notes.length <= 8003, `${notes.length}`);
+	assert.match(notes, /### Fixed\n- The tabs fit\./, "the last section survives");
+	assert.match(notes, /- Entry 29\./, "every entry keeps its first sentence");
+	assert.equal(fitNotes("Short notes."), "Short notes.");
+});
+
+test("notes too long even with short bullets drop the longest sections' last bullets, never a section", () => {
+	const body = ["### Added", ...Array.from({ length: 120 }, (_, i) => `- Entry ${i}. ${"More words here. ".repeat(10)}`), "### Fixed", "- The last fix."].join("\n");
+	const notes = fitNotes(body);
+	assert.ok(notes.length <= 8000, `${notes.length}`);
+	assert.match(notes, /### Fixed\n- The last fix\./);
+	assert.match(notes, /- Entry 0\./);
+	const code = fitNotes(`### Added\n- Adds \`${"x".repeat(500)} y\` and more.\n${"- filler. ".repeat(900)}`);
+	for (const line of code.split("\n")) assert.equal((line.match(/`/g) ?? []).length % 2, 0, line.slice(0, 80));
+});
+
+test("the CLI's local imports name .ts files, so source runs resolve them", () => {
+	for (const file of readdirSync(join(here, "..", "src")).filter((f) => f.endsWith(".ts"))) {
+		const text = readFileSync(join(here, "..", "src", file), "utf8");
+		assert.doesNotMatch(text, /from "\.\/[^"]+\.js"/, file);
+	}
 });

@@ -2,11 +2,13 @@
 // requests, the idle gate before a reload, where the extension runs from, version mismatches,
 // automatic updates and the "What's new" card.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
 	AUTO_UPDATE_QUIET_MS,
 	BRIDGE_RUN_GAP_MS,
 	diagnoseVersions,
+	digestReleaseNotes,
 	idleGate,
 	locateExtension,
 	offerKey,
@@ -152,4 +154,83 @@ test("only https links reach the What's new card", () => {
 	assert.equal(safeLink("http://example.com"), undefined);
 	assert.equal(safeLink("not a url"), undefined);
 	assert.equal(safeLink(undefined), undefined);
+});
+
+test("release notes become a short digest: first sentence of each entry, grouped, references and markdown stripped", () => {
+	const notes = [
+		"### Added",
+		"- **Update now** in the side panel (docs/updates.md). The host runs a fixed command line.",
+		"- Side panel `/` menu runs skills. It lists matching skills first.",
+		"- Past chats for local agents (D24): `threads_list` and more. Tests in `test/threads.test.mjs`.",
+		"- A fourth addition. More text.",
+		"",
+		"### Changed",
+		"- Settings has [six tabs](https://example.com/settings) that wrap, e.g. on narrow panels. Details follow.",
+		"",
+		"### Fixed",
+		"- The `claude mcp add` command was black on the dark theme (#67). Body now sets the color.",
+		"",
+		"---",
+		"",
+		"Update with `tabkyra update`, then reload Tabkyra.",
+	].join("\n");
+	const d = digestReleaseNotes(notes);
+	assert.deepEqual(d?.sections, [
+		{ title: "New", items: ["Update now in the side panel.", "Side panel `/` menu runs skills."] },
+		{ title: "Changed", items: ["Settings has six tabs that wrap, e.g. on narrow panels."] },
+		{ title: "Fixed", items: ["The `claude mcp add` command was black on the dark theme."] },
+	]);
+	assert.equal(d?.more, 2, "the third and fourth additions are counted, not shown");
+	assert.equal(digestReleaseNotes(notes, 3)?.sections[0].items[2], "Past chats for local agents: `threads_list` and more.");
+});
+
+test("the real 1.1.9 notes, as the host truncates them, digest to short lines instead of a wall of text", () => {
+	const notes = readFileSync(new URL("./fixtures/release-notes-1.1.9.md", import.meta.url), "utf8");
+	const d = digestReleaseNotes(notes);
+	assert.ok(d);
+	const items = d.sections.flatMap((s) => s.items);
+	assert.ok(items.length >= 2 && items.length <= 6, `${items.length} items`);
+	for (const item of items) {
+		assert.ok(item.length <= 180, `too long: ${item}`);
+		assert.doesNotMatch(item, /\*\*|\]\(|docs\/|\(D\d+/, item);
+		assert.equal((item.match(/`/g) ?? []).length % 2, 0, `unbalanced code span: ${item}`);
+	}
+	assert.equal(items[0], "Updates from the side panel.");
+	assert.equal(digestReleaseNotes(notes, 3)?.sections[0].items[2], "Demo video `media/demo.mp4`.", "a long sentence keeps its lead clause");
+	assert.ok(d.more > 0);
+});
+
+test("notes with no bullet list are left to the plain-text fallback", () => {
+	assert.equal(digestReleaseNotes("Just a paragraph about the release."), undefined);
+	assert.equal(digestReleaseNotes(undefined), undefined);
+	assert.equal(digestReleaseNotes(""), undefined);
+});
+
+test("every section gets its first entry before any gets a second, and code spans are kept exactly", () => {
+	const notes = [
+		"### Added",
+		...["A1.", "A2.", "A3.", "A4.", "A5."].map((x) => `- ${x}`),
+		"### Changed",
+		...["C1.", "C2.", "C3."].map((x) => `- ${x}`),
+		"### Removed",
+		"- R1.",
+		"- R2.",
+		"### Fixed",
+		"- F1.",
+		"- F2.",
+	].join("\n");
+	const d = digestReleaseNotes(notes);
+	assert.deepEqual(
+		d?.sections.map((s) => [s.title, s.items.length]),
+		[
+			["New", 2],
+			["Changed", 2],
+			["Removed", 1],
+			["Fixed", 1],
+		],
+	);
+	assert.equal(d?.more, 6);
+	assert.equal(digestReleaseNotes("### Fixed\n- Reads `__dirname` instead of `__filename`.")?.sections[0].items[0], "Reads `__dirname` instead of `__filename`.");
+	const cut = digestReleaseNotes("### Added\n- Adds `tabkyra skill eval --json --update-baseline …")?.sections[0].items[0] ?? "";
+	assert.equal((cut.match(/`/g) ?? []).length % 2, 0, cut);
 });

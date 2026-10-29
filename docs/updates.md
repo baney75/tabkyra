@@ -57,7 +57,8 @@ What "update" does depends on how Tabkyra runs (the install mode):
   mid-update, the update finishes, and the next host reports it (or reports that it stopped,
   if its process died). A host also repairs an interrupted swap when it starts.
 - **What's new.** After the reload a card shows the release notes (the GitHub release
-  body) or, in a checkout, the commits pulled in (first-parent, a pull request shown by its
+  body) as a digest: the first sentence of up to two entries per section, six in all, with
+  "And N more" and a link to the full notes (notes without a bullet list show as text) or, in a checkout, the commits pulled in (first-parent, a pull request shown by its
   title, at most 20, with a link to compare on GitHub). The ✕ hides it.
 - **Bundled skills.** After an update the new CLI refreshes the skills installed in Claude
   Code, Codex and OpenCode that you haven't edited (`tabkyra skill refresh`). A copy is
@@ -263,7 +264,8 @@ Checked 2026-10-27, before the first release:
   `v1.1.9`. Build with `TABKYRA_NO_BUMP=1` (the workflow does): a plain `npm run build` bumps
   the manifest in the checkout.
 - **The notes** are the `CHANGELOG.md` section for the version (`scripts/release/notes.mjs`);
-  the side panel shows them in "What's new". Checkout mode needs no release at all.
+  the side panel shows each entry's first sentence in "What's new", so start every entry with a
+  short sentence a user understands (AGENTS.md, Changelog). Checkout mode needs no release at all.
 
 1. Add entries under `## [Unreleased]` in `CHANGELOG.md`.
 2. Stable: `./release.sh patch` (or `minor`, `major`). It bumps

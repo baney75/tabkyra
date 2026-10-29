@@ -14,7 +14,14 @@ import {
 	UPDATE_STATUS_KEY,
 } from "../bridge/protocol.js";
 import { BUILD } from "../update/build.js";
-import { PANEL_UPDATE_MESSAGE, safeLink, type UpdateAction, whatsNewFor } from "../update/logic.js";
+import {
+	digestReleaseNotes,
+	type NotesDigest,
+	PANEL_UPDATE_MESSAGE,
+	safeLink,
+	type UpdateAction,
+	whatsNewFor,
+} from "../update/logic.js";
 
 const DISMISSED_KEY = "tabkyra.updateDismissed";
 const WHATS_NEW_DISMISSED_KEY = "tabkyra.whatsNewDismissed";
@@ -184,14 +191,39 @@ function availableLine(): TemplateResult | typeof nothing {
 	</div>`;
 }
 
+/** Changelog text with its `code` spans set in mono; everything else stays plain text. */
+function withCode(text: string): TemplateResult {
+	return html`${text
+		.split("`")
+		.map((part, i) =>
+			i % 2 ? html`<code class="font-mono text-[11px] rounded bg-muted px-1 py-px">${part}</code>` : part,
+		)}`;
+}
+
+/** The release notes as a short digest; notes without a bullet list show as plain text. */
+function releaseNotes(notes: string | undefined, digest: NotesDigest | undefined): TemplateResult | typeof nothing {
+	if (!digest)
+		return notes ? html`<p class="whitespace-pre-wrap text-muted-foreground line-clamp-6">${notes}</p>` : nothing;
+	return html`${digest.sections.map(
+		(section) => html`<div class="space-y-1">
+			${section.title ? html`<p class="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">${section.title}</p>` : nothing}
+			<ul class="list-disc pl-4 space-y-1 text-foreground marker:text-muted-foreground">
+				${section.items.map((item) => html`<li>${withCode(item)}</li>`)}
+			</ul>
+		</div>`,
+	)}`;
+}
+
 function whatsNewCard(): TemplateResult | typeof nothing {
 	const last = whatsNewFor(updateState.status?.lastUpdate, updateState.whatsNewDismissed, BUILD?.id);
 	if (!last) return nothing;
 	const url = safeLink(last.url);
 	const more = (last.totalCommits ?? 0) - (last.commits?.length ?? 0);
 	const skipped = last.skills?.skipped ?? [];
+	const digest = digestReleaseNotes(last.notes);
+	const moreNotes = digest?.more ?? 0;
 	return html`<section
-		class="mx-3 my-2 rounded-lg border border-border bg-card p-3 text-xs space-y-2 shrink-0 max-h-64 overflow-y-auto"
+		class="mx-3 my-2 rounded-lg border border-border bg-card p-3 text-xs space-y-2 shrink-0 max-h-80 overflow-y-auto"
 		aria-label="What's new"
 		data-testid="whats-new"
 	>
@@ -205,7 +237,7 @@ function whatsNewCard(): TemplateResult | typeof nothing {
 				✕
 			</button>
 		</div>
-		${last.notes ? html`<p class="whitespace-pre-wrap text-muted-foreground">${last.notes}</p>` : nothing}
+		${releaseNotes(last.notes, digest)}
 		${
 			last.commits?.length
 				? html`<ul class="list-disc pl-4 space-y-0.5 text-muted-foreground">
@@ -214,7 +246,14 @@ function whatsNewCard(): TemplateResult | typeof nothing {
 					${more > 0 ? html`<p class="text-muted-foreground">and ${more} more</p>` : nothing}`
 				: nothing
 		}
-		${url ? html`<a class="underline underline-offset-2 text-foreground" href=${url} target="_blank" rel="noopener">${last.mode === "checkout" ? "Compare on GitHub" : "Release page"}</a>` : nothing}
+		${
+			url || moreNotes
+				? html`<p class="flex flex-wrap items-baseline gap-x-2">
+						${moreNotes ? html`<span class="text-muted-foreground">And ${moreNotes} more.</span>` : nothing}
+						${url ? html`<a class="underline underline-offset-2 text-foreground" href=${url} target="_blank" rel="noopener">${last.mode === "checkout" ? "Compare on GitHub" : "Full release notes"}</a>` : nothing}
+					</p>`
+				: nothing
+		}
 		${last.skills?.error ? html`<p class="text-destructive">Skills were not refreshed: ${last.skills.error}</p>` : nothing}
 		${
 			skipped.length

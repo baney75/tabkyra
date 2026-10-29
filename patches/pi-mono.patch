@@ -1099,14 +1099,17 @@ index 192c3c536..9cdc25848 100644
  						</div>
  					`;
 diff --git a/packages/web-ui/src/dialogs/SettingsDialog.ts b/packages/web-ui/src/dialogs/SettingsDialog.ts
-index 71620552e..db655ea6f 100644
+index 71620552e..0213fc2dc 100644
 --- a/packages/web-ui/src/dialogs/SettingsDialog.ts
 +++ b/packages/web-ui/src/dialogs/SettingsDialog.ts
-@@ -152,12 +152,16 @@ export class SettingsDialog extends LitElement {
+@@ -152,12 +152,19 @@ export class SettingsDialog extends LitElement {
  		`;
  	}
  
-+	/** Narrow layout (the side panel): every tab is a chip that wraps, none hidden off the edge. */
++	/**
++	 * Narrow layout (the side panel): every tab is a chip, none hidden off the edge. Chips sit in
++	 * an even grid (two rows of equal columns) until one row fits, so no tab is left alone on a line.
++	 */
  	private renderMobileTab(tab: SettingsTab, index: number): TemplateResult {
  		const isActive = this.activeTabIndex === index;
  		return html`
@@ -1116,12 +1119,12 @@ index 71620552e..db655ea6f 100644
 +				type="button"
 +				role="tab"
 +				aria-selected=${isActive ? "true" : "false"}
-+				class="whitespace-nowrap h-8 px-3 rounded-full text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
++				class="min-w-0 truncate whitespace-nowrap h-8 px-1.5 @[28rem]:px-3 rounded-full text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
 +					isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
  				}"
  				@click=${() => this.setActiveTab(index)}
  			>
-@@ -183,14 +187,14 @@ export class SettingsDialog extends LitElement {
+@@ -183,15 +190,21 @@ export class SettingsDialog extends LitElement {
  			backdropClassName: "bg-black/50 backdrop-blur-sm",
  			children: html`
  				${DialogContent({
@@ -1135,10 +1138,18 @@ index 71620552e..db655ea6f 100644
  
  							<!-- Mobile Tabs -->
 -							<div class="md:hidden flex flex-shrink-0 pb-4">
-+							<div role="tablist" class="md:hidden flex flex-wrap gap-1 flex-shrink-0 mb-4 pb-3 border-b border-border">
- 								${this.tabs.map((tab, index) => this.renderMobileTab(tab, index))}
+-								${this.tabs.map((tab, index) => this.renderMobileTab(tab, index))}
++							<div class="@container md:hidden flex-shrink-0 mb-4 pb-3 border-b border-border">
++								<div
++									role="tablist"
++									class="grid gap-1 @[28rem]:flex @[28rem]:flex-wrap"
++									style="grid-template-columns: repeat(${this.tabs.length > 3 ? Math.ceil(this.tabs.length / 2) : this.tabs.length}, minmax(0, 1fr))"
++								>
++									${this.tabs.map((tab, index) => this.renderMobileTab(tab, index))}
++								</div>
  							</div>
  
+ 							<!-- Layout -->
 diff --git a/packages/web-ui/src/index.ts b/packages/web-ui/src/index.ts
 index 48284c742..583eabc9d 100644
 --- a/packages/web-ui/src/index.ts

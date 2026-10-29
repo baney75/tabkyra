@@ -23,6 +23,9 @@
 	--tk-ink: #0f1b24;
 	--tk-tide: #43b3a0;
 	--ring: var(--tk-brass-deep);
+	/* Native controls (checkboxes, the search box's clear button, scrollbars) follow the theme. */
+	color-scheme: light;
+	accent-color: var(--tk-brass-deep);
 	/* Hover is neutral. The theme's blue (light) and yellow (dark) accent text made a hovered
 	   icon look switched on; brass is kept for a real "on" state (aria-pressed, recording). */
 	--accent-foreground: var(--foreground);
@@ -40,6 +43,8 @@
 	--ring: var(--tk-brass);
 	--accent-foreground: var(--foreground);
 	--tk-brass-text: var(--tk-brass);
+	color-scheme: dark;
+	accent-color: var(--tk-brass);
 }
 
 body {
