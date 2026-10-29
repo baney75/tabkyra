@@ -67,8 +67,8 @@ Repeat 2 to 4 until the task is done. Prefer refs over selectors, and selectors 
 - Web components and same-origin frames are in `read_page`. A frame from another site shows
   as `iframe` with its URL: `navigate` to that URL to read it.
 - Data a page loads (results, prices, lists): call `read_network {"type":"Fetch"}` before you
-  load or act, then `read_network {"requestId":"..."}` for that response's JSON (same-origin
-  responses; fetch another site's API with `run_js`). It's exact where page text is cut or paged.
+  load or act, then `read_network {"requestId":"..."}` for its JSON and the shape of what it sent
+  (same-origin only; fetch another site's API with `run_js`). Exact where page text is cut or paged.
 - `inspect_page` maps the page: framework, embedded JSON, forms and fields, frames, API calls.
 - `run_js` reads what no tool shows (`"world":"main"` sees the page's own variables). Read
   with it; act with click, type and fill. Never use it to read cookies or to send data off the page.

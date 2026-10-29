@@ -5,7 +5,7 @@
  * on tabs that are not visible; nothing here activates a tab.
  */
 
-import { maskBody } from "./mask-body.js";
+import { bodyShape, maskJsonResponse, maskUrl } from "./mask-body.js";
 
 const PROTOCOL_VERSION = "1.3";
 
@@ -633,22 +633,20 @@ export async function enableNetworkCapture(tabId: number): Promise<void> {
 	await cdpSend(tabId, "Network.enable");
 }
 
-/** One captured request in full: its entry, the request body and the response body, capped. */
+/** One captured request in full: its entry, the request body's shape and a JSON response, capped. */
 export interface NetworkDetail extends NetworkEntry {
-	requestBody?: string;
+	/** Keys and value types of what was sent, never the values (mask-body.ts). */
+	requestShape?: string;
 	responseBody?: string;
 	/** Why there is no body: still loading, evicted, binary, ... */
 	bodyNote?: string;
 }
 
 const MAX_RESPONSE_BODY = 20000;
-const MAX_REQUEST_BODY = 4000;
-/** How much of a body is masked before it is cut to the limits above (linear work). */
-const MASK_CEILING = 2_000_000;
-/** The base64 text for MASK_CEILING bytes, a multiple of 4 so it decodes. */
-const BASE64_CEILING = Math.ceil(MASK_CEILING / 3) * 4;
-const TEXTUAL =
-	/^(text\/|application\/(json|[\w.+-]*\+json|javascript|x-javascript|xml|[\w.+-]*\+xml|x-www-form-urlencoded|graphql))/i;
+const MAX_REQUEST_SHAPE = 4000;
+/** Largest response read and masked; a bigger one isn't shown (a cut body isn't complete JSON). */
+const BODY_CEILING = 2_000_000;
+const JSON_TYPE = /^application\/(?:json|[\w.+-]*\+json)\b/i;
 
 function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
 	if (!headers) return undefined;
@@ -684,8 +682,8 @@ function decodeBody(body: string, base64: boolean): string {
 }
 
 /**
- * The bodies of one request this tab made, for reading the JSON a page renders from. Only what
- * the page itself could read; credentials masked; text capped before it is masked.
+ * One request in detail: what was sent, as its shape only, and the response when it is complete
+ * JSON the page itself could read, credentials masked in place (src/browser/mask-body.ts).
  */
 export async function readNetworkDetail(tabId: number, requestId: string): Promise<NetworkDetail> {
 	const entry = networkBuffers.get(tabId)?.get(requestId);
@@ -693,7 +691,7 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 		throw new Error(
 			`No captured request ${requestId}. Call read_network for the current list (capture starts on the first call).`,
 		);
-	const detail: NetworkDetail = { ...entry };
+	const detail: NetworkDetail = { ...entry, url: maskUrl(entry.url) };
 	const pageUrl = (await chrome.tabs.get(tabId)).url;
 	if (!pageCouldRead(entry, pageUrl)) {
 		detail.bodyNote =
@@ -702,27 +700,28 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 	}
 	try {
 		const post = await cdpSend<{ postData: string }>(tabId, "Network.getRequestPostData", { requestId });
-		detail.requestBody = cap(maskBody(post.postData.slice(0, MASK_CEILING), entry.requestType), MAX_REQUEST_BODY);
+		detail.requestShape = cap(bodyShape(post.postData.slice(0, BODY_CEILING), entry.requestType), MAX_REQUEST_SHAPE);
 	} catch {
 		/* no request body */
 	}
 	if (entry.failed) detail.bodyNote = `The request failed: ${entry.failed}`;
 	else if (entry.status === undefined) detail.bodyNote = "No response yet; wait and call again.";
 	else if (!entry.finished) detail.bodyNote = "Still loading (a streaming or large response); wait and call again.";
-	else if (entry.mimeType && !TEXTUAL.test(entry.mimeType))
-		detail.bodyNote = `Binary response (${entry.mimeType}); not shown.`;
+	else if (!entry.mimeType || !JSON_TYPE.test(entry.mimeType))
+		detail.bodyNote = `Only JSON responses are shown; this one is ${entry.mimeType || "untyped"}. Read the page with get_page_text or get_page_html, or fetch it with run_js.`;
 	else {
 		try {
 			const body = await cdpSend<{ body: string; base64Encoded: boolean }>(tabId, "Network.getResponseBody", {
 				requestId,
 			});
-			const text = decodeBody(
-				// Masked whole up to a ceiling, then cut: a cut never splits a credential's structure,
-				// and the masker handles a body cut at the ceiling.
-				body.base64Encoded ? body.body.slice(0, BASE64_CEILING) : body.body.slice(0, MASK_CEILING),
-				body.base64Encoded,
-			);
-			detail.responseBody = cap(maskBody(text, entry.mimeType), MAX_RESPONSE_BODY);
+			const text = decodeBody(body.body, body.base64Encoded);
+			const masked = text.length <= BODY_CEILING ? maskJsonResponse(text) : undefined;
+			if (masked === undefined)
+				detail.bodyNote =
+					text.length > BODY_CEILING
+						? `The response is ${Math.round(text.length / 1e6)} MB, over the 2 MB this reads; fetch it with run_js.`
+						: "The response isn't complete JSON, so it isn't shown; fetch it with run_js.";
+			else detail.responseBody = cap(masked, MAX_RESPONSE_BODY);
 		} catch {
 			detail.bodyNote =
 				"The browser no longer has this response body (it keeps recent ones only). Reload and read again.";
@@ -743,7 +742,8 @@ export function networkCapturing(tabId: number): boolean {
 export function readNetwork(tabId: number, clear = false): NetworkEntry[] {
 	const buf = networkBuffers.get(tabId);
 	if (!buf) return [];
-	const out = [...buf.values()];
+	// Query strings can carry tokens (?token=...): masked for every reader.
+	const out = [...buf.values()].map((e) => ({ ...e, url: maskUrl(e.url) }));
 	if (clear) buf.clear();
 	return out;
 }

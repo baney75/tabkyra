@@ -456,18 +456,35 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 
 	// Text: the document, then what shadow roots and same-origin frames render, which
 	// document.body.innerText leaves out. Rendered text only: nothing hidden reaches the agent.
-	const rendered = (c: Element) => {
-		const check = (c as Element & { checkVisibility?: () => boolean }).checkVisibility;
-		return check ? check.call(c) : isVisible(c);
+	// Hidden includes visibility:hidden and opacity:0; display:contents has no box of its own,
+	// so the nearest ancestor with one decides.
+	const rendered = (c: Element): boolean => {
+		const view = c.ownerDocument.defaultView ?? window;
+		if (view.getComputedStyle(c).display === "contents") {
+			const up = c.parentElement ?? ((c.getRootNode() as ShadowRoot).host as Element | undefined);
+			return up ? rendered(up) : true;
+		}
+		const check = (c as Element & { checkVisibility?: (o?: Record<string, boolean>) => boolean }).checkVisibility;
+		return check ? check.call(c, { visibilityProperty: true, opacityProperty: true }) : isVisible(c);
 	};
+	// A shadow root's own text: element children that render, and text written straight into it.
+	const shadowText = (root: Document | ShadowRoot) =>
+		Array.from(root.childNodes)
+			.map((c) =>
+				c.nodeType === 3
+					? (c.textContent ?? "").trim()
+					: c.nodeType === 1 &&
+							tagOf(c as Element) !== "style" &&
+							tagOf(c as Element) !== "script" &&
+							rendered(c as Element)
+						? ((c as HTMLElement).innerText ?? "")
+						: "",
+			)
+			.filter(Boolean)
+			.join("\n");
 	const parts = [document.body?.innerText ?? ""];
 	for (const at of roots.slice(1)) {
-		const own = isShadow(at.root)
-			? Array.from(at.root.children)
-					.filter((c) => tagOf(c) !== "style" && tagOf(c) !== "script" && rendered(c))
-					.map((c) => (c as HTMLElement).innerText ?? "")
-					.join("\n")
-			: ((at.root as Document).body?.innerText ?? "");
+		const own = isShadow(at.root) ? shadowText(at.root) : ((at.root as Document).body?.innerText ?? "");
 		if (own.trim()) parts.push(at.frame && !isShadow(at.root) ? `[frame ${at.frame}]\n${own}` : own);
 	}
 	const text = parts
@@ -588,8 +605,10 @@ function pageInspect(): unknown {
 			.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[id]")
 			.replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "[id]")
 			.slice(0, 120);
-	const storageKeys = (st: Storage | undefined) => {
+	// Reading window.localStorage itself throws on some pages (sandboxed, storage blocked).
+	const storageKeys = (get: () => Storage | undefined) => {
 		try {
+			const st = get();
 			return st
 				? Array.from({ length: Math.min(st.length, 30) }, (_, i) => anonymous(st.key(i) ?? "")).filter(Boolean)
 				: [];
@@ -597,11 +616,16 @@ function pageInspect(): unknown {
 			return [];
 		}
 	};
-	const cookieNames = document.cookie
-		.split(";")
-		.map((c) => anonymous(c.split("=")[0]?.trim() ?? ""))
-		.filter(Boolean)
-		.slice(0, 30);
+	let cookieNames: string[] = [];
+	try {
+		cookieNames = document.cookie
+			.split(";")
+			.map((c) => anonymous(c.split("=")[0]?.trim() ?? ""))
+			.filter(Boolean)
+			.slice(0, 30);
+	} catch {
+		cookieNames = [];
+	}
 	return {
 		url: location.href,
 		title: document.title,
@@ -614,8 +638,8 @@ function pageInspect(): unknown {
 		customTags,
 		scripts: { inline: scripts.filter((x) => !x.src).length, hosts: scriptHosts },
 		storage: {
-			local: storageKeys(window.localStorage),
-			session: storageKeys(window.sessionStorage),
+			local: storageKeys(() => window.localStorage),
+			session: storageKeys(() => window.sessionStorage),
 			cookies: cookieNames,
 		},
 		serviceWorker: !!navigator.serviceWorker?.controller,
@@ -737,14 +761,18 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
 		// Text inside web components (open shadow roots) and same-origin frames, which innerText
 		// leaves out, follows the element's own text. Rendered text only: nothing hidden.
+		// Hidden includes visibility:hidden and opacity:0; display:contents has no box, so the
+		// nearest ancestor with one decides.
 		const shown = (c) => {
-			// display:contents draws no box of its own; its children decide.
 			const view = c.ownerDocument && c.ownerDocument.defaultView;
-			if (view && view.getComputedStyle(c).display === "contents") return true;
-			return c.checkVisibility ? c.checkVisibility() : !!(c.getClientRects && c.getClientRects().length);
+			if (view && view.getComputedStyle(c).display === "contents") {
+				const up = c.parentElement || (c.getRootNode && c.getRootNode().host);
+				return up ? shown(up) : true;
+			}
+			return c.checkVisibility ? c.checkVisibility({ visibilityProperty: true, opacityProperty: true }) : !!(c.getClientRects && c.getClientRects().length);
 		};
 		const parts = [el.innerText || ""];
-		const own = (root) => Array.from(root.children).filter((c) => !/^(style|script)$/i.test(c.tagName) && shown(c)).map((c) => c.innerText ?? "").join("\\n");
+		const own = (root) => Array.from(root.childNodes).map((c) => c.nodeType === 3 ? (c.textContent || "").trim() : c.nodeType === 1 && !/^(style|script)$/i.test(c.tagName) && shown(c) ? (c.innerText ?? "") : "").filter(Boolean).join("\\n");
 		const visit = (root, depth) => {
 			if (depth > 12) return;
 			const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll("*")) : [];

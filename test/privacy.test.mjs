@@ -163,73 +163,52 @@ test("the stream gate applies private mode, the trusted hosts and the proxy chec
 	assert.equal((sidepanel.match(/new PrivacyTab\(\)/g) ?? []).length, 1, "the settings dialog shows the Privacy tab");
 });
 
-test("response bodies an agent reads have the user's credentials masked and the data intact", async () => {
-	const { maskBody, isSecretName } = await import("../src/browser/mask-body.ts");
-	const json = JSON.parse(
-		maskBody(
-			JSON.stringify({
-				id: "3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c",
-				image: "/images/products/2024/summer/item42-large-variant-abcdef123456.jpg",
-				sku: "sku_variants_v2_skeleton_loader",
-				price: 4242,
-				tokenCount: 5,
-				author: "Ada",
-				access_token: "abc",
-				tokens: ["a1", "b2"],
-				auth: { jwt_short: 1 },
-				sid: "x9",
-				otp: "123456",
-				data: JSON.stringify({ access_token: "short-opaque", ok: true }),
-				note: "Bearer abc123def456ghi789jkl0 and eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJlMTIz",
-			}),
-			"application/json",
-		),
-	);
-	assert.equal(json.id, "3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c", "ids stay");
-	assert.equal(json.image, "/images/products/2024/summer/item42-large-variant-abcdef123456.jpg", "paths stay");
-	assert.equal(json.sku, "sku_variants_v2_skeleton_loader");
-	assert.equal(json.price, 4242);
-	assert.equal(json.tokenCount, 5);
-	assert.equal(json.author, "Ada");
-	for (const k of ["access_token", "tokens", "auth", "sid", "otp"]) assert.equal(json[k], "[secret]", k);
-	assert.deepEqual(JSON.parse(json.data), { access_token: "[secret]", ok: true }, "JSON inside a string");
-	assert.equal(json.note, "Bearer [secret] and [secret]");
-	assert.equal(
-		maskBody("authenticity_token=abc&user%5Bemail%5D=ada%40x.co&user%5Bpassword%5D=hunter2&remember=1", "application/x-www-form-urlencoded"),
-		"authenticity_token=[secret]&user%5Bemail%5D=ada%40x.co&user%5Bpassword%5D=[secret]&remember=1",
-	);
-	const multipart = '--b\r\nContent-Disposition: form-data; name="email"\r\n\r\nada@x.co\r\n--b\r\nContent-Disposition: form-data; name="password"\r\n\r\nhunter2\r\n--b--\r\n';
-	const masked = maskBody(multipart, "multipart/form-data; boundary=b");
-	assert.match(masked, /ada@x\.co/);
-	assert.doesNotMatch(masked, /hunter2/);
-	assert.ok(isSecretName("user[password]") || isSecretName("password"));
-	assert.equal(isSecretName("author"), false);
-	const t0 = performance.now();
-	maskBody(`{"blob":"${"a-".repeat(500000)}"}x`);
-	maskBody(`k=${"a-".repeat(500000)}`);
-	assert.ok(performance.now() - t0 < 500, "linear on a 1 MB body (about 25 ms measured)");
-});
-
-test("masking edits only credential values: big ids, duplicate keys, deep nesting and cut-off bodies", async () => {
-	const { maskBody, isSecretName } = await import("../src/browser/mask-body.ts");
-	assert.equal(maskBody('{"id":1153826337396867073,"id":2,"__proto__":{"x":1}}', "application/json"), '{"id":1153826337396867073,"id":2,"__proto__":{"x":1}}', "the text comes back unchanged");
+test("what read_network shows of bodies: request shapes without values, JSON responses masked in place", async () => {
+	const { maskJsonResponse, bodyShape, isSecretName, holdsCredential, maskUrl } = await import("../src/browser/mask-body.ts");
+	// Names: the review's short forms and card and code fields are credentials; data names aren't.
+	for (const name of ["password1", "pass1", "user_pw", "loginPwd", "newPwd", "pwd1", "userpass", "confirm_pass", "cardPin", "pw", "key", "session", "secretKey", "signing_key", "code_verifier", "x-csrf-token", "client_secret", "mfa_code", "verification_code", "sms_code", "cvv", "card_number", "bypassToken", "passport_client_secret", "otp", "mfa_otp"])
+		assert.ok(isSecretName(name), name);
+	for (const name of ["max_tokens", "tokenCount", "total_tokens", "author", "footprint", "spotPrice", "hotplug", "depotId", "passenger_count", "passport_country", "code", "sku", "keyboard_layout", "id"])
+		assert.equal(isSecretName(name), false, name);
+	// Requests: the shape only.
+	const login = JSON.stringify({ email: "ada@x.co", password: "hunter2", remember: true, tags: ["a", "b"] });
+	const shape = bodyShape(login, "application/json");
+	assert.doesNotMatch(shape, /hunter2|ada@x\.co/);
+	assert.deepEqual(JSON.parse(shape), { email: "<string, 8 chars>", password: "<string, 7 chars>", remember: "<boolean>", tags: ["<string, 1 chars>", "(2 items)"] });
+	assert.equal(bodyShape("user%5Bpassword%5D=hunter2&next=%2F", "application/x-www-form-urlencoded"), "form fields: user[password], next");
+	assert.doesNotMatch(bodyShape('--b\r\nContent-Disposition: form-data; name="password"\r\n\r\nhun\r\n--ter2\r\n--b--', "multipart/form-data; boundary=b"), /hun|ter2/);
+	assert.doesNotMatch(bodyShape('{viewer(token:"opaque-token-6161"){id}}', "application/graphql"), /opaque/);
+	// Responses: complete JSON only, edited in place.
+	assert.equal(maskJsonResponse('{"id":1153826337396867073,"id":2,"__proto__":{"x":1}}'), '{"id":1153826337396867073,"id":2,"__proto__":{"x":1}}');
+	assert.equal(maskJsonResponse('{"amount":12.50,"secretKey":{"a":[1,2]},"key":"9944b091","user_pw":"x","tokens":["t1"]}'), '{"amount":12.50,"secretKey":"[secret]","key":"[secret]","user_pw":"[secret]","tokens":"[secret]"}');
 	let deep = '"password":"opaque-password-6161"';
 	for (let i = 0; i < 45; i++) deep = `"k${i}":{${deep}}`;
-	assert.doesNotMatch(maskBody(`{${deep}}`, "application/json"), /opaque-password-6161/, "no depth limit");
-	assert.equal(maskBody('{"ok":true,"tokens":["t-1","t-2","t-', "application/json"), '{"ok":true,"tokens":"[secret]"', "a body cut in a credential is masked to its end");
-	assert.equal(maskBody('{"amount":12.50,"secretKey":{"a":[1,2]},"signingKey":"k"}', "application/json"), '{"amount":12.50,"secretKey":"[secret]","signingKey":"[secret]"}');
-	const gql = JSON.stringify({ query: 'mutation{login(email:"a@x.co",password:"hunter2"){token}}' });
-	assert.doesNotMatch(maskBody(gql, "application/json"), /hunter2/, "GraphQL inline argument");
-	assert.match(maskBody(gql, "application/json"), /a@x\.co/);
-	assert.doesNotMatch(maskBody("payload=%7B%22password%22%3A%22hunter2%22%7D&x=1", "application/x-www-form-urlencoded"), /hunter2/, "JSON inside a form value");
-	assert.equal(maskBody('{"plan":"Basic Subscription","course":"Bearer of good news"}', "application/json"), '{"plan":"Basic Subscription","course":"Bearer of good news"}');
-	for (const name of ["password1", "password2", "pass1", "user[password_confirmation]", "secretKey", "signing_key", "code_verifier", "x-csrf-token", "client_secret", "mfa_code"])
-		assert.ok(isSecretName(name) || isSecretName(name.replace(/^.*\[|\]$/g, "")), name);
-	for (const name of ["max_tokens", "tokenCount", "total_tokens", "author", "passenger_count", "passport_country", "code", "sku"]) assert.equal(isSecretName(name), false, name);
-	assert.equal(
-		maskBody("user%5Bpassword%5D=a&user%5Bpassword_confirmation%5D=a&password1=b&password2=b&pass1=c&code_verifier=d&next=%2F", "application/x-www-form-urlencoded"),
-		"user%5Bpassword%5D=[secret]&user%5Bpassword_confirmation%5D=[secret]&password1=[secret]&password2=[secret]&pass1=[secret]&code_verifier=[secret]&next=%2F",
+	assert.doesNotMatch(maskJsonResponse(`{${deep}}`), /opaque-password-6161/);
+	const strings = JSON.parse(
+		maskJsonResponse(
+			JSON.stringify({
+				query: 'mutation{login(input:{password:"hunter2"}){id}}',
+				anon: '{viewer(token:"opaque-token-6161"){id}}',
+				link: "https://x.example/cb?access_token=abc&next=/",
+				log: "[INFO] login password=hunter2",
+				long: `password=${"x".repeat(5000)}`,
+				auth: "Bearer abc123def456ghi789jkl0",
+				plan: "Basic Subscription",
+				note: "Price: 4242, see the docs",
+			}),
+		),
 	);
+	for (const k of ["query", "anon", "link", "log", "long", "auth"]) assert.equal(strings[k], "[secret]", k);
+	assert.equal(strings.plan, "Basic Subscription");
+	assert.equal(strings.note, "Price: 4242, see the docs");
+	assert.equal(maskJsonResponse('{"ok":true,"tokens":["t-1","t-'), undefined, "a cut-off body isn't shown");
+	assert.equal(maskJsonResponse("<html>csrf</html>"), undefined, "HTML isn't shown");
+	assert.equal(holdsCredential("footprint: 3 kg"), false);
+	assert.equal(maskUrl("https://u:p@x.example/a?access_token=abc&page=2"), "https://x.example/a?access_token=%5Bsecret%5D&page=2");
+	const t0 = performance.now();
+	holdsCredential("a-".repeat(500000));
+	maskJsonResponse(JSON.stringify({ blob: "a-".repeat(500000) }));
+	assert.ok(performance.now() - t0 < 500, "linear on a 1 MB body");
 });
 
 test("a response the page itself couldn't read stays unread: same origin only", async () => {

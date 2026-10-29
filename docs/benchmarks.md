@@ -165,31 +165,32 @@ local fixture pages (no model) and scores 20 probes:
   - `fill` reaches a listener outside the shadow root
   - a newline in a frame URL or a `role` can't fake an element line
 
-Measured 2026-10-28 in headless Chromium, each build with the current CLI.
+Measured 2026-10-28 in headless Chromium, each build with the current CLI. Each review
+column is the head that review saw; its high findings show as that column's failures.
 
-| Probe | main | first review (328e9f6) | second review (8a21dfc) | now |
-| --- | --- | --- | --- | --- |
-| `shadow-see` | fail | pass | pass | pass |
-| `shadow-click` | fail | pass | pass | pass |
-| `nested-fill` | fail | pass | pass | pass |
-| `shadow-text` | fail | fail | pass | pass |
-| `frame-see` | fail | pass | pass | pass |
-| `frame-click` | fail | pass | pass | pass |
-| `xorigin-flag` | fail | pass | pass | pass |
-| `states` | fail | pass | pass | pass |
-| `api-request` | pass | pass | pass | pass |
-| `api-body` | fail | pass | pass | pass |
-| `embedded-map` | fail | pass | pass | pass |
-| `cost` | pass | pass | pass | pass |
-| `scaled-click` | fail | fail | pass | pass |
-| `hidden-text` | fail | fail | pass | pass |
-| `xorigin-body` | pass | fail | fail | pass |
-| `login-masked` | fail | fail | pass | pass |
-| `composed-fill` | fail | fail | pass | pass |
-| `fieldset-disabled` | fail | fail | pass | pass |
-| `hostile-src` | pass | pass | pass | pass |
-| `contents-host` | fail | pass | fail | pass |
+| Probe | main | review 1 (328e9f6) | review 2 (8a21dfc) | review 3 (c2f4df9) | now |
+| --- | --- | --- | --- | --- | --- |
+| `shadow-see` | fail | pass | pass | pass | pass |
+| `shadow-click` | fail | pass | pass | pass | pass |
+| `nested-fill` | fail | pass | pass | pass | pass |
+| `shadow-text` | fail | fail | pass | pass | pass |
+| `frame-see` | fail | pass | pass | pass | pass |
+| `frame-click` | fail | pass | pass | pass | pass |
+| `xorigin-flag` | fail | pass | pass | pass | pass |
+| `states` | fail | pass | pass | pass | pass |
+| `api-request` | pass | pass | pass | pass | pass |
+| `api-body` | fail | pass | pass | pass | pass |
+| `embedded-map` | fail | pass | pass | pass | pass |
+| `cost` | pass | pass | pass | pass | pass |
+| `scaled-click` | fail | fail | pass | pass | pass |
+| `hidden-text` | fail | fail | fail | fail | pass |
+| `xorigin-body` | pass | fail | fail | pass | pass |
+| `login-masked` | fail | fail | fail | fail | pass |
+| `composed-fill` | fail | fail | pass | pass | pass |
+| `fieldset-disabled` | fail | fail | pass | pass | pass |
+| `hostile-src` | pass | pass | pass | pass | pass |
+| `contents-host` | fail | fail | fail | fail | pass |
 
-Score: main 4/20, first review (328e9f6) 13/20, second review (8a21dfc) 18/20, now 20/20. The cross-site fixture serves text/plain:
+Score: main 4/20, review 1 (328e9f6) 12/20, review 2 (8a21dfc) 16/20, review 3 (c2f4df9) 17/20, now 20/20. The cross-site fixture serves text/plain:
 Chromium aborts an opaque JSON or HTML response before a body exists, which would make that
 probe pass on any build.

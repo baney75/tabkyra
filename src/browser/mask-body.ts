@@ -1,100 +1,118 @@
 /**
- * Request and response bodies an agent reads through read_network: the user's credentials are
- * masked, the data is left exactly as sent. Masking goes by structure (the field's name in JSON,
- * a form, a multipart part, or name: value text inside a string), not by how a value looks, so
- * ids, paths and SKUs survive. JSON is edited in place, span by span, never parsed and
- * re-serialized: 64-bit ids keep every digit, duplicate keys and key order stay, and a body cut
- * off in the middle of a credential is masked to its end. Every pass is linear in the text.
+ * What an agent sees of a request's bodies through read_network, kept to promises that hold:
+ *
+ * - A request body is shown as its shape only: keys and value types, never a value. It carries
+ *   what the user typed, passwords included, and no name list catches every password field.
+ * - A response body is shown only when it is complete JSON. Values under credential-named keys
+ *   become "[secret]", edited in place so every other byte (64-bit ids, key order, duplicate
+ *   keys) comes back as sent. A string value that holds a credential as text ("token=...",
+ *   'password:"..."', a bearer token, a JWT) is masked whole, never partly parsed.
+ * - Anything else (HTML, plain text, a body cut off) isn't shown; get_page_html and run_js cover it.
+ *
+ * Every pass is linear in the text.
  */
 
 export const SECRET = "[secret]";
 
-/** Names that contain a credential word but hold data (token counts, limits, tokenizers). */
+/** Names that contain a credential word but hold counts and settings. */
 const DATA_NAMES =
-	/^(?:(?:max|min|total|input|output|prompt|completion|cached|reasoning|remaining|used)tokens?|tokens?(?:count|limit|usage|used|total|budget|remaining|type)|tokenizer|tokenized|secretary\w*|passenger\w*|passport\w*|bypass\w*|compass\w*|passage\w*)$/;
-/** Credential words anywhere in a name: password_confirmation, secretKey, x-csrf-token, pass1. */
-const SECRET_WORDS =
-	/password|passwd|passphrase|passcode|secret|token|apikey|accesskey|privatekey|signingkey|authkey|credential|csrf|xsrf|cookie|sessionid|sessid|sessionkey|authorization|codeverifier|authcode|jwt|otp|mfacode|totp|recoverycode|backupcode/;
+	/^(?:(?:max|min|total|input|output|prompt|completion|cached|reasoning|remaining|used)tokens?|tokens?(?:count|limit|usage|used|total|budget|remaining|type)|tokenizer|tokenized)$/;
+/** Exact names that are credentials. */
+const EXACT = /^(?:sid|pin|pw|pwd|pass|key|session|otp|auth|sig|signature|code2fa|cvv|cvc|csc)$/;
+/** Credential words anywhere in a name: password_confirmation, secretKey, x-csrf-token. */
+const ANYWHERE =
+	/password|passwd|passphrase|passcode|secret|token|apikey|accesskey|privatekey|signingkey|authkey|credential|csrf|xsrf|cookie|sessionid|sessid|sessionkey|authorization|codeverifier|authcode|jwt|recoverycode|backupcode|verificationcode|smscode|twofactor|2fa|mfacode|totp|cardnumber|cardno|iban|ssn/;
+/** Credential words at the end of a name: user_pw, loginPwd, confirm_pass, cardPin, mfa_otp. */
+const ENDING = /(?:pw|pwd|pass|pin|otp|cvv|cvc)$/;
 
 /** A field name that holds a credential: compared with punctuation, case and trailing digits removed. */
 export function isSecretName(name: string): boolean {
 	const n = name.toLowerCase().replace(/[^a-z0-9]/g, "");
 	if (!n || DATA_NAMES.test(n)) return false;
-	if (/^(?:sid|pin|pwd|pass\d*|auth|signature|sig)$/.test(n)) return true;
-	return SECRET_WORDS.test(n.replace(/\d+$/, ""));
+	const stem = n.replace(/\d+$/, "");
+	return EXACT.test(stem) || ANYWHERE.test(stem) || ENDING.test(stem);
 }
 
-/** The name inside brackets for form keys like user[password]. */
-const innerName = (key: string) => key.replace(/^.*\[|\]$/g, "");
-const secretKey = (key: string) => isSecretName(key) || isSecretName(innerName(key));
-
-/** Token shapes masked wherever they appear: never data an agent needs. */
-function maskTokenShapes(text: string): string {
-	return (
-		text
-			.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[private-key]")
-			.replace(
-				/\b((?:Proxy-)?Authorization\s*:\s*)(?:(Bearer|Basic|Digest|Token)\s+)?[^\s"',;]+/gi,
-				(_m, head: string, scheme?: string) => `${head}${scheme ? `${scheme} ` : ""}${SECRET}`,
-			)
-			// A bare "Bearer <token>" only when the token looks like one (long, letters and digits), so
-			// "Basic Subscription" stays.
-			.replace(
-				/\b(Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*\d)(?=[A-Za-z0-9._~+/=-]*[A-Za-z])[A-Za-z0-9._~+/=-]{20,}/g,
-				`$1 ${SECRET}`,
-			)
-			.replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, SECRET)
-			.replace(
-				/\b(?:sk-(?:ant-|proj-|or-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,}|npm_[A-Za-z0-9]{30,}|hf_[A-Za-z0-9]{30,})/g,
-				SECRET,
-			)
-	);
+/** A string that carries a credential: a token shape, or a credential name followed by : or =. */
+export function holdsCredential(text: string): boolean {
+	if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text)) return true;
+	// A scheme and a token: long, with a digit, so "Basic Subscription" stays.
+	if (/\b(?:Bearer|Basic|Digest)\s+(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{16,}/.test(text)) return true;
+	if (/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/.test(text)) return true;
+	if (
+		/\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{16,}|xox[abprs]-[\w-]{10,}|AKIA[0-9A-Z]{16}|AIza[\w-]{30,}|ya29\.[\w-]{20,}|npm_\w{30,}|hf_\w{30,})/.test(
+			text,
+		)
+	)
+		return true;
+	// name: value or name=value, the name not starting mid-word; quotes and escapes allowed around it.
+	for (const m of text.matchAll(/(?<![A-Za-z0-9_[\]-])\\?["']?([A-Za-z0-9_[\]-]{1,80})\\?["']?\s*[:=]/g))
+		if (isSecretName(m[1].replace(/^.*\[|\]$/g, ""))) return true;
+	return false;
 }
 
-/**
- * Credentials written as name/value text inside a value: a GraphQL query's inline arguments
- * (password:"hunter2"), a query string or form in a string (password=hunter2), JSON in a string.
- */
-function maskText(text: string, depth: number): string {
+/** The shape of a request body: keys and value types, no values. */
+export function bodyShape(text: string, contentType = ""): string {
+	const type = contentType.toLowerCase();
 	const t = text.trim();
-	if (depth < 8 && /^[[{]/.test(t)) return maskJson(text, depth + 1);
-	return maskTokenShapes(
-		text.replace(
-			/(?<![\w[\]-])("?)([\w[\]-]{1,80})\1(\s*[:=]\s*)("(?:[^"\\\n]|\\.){0,4000}"|'(?:[^'\\\n]|\\.){0,4000}'|[^&\s,;)}\]"']{1,4000})/g,
-			(whole, q: string, key: string, sep: string, value: string) => {
-				if (!secretKey(key)) return whole;
-				const quote = value[0] === '"' || value[0] === "'" ? value[0] : "";
-				return `${q}${key}${q}${sep}${quote}${SECRET}${quote}`;
-			},
-		),
-	);
+	const describe = (v: unknown, depth: number): unknown => {
+		if (Array.isArray(v)) return v.length ? [describe(v[0], depth + 1), `(${v.length} items)`] : [];
+		if (v && typeof v === "object") {
+			if (depth > 20) return "{…}";
+			return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, describe(x, depth + 1)]));
+		}
+		if (typeof v === "string") return `<string, ${v.length} chars>`;
+		return `<${v === null ? "null" : typeof v}>`;
+	};
+	if (type.includes("json") || /^[[{]/.test(t)) {
+		try {
+			return JSON.stringify(describe(JSON.parse(t), 0));
+		} catch {
+			/* not JSON */
+		}
+	}
+	if (type.includes("x-www-form-urlencoded") || /^[^\s=&]+=[^\s]*$/.test(t)) {
+		const keys = t.split("&").map((pair) => {
+			const key = pair.split("=")[0] ?? "";
+			try {
+				return decodeURIComponent(key.replace(/\+/g, " "));
+			} catch {
+				return key;
+			}
+		});
+		return `form fields: ${keys.join(", ")}`;
+	}
+	if (type.includes("multipart/")) {
+		const names = [...t.matchAll(/Content-Disposition:[^\r\n]*\bname="([^"\r\n]*)"/gi)].map((m) => m[1]);
+		return `multipart fields: ${names.join(", ")}`;
+	}
+	return `${t.length} characters of ${type || "text"}; values not shown`;
 }
 
 /**
- * JSON, edited in place: the value after a credential-named key becomes "[secret]" whatever its
- * type; other string values are checked for name/value text and JSON inside them. Truncated
- * input is fine: an unfinished credential value is masked to the end.
+ * A complete JSON response with credentials masked in place, or undefined when the text isn't
+ * complete JSON (then it isn't shown at all).
  */
-function maskJson(text: string, depth = 0): string {
+export function maskJsonResponse(text: string): string | undefined {
+	try {
+		JSON.parse(text);
+	} catch {
+		return undefined;
+	}
 	let out = "";
 	let i = 0;
 	const n = text.length;
-	// One frame per open object or array: whether the next string in an object is a key.
 	const stack: Array<{ obj: boolean; key: boolean }> = [];
 	let lastKey = "";
-
-	/** End of the string token starting at the quote at `start` (index after the closing quote, or n). */
 	const stringEnd = (start: number) => {
 		let j = start + 1;
 		while (j < n) {
-			const c = text[j];
-			if (c === "\\") j += 2;
-			else if (c === '"') return j + 1;
+			if (text[j] === "\\") j += 2;
+			else if (text[j] === '"') return j + 1;
 			else j++;
 		}
 		return n;
 	};
-	/** End of the whole JSON value starting at `start`, balanced; n if the text ends first. */
 	const valueEnd = (start: number) => {
 		const c = text[start];
 		if (c === '"') return stringEnd(start);
@@ -104,11 +122,10 @@ function maskJson(text: string, depth = 0): string {
 			return j;
 		}
 		let level = 0;
-		let j = start;
-		while (j < n) {
+		for (let j = start; j < n; j++) {
 			const d = text[j];
 			if (d === '"') {
-				j = stringEnd(j);
+				j = stringEnd(j) - 1;
 				continue;
 			}
 			if (d === "{" || d === "[") level++;
@@ -116,11 +133,9 @@ function maskJson(text: string, depth = 0): string {
 				level--;
 				if (level === 0) return j + 1;
 			}
-			j++;
 		}
 		return n;
 	};
-
 	while (i < n) {
 		const c = text[i];
 		const top = stack[stack.length - 1];
@@ -128,39 +143,21 @@ function maskJson(text: string, depth = 0): string {
 			const end = stringEnd(i);
 			const token = text.slice(i, end);
 			if (top?.obj && top.key) {
-				try {
-					lastKey = JSON.parse(token);
-				} catch {
-					lastKey = token.slice(1, -1);
-				}
+				lastKey = JSON.parse(token) as string;
 				out += token;
-			} else {
-				// A string value: look inside it for credentials written as text or as JSON.
-				let replaced = token;
-				if (end <= n && token.length >= 2 && token.endsWith('"')) {
-					try {
-						const value = JSON.parse(token) as string;
-						const masked = maskText(value, depth);
-						if (masked !== value) replaced = JSON.stringify(masked);
-					} catch {
-						/* not a complete string token */
-					}
-				}
-				out += replaced;
-			}
+			} else out += holdsCredential(JSON.parse(token) as string) ? `"${SECRET}"` : token;
 			i = end;
 			continue;
 		}
 		if (c === ":" && top?.obj) {
 			out += c;
 			i++;
-			// Whitespace, then the value: masked whole when its key names a credential.
 			while (i < n && /\s/.test(text[i])) out += text[i++];
-			if (secretKey(lastKey) && i < n) {
+			if (isSecretName(lastKey) && i < n) {
 				i = valueEnd(i);
 				out += `"${SECRET}"`;
 			}
-			if (top) top.key = false;
+			top.key = false;
 			continue;
 		}
 		if (c === "{" || c === "[") stack.push({ obj: c === "{", key: c === "{" });
@@ -172,45 +169,24 @@ function maskJson(text: string, depth = 0): string {
 	return out;
 }
 
-function maskForm(text: string): string {
-	return text
-		.split("&")
-		.map((pair) => {
-			const eq = pair.indexOf("=");
-			if (eq < 0) return pair;
-			let key = pair.slice(0, eq);
-			let value = pair.slice(eq + 1);
-			try {
-				key = decodeURIComponent(key.replace(/\+/g, " "));
-				value = decodeURIComponent(value.replace(/\+/g, " "));
-			} catch {
-				/* keep the raw text */
+/** A URL with credential-named query parameters, token-shaped values and userinfo masked. */
+export function maskUrl(url: string): string {
+	try {
+		const u = new URL(url);
+		let changed = false;
+		for (const [key, value] of [...u.searchParams]) {
+			if (isSecretName(key) || holdsCredential(value)) {
+				u.searchParams.set(key, SECRET);
+				changed = true;
 			}
-			if (secretKey(key)) return `${pair.slice(0, eq)}=${SECRET}`;
-			// A value that carries JSON or name=value text of its own.
-			const masked = maskText(value, 0);
-			return masked === value ? pair : `${pair.slice(0, eq)}=${encodeURIComponent(masked)}`;
-		})
-		.join("&");
-}
-
-/** multipart/form-data: a part named like a credential keeps its headers and loses its value, even when cut off. */
-function maskMultipart(text: string): string {
-	return text.replace(
-		/(Content-Disposition:[^\r\n]*\bname="([^"\r\n]*)"[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n)([\s\S]*?)(?=\r?\n--|$)/gi,
-		(_whole, head: string, name: string, value: string) =>
-			secretKey(name) ? `${head}${SECRET}` : `${head}${maskText(value, 0)}`,
-	);
-}
-
-/** Mask a body: by its content type when known, else by trying JSON, form and multipart shapes. */
-export function maskBody(text: string, contentType = ""): string {
-	const type = contentType.toLowerCase();
-	const t = text.trimStart();
-	if (type.includes("json") || /^[[{]/.test(t)) return maskTokenShapes(maskJson(text));
-	if (type.includes("multipart/") || /^--\S+\r?\nContent-Disposition:/i.test(t))
-		return maskTokenShapes(maskMultipart(text));
-	if (type.includes("x-www-form-urlencoded") || /^[^\s=&]+=[^\s]*$/.test(t.trim()))
-		return maskTokenShapes(maskForm(t.trim()));
-	return maskText(text, 0);
+		}
+		if (u.username || u.password) {
+			u.username = "";
+			u.password = "";
+			changed = true;
+		}
+		return changed ? u.toString() : url;
+	} catch {
+		return url;
+	}
 }

@@ -52,8 +52,8 @@ function formatNodes(nodes: SnapNode[], pageUrl: string): string {
 	}
 	return nodes
 		.map((n) => {
-			let line = `${n.ref} ${oneLine(n.role)} ${JSON.stringify(n.name)}`;
-			if (n.value) line += ` value=${JSON.stringify(n.value)}`;
+			let line = `${n.ref} ${oneLine(n.role)} ${JSON.stringify(oneLine(n.name))}`;
+			if (n.value) line += ` value=${JSON.stringify(oneLine(n.value))}`;
 			if (n.states?.length) line += ` [${oneLine(n.states.join(", "))}]`;
 			if (n.href) line += ` -> ${oneLine(origin && n.href.startsWith(origin) ? n.href.slice(origin.length) || "/" : n.href)}`;
 			if (n.frame) line += ` (in frame ${JSON.stringify(oneLine(n.frame))})`;
@@ -675,7 +675,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"read_network",
 		{
 			title: "Read network requests",
-			description: "Your tab's requests (id, method, URL, status, type). Capture starts on the first call: call it before loading. requestId gives that request's bodies, secrets masked. Example: {\"type\":\"Fetch\"}",
+			description: "Your tab's requests (id, method, URL, status, type). Capture starts on the first call: call it before loading. requestId gives what it sent (keys only) and a JSON response, secrets masked. Example: {\"type\":\"Fetch\"}",
 			inputSchema: {
 				tabId,
 				urlPattern: z.string().optional().describe("Substring or regex the URL must match"),
