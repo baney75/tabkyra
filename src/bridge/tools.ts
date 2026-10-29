@@ -380,6 +380,18 @@ export const handlers: Record<string, Handler> = {
 	inspect: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
 		const page = await inspectPage(tabId);
+		// React marks DOM nodes with "__react…" properties only the page's own world can see: a
+		// fixed, read-only check there, not code from the agent.
+		try {
+			const react = await evaluateMain(
+				tabId,
+				"Array.from(document.querySelectorAll('body *')).slice(0, 400).some((el) => Object.keys(el).some((k) => k.startsWith('__react')))",
+			);
+			const frameworks = page.frameworks as string[];
+			if (react === true && !frameworks.includes("React")) frameworks.push("React");
+		} catch {
+			/* the page's world isn't reachable; markup checks stand */
+		}
 		// The site's own data calls, if this tab has been capturing network (read_network turns it on).
 		const seen = new Map<string, number>();
 		for (const e of readNetwork(tabId)) {

@@ -5,7 +5,7 @@
  * on tabs that are not visible; nothing here activates a tab.
  */
 
-import { redactSecrets } from "../privacy/bug-reports.js";
+import { maskBody } from "./mask-body.js";
 
 const PROTOCOL_VERSION = "1.3";
 
@@ -539,6 +539,10 @@ export interface NetworkEntry {
 	mimeType?: string;
 	/** Document, XHR, Fetch, Script, Image, ... (CDP's resource type). */
 	type?: string;
+	/** The request's Content-Type, for masking its body by structure. */
+	requestType?: string;
+	/** Access-Control-Allow-Origin on the response: whether the page itself could read it. */
+	allowOrigin?: string;
 	timestamp: number;
 	failed?: string;
 }
@@ -580,15 +584,17 @@ function installCaptureListener(): void {
 				method: request.method,
 				url: request.url,
 				type: typeof p.type === "string" ? p.type : undefined,
+				requestType: headerValue((p.request as { headers?: Record<string, string> }).headers, "content-type"),
 				timestamp: Date.now(),
 			});
 			if (buf.size > MAX_ENTRIES) buf.delete(buf.keys().next().value as string);
 		} else if (method === "Network.responseReceived") {
 			const entry = networkBuffers.get(tabId)?.get(String(p.requestId));
 			if (!entry) return;
-			const response = p.response as { status: number; mimeType: string };
+			const response = p.response as { status: number; mimeType: string; headers?: Record<string, string> };
 			entry.status = response.status;
 			entry.mimeType = response.mimeType;
+			entry.allowOrigin = headerValue(response.headers, "access-control-allow-origin");
 		} else if (method === "Network.loadingFailed") {
 			const entry = networkBuffers.get(tabId)?.get(String(p.requestId));
 			if (entry) entry.failed = String(p.errorText ?? "failed");
@@ -635,9 +641,42 @@ const MAX_REQUEST_BODY = 4000;
 const TEXTUAL =
 	/^(text\/|application\/(json|[\w.+-]*\+json|javascript|x-javascript|xml|[\w.+-]*\+xml|x-www-form-urlencoded|graphql))/i;
 
+function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
+	if (!headers) return undefined;
+	for (const [k, v] of Object.entries(headers)) if (k.toLowerCase() === name) return String(v);
+	return undefined;
+}
+
+function originOf(url: string | undefined): string | undefined {
+	try {
+		return url ? new URL(url).origin : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /**
- * The bodies of one request this tab made, for reading the JSON a page renders from. The page
- * already received them; this only shows them to the agent. Binary bodies are described, not sent.
+ * The page could read this response itself: same origin as the tab's page, or allowed to it by
+ * CORS. Anything else (an opaque no-cors fetch, another site's frame or script) is out of reach
+ * of the page's own scripts, so it stays out of reach here too.
+ */
+export function pageCouldRead(entry: Pick<NetworkEntry, "url" | "allowOrigin">, pageUrl: string | undefined): boolean {
+	const page = originOf(pageUrl);
+	if (!page) return false;
+	if (originOf(entry.url) === page) return true;
+	const allow = entry.allowOrigin?.trim();
+	return allow === "*" || allow === page;
+}
+
+function decodeBody(body: string, base64: boolean): string {
+	if (!base64) return body;
+	const bytes = Uint8Array.from(atob(body), (c) => c.charCodeAt(0));
+	return new TextDecoder().decode(bytes);
+}
+
+/**
+ * The bodies of one request this tab made, for reading the JSON a page renders from. Only what
+ * the page itself could read; credentials masked; text capped before it is masked.
  */
 export async function readNetworkDetail(tabId: number, requestId: string): Promise<NetworkDetail> {
 	const entry = networkBuffers.get(tabId)?.get(requestId);
@@ -646,9 +685,18 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 			`No captured request ${requestId}. Call read_network for the current list (capture starts on the first call).`,
 		);
 	const detail: NetworkDetail = { ...entry };
+	const pageUrl = (await chrome.tabs.get(tabId)).url;
+	if (!pageCouldRead(entry, pageUrl)) {
+		detail.bodyNote =
+			"Another site's response that this page can't read itself; its body isn't shown. To read that site, navigate to its URL.";
+		return detail;
+	}
 	try {
 		const post = await cdpSend<{ postData: string }>(tabId, "Network.getRequestPostData", { requestId });
-		detail.requestBody = cap(maskBody(post.postData), MAX_REQUEST_BODY);
+		detail.requestBody = cap(
+			maskBody(post.postData.slice(0, MAX_REQUEST_BODY * 2), entry.requestType),
+			MAX_REQUEST_BODY,
+		);
 	} catch {
 		/* no request body */
 	}
@@ -661,7 +709,11 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 			const body = await cdpSend<{ body: string; base64Encoded: boolean }>(tabId, "Network.getResponseBody", {
 				requestId,
 			});
-			detail.responseBody = cap(maskBody(body.base64Encoded ? atob(body.body) : body.body), MAX_RESPONSE_BODY);
+			const text = decodeBody(
+				body.base64Encoded ? body.body.slice(0, MAX_RESPONSE_BODY * 4) : body.body.slice(0, MAX_RESPONSE_BODY * 2),
+				body.base64Encoded,
+			);
+			detail.responseBody = cap(maskBody(text, entry.mimeType), MAX_RESPONSE_BODY);
 		} catch {
 			detail.bodyNote =
 				"The browser no longer has this response body (it keeps recent ones only). Reload and read again.";
@@ -670,26 +722,8 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 	return detail;
 }
 
-/**
- * Bodies can carry the user's credentials (a login response, a session refresh). Secret-named
- * fields and token-shaped strings are masked before an agent sees them; the rest is the data.
- */
-export function maskBody(text: string): string {
-	return redactSecrets(
-		text
-			.replace(
-				/("[\w-]*(?:token|password|passwd|secret|api_?key|apikey|authorization|session_?id|sessid|csrf|cookie)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi,
-				'$1"[secret]"',
-			)
-			.replace(
-				/\b([\w-]*(?:token|password|passwd|secret|api_?key|apikey|authorization|session_?id|sessid|csrf|cookie)[\w-]*)=[^&\s"]*/gi,
-				"$1=[secret]",
-			),
-	);
-}
-
 function cap(text: string, max: number): string {
-	return text.length > max ? `${text.slice(0, max)}… (${text.length - max} more characters)` : text;
+	return text.length > max ? `${text.slice(0, max)}… (cut at ${max} characters)` : text;
 }
 
 /** Whether read_network has turned capture on for this tab. */

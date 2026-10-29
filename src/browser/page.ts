@@ -340,23 +340,41 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 		if (at("aria-checked") === "true") out.push("checked");
 		else if (at("aria-checked") === "mixed") out.push("mixed");
 		if (at("aria-current") && at("aria-current") !== "false") out.push("current");
-		if (field(el).disabled || at("aria-disabled") === "true") out.push("disabled");
+		if (el.matches(":disabled") || at("aria-disabled") === "true") out.push("disabled");
 		if (field(el).required || at("aria-required") === "true") out.push("required");
 		if (at("aria-invalid") === "true") out.push("invalid");
 		return out;
 	};
 
 	// Every place elements live: the document, each open shadow root (web components), and
-	// each same-origin frame, with the offset that maps a frame's coordinates to the tab's.
-	type Root = { root: Document | ShadowRoot; dx: number; dy: number; frame?: string };
+	// each same-origin frame. A frame's own transform (scale), border and padding map its
+	// coordinates to the tab's: x_tab = dx + sx * x_frame.
+	type Root = { root: Document | ShadowRoot; dx: number; dy: number; sx: number; sy: number; frame?: string };
 	const roots: Root[] = [];
-	const crossFrames: Element[] = [];
-	const visit = (root: Document | ShadowRoot, dx: number, dy: number, frame: string | undefined, depth: number) => {
-		roots.push({ root, dx, dy, frame });
+	const crossFrames: Array<{ el: Element; at: Root }> = [];
+	const isShadow = (root: Node) => root.nodeType === 11;
+	const frameUrl = (el: Element) => String((el as HTMLIFrameElement).src || el.getAttribute("src") || "");
+	const inner = (fr: Element, at: Root) => {
+		const r = fr.getBoundingClientRect();
+		const style = (fr.ownerDocument.defaultView ?? window).getComputedStyle(fr);
+		const layoutW = (fr as HTMLElement).offsetWidth || r.width || 1;
+		const layoutH = (fr as HTMLElement).offsetHeight || r.height || 1;
+		const kx = r.width / layoutW;
+		const ky = r.height / layoutH;
+		return {
+			dx: at.dx + at.sx * (r.left + (fr.clientLeft + Number.parseFloat(style.paddingLeft || "0")) * kx),
+			dy: at.dy + at.sy * (r.top + (fr.clientTop + Number.parseFloat(style.paddingTop || "0")) * ky),
+			sx: at.sx * kx,
+			sy: at.sy * ky,
+		};
+	};
+	const visit = (at: Root, depth: number) => {
+		roots.push(at);
 		if (depth > 12) return;
-		for (const el of Array.from(root.querySelectorAll("*"))) {
+		for (const el of Array.from(at.root.querySelectorAll("*"))) {
 			const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
-			if (shadow) visit(shadow, dx, dy, frame, depth + 1);
+			// A web component that isn't rendered (hidden, display:none) adds nothing a user sees.
+			if (shadow && isVisible(el)) visit({ ...at, root: shadow }, depth + 1);
 			const tag = tagOf(el);
 			if (tag !== "iframe" && tag !== "frame") continue;
 			let doc: Document | null = null;
@@ -366,35 +384,39 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 				doc = null;
 			}
 			if (doc?.documentElement) {
-				const r = el.getBoundingClientRect();
-				const src = el.getAttribute("src") ?? "";
-				visit(doc, dx + r.left + el.clientLeft, dy + r.top + el.clientTop, src || "(inline frame)", depth + 1);
-			} else crossFrames.push(el);
+				if (isVisible(el))
+					visit({ root: doc, ...inner(el, at), frame: frameUrl(el) || "(inline frame)" }, depth + 1);
+			} else crossFrames.push({ el, at });
 		}
 	};
-	visit(document, 0, 0, undefined, 0);
+	visit({ root: document, dx: 0, dy: 0, sx: 1, sy: 1 }, 0);
+	const cross = new Set(crossFrames.map((c) => c.el));
 
 	const nodes: unknown[] = [];
 	// Elements in the viewport first, then the rest in document order: on long pages the
 	// cap used to be spent on navigation chrome above the fold and the content was cut.
 	const inView: Array<{ el: Element; at: Root }> = [];
 	const offView: Array<{ el: Element; at: Root }> = [];
+	const box = (el: Element, at: Root) => {
+		const r = el.getBoundingClientRect();
+		const left = at.dx + at.sx * r.left;
+		const top = at.dy + at.sy * r.top;
+		const width = r.width * at.sx;
+		const height = r.height * at.sy;
+		const onScreen = top + height > 0 && top < window.innerHeight && left + width > 0 && left < window.innerWidth;
+		return { left, top, width, height, onScreen };
+	};
 	const place = (el: Element, at: Root) => {
 		if (!isVisible(el)) return;
-		const r = el.getBoundingClientRect();
-		const left = r.left + at.dx;
-		const top = r.top + at.dy;
-		const onScreen = top + r.height > 0 && top < window.innerHeight && left + r.width > 0 && left < window.innerWidth;
-		(onScreen ? inView : offView).push({ el, at });
+		(box(el, at).onScreen ? inView : offView).push({ el, at });
 	};
-	for (const at of roots) for (const el of Array.from(at.root.querySelectorAll(selector))) place(el, at);
+	for (const at of roots)
+		for (const el of Array.from(at.root.querySelectorAll(selector))) if (!cross.has(el)) place(el, at);
 	// A frame Tabkyra can't look into (another site) is still listed, so the agent knows it's there.
-	for (const el of crossFrames) place(el, roots[0]);
+	for (const { el, at } of crossFrames) place(el, at);
 	for (const { el, at } of [...inView, ...offView]) {
 		if (nodes.length >= maxNodes) break;
-		const r = el.getBoundingClientRect();
-		const left = r.left + at.dx;
-		const top = r.top + at.dy;
+		const b = box(el, at);
 		const ref = `e${++seq}`;
 		refs.set(ref, el);
 		const tag = tagOf(el);
@@ -403,15 +425,15 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 			ref,
 			role: roleOf(el),
 			name: nameOf(el).slice(0, 120),
-			x: Math.round(left + r.width / 2),
-			y: Math.round(top + r.height / 2),
-			width: Math.round(r.width),
-			height: Math.round(r.height),
-			visible: top + r.height > 0 && top < window.innerHeight && left + r.width > 0 && left < window.innerWidth,
+			x: Math.round(b.left + b.width / 2),
+			y: Math.round(b.top + b.height / 2),
+			width: Math.round(b.width),
+			height: Math.round(b.height),
+			visible: b.onScreen,
 		};
 		if (tag === "a" && f.href) node.href = String(f.href).slice(0, 200);
-		if (tag === "iframe" || tag === "frame") {
-			node.href = (el.getAttribute("src") ?? "").slice(0, 200);
+		if (cross.has(el)) {
+			node.href = frameUrl(el).slice(0, 200);
 			node.states = ["cross-origin: read it with navigate to its URL"];
 		}
 		if (tag === "input") {
@@ -428,17 +450,20 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 	w.__tabkyraRefSeq = seq;
 
 	// Text: the document, then what shadow roots and same-origin frames render, which
-	// document.body.innerText leaves out.
+	// document.body.innerText leaves out. Rendered text only: nothing hidden reaches the agent.
+	const rendered = (c: Element) => {
+		const check = (c as Element & { checkVisibility?: () => boolean }).checkVisibility;
+		return check ? check.call(c) : isVisible(c);
+	};
 	const parts = [document.body?.innerText ?? ""];
 	for (const at of roots.slice(1)) {
-		const own =
-			at.root instanceof ShadowRoot || !(at.root as Document).body
-				? Array.from(at.root.children)
-						.filter((c) => tagOf(c) !== "style" && tagOf(c) !== "script")
-						.map((c) => (c as HTMLElement).innerText ?? c.textContent ?? "")
-						.join("\n")
-				: ((at.root as Document).body?.innerText ?? "");
-		if (own.trim()) parts.push(at.frame && !(at.root instanceof ShadowRoot) ? `[frame ${at.frame}]\n${own}` : own);
+		const own = isShadow(at.root)
+			? Array.from(at.root.children)
+					.filter((c) => tagOf(c) !== "style" && tagOf(c) !== "script" && rendered(c))
+					.map((c) => (c as HTMLElement).innerText ?? "")
+					.join("\n")
+			: ((at.root as Document).body?.innerText ?? "");
+		if (own.trim()) parts.push(at.frame && !isShadow(at.root) ? `[frame ${at.frame}]\n${own}` : own);
 	}
 	const text = parts
 		.join("\n")
@@ -474,8 +499,8 @@ function pageInspect(): unknown {
 	const frameworks: string[] = [];
 	if (has("#__next") || has("script#__NEXT_DATA__") || anySrc(/\/_next\//)) frameworks.push("Next.js");
 	if (has("#__nuxt") || anySrc(/\/_nuxt\//)) frameworks.push("Nuxt");
-	if (has("[data-reactroot]") || all.some((el) => Object.keys(el).some((k) => k.startsWith("__react"))))
-		frameworks.push("React");
+	// Modern React leaves no markup; the bridge checks its expando properties in the page's own world.
+	if (has("[data-reactroot]")) frameworks.push("React");
 	if (has("[ng-version]"))
 		frameworks.push(`Angular ${document.querySelector("[ng-version]")?.getAttribute("ng-version") ?? ""}`.trim());
 	if (has("[data-v-app]") || all.some((el) => Array.from(el.attributes).some((a) => a.name.startsWith("data-v-"))))
@@ -491,9 +516,11 @@ function pageInspect(): unknown {
 			const v = JSON.parse(text);
 			if (Array.isArray(v)) return `array of ${v.length}`;
 			if (v && typeof v === "object") {
+				// A schema.org type name (Product, Recipe) says what the blob is; any other value stays out.
 				const type = (v as Record<string, unknown>)["@type"];
+				const schemaType = typeof type === "string" && /^[A-Z][A-Za-z]{1,40}$/.test(type) ? type : undefined;
 				const keys = Object.keys(v).slice(0, 12).join(", ");
-				return type ? `@type ${String(type)}; keys ${keys}` : `keys ${keys}`;
+				return schemaType ? `@type ${schemaType}; keys ${keys}` : `keys ${keys}`;
 			}
 			return typeof v;
 		} catch {
@@ -616,15 +643,24 @@ export async function locate(
 		for (let win = el.ownerDocument.defaultView; win && win !== window && win.frameElement; win = win.parent) frames.push(win.frameElement);
 		for (const fr of frames.slice().reverse()) fr.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 		el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+		// Innermost frame outward: each frame scales the point by its transform, then adds its own
+		// position, border and padding (the same mapping read_page uses).
 		const r = el.getBoundingClientRect();
 		let x = r.left + r.width / 2;
 		let y = r.top + r.height / 2;
+		let w = r.width;
+		let h = r.height;
 		for (const fr of frames) {
 			const fr0 = fr.getBoundingClientRect();
-			x += fr0.left + fr.clientLeft;
-			y += fr0.top + fr.clientTop;
+			const st = (fr.ownerDocument.defaultView || window).getComputedStyle(fr);
+			const kx = fr0.width / (fr.offsetWidth || fr0.width || 1);
+			const ky = fr0.height / (fr.offsetHeight || fr0.height || 1);
+			x = fr0.left + (fr.clientLeft + parseFloat(st.paddingLeft || "0") + x) * kx;
+			y = fr0.top + (fr.clientTop + parseFloat(st.paddingTop || "0") + y) * ky;
+			w *= kx;
+			h *= ky;
 		}
-		return { x, y, width: r.width, height: r.height };
+		return { x, y, width: w, height: h };
 	})()`;
 	return runInPage(tabId, code);
 }
@@ -652,7 +688,7 @@ export async function fillElement(
 			const opt = Array.from(el.options).find(o => o.value === value || o.text.trim() === value);
 			if (!opt) throw new Error("No option matches " + value + ". read_page lists the options (value=...).");
 			el.value = opt.value;
-			el.dispatchEvent(new W.Event("input", { bubbles: true }));
+			el.dispatchEvent(new W.Event("input", { bubbles: true, composed: true }));
 			el.dispatchEvent(new W.Event("change", { bubbles: true }));
 			return true;
 		}
@@ -665,13 +701,13 @@ export async function fillElement(
 			const proto = el instanceof W.HTMLTextAreaElement ? W.HTMLTextAreaElement.prototype : W.HTMLInputElement.prototype;
 			const setter = Object.getOwnPropertyDescriptor(proto, "value");
 			if (setter && setter.set) setter.set.call(el, value); else el.value = value;
-			el.dispatchEvent(new W.Event("input", { bubbles: true }));
+			el.dispatchEvent(new W.InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: value }));
 			el.dispatchEvent(new W.Event("change", { bubbles: true }));
 			return true;
 		}
 		if (el.isContentEditable) {
 			el.textContent = value;
-			el.dispatchEvent(new W.InputEvent("input", { bubbles: true }));
+			el.dispatchEvent(new W.InputEvent("input", { bubbles: true, composed: true }));
 			return true;
 		}
 		throw new Error("Element is not a form control: use click or type on it instead of fill.");
@@ -685,22 +721,26 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 		const el = sel ? document.querySelector(sel) : document.body;
 		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
 		// Text inside web components (open shadow roots) and same-origin frames, which innerText
-		// leaves out, follows the element's own text.
-		const parts = [el.innerText || el.textContent || ""];
-		const own = (root) => Array.from(root.children).filter((c) => !/^(style|script)$/i.test(c.tagName)).map((c) => c.innerText ?? c.textContent ?? "").join("\\n");
+		// leaves out, follows the element's own text. Rendered text only: nothing hidden.
+		const shown = (c) => (c.checkVisibility ? c.checkVisibility() : !!(c.getClientRects && c.getClientRects().length));
+		const parts = [el.innerText || ""];
+		const own = (root) => Array.from(root.children).filter((c) => !/^(style|script)$/i.test(c.tagName) && shown(c)).map((c) => c.innerText ?? "").join("\\n");
 		const visit = (root, depth) => {
 			if (depth > 12) return;
-			for (const node of Array.from(root.querySelectorAll("*"))) {
-				if (node.shadowRoot) {
+			const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll("*")) : [];
+			// The selected element itself can be the host or the frame.
+			if (depth === 0 && root.nodeType === 1) nodes.unshift(root);
+			for (const node of nodes) {
+				if (node.shadowRoot && shown(node)) {
 					const t = own(node.shadowRoot);
 					if (t.trim()) parts.push(t);
 					visit(node.shadowRoot, depth + 1);
 				}
-				if (/^i?frame$/i.test(node.tagName)) {
+				if (/^i?frame$/i.test(node.tagName) && shown(node)) {
 					let doc = null;
 					try { doc = node.contentDocument; } catch { doc = null; }
 					if (doc && doc.body) {
-						parts.push("[frame " + (node.getAttribute("src") || "inline") + "]\\n" + (doc.body.innerText || ""));
+						parts.push("[frame " + (node.src || node.getAttribute("src") || "inline") + "]\\n" + (doc.body.innerText || ""));
 						visit(doc, depth + 1);
 					}
 				}

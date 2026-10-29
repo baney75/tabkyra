@@ -424,13 +424,16 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 				}
 			},
 		};
-		if (!DIALOG_SAFE.has(req.method)) {
+		// Reading a body asks the page's network stack, not just a buffer: not while a dialog holds it.
+		const dialogSafe =
+			DIALOG_SAFE.has(req.method) && !(req.method === "network.read" && req.params?.requestId !== undefined);
+		if (!dialogSafe) {
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
 		const work = handler(ctx, req.params ?? {});
 		const result = await withTimeout(
-			DIALOG_SAFE.has(req.method)
+			dialogSafe
 				? work
 				: raceDialogs(session, work, () => {
 						aborted = true;

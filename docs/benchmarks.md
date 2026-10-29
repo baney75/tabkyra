@@ -150,24 +150,45 @@ nothing caps the tabs in a group.
 ## Seeing pages: perception eval
 
 `node cli/eval/perception.mjs --extension <build> [--out file.json]` drives the MCP tools against
-local fixture pages (no model) and scores 12 probes: open shadow roots (see, click, fill a nested
-field, read text with both `read_page` and `get_page_text`), same-origin and cross-origin frames,
-control states, a page's own `fetch()` and its response body, embedded JSON and forms, and the
-size of a small interactive read. Measured 2026-10-28 in headless Chromium.
+local fixture pages (no model) and scores 19 probes:
+- open shadow roots: see, click, fill a nested field, and read their text with `read_page`,
+  `get_page_text`, and `get_page_text` on the host
+- same-origin and cross-origin frames, including a scaled, padded frame
+- control states, including a disabled fieldset
+- a page's own `fetch()` and its response body
+- embedded JSON and forms
+- the size of a small interactive read
+- the review cases from #73:
+  - hidden web-component text stays out
+  - an opaque cross-site response is refused
+  - login passwords in multipart and form bodies are masked
+  - `fill` reaches a listener outside the shadow root
+  - a newline in a frame URL can't fake an element line
 
-| Probe | Before (main + #70) | After | Detail after |
+Measured 2026-10-28 in headless Chromium, each build with the current CLI.
+
+| Probe | main | #73 as first reviewed (328e9f6) | #73 after review |
 | --- | --- | --- | --- |
-| `shadow-see` | fail | pass | button listed |
-| `shadow-click` | fail | pass | click ok, __clicked=shadow |
-| `nested-fill` | fail | pass | fill ok, value=a@b.co |
-| `shadow-text` | fail | pass | read_page yes, get_page_text yes |
-| `frame-see` | fail | pass | button listed |
-| `frame-click` | fail | pass | click ok, __clicked=frame |
-| `xorigin-flag` | fail | pass | host yes, word iframe yes |
-| `states` | fail | pass | all five states shown |
-| `api-request` | pass | pass | request and status 200 listed |
-| `api-body` | fail | pass | body for 70024.8 |
-| `embedded-map` | fail | pass | script data and form action listed |
-| `cost` | pass | pass | 335 bytes |
+| `shadow-see` | fail | pass | pass |
+| `shadow-click` | fail | pass | pass |
+| `nested-fill` | fail | pass | pass |
+| `shadow-text` | fail | fail | pass |
+| `frame-see` | fail | pass | pass |
+| `frame-click` | fail | pass | pass |
+| `xorigin-flag` | fail | pass | pass |
+| `states` | fail | pass | pass |
+| `api-request` | pass | pass | pass |
+| `api-body` | fail | pass | pass |
+| `embedded-map` | fail | pass | pass |
+| `cost` | pass | pass | pass |
+| `scaled-click` | fail | fail | pass |
+| `hidden-text` | fail | fail | pass |
+| `xorigin-body` | pass | fail | pass |
+| `login-masked` | fail | fail | pass |
+| `composed-fill` | fail | fail | pass |
+| `fieldset-disabled` | fail | fail | pass |
+| `hostile-src` | pass | pass | pass |
 
-Score: before 2/12, after 12/12.
+Score: main 4/19, first review 12/19, after review 19/19. The
+`xorigin-body` fixture serves text/plain: Chromium aborts an opaque JSON or HTML response before
+a body exists, which would make that probe pass on any build.

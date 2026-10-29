@@ -39,6 +39,9 @@ interface SnapNode {
 	frame?: string;
 }
 
+/** Page-supplied text on one line: a URL or frame label can't start a fake element line. */
+const oneLine = (text: string) => text.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]/g, " ");
+
 /** One line per element; same-origin links shortened to their path. */
 function formatNodes(nodes: SnapNode[], pageUrl: string): string {
 	let origin = "";
@@ -51,9 +54,9 @@ function formatNodes(nodes: SnapNode[], pageUrl: string): string {
 		.map((n) => {
 			let line = `${n.ref} ${n.role} ${JSON.stringify(n.name)}`;
 			if (n.value) line += ` value=${JSON.stringify(n.value)}`;
-			if (n.states?.length) line += ` [${n.states.join(", ")}]`;
-			if (n.href) line += ` -> ${origin && n.href.startsWith(origin) ? n.href.slice(origin.length) || "/" : n.href}`;
-			if (n.frame) line += ` (in frame ${n.frame})`;
+			if (n.states?.length) line += ` [${oneLine(n.states.join(", "))}]`;
+			if (n.href) line += ` -> ${oneLine(origin && n.href.startsWith(origin) ? n.href.slice(origin.length) || "/" : n.href)}`;
+			if (n.frame) line += ` (in frame ${JSON.stringify(oneLine(n.frame))})`;
 			if (!n.visible) line += " (offscreen)";
 			return line;
 		})

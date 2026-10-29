@@ -163,20 +163,61 @@ test("the stream gate applies private mode, the trusted hosts and the proxy chec
 	assert.equal((sidepanel.match(/new PrivacyTab\(\)/g) ?? []).length, 1, "the settings dialog shows the Privacy tab");
 });
 
-test("response bodies an agent reads have the user's secrets masked and the data intact", async () => {
-	const { maskBody } = await import("../src/browser/cdp.ts");
-	const body = JSON.stringify({
-		sku: "A1",
-		price: 4242,
-		tokenCount: 5,
-		access_token: "abc.def.ghi",
-		csrfToken: 'x"y',
-		user: { name: "Ada", password: "hunter2", session_id: "s-1" },
-	});
-	const masked = JSON.parse(maskBody(body));
-	assert.deepEqual(masked, { sku: "A1", price: 4242, tokenCount: 5, access_token: "[secret]", csrfToken: "[secret]", user: { name: "Ada", password: "[secret]", session_id: "[secret]" } });
-	assert.equal(maskBody("user=ada&password=hunter2&next=/home"), "user=ada&password=[secret]&next=/home");
-	assert.match(maskBody("Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345"), /Bearer \[secret\]/);
+test("response bodies an agent reads have the user's credentials masked and the data intact", async () => {
+	const { maskBody, isSecretName } = await import("../src/browser/mask-body.ts");
+	const json = JSON.parse(
+		maskBody(
+			JSON.stringify({
+				id: "3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c",
+				image: "/images/products/2024/summer/item42-large-variant-abcdef123456.jpg",
+				sku: "sku_variants_v2_skeleton_loader",
+				price: 4242,
+				tokenCount: 5,
+				author: "Ada",
+				access_token: "abc",
+				tokens: ["a1", "b2"],
+				auth: { jwt_short: 1 },
+				sid: "x9",
+				otp: "123456",
+				data: JSON.stringify({ access_token: "short-opaque", ok: true }),
+				note: "Bearer abcdefghijklmnop and eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJlMTIz",
+			}),
+			"application/json",
+		),
+	);
+	assert.equal(json.id, "3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c", "ids stay");
+	assert.equal(json.image, "/images/products/2024/summer/item42-large-variant-abcdef123456.jpg", "paths stay");
+	assert.equal(json.sku, "sku_variants_v2_skeleton_loader");
+	assert.equal(json.price, 4242);
+	assert.equal(json.tokenCount, 5);
+	assert.equal(json.author, "Ada");
+	for (const k of ["access_token", "tokens", "auth", "sid", "otp"]) assert.equal(json[k], "[secret]", k);
+	assert.deepEqual(JSON.parse(json.data), { access_token: "[secret]", ok: true }, "JSON inside a string");
+	assert.equal(json.note, "Bearer [secret] and [secret]");
+	assert.equal(
+		maskBody("authenticity_token=abc&user%5Bemail%5D=ada%40x.co&user%5Bpassword%5D=hunter2&remember=1", "application/x-www-form-urlencoded"),
+		"authenticity_token=[secret]&user%5Bemail%5D=ada%40x.co&user%5Bpassword%5D=[secret]&remember=1",
+	);
+	const multipart = '--b\r\nContent-Disposition: form-data; name="email"\r\n\r\nada@x.co\r\n--b\r\nContent-Disposition: form-data; name="password"\r\n\r\nhunter2\r\n--b--\r\n';
+	const masked = maskBody(multipart, "multipart/form-data; boundary=b");
+	assert.match(masked, /ada@x\.co/);
+	assert.doesNotMatch(masked, /hunter2/);
+	assert.ok(isSecretName("user[password]") || isSecretName("password"));
+	assert.equal(isSecretName("author"), false);
+	const t0 = performance.now();
+	maskBody(`{"blob":"${"a-".repeat(500000)}"}x`);
+	maskBody(`k=${"a-".repeat(500000)}`);
+	assert.ok(performance.now() - t0 < 1500, "linear on a 1 MB body");
+});
+
+test("a response the page itself couldn't read stays unread", async () => {
+	const { pageCouldRead } = await import("../src/browser/cdp.ts");
+	const page = "https://shop.example/cart";
+	assert.equal(pageCouldRead({ url: "https://shop.example/api/cart" }, page), true);
+	assert.equal(pageCouldRead({ url: "https://api.other.example/x", allowOrigin: "https://shop.example" }, page), true);
+	assert.equal(pageCouldRead({ url: "https://api.other.example/x", allowOrigin: "*" }, page), true);
+	assert.equal(pageCouldRead({ url: "https://bank.example/me" }, page), false, "opaque no-cors response");
+	assert.equal(pageCouldRead({ url: "https://bank.example/me", allowOrigin: "https://evil.example" }, page), false);
 });
 
 test("inspect_page reports storage and cookie names, never their values", () => {
