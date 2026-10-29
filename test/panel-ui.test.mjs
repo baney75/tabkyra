@@ -244,6 +244,6 @@ test("Settings, the skill screens and the provider editor are pages, not overlay
 	}
 	assert.doesNotMatch(read("sidepanel.ts"), /\bSettingsDialog\b/, "the side panel opens SettingsPage, not pi-web-ui's dialog");
 	const page = read("components/PageBase.ts");
-	assert.match(page, /aria-label="Back"/, "every page has a back arrow");
+	assert.match(page, /aria-label=\$\{i18n\("Back"\)\}/, "every page has a back arrow");
 	assert.match(page, /fixed inset-0/, "a page fills the panel");
 });
