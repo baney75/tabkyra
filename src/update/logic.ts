@@ -212,10 +212,17 @@ const DIGEST_CLAUSE_AT = 110;
 /** A parenthetical that points at the repo, not the reader: a decision, an issue, a path or a file. */
 const REFERENCE = /\s*\((?:[^()]*?(?:\bD\d+\b|#\d+|docs\/|test\/|cli\/|src\/|\.(?:md|ts|mjs|json)\b))[^()]*\)/g;
 
+/** A parenthetical that is only a repo reference in code, e.g. (`src/settings.ts`). */
+const CODE_REFERENCE =
+	/\s*\(\s*`[^`()]*?(?:\bD\d+\b|#\d+|docs\/|test\/|cli\/|src\/|\.(?:md|ts|mjs|json)\b)[^`()]*`(?:\s*(?:,|and)\s*`[^`()]*`)*\s*\)/g;
+/** The line the host's fitNotes adds when it drops entries (cli/src/release-notes.ts, MORE_LINE). */
+const MORE_LINE = /^More: (\d+) entr(?:y|ies) in the full release notes\.$/m;
+
 /** The first sentence of a changelog entry, as plain text with `code` spans kept for the card. */
 function entrySummary(entry: string): string {
 	// Links, bold and references come out of the prose only; code spans stay exactly as written.
 	const text = entry
+		.replace(CODE_REFERENCE, "")
 		.split("`")
 		.map((part, i) =>
 			i % 2
@@ -269,9 +276,11 @@ function entrySummary(entry: string): string {
  */
 export function digestReleaseNotes(notes: string | undefined, perSection = 2, total = 6): NotesDigest | undefined {
 	if (!notes) return undefined;
+	const text = notes.replace(/\r\n?/g, "\n");
 	const sections: { title: string; entries: string[] }[] = [];
-	for (const line of notes.split("\n")) {
-		if (/^-{3,}\s*$/.test(line)) break;
+	for (const line of text.split("\n")) {
+		// The summary ends at the full notes (a collapsed block) or the footer.
+		if (/^-{3,}\s*$/.test(line) || /^<details>/.test(line)) break;
 		const heading = line.match(/^#{2,4}\s+(.+?)\s*$/);
 		if (heading) {
 			const name = heading[1].toLowerCase();
@@ -285,13 +294,13 @@ export function digestReleaseNotes(notes: string | undefined, perSection = 2, to
 	}
 	const all = sections.reduce((n, s) => n + s.entries.length, 0);
 	if (all === 0) return undefined;
-	// Every section gets its first entry before any gets a second, so a late Fixed or Security
-	// section is never squeezed out by the ones above it.
+	// Every section gets its first entry, even past `total`, before any gets a second, so a late
+	// Fixed or Security section is never squeezed out by the ones above it.
 	const take = sections.map(() => 0);
 	let shown = 0;
-	for (let round = 0; round < perSection && shown < total; round++)
+	for (let round = 0; round < perSection; round++)
 		sections.forEach((section, i) => {
-			if (shown < total && section.entries.length > round) {
+			if ((round === 0 || shown < total) && section.entries.length > round) {
 				take[i]++;
 				shown++;
 			}
@@ -301,7 +310,9 @@ export function digestReleaseNotes(notes: string | undefined, perSection = 2, to
 		const items = section.entries.slice(0, take[i]).map(entrySummary).filter(Boolean);
 		if (items.length) out.push({ title: section.title, items });
 	});
-	return { sections: out, more: all - shown };
+	// Entries the host dropped to fit the notes still count: the full notes have them.
+	const dropped = Number(text.match(MORE_LINE)?.[1] ?? 0);
+	return { sections: out, more: all - shown + dropped };
 }
 
 /** Only https links leave the panel (release pages and compare views). */

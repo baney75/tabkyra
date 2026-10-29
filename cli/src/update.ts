@@ -21,7 +21,7 @@ import type { UpdatePolicy } from "../../src/update/logic.ts";
 import RELEASE_KEY from "../../keys/tabkyra-release.pub";
 import { parsePublicKey, SignatureError, verifyMinisign } from "./minisign.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
-import { fitNotes } from "./release-notes.ts";
+import { releaseSummary } from "./release-notes.ts";
 import { banner, c, confirm, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 import { extractZip } from "./zip.ts";
@@ -302,7 +302,7 @@ export async function latestRelease(channel: Channel): Promise<Release | undefin
 		throw new UpdateError(`Release ${best.release.tag_name} is missing its zip, SHA256SUMS or SHA256SUMS.minisig; not installing it`);
 	}
 	const body = typeof best.release.body === "string" ? best.release.body.trim() : "";
-	const notes = body ? fitNotes(body) : undefined;
+	const notes = body ? releaseSummary(body) : undefined;
 	return { version: best.version.text, url: best.release.html_url, notes, zip, sums, signature };
 }
 

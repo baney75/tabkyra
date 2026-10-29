@@ -234,3 +234,16 @@ test("every section gets its first entry before any gets a second, and code span
 	const cut = digestReleaseNotes("### Added\n- Adds `tabkyra skill eval --json --update-baseline …")?.sections[0].items[0] ?? "";
 	assert.equal((cut.match(/`/g) ?? []).length % 2, 0, cut);
 });
+
+test("the digest survives CRLF, keeps a seventh section, strips code-span references and counts dropped entries", () => {
+	const crlf = "### Added\r\n- One thing. More.\r\n- Two things.\r\n";
+	assert.deepEqual(digestReleaseNotes(crlf)?.sections[0].items, ["One thing.", "Two things."]);
+	const seven = ["Breaking changes", "Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"].map((t) => `### ${t}\n- ${t} entry.`).join("\n");
+	const d = digestReleaseNotes(seven);
+	assert.equal(d?.sections.length, 7, "every section keeps its first entry, past the total");
+	assert.equal(d?.sections[6].title, "Security");
+	assert.equal(digestReleaseNotes("### Changed\n- The panel reads settings (`src/settings.ts`). More.")?.sections[0].items[0], "The panel reads settings.");
+	assert.equal(digestReleaseNotes("### Added\n- A.\n- B.\n- C.\n\nMore: 40 entries in the full release notes.")?.more, 41);
+	const withFull = "### Fixed\n- Short.\n\n<details>\n<summary>Full release notes</summary>\n\n### Added\n- Hidden detail.\n</details>";
+	assert.deepEqual(digestReleaseNotes(withFull)?.sections.map((s) => s.title), ["Fixed"], "the summary ends at the full notes");
+});

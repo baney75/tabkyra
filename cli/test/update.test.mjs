@@ -2,7 +2,7 @@
 // throwaway signing key: install, update, refuse tampered or mis-signed releases, roll back,
 // recover an interrupted swap, and the native host's "update available" message.
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parsePublicKey, verifyMinisign } from "../src/minisign.ts";
-import { fitNotes } from "../src/release-notes.ts";
+import { fitNotes, MORE_LINE, releaseSummary } from "../src/release-notes.ts";
 import { createZip } from "../../scripts/release/zip.mjs";
 import { signMinisign, throwawayKey } from "./helpers/minisign-sign.mjs";
 
@@ -496,8 +496,33 @@ test("notes too long even with short bullets drop the longest sections' last bul
 });
 
 test("the CLI's local imports name .ts files, so source runs resolve them", () => {
-	for (const file of readdirSync(join(here, "..", "src")).filter((f) => f.endsWith(".ts"))) {
-		const text = readFileSync(join(here, "..", "src", file), "utf8");
-		assert.doesNotMatch(text, /from "\.\/[^"]+\.js"/, file);
+	const src = join(here, "..", "src");
+	for (const file of readdirSync(src, { recursive: true }).filter((f) => String(f).endsWith(".ts"))) {
+		const text = readFileSync(join(src, String(file)), "utf8");
+		assert.doesNotMatch(text, /(?:from|import\()\s*"\.{1,2}\/[^"]+\.js"/, String(file));
 	}
+});
+
+test("fitNotes keeps a bullet that opens with a long code span, counts what it drops, and stays fast on huge notes", () => {
+	const span = `- \`tabkyra skill eval ${"--flag value ".repeat(15)}\` then more words.`;
+	const fitted = fitNotes(`### Added\n${span}\n${"- filler entry with words. ".repeat(1).trim()}\n`.repeat(1) + "- x ".repeat(4000), 600);
+	for (const line of fitted.split("\n").filter((l) => l.startsWith("-"))) assert.match(line, /^- \S/, line.slice(0, 60));
+	assert.equal(((fitted.split("\n")[1] ?? "").match(/`/g) ?? []).length % 2, 0);
+	const huge = ["### Added", ...Array.from({ length: 3000 }, (_, i) => `- Entry ${i}. ${"word ".repeat(40)}`), "### Fixed", "- Last fix."].join("\n");
+	const t0 = performance.now();
+	const out = fitNotes(huge);
+	assert.ok(performance.now() - t0 < 1000, "linear enough for a 3,000-entry body");
+	assert.ok(out.length <= 8000);
+	assert.match(out, /### Fixed\n- Last fix\./);
+	assert.ok(Number(out.match(MORE_LINE)?.[1]) > 2000, "says how many entries it dropped");
+	assert.equal(fitNotes("### Fixed\r\n- One.\r\n"), "### Fixed\n- One.\n");
+});
+
+test("release bodies open with a summary of every section that fits what an installed host keeps", () => {
+	const body = execFileSync(process.execPath, [join(here, "..", "..", "scripts", "release", "notes.mjs"), "1.1.9"], { encoding: "utf8" });
+	const summary = body.split("\n<details>")[0];
+	assert.ok(summary.length <= 8000, `summary is ${summary.length} characters`);
+	assert.match(body, /<details>\n<summary>Full release notes<\/summary>/);
+	assert.match(body, /Updates from the side panel \(docs\/updates\.md\)\. "Update available" has an \*\*Update now\*\* button/, "the full notes are all there");
+	assert.equal(releaseSummary(body), fitNotes(summary.trim()));
 });

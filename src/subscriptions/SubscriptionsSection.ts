@@ -24,6 +24,8 @@ export class SubscriptionsSection extends LitElement {
 	@state() private notice?: string;
 	@state() private copied?: string;
 	private copiedTimer?: ReturnType<typeof setTimeout>;
+	/** The "Couldn't copy" toast, taken down as soon as a copy works. */
+	private copyFailed?: Element;
 
 	protected override createRenderRoot(): HTMLElement {
 		return this;
@@ -121,6 +123,8 @@ export class SubscriptionsSection extends LitElement {
 	private copy(text: string): void {
 		navigator.clipboard.writeText(text).then(
 			() => {
+				this.copyFailed?.remove();
+				this.copyFailed = undefined;
 				clearTimeout(this.copiedTimer);
 				this.copied = text;
 				this.copiedTimer = setTimeout(() => {
@@ -128,7 +132,9 @@ export class SubscriptionsSection extends LitElement {
 				}, 1500);
 			},
 			// A toast, not the section's notice: it can't overwrite a sign-out message or outlive a later copy.
-			() => Toast.error("Couldn't copy. Click the side panel first, then try again."),
+			() => {
+				this.copyFailed = Toast.error("Couldn't copy. Click the side panel first, then try again.");
+			},
 		);
 	}
 
