@@ -394,8 +394,11 @@ export const handlers: Record<string, Handler> = {
 		}
 		// The site's own data calls, if this tab has been capturing network (read_network turns it on).
 		const seen = new Map<string, number>();
+		// Only this page's calls: the buffer outlives navigations.
+		const here = String(page.url ?? "").split("#")[0];
 		for (const e of readNetwork(tabId)) {
 			if (e.type !== "XHR" && e.type !== "Fetch") continue;
+			if (e.documentURL && e.documentURL.split("#")[0] !== here) continue;
 			let path = e.url;
 			try {
 				const u = new URL(e.url);

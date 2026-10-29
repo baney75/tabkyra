@@ -180,7 +180,7 @@ test("response bodies an agent reads have the user's credentials masked and the 
 				sid: "x9",
 				otp: "123456",
 				data: JSON.stringify({ access_token: "short-opaque", ok: true }),
-				note: "Bearer abcdefghijklmnop and eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJlMTIz",
+				note: "Bearer abc123def456ghi789jkl0 and eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJlMTIz",
 			}),
 			"application/json",
 		),
@@ -207,17 +207,38 @@ test("response bodies an agent reads have the user's credentials masked and the 
 	const t0 = performance.now();
 	maskBody(`{"blob":"${"a-".repeat(500000)}"}x`);
 	maskBody(`k=${"a-".repeat(500000)}`);
-	assert.ok(performance.now() - t0 < 1500, "linear on a 1 MB body");
+	assert.ok(performance.now() - t0 < 500, "linear on a 1 MB body (about 25 ms measured)");
 });
 
-test("a response the page itself couldn't read stays unread", async () => {
+test("masking edits only credential values: big ids, duplicate keys, deep nesting and cut-off bodies", async () => {
+	const { maskBody, isSecretName } = await import("../src/browser/mask-body.ts");
+	assert.equal(maskBody('{"id":1153826337396867073,"id":2,"__proto__":{"x":1}}', "application/json"), '{"id":1153826337396867073,"id":2,"__proto__":{"x":1}}', "the text comes back unchanged");
+	let deep = '"password":"opaque-password-6161"';
+	for (let i = 0; i < 45; i++) deep = `"k${i}":{${deep}}`;
+	assert.doesNotMatch(maskBody(`{${deep}}`, "application/json"), /opaque-password-6161/, "no depth limit");
+	assert.equal(maskBody('{"ok":true,"tokens":["t-1","t-2","t-', "application/json"), '{"ok":true,"tokens":"[secret]"', "a body cut in a credential is masked to its end");
+	assert.equal(maskBody('{"amount":12.50,"secretKey":{"a":[1,2]},"signingKey":"k"}', "application/json"), '{"amount":12.50,"secretKey":"[secret]","signingKey":"[secret]"}');
+	const gql = JSON.stringify({ query: 'mutation{login(email:"a@x.co",password:"hunter2"){token}}' });
+	assert.doesNotMatch(maskBody(gql, "application/json"), /hunter2/, "GraphQL inline argument");
+	assert.match(maskBody(gql, "application/json"), /a@x\.co/);
+	assert.doesNotMatch(maskBody("payload=%7B%22password%22%3A%22hunter2%22%7D&x=1", "application/x-www-form-urlencoded"), /hunter2/, "JSON inside a form value");
+	assert.equal(maskBody('{"plan":"Basic Subscription","course":"Bearer of good news"}', "application/json"), '{"plan":"Basic Subscription","course":"Bearer of good news"}');
+	for (const name of ["password1", "password2", "pass1", "user[password_confirmation]", "secretKey", "signing_key", "code_verifier", "x-csrf-token", "client_secret", "mfa_code"])
+		assert.ok(isSecretName(name) || isSecretName(name.replace(/^.*\[|\]$/g, "")), name);
+	for (const name of ["max_tokens", "tokenCount", "total_tokens", "author", "passenger_count", "passport_country", "code", "sku"]) assert.equal(isSecretName(name), false, name);
+	assert.equal(
+		maskBody("user%5Bpassword%5D=a&user%5Bpassword_confirmation%5D=a&password1=b&password2=b&pass1=c&code_verifier=d&next=%2F", "application/x-www-form-urlencoded"),
+		"user%5Bpassword%5D=[secret]&user%5Bpassword_confirmation%5D=[secret]&password1=[secret]&password2=[secret]&pass1=[secret]&code_verifier=[secret]&next=%2F",
+	);
+});
+
+test("a response the page itself couldn't read stays unread: same origin only", async () => {
 	const { pageCouldRead } = await import("../src/browser/cdp.ts");
 	const page = "https://shop.example/cart";
-	assert.equal(pageCouldRead({ url: "https://shop.example/api/cart" }, page), true);
-	assert.equal(pageCouldRead({ url: "https://api.other.example/x", allowOrigin: "https://shop.example" }, page), true);
-	assert.equal(pageCouldRead({ url: "https://api.other.example/x", allowOrigin: "*" }, page), true);
-	assert.equal(pageCouldRead({ url: "https://bank.example/me" }, page), false, "opaque no-cors response");
-	assert.equal(pageCouldRead({ url: "https://bank.example/me", allowOrigin: "https://evil.example" }, page), false);
+	assert.equal(pageCouldRead({ url: "https://shop.example/api/cart", documentURL: page }, page), true);
+	assert.equal(pageCouldRead({ url: "https://api.other.example/x", documentURL: page }, page), false, "CORS isn't enough: no-cors credentialed reads stay opaque");
+	assert.equal(pageCouldRead({ url: "https://bank.example/me" }, page), false);
+	assert.equal(pageCouldRead({ url: "https://shop.example/x", documentURL: "https://ads.example/frame" }, page), false, "asked for by another origin's frame");
 });
 
 test("inspect_page reports storage and cookie names, never their values", () => {

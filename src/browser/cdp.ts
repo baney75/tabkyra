@@ -541,8 +541,10 @@ export interface NetworkEntry {
 	type?: string;
 	/** The request's Content-Type, for masking its body by structure. */
 	requestType?: string;
-	/** Access-Control-Allow-Origin on the response: whether the page itself could read it. */
-	allowOrigin?: string;
+	/** The document that made the request: whose own scripts could read the response. */
+	documentURL?: string;
+	/** The response finished loading (a streaming or long-poll response may never). */
+	finished?: boolean;
 	timestamp: number;
 	failed?: string;
 }
@@ -585,6 +587,7 @@ function installCaptureListener(): void {
 				url: request.url,
 				type: typeof p.type === "string" ? p.type : undefined,
 				requestType: headerValue((p.request as { headers?: Record<string, string> }).headers, "content-type"),
+				documentURL: typeof p.documentURL === "string" ? p.documentURL : undefined,
 				timestamp: Date.now(),
 			});
 			if (buf.size > MAX_ENTRIES) buf.delete(buf.keys().next().value as string);
@@ -594,7 +597,9 @@ function installCaptureListener(): void {
 			const response = p.response as { status: number; mimeType: string; headers?: Record<string, string> };
 			entry.status = response.status;
 			entry.mimeType = response.mimeType;
-			entry.allowOrigin = headerValue(response.headers, "access-control-allow-origin");
+		} else if (method === "Network.loadingFinished") {
+			const entry = networkBuffers.get(tabId)?.get(String(p.requestId));
+			if (entry) entry.finished = true;
 		} else if (method === "Network.loadingFailed") {
 			const entry = networkBuffers.get(tabId)?.get(String(p.requestId));
 			if (entry) entry.failed = String(p.errorText ?? "failed");
@@ -638,6 +643,10 @@ export interface NetworkDetail extends NetworkEntry {
 
 const MAX_RESPONSE_BODY = 20000;
 const MAX_REQUEST_BODY = 4000;
+/** How much of a body is masked before it is cut to the limits above (linear work). */
+const MASK_CEILING = 2_000_000;
+/** The base64 text for MASK_CEILING bytes, a multiple of 4 so it decodes. */
+const BASE64_CEILING = Math.ceil(MASK_CEILING / 3) * 4;
 const TEXTUAL =
 	/^(text\/|application\/(json|[\w.+-]*\+json|javascript|x-javascript|xml|[\w.+-]*\+xml|x-www-form-urlencoded|graphql))/i;
 
@@ -656,16 +665,16 @@ function originOf(url: string | undefined): string | undefined {
 }
 
 /**
- * The page could read this response itself: same origin as the tab's page, or allowed to it by
- * CORS. Anything else (an opaque no-cors fetch, another site's frame or script) is out of reach
- * of the page's own scripts, so it stays out of reach here too.
+ * The page could read this response itself: the request went to the same origin as the tab's
+ * page, from a document of that origin. A cross-origin response is out: even with
+ * Access-Control-Allow-Origin a credentialed no-cors fetch stays opaque to the page, and the
+ * capture can't tell the modes apart. Cross-origin API data is still one run_js fetch away,
+ * where the browser enforces CORS itself.
  */
-export function pageCouldRead(entry: Pick<NetworkEntry, "url" | "allowOrigin">, pageUrl: string | undefined): boolean {
+export function pageCouldRead(entry: Pick<NetworkEntry, "url" | "documentURL">, pageUrl: string | undefined): boolean {
 	const page = originOf(pageUrl);
 	if (!page) return false;
-	if (originOf(entry.url) === page) return true;
-	const allow = entry.allowOrigin?.trim();
-	return allow === "*" || allow === page;
+	return originOf(entry.url) === page && (entry.documentURL === undefined || originOf(entry.documentURL) === page);
 }
 
 function decodeBody(body: string, base64: boolean): string {
@@ -688,20 +697,18 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 	const pageUrl = (await chrome.tabs.get(tabId)).url;
 	if (!pageCouldRead(entry, pageUrl)) {
 		detail.bodyNote =
-			"Another site's response that this page can't read itself; its body isn't shown. To read that site, navigate to its URL.";
+			"Another origin's response: its body isn't shown. Fetch it with run_js (CORS applies, as for the page) or navigate to its URL.";
 		return detail;
 	}
 	try {
 		const post = await cdpSend<{ postData: string }>(tabId, "Network.getRequestPostData", { requestId });
-		detail.requestBody = cap(
-			maskBody(post.postData.slice(0, MAX_REQUEST_BODY * 2), entry.requestType),
-			MAX_REQUEST_BODY,
-		);
+		detail.requestBody = cap(maskBody(post.postData.slice(0, MASK_CEILING), entry.requestType), MAX_REQUEST_BODY);
 	} catch {
 		/* no request body */
 	}
 	if (entry.failed) detail.bodyNote = `The request failed: ${entry.failed}`;
 	else if (entry.status === undefined) detail.bodyNote = "No response yet; wait and call again.";
+	else if (!entry.finished) detail.bodyNote = "Still loading (a streaming or large response); wait and call again.";
 	else if (entry.mimeType && !TEXTUAL.test(entry.mimeType))
 		detail.bodyNote = `Binary response (${entry.mimeType}); not shown.`;
 	else {
@@ -710,7 +717,9 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 				requestId,
 			});
 			const text = decodeBody(
-				body.base64Encoded ? body.body.slice(0, MAX_RESPONSE_BODY * 4) : body.body.slice(0, MAX_RESPONSE_BODY * 2),
+				// Masked whole up to a ceiling, then cut: a cut never splits a credential's structure,
+				// and the masker handles a body cut at the ceiling.
+				body.base64Encoded ? body.body.slice(0, BASE64_CEILING) : body.body.slice(0, MASK_CEILING),
 				body.base64Encoded,
 			);
 			detail.responseBody = cap(maskBody(text, entry.mimeType), MAX_RESPONSE_BODY);

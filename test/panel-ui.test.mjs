@@ -225,6 +225,11 @@ test("Settings > Skills: one search for both lists, full descriptions on hover, 
 	assert.deepEqual(rows, [
 		{ name: "github", summary: "Work with GitHub.", description: "Work with GitHub. Issues, pull requests and more.", source: "bundled", sharesNameWithSiteSkill: true },
 	]);
+	assert.deepEqual(
+		libraryRows(bundled, community, "shop", new Set(["github", "shop"])).map((r) => [r.name, r.source, r.sharesNameWithSiteSkill]),
+		[["shop", "community", true]],
+		"a community skill that shares a site skill's name is listed and flagged",
+	);
 	const tab = readFileSync(new URL("../src/dialogs/SkillsTab.ts", import.meta.url), "utf8");
 	assert.match(tab, /const query = normalizeSkillQuery\(this\.searchQuery\);/);
 	assert.match(tab, /title=\$\{row\.description\}/);

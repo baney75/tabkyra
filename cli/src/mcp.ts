@@ -52,7 +52,7 @@ function formatNodes(nodes: SnapNode[], pageUrl: string): string {
 	}
 	return nodes
 		.map((n) => {
-			let line = `${n.ref} ${n.role} ${JSON.stringify(n.name)}`;
+			let line = `${n.ref} ${oneLine(n.role)} ${JSON.stringify(n.name)}`;
 			if (n.value) line += ` value=${JSON.stringify(n.value)}`;
 			if (n.states?.length) line += ` [${oneLine(n.states.join(", "))}]`;
 			if (n.href) line += ` -> ${oneLine(origin && n.href.startsWith(origin) ? n.href.slice(origin.length) || "/" : n.href)}`;

@@ -40,10 +40,9 @@ export function libraryRows(
 	const taken = new Set(bundled.map((s) => s.name));
 	return [
 		...bundled.map((s) => ({ ...s, source: "bundled" as const })),
-		// A community skill never shadows a bundled one or one of the user's own site skills.
-		...community
-			.filter((s) => !taken.has(s.name) && !siteSkillNames.has(s.name))
-			.map((s) => ({ ...s, source: "community" as const })),
+		// A community skill a bundled one already names isn't run, so it isn't listed; one that
+		// shares a site skill's name is listed and flagged, like a bundled one.
+		...community.filter((s) => !taken.has(s.name)).map((s) => ({ ...s, source: "community" as const })),
 	]
 		.filter((s) => matches(q, s.name, s.description))
 		.sort((a, b) => a.name.localeCompare(b.name))

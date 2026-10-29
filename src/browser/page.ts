@@ -272,8 +272,9 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 		return style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
 	};
 	const roleOf = (el: Element): string => {
-		const role = el.getAttribute("role");
-		if (role) return role;
+		// The page writes this attribute: only a plain role token, so it can't break the line.
+		const role = (el.getAttribute("role") ?? "").trim().split(/\s+/)[0];
+		if (role) return /^[a-z-]{1,30}$/.test(role) ? role : "generic";
 		const tag = tagOf(el);
 		if (tag === "a") return "link";
 		if (tag === "input") {
@@ -373,8 +374,12 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 		if (depth > 12) return;
 		for (const el of Array.from(at.root.querySelectorAll("*"))) {
 			const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
-			// A web component that isn't rendered (hidden, display:none) adds nothing a user sees.
-			if (shadow && isVisible(el)) visit({ ...at, root: shadow }, depth + 1);
+			// A web component that isn't rendered (hidden, display:none) adds nothing a user sees. One
+			// with display:contents has no box of its own: its children decide.
+			const contents = shadow
+				? (el.ownerDocument.defaultView ?? window).getComputedStyle(el).display === "contents"
+				: false;
+			if (shadow && (contents || isVisible(el))) visit({ ...at, root: shadow }, depth + 1);
 			const tag = tagOf(el);
 			if (tag !== "iframe" && tag !== "frame") continue;
 			let doc: Document | null = null;
@@ -575,16 +580,26 @@ function pageInspect(): unknown {
 			/* not a URL */
 		}
 	}
+	// Names only, and a name's account-specific parts (an email, a UUID, a long id) become [id]:
+	// some sites put the signed-in user in key names.
+	const anonymous = (name: string) =>
+		name
+			.replace(/[^\s.:/|]*@[^\s.:/|]+(?:\.[^\s.:/|]+)*/g, "[id]")
+			.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[id]")
+			.replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "[id]")
+			.slice(0, 120);
 	const storageKeys = (st: Storage | undefined) => {
 		try {
-			return st ? Array.from({ length: Math.min(st.length, 30) }, (_, i) => st.key(i) ?? "").filter(Boolean) : [];
+			return st
+				? Array.from({ length: Math.min(st.length, 30) }, (_, i) => anonymous(st.key(i) ?? "")).filter(Boolean)
+				: [];
 		} catch {
 			return [];
 		}
 	};
 	const cookieNames = document.cookie
 		.split(";")
-		.map((c) => c.split("=")[0]?.trim())
+		.map((c) => anonymous(c.split("=")[0]?.trim() ?? ""))
 		.filter(Boolean)
 		.slice(0, 30);
 	return {
@@ -722,7 +737,12 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
 		// Text inside web components (open shadow roots) and same-origin frames, which innerText
 		// leaves out, follows the element's own text. Rendered text only: nothing hidden.
-		const shown = (c) => (c.checkVisibility ? c.checkVisibility() : !!(c.getClientRects && c.getClientRects().length));
+		const shown = (c) => {
+			// display:contents draws no box of its own; its children decide.
+			const view = c.ownerDocument && c.ownerDocument.defaultView;
+			if (view && view.getComputedStyle(c).display === "contents") return true;
+			return c.checkVisibility ? c.checkVisibility() : !!(c.getClientRects && c.getClientRects().length);
+		};
 		const parts = [el.innerText || ""];
 		const own = (root) => Array.from(root.children).filter((c) => !/^(style|script)$/i.test(c.tagName) && shown(c)).map((c) => c.innerText ?? "").join("\\n");
 		const visit = (root, depth) => {
