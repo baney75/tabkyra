@@ -16,7 +16,6 @@ import {
 	createStreamFn,
 	ModelSelector,
 	ProxyTab,
-	SettingsDialog,
 	// PersistentStorageDialog,
 	setAppStorage,
 	setArtifactViewerFactory,
@@ -58,6 +57,7 @@ import { PrivacyTab } from "./dialogs/PrivacyTab.js";
 import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
+import { SettingsPage } from "./dialogs/SettingsPage.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import { UpdatesTab } from "./dialogs/UpdatesTab.js";
 import { WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
@@ -614,29 +614,27 @@ async function hasAnyApiKey(): Promise<boolean> {
 }
 
 /**
- * Settings, six tabs that fit the panel's width: Providers (keys and custom providers), Skills,
- * Bridge, Privacy (with the network proxy), Costs, About (with updates).
+ * Settings, a page over the chat with six tabs that fit the panel's width: Providers (keys and
+ * custom providers), Skills, Bridge, Privacy (with the network proxy), Costs, About (with
+ * updates). Settles when it closes; an open Settings page is reused, not opened twice.
  */
 function openApiKeysDialog(): Promise<void> {
-	return new Promise((resolve) => {
-		const providers = new ApiKeysTab();
-		providers.onChooseModel = () => {
-			document.querySelector("settings-dialog")?.remove();
-			resolve();
-			void chatPanel?.agentInterface?.onModelSelect?.();
-		};
-		SettingsDialog.open(
-			[
-				providers,
-				new SkillsTab(),
-				new BridgeTab(),
-				new CombinedTab("Privacy", [{ tab: new PrivacyTab() }, { tab: new ProxyTab(), heading: "CORS proxy" }]),
-				new CostsTab(),
-				new CombinedTab("About", [{ tab: new AboutTab() }, { tab: new UpdatesTab() }]),
-			],
-			resolve,
-		);
-	});
+	const open = document.querySelector<SettingsPage>("tabkyra-settings");
+	if (open) return open.closed;
+	const providers = new ApiKeysTab();
+	const page = SettingsPage.open([
+		providers,
+		new SkillsTab(),
+		new BridgeTab(),
+		new CombinedTab("Privacy", [{ tab: new PrivacyTab() }, { tab: new ProxyTab(), heading: "CORS proxy" }]),
+		new CostsTab(),
+		new CombinedTab("About", [{ tab: new AboutTab() }, { tab: new UpdatesTab() }]),
+	]);
+	providers.onChooseModel = () => {
+		page.close();
+		void chatPanel?.agentInterface?.onModelSelect?.();
+	};
+	return page.closed;
 }
 
 // Export getter for message transformer

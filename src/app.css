@@ -634,11 +634,10 @@ button[role="switch"]:disabled {
 	}
 }
 
-/* Settings scrolls inside the dialog. macOS overlay scrollbars take no room, so padding keeps
-   the scrollbar off the Save buttons; the gutter does it for classic scrollbars. */
-settings-dialog .overflow-y-auto {
+/* A page (Settings, a skill) scrolls under its top bar. Its content has side padding wider than
+   a macOS overlay scrollbar, and the gutter keeps a classic scrollbar off the Save buttons. */
+.tk-page-body {
 	scrollbar-gutter: stable;
-	padding-inline-end: 0.75rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

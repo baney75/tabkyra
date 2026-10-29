@@ -1,9 +1,8 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
-import { DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.js";
-import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { PageBase } from "../components/PageBase.js";
 import { Toast } from "../components/Toast.js";
 import { buildSkillFromRecording, type RecordingResult } from "../recording/recorder.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
@@ -13,7 +12,7 @@ import { getTabkyraStorage } from "../storage/app-storage.js";
  * see the skill id on that site (via URL matching) and can retrieve/replay it.
  */
 @customElement("record-skill-dialog")
-export class RecordSkillDialog extends DialogBase {
+export class RecordSkillDialog extends PageBase {
 	@state() private rec!: RecordingResult;
 	@state() private name = "";
 	@state() private domains = "";
@@ -21,8 +20,7 @@ export class RecordSkillDialog extends DialogBase {
 	@state() private showSteps = true;
 	private onSaved?: () => void;
 
-	protected modalWidth = "min(820px, 94vw)";
-	protected modalHeight = "min(860px, 92vh)";
+	protected override fillsHeight = true;
 
 	static open(rec: RecordingResult, onSaved?: () => void) {
 		const dialog = new RecordSkillDialog();
@@ -31,7 +29,6 @@ export class RecordSkillDialog extends DialogBase {
 		dialog.name = `${shortHost}-workflow`;
 		dialog.domains = rec.hostname;
 		dialog.onSaved = onSaved;
-		document.body.appendChild(dialog);
 		dialog.open();
 	}
 
@@ -54,12 +51,12 @@ export class RecordSkillDialog extends DialogBase {
 		return html`
 			<div class="flex items-center justify-between gap-3">
 				<div class="min-w-0">
-					<div class="text-sm font-semibold text-white">${label}</div>
-					<div class="text-xs text-white/60">${count} captured</div>
+					<div class="text-sm font-semibold text-foreground">${label}</div>
+					<div class="text-xs text-muted-foreground">${count} captured</div>
 				</div>
 				<button
 					type="button"
-					class="shrink-0 rounded-md border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/15"
+					class="shrink-0 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
 					aria-expanded=${expanded ? "true" : "false"}
 					@click=${onToggle}
 				>
@@ -72,7 +69,7 @@ export class RecordSkillDialog extends DialogBase {
 	private renderScreenshots(): TemplateResult {
 		const screenshots = this.rec?.screenshots ?? [];
 		return html`
-			<section class="rounded-md border border-white/15 bg-black/40 p-3">
+			<section class="rounded-md border border-border bg-card p-3">
 				${this.sectionHeader("Screenshots", screenshots.length, this.showScreenshots, () => {
 					this.showScreenshots = !this.showScreenshots;
 				})}
@@ -83,13 +80,13 @@ export class RecordSkillDialog extends DialogBase {
 								<div class="mt-3 grid max-h-80 grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
 									${screenshots.map(
 										(src, index) => html`
-											<figure class="overflow-hidden rounded-md border border-white/15 bg-black">
+											<figure class="overflow-hidden rounded-md border border-border bg-background">
 												<img
 													src=${src}
 													class="block h-44 w-full object-cover"
 													alt=${`Recording screenshot ${index + 1}`}
 												/>
-												<figcaption class="border-t border-white/10 px-3 py-1.5 text-xs text-white/70">
+												<figcaption class="border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
 													Screenshot ${index + 1}
 												</figcaption>
 											</figure>
@@ -97,7 +94,7 @@ export class RecordSkillDialog extends DialogBase {
 									)}
 								</div>
 							`
-							: html`<div class="mt-3 rounded-md border border-white/10 bg-black/30 p-3 text-sm text-white/70">
+							: html`<div class="mt-3 rounded-md border border-border bg-background p-3 text-sm text-muted-foreground">
 								No screenshots were captured for this recording.
 							</div>`
 						: ""
@@ -108,7 +105,7 @@ export class RecordSkillDialog extends DialogBase {
 
 	private renderSteps(steps: RecordingResult["steps"]): TemplateResult {
 		return html`
-			<section class="rounded-md border border-white/15 bg-black/40 p-3">
+			<section class="rounded-md border border-border bg-card p-3">
 				${this.sectionHeader("Steps", steps.length, this.showSteps, () => {
 					this.showSteps = !this.showSteps;
 				})}
@@ -116,16 +113,16 @@ export class RecordSkillDialog extends DialogBase {
 					this.showSteps
 						? html`
 							<div
-								class="mt-3 max-h-72 overflow-y-auto rounded-md border border-white/15 bg-black text-sm font-mono text-white"
+								class="mt-3 max-h-72 overflow-y-auto rounded-md border border-border bg-background text-sm font-mono text-foreground"
 							>
 								${
 									steps.length === 0
-										? html`<div class="p-3 text-white/70">No interactions were captured.</div>`
+										? html`<div class="p-3 text-muted-foreground">No interactions were captured.</div>`
 										: steps.map(
 												(step, i) => html`
-												<div class="grid grid-cols-[2.5rem_1fr] gap-2 border-b border-white/10 px-3 py-2 last:border-0">
-													<span class="text-right font-semibold text-white/60">${i + 1}.</span>
-													<span class="min-w-0 whitespace-pre-wrap break-words text-white">${this.stepLabel(step)}</span>
+												<div class="grid grid-cols-[2.5rem_1fr] gap-2 border-b border-border px-3 py-2 last:border-0">
+													<span class="text-right font-semibold text-muted-foreground">${i + 1}.</span>
+													<span class="min-w-0 whitespace-pre-wrap break-words text-foreground">${this.stepLabel(step)}</span>
 												</div>
 											`,
 											)
@@ -163,45 +160,39 @@ export class RecordSkillDialog extends DialogBase {
 		this.close();
 	}
 
+	protected pageTitle(): string {
+		return "Save recording as skill";
+	}
+
 	protected renderContent(): TemplateResult {
 		const steps = this.rec?.steps ?? [];
 		return html`
-			${DialogContent({
-				className: "overflow-y-auto text-white",
-				children: html`
-					${DialogHeader({
-						title: "Save recording as skill",
-						description: `${steps.length} step(s) captured on ${this.rec?.hostname ?? ""}`,
-						className: "[&_h2]:text-white [&_p]:text-white/60",
+			<div class="tk-page-body min-h-0 flex-1 overflow-y-auto">
+				<div class="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-5">
+					<p class="text-sm text-muted-foreground">${steps.length} step(s) captured on ${this.rec?.hostname ?? ""}</p>
+					${Input({
+						label: "Skill name (id)",
+						type: "text",
+						value: this.name,
+						onInput: (e: Event) => {
+							this.name = (e.target as HTMLInputElement).value;
+						},
 					})}
-
-					<div class="flex flex-col gap-4 mt-4">
-						${Input({
-							label: "Skill name (id)",
-							type: "text",
-							value: this.name,
-							onInput: (e: Event) => {
-								this.name = (e.target as HTMLInputElement).value;
-							},
-						})}
-						${Input({
-							label: "Domain patterns (comma-separated)",
-							type: "text",
-							value: this.domains,
-							onInput: (e: Event) => {
-								this.domains = (e.target as HTMLInputElement).value;
-							},
-						})}
-
-						${this.renderScreenshots()} ${this.renderSteps(steps)}
-					</div>
-
-					<div class="mt-6 flex justify-end gap-2">
-						${Button({ variant: "outline", onClick: () => this.close(), children: "Cancel" })}
-						${Button({ variant: "default", onClick: () => this.save(), children: "Save skill", disabled: steps.length === 0 })}
-					</div>
-				`,
-			})}
+					${Input({
+						label: "Domain patterns (comma-separated)",
+						type: "text",
+						value: this.domains,
+						onInput: (e: Event) => {
+							this.domains = (e.target as HTMLInputElement).value;
+						},
+					})}
+					${this.renderScreenshots()} ${this.renderSteps(steps)}
+				</div>
+			</div>
+			<div class="flex flex-shrink-0 justify-end gap-2 border-t border-border px-4 py-3">
+				${Button({ variant: "outline", onClick: () => this.close(), children: "Cancel" })}
+				${Button({ variant: "default", onClick: () => this.save(), children: "Save skill", disabled: steps.length === 0 })}
+			</div>
 		`;
 	}
 }

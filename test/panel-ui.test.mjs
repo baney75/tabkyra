@@ -231,3 +231,18 @@ test("an on/off setting is a switch, and every checkbox and radio is styled", ()
 	const patch = readFileSync(new URL("../patches/pi-mono.patch", import.meta.url), "utf8");
 	assert.match(patch, /^\+.*Key saved/m, "a saved provider key reads Key saved, not a green ✓");
 });
+
+// Donovan, 2026-10-29: Settings and the skill screens are "full screen with a back arrow, NOT a
+// weird overlay thing".
+test("Settings, the skill screens and the provider editor are pages, not overlay dialogs", () => {
+	const read = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
+	for (const file of ["SettingsPage", "SkillDialog", "RecordSkillDialog", "CustomProviderEditDialog"]) {
+		const src = read(`dialogs/${file}.ts`);
+		assert.match(src, /extends PageBase\b/, `${file} is a page`);
+		assert.doesNotMatch(src, /DialogBase|mini-lit\/dist\/Dialog\.js/, `${file} uses no overlay dialog`);
+	}
+	assert.doesNotMatch(read("sidepanel.ts"), /\bSettingsDialog\b/, "the side panel opens SettingsPage, not pi-web-ui's dialog");
+	const page = read("components/PageBase.ts");
+	assert.match(page, /aria-label="Back"/, "every page has a back arrow");
+	assert.match(page, /fixed inset-0/, "a page fills the panel");
+});

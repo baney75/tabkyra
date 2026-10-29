@@ -186,7 +186,7 @@ try {
 	await page.waitForTimeout(1500);
 	await page.evaluate(() => {
 		document.querySelector("welcome-setup-dialog")?.remove();
-		document.querySelector("settings-dialog")?.remove();
+		document.querySelector("tabkyra-settings")?.close?.();
 	});
 	const mic = page.getByRole("button", { name: /^Dictate/ });
 	await mic.click();
