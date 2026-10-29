@@ -26,9 +26,10 @@ const HIDDEN_PROVIDERS = new Set([
 ]);
 
 /**
- * Settings > Providers: API keys for the built-in providers, then custom providers. A search
- * box finds a provider without scrolling, providers with a key come first, and saving a key
- * offers "Choose a model" right there.
+ * Settings > Providers, in four sections: Free mode, subscriptions (and connecting your own
+ * agent), API keys for the built-in providers, then custom providers. A search box finds a
+ * provider without scrolling, providers with a key come first, and saving a key offers
+ * "Choose a model" right there.
  */
 export class ApiKeysTab extends SettingsTab {
 	/** Opens the model picker (the composer's own); set by the side panel. */
@@ -103,51 +104,54 @@ export class ApiKeysTab extends SettingsTab {
 						limited per day. ${FREE_PRIVACY_NOTE}
 					</p>
 				</div>
-				<div class="flex flex-col gap-1.5">
-					<p class="text-sm text-muted-foreground">
-						API keys for the side panel's agent. Keys stay in this browser. ${API_BILLING_NOTE}
-					</p>
+				<section class="flex flex-col gap-4 pt-5 border-t border-border">
+					<tabkyra-subscriptions></tabkyra-subscriptions>
 					${agentSetupPromptButton("Using your own agent instead? Paste this prompt into Claude Code, Codex, pi, OMP or any agent to connect it to this browser.")}
-				</div>
-				<tabkyra-subscriptions></tabkyra-subscriptions>
-				${
-					this.justSaved
-						? html`<div
-								role="status"
-								class="flex items-center justify-between gap-3 rounded-lg border border-[var(--tk-brass)]/50 bg-[var(--tk-brass)]/10 px-3 py-2"
-							>
-								<span class="text-sm text-foreground">${providerDisplayName(this.justSaved)} key saved.</span>
-								${Button({
-									size: "sm",
-									onClick: () => this.onChooseModel?.(),
-									children: "Choose a model",
-								})}
-							</div>`
-						: nothing
-				}
-				<input
-					type="search"
-					aria-label="Find a provider"
-					placeholder="Find a provider"
-					.value=${this.query}
-					@input=${(e: Event) => {
-						this.query = (e.target as HTMLInputElement).value;
-						this.requestUpdate();
-					}}
-					class="w-full h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-				/>
-				<div class="flex flex-col gap-5">
+				</section>
+				<section class="flex flex-col gap-3 pt-5 border-t border-border" aria-labelledby="api-keys-heading">
+					<div>
+						<h3 id="api-keys-heading" class="text-sm font-semibold text-foreground mb-1">API keys</h3>
+						<p class="text-xs text-muted-foreground">For the side panel's agent. Keys stay in this browser. ${API_BILLING_NOTE}</p>
+					</div>
 					${
-						providers.length === 0
-							? html`<p class="text-sm text-muted-foreground">No provider matches. Add any OpenAI- or Anthropic-compatible endpoint under Custom providers below.</p>`
-							: repeat(
-									providers,
-									(provider) => provider,
-									(provider) =>
-										html`<provider-key-input .provider=${provider} .label=${providerDisplayName(provider)}></provider-key-input>`,
-								)
+						this.justSaved
+							? html`<div
+									role="status"
+									class="flex items-center justify-between gap-3 rounded-lg border border-[var(--tk-brass)]/50 bg-[var(--tk-brass)]/10 px-3 py-2"
+								>
+									<span class="text-sm text-foreground">${providerDisplayName(this.justSaved)} key saved.</span>
+									${Button({
+										size: "sm",
+										onClick: () => this.onChooseModel?.(),
+										children: "Choose a model",
+									})}
+								</div>`
+							: nothing
 					}
-				</div>
+					<input
+						type="search"
+						aria-label="Find a provider"
+						placeholder="Find a provider"
+						.value=${this.query}
+						@input=${(e: Event) => {
+							this.query = (e.target as HTMLInputElement).value;
+							this.requestUpdate();
+						}}
+						class="w-full h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					/>
+					<div class="flex flex-col gap-5">
+						${
+							providers.length === 0
+								? html`<p class="text-sm text-muted-foreground">No provider matches. Add any OpenAI- or Anthropic-compatible endpoint under Custom providers below.</p>`
+								: repeat(
+										providers,
+										(provider) => provider,
+										(provider) =>
+											html`<provider-key-input .provider=${provider} .label=${providerDisplayName(provider)}></provider-key-input>`,
+									)
+						}
+					</div>
+				</section>
 				<div class="pt-5 border-t border-border">${this.custom}</div>
 			</div>
 		`;

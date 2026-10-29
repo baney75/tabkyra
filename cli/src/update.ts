@@ -24,6 +24,7 @@ import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { banner, c, confirm, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 import { extractZip } from "./zip.ts";
+import { fitNotes } from "./release-notes.js";
 
 export const REPO = "baney75/tabkyra";
 export type Channel = "stable" | "nightly";
@@ -234,9 +235,6 @@ interface GitHubRelease {
 	assets: ReleaseAsset[];
 }
 
-/** Release notes are shown as plain text in the side panel; keep them to a readable size. */
-const MAX_NOTES_CHARS = 8000;
-
 export interface Release {
 	version: string;
 	url: string;
@@ -304,7 +302,7 @@ export async function latestRelease(channel: Channel): Promise<Release | undefin
 		throw new UpdateError(`Release ${best.release.tag_name} is missing its zip, SHA256SUMS or SHA256SUMS.minisig; not installing it`);
 	}
 	const body = typeof best.release.body === "string" ? best.release.body.trim() : "";
-	const notes = body ? (body.length > MAX_NOTES_CHARS ? `${body.slice(0, MAX_NOTES_CHARS)}...` : body) : undefined;
+	const notes = body ? fitNotes(body) : undefined;
 	return { version: best.version.text, url: best.release.html_url, notes, zip, sums, signature };
 }
 

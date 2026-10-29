@@ -192,6 +192,105 @@ export function whatsNewFor(
 	return last;
 }
 
+/** The "What's new" card's view of the release notes: a few short lines, grouped like the changelog. */
+export interface NotesDigest {
+	/** Changelog sections in order, each with the first sentence of its first entries. */
+	sections: { title: string; items: string[] }[];
+	/** Entries not shown; the release page has them all. */
+	more: number;
+}
+
+const SECTION_TITLES: Record<string, string> = {
+	"breaking changes": "Breaking changes",
+	added: "New",
+	changed: "Changed",
+	fixed: "Fixed",
+	removed: "Removed",
+};
+const DIGEST_ITEM_MAX = 180;
+const DIGEST_CLAUSE_AT = 110;
+/** A parenthetical that points at the repo, not the reader: a decision, an issue, a path or a file. */
+const REFERENCE = /\s*\((?:[^()]*?(?:\bD\d+\b|#\d+|docs\/|test\/|cli\/|src\/|\.(?:md|ts|mjs|json)\b))[^()]*\)/g;
+
+/** The first sentence of a changelog entry, as plain text with `code` spans kept for the card. */
+function entrySummary(entry: string): string {
+	const text = entry
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+		.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
+		.replace(REFERENCE, "")
+		.trim();
+	let inCode = false;
+	let end = text.length;
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i];
+		if (c === "`") inCode = !inCode;
+		else if (
+			!inCode &&
+			(c === "." || c === "!" || c === "?") &&
+			/^(\s+[A-Z`"\u201c(]|\s*$)/.test(text.slice(i + 1))
+		) {
+			end = i + 1;
+			break;
+		}
+	}
+	let summary = text.slice(0, end).trim();
+	// A long first sentence keeps its lead clause, up to the first colon, semicolon or aside.
+	if (summary.length > DIGEST_CLAUSE_AT) {
+		inCode = false;
+		for (let i = 0; i < summary.length; i++) {
+			if (summary[i] === "`") inCode = !inCode;
+			else if (!inCode && i >= 20 && /^(?:[:;]\s| \()/.test(summary.slice(i))) {
+				summary = `${summary.slice(0, i).trimEnd()}.`;
+				break;
+			}
+		}
+	}
+	if (summary.length > DIGEST_ITEM_MAX) {
+		summary = summary.slice(0, DIGEST_ITEM_MAX);
+		summary = `${summary.slice(0, Math.max(summary.lastIndexOf(" "), 1))}\u2026`;
+		// A cut inside a code span would leave a stray backtick.
+		if ((summary.match(/`/g) ?? []).length % 2) summary = summary.replace(/`(?=[^`]*$)/, "");
+	}
+	return summary;
+}
+
+/**
+ * Release notes (the GitHub release body, from CHANGELOG.md) reduced to what fits the side
+ * panel: up to `perSection` entries per section and `total` overall, each its first sentence.
+ * Undefined when the notes have no bullet list, so the card can show them as text instead.
+ */
+export function digestReleaseNotes(notes: string | undefined, perSection = 2, total = 6): NotesDigest | undefined {
+	if (!notes) return undefined;
+	const sections: { title: string; entries: string[] }[] = [];
+	for (const line of notes.split("\n")) {
+		if (/^-{3,}\s*$/.test(line)) break;
+		const heading = line.match(/^#{2,4}\s+(.+?)\s*$/);
+		if (heading) {
+			const name = heading[1].toLowerCase();
+			sections.push({ title: SECTION_TITLES[name] ?? heading[1], entries: [] });
+			continue;
+		}
+		const bullet = line.match(/^[-*]\s+(.+)$/);
+		if (!bullet) continue;
+		if (sections.length === 0) sections.push({ title: "", entries: [] });
+		sections[sections.length - 1].entries.push(bullet[1]);
+	}
+	const all = sections.reduce((n, s) => n + s.entries.length, 0);
+	if (all === 0) return undefined;
+	let shown = 0;
+	const out: NotesDigest["sections"] = [];
+	for (const section of sections) {
+		const items = section.entries
+			.slice(0, Math.min(perSection, total - shown))
+			.map(entrySummary)
+			.filter(Boolean);
+		if (items.length === 0) continue;
+		shown += items.length;
+		out.push({ title: section.title, items });
+	}
+	return { sections: out, more: all - shown };
+}
+
 /** Only https links leave the panel (release pages and compare views). */
 export function safeLink(url: string | undefined): string | undefined {
 	if (!url) return undefined;

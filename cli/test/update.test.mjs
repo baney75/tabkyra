@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parsePublicKey, verifyMinisign } from "../src/minisign.ts";
+import { fitNotes } from "../src/release-notes.ts";
 import { createZip } from "../../scripts/release/zip.mjs";
 import { signMinisign, throwawayKey } from "./helpers/minisign-sign.mjs";
 
@@ -471,4 +472,15 @@ test("release mode from the side panel: the same signed install, streamed as ste
 
 	const usage = await run(appCli(), "update", "--host", "--channel", "nightly");
 	assert.equal(usage.code, 2, "the host's command lines are fixed; nothing else is accepted");
+});
+
+test("long release notes keep every section: bullets are shortened before anything is cut", () => {
+	const long = (n) => `- Entry ${n}. ${"Detail that only the full notes need. ".repeat(20)}`;
+	const body = ["### Added", ...Array.from({ length: 30 }, (_, i) => long(i)), "", "### Fixed", "- The tabs fit. More detail."].join("\n");
+	assert.ok(body.length > 8000);
+	const notes = fitNotes(body);
+	assert.ok(notes.length <= 8003, `${notes.length}`);
+	assert.match(notes, /### Fixed\n- The tabs fit\./, "the last section survives");
+	assert.match(notes, /- Entry 29\./, "every entry keeps its first sentence");
+	assert.equal(fitNotes("Short notes."), "Short notes.");
 });

@@ -1,6 +1,7 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { Toast } from "../components/Toast.js";
 import { request, type SubscriptionStatus, subscriptionStatus } from "./client.js";
 import { CLI_MCP_SETUP, COPILOT, SIWC } from "./constants.js";
 import { refreshSubscriptionModels } from "./stream.js";
@@ -126,9 +127,8 @@ export class SubscriptionsSection extends LitElement {
 					this.copied = undefined;
 				}, 1500);
 			},
-			() => {
-				this.notice = "Couldn't copy. Select the command and copy it by hand.";
-			},
+			// A toast, not the section's notice: it can't overwrite a sign-out message or outlive a later copy.
+			() => Toast.error("Couldn't copy. Click the side panel first, then try again."),
 		);
 	}
 
@@ -194,7 +194,7 @@ export class SubscriptionsSection extends LitElement {
 									})
 								: Button({
 										size: "sm",
-										variant: "default",
+										variant: "outline",
 										children: opts.button,
 										onClick: opts.onSignIn,
 										disabled: Boolean(this.busy) || !this.status,
@@ -219,7 +219,10 @@ export class SubscriptionsSection extends LitElement {
 				</div>
 				${
 					this.error
-						? html`<p class="text-xs text-destructive">Subscription sign-ins need Tabkyra's native host: run <code>tabkyra setup</code>. (${this.error})</p>`
+						? html`<div class="flex flex-col gap-2">
+								<p class="text-xs text-destructive">Subscription sign-ins need Tabkyra's native host. Run this in a terminal, then reopen Settings. (${this.error})</p>
+								${this.command("Set up Tabkyra", "tabkyra setup")}
+							</div>`
 						: nothing
 				}
 				${
@@ -254,12 +257,13 @@ export class SubscriptionsSection extends LitElement {
 					note: html`Uses your own Copilot plan through GitHub's Copilot SDK; allowed by ${link(COPILOT.termsUrl, "GitHub's Copilot SDK docs")}; sign out anytime.`,
 					extra: html`${
 						this.deviceCode
-							? html`<p class="text-xs">Enter <code class="font-semibold" data-device-code>${this.deviceCode.userCode}</code> at ${link(this.deviceCode.verificationUri, this.deviceCode.verificationUri)}
+							? html`<p class="text-xs">Enter <code class="font-mono font-semibold text-foreground" data-device-code>${this.deviceCode.userCode}</code> at ${link(this.deviceCode.verificationUri, this.deviceCode.verificationUri)}
 									${Button({ size: "sm", variant: "ghost", children: "Copy code", onClick: () => this.copy(this.deviceCode?.userCode ?? "") })}</p>`
 							: nothing
 					}${
 						s && !s.copilot.sdkInstalled
-							? html`<p class="text-xs text-muted-foreground">Copilot needs GitHub's Copilot SDK on this computer (about 160 MB): run <code>tabkyra copilot-sdk install</code>.</p>`
+							? html`<p class="text-xs text-muted-foreground">Copilot needs GitHub's Copilot SDK on this computer (about 160 MB).</p>
+									${this.command("Install the Copilot SDK", "tabkyra copilot-sdk install")}`
 							: nothing
 					}`,
 				})}

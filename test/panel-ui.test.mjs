@@ -138,3 +138,35 @@ test("the Claude and Gemini MCP setup commands render as readable command blocks
 	assert.match(codeClass, /\bfont-mono\b/);
 	assert.match(block, /@click=\$\{\(\) => this\.copy\(text\)\}/);
 });
+
+test("settings tabs sit in an even grid until one row fits, so no tab is left alone on a line", () => {
+	const patch = readFileSync(new URL("../patches/pi-mono.patch", import.meta.url), "utf8");
+	const dialog = patch.slice(patch.indexOf("b/packages/web-ui/src/dialogs/SettingsDialog.ts"));
+	assert.match(dialog, /\+\s*<div class="@container md:hidden/);
+	assert.match(dialog, /\+\s*class="grid gap-1 @\[28rem\]:flex @\[28rem\]:flex-wrap"/);
+	assert.match(dialog, /grid-template-columns: repeat\(\$\{this\.tabs\.length > 3 \? Math\.ceil\(this\.tabs\.length \/ 2\) : this\.tabs\.length\}/);
+});
+
+test("native controls follow the theme: dark mode declares color-scheme dark", () => {
+	const css = readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
+	const dark = css.slice(css.indexOf(".dark {"), css.indexOf("}", css.indexOf(".dark {")));
+	assert.match(dark, /color-scheme: dark;/);
+	assert.match(dark, /accent-color: var\(--tk-brass\);/);
+});
+
+test("Settings > Providers reads top to bottom: Free mode, subscriptions, API keys with their search and list, custom providers", () => {
+	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
+	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", "agentSetupPromptButton(", ">API keys</h3>", 'placeholder="Find a provider"', "<provider-key-input", "${this.custom}"].map((s) => tab.indexOf(s));
+	assert.ok(order.every((i) => i > 0), JSON.stringify(order));
+	assert.deepEqual([...order].sort((a, b) => a - b), order);
+});
+
+test("subscription commands are copyable blocks, and a failed copy is a toast that can't overwrite or outlive the section's notice", () => {
+	const source = readFileSync(new URL("../src/subscriptions/SubscriptionsSection.ts", import.meta.url), "utf8");
+	assert.match(source, /this\.command\("Install the Copilot SDK", "tabkyra copilot-sdk install"\)/);
+	assert.match(source, /this\.command\("Set up Tabkyra", "tabkyra setup"\)/);
+	assert.doesNotMatch(source, /run <code>/, "no bare inline commands left");
+	const copy = source.slice(source.indexOf("private copy("), source.indexOf("private command("));
+	assert.match(copy, /Toast\.error\(/);
+	assert.doesNotMatch(copy, /this\.notice/);
+});
