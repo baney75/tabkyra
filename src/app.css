@@ -597,9 +597,48 @@ button[role="switch"]:disabled {
 	cursor: not-allowed;
 }
 
-/* Settings scrolls inside the dialog. A stable gutter keeps the scrollbar off the Save buttons. */
+/* High contrast (forced colors) replaces background colors, which carry every state above. The
+   checkboxes and radios go back to the system's own; the switches keep their shape in system
+   colors, on Highlight when on. */
+@media (forced-colors: active) {
+	input[type="checkbox"]:not(.tk-switch),
+	input[type="radio"] {
+		appearance: auto;
+	}
+	input[type="checkbox"]:not(.tk-switch):checked::before,
+	input[type="radio"]:checked::before {
+		content: none;
+	}
+	input[type="checkbox"].tk-switch,
+	button[role="switch"] {
+		forced-color-adjust: none;
+		border: 1px solid ButtonText;
+		background: ButtonFace;
+	}
+	input[type="checkbox"].tk-switch::before,
+	button[role="switch"] > span {
+		background: ButtonText;
+		box-shadow: none;
+	}
+	input[type="checkbox"].tk-switch::before {
+		top: calc(0.125rem - 1px);
+		left: calc(0.125rem - 1px);
+	}
+	input[type="checkbox"].tk-switch:checked,
+	button[role="switch"][data-state="checked"] {
+		background: Highlight;
+	}
+	input[type="checkbox"].tk-switch:checked::before,
+	button[role="switch"][data-state="checked"] > span {
+		background: HighlightText;
+	}
+}
+
+/* Settings scrolls inside the dialog. macOS overlay scrollbars take no room, so padding keeps
+   the scrollbar off the Save buttons; the gutter does it for classic scrollbars. */
 settings-dialog .overflow-y-auto {
 	scrollbar-gutter: stable;
+	padding-inline-end: 0.75rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -607,6 +646,12 @@ settings-dialog .overflow-y-auto {
 	*::before,
 	*::after {
 		transition-duration: 0.01ms;
+	}
+	input[type="checkbox"].tk-switch,
+	input[type="checkbox"].tk-switch::before,
+	button[role="switch"],
+	button[role="switch"] > span {
+		transition: none;
 	}
 	.welcome-container,
 	.tutorial-pill::before,
