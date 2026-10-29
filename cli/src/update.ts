@@ -21,10 +21,10 @@ import type { UpdatePolicy } from "../../src/update/logic.ts";
 import RELEASE_KEY from "../../keys/tabkyra-release.pub";
 import { parsePublicKey, SignatureError, verifyMinisign } from "./minisign.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
+import { fitNotes } from "./release-notes.ts";
 import { banner, c, confirm, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 import { extractZip } from "./zip.ts";
-import { fitNotes } from "./release-notes.js";
 
 export const REPO = "baney75/tabkyra";
 export type Channel = "stable" | "nightly";

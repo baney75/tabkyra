@@ -214,10 +214,18 @@ const REFERENCE = /\s*\((?:[^()]*?(?:\bD\d+\b|#\d+|docs\/|test\/|cli\/|src\/|\.(
 
 /** The first sentence of a changelog entry, as plain text with `code` spans kept for the card. */
 function entrySummary(entry: string): string {
+	// Links, bold and references come out of the prose only; code spans stay exactly as written.
 	const text = entry
-		.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-		.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, "$1$2")
-		.replace(REFERENCE, "")
+		.split("`")
+		.map((part, i) =>
+			i % 2
+				? part
+				: part
+						.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+						.replace(/\*\*([^*]+)\*\*/g, "$1")
+						.replace(REFERENCE, ""),
+		)
+		.join("`")
 		.trim();
 	let inCode = false;
 	let end = text.length;
@@ -248,9 +256,9 @@ function entrySummary(entry: string): string {
 	if (summary.length > DIGEST_ITEM_MAX) {
 		summary = summary.slice(0, DIGEST_ITEM_MAX);
 		summary = `${summary.slice(0, Math.max(summary.lastIndexOf(" "), 1))}\u2026`;
-		// A cut inside a code span would leave a stray backtick.
-		if ((summary.match(/`/g) ?? []).length % 2) summary = summary.replace(/`(?=[^`]*$)/, "");
 	}
+	// A cut inside a code span (here or by the host) would leave a stray backtick.
+	if ((summary.match(/`/g) ?? []).length % 2) summary = summary.replace(/`(?=[^`]*$)/, "");
 	return summary;
 }
 
@@ -277,17 +285,22 @@ export function digestReleaseNotes(notes: string | undefined, perSection = 2, to
 	}
 	const all = sections.reduce((n, s) => n + s.entries.length, 0);
 	if (all === 0) return undefined;
+	// Every section gets its first entry before any gets a second, so a late Fixed or Security
+	// section is never squeezed out by the ones above it.
+	const take = sections.map(() => 0);
 	let shown = 0;
+	for (let round = 0; round < perSection && shown < total; round++)
+		sections.forEach((section, i) => {
+			if (shown < total && section.entries.length > round) {
+				take[i]++;
+				shown++;
+			}
+		});
 	const out: NotesDigest["sections"] = [];
-	for (const section of sections) {
-		const items = section.entries
-			.slice(0, Math.min(perSection, total - shown))
-			.map(entrySummary)
-			.filter(Boolean);
-		if (items.length === 0) continue;
-		shown += items.length;
-		out.push({ title: section.title, items });
-	}
+	sections.forEach((section, i) => {
+		const items = section.entries.slice(0, take[i]).map(entrySummary).filter(Boolean);
+		if (items.length) out.push({ title: section.title, items });
+	});
 	return { sections: out, more: all - shown };
 }
 

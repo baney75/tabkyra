@@ -205,3 +205,32 @@ test("notes with no bullet list are left to the plain-text fallback", () => {
 	assert.equal(digestReleaseNotes(undefined), undefined);
 	assert.equal(digestReleaseNotes(""), undefined);
 });
+
+test("every section gets its first entry before any gets a second, and code spans are kept exactly", () => {
+	const notes = [
+		"### Added",
+		...["A1.", "A2.", "A3.", "A4.", "A5."].map((x) => `- ${x}`),
+		"### Changed",
+		...["C1.", "C2.", "C3."].map((x) => `- ${x}`),
+		"### Removed",
+		"- R1.",
+		"- R2.",
+		"### Fixed",
+		"- F1.",
+		"- F2.",
+	].join("\n");
+	const d = digestReleaseNotes(notes);
+	assert.deepEqual(
+		d?.sections.map((s) => [s.title, s.items.length]),
+		[
+			["New", 2],
+			["Changed", 2],
+			["Removed", 1],
+			["Fixed", 1],
+		],
+	);
+	assert.equal(d?.more, 6);
+	assert.equal(digestReleaseNotes("### Fixed\n- Reads `__dirname` instead of `__filename`.")?.sections[0].items[0], "Reads `__dirname` instead of `__filename`.");
+	const cut = digestReleaseNotes("### Added\n- Adds `tabkyra skill eval --json --update-baseline …")?.sections[0].items[0] ?? "";
+	assert.equal((cut.match(/`/g) ?? []).length % 2, 0, cut);
+});

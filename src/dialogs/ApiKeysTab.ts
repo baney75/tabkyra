@@ -47,9 +47,10 @@ export class ApiKeysTab extends SettingsTab {
 	override async connectedCallback() {
 		super.connectedCallback();
 		this.addEventListener("provider-key-saved", this.onSaved);
-		// Typing a provider's name finds it at once.
+		// Typing a provider's name finds it at once, without scrolling the tab past Free mode and
+		// the subscriptions when Settings opens.
 		await this.updateComplete;
-		this.querySelector<HTMLInputElement>("input[type=search]")?.focus();
+		this.querySelector<HTMLInputElement>("input[type=search]")?.focus({ preventScroll: true });
 		try {
 			const storage = getAppStorage();
 			for (const p of await storage.providerKeys.list()) if (await storage.providerKeys.get(p)) this.withKeys.add(p);

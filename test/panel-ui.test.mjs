@@ -170,3 +170,8 @@ test("subscription commands are copyable blocks, and a failed copy is a toast th
 	assert.match(copy, /Toast\.error\(/);
 	assert.doesNotMatch(copy, /this\.notice/);
 });
+
+test("opening Settings doesn't scroll Providers past Free mode to reach the search box", () => {
+	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
+	assert.match(tab, /\.focus\(\{ preventScroll: true \}\)/);
+});

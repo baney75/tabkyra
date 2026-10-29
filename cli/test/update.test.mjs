@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -483,4 +483,21 @@ test("long release notes keep every section: bullets are shortened before anythi
 	assert.match(notes, /### Fixed\n- The tabs fit\./, "the last section survives");
 	assert.match(notes, /- Entry 29\./, "every entry keeps its first sentence");
 	assert.equal(fitNotes("Short notes."), "Short notes.");
+});
+
+test("notes too long even with short bullets drop the longest sections' last bullets, never a section", () => {
+	const body = ["### Added", ...Array.from({ length: 120 }, (_, i) => `- Entry ${i}. ${"More words here. ".repeat(10)}`), "### Fixed", "- The last fix."].join("\n");
+	const notes = fitNotes(body);
+	assert.ok(notes.length <= 8000, `${notes.length}`);
+	assert.match(notes, /### Fixed\n- The last fix\./);
+	assert.match(notes, /- Entry 0\./);
+	const code = fitNotes(`### Added\n- Adds \`${"x".repeat(500)} y\` and more.\n${"- filler. ".repeat(900)}`);
+	for (const line of code.split("\n")) assert.equal((line.match(/`/g) ?? []).length % 2, 0, line.slice(0, 80));
+});
+
+test("the CLI's local imports name .ts files, so source runs resolve them", () => {
+	for (const file of readdirSync(join(here, "..", "src")).filter((f) => f.endsWith(".ts"))) {
+		const text = readFileSync(join(here, "..", "src", file), "utf8");
+		assert.doesNotMatch(text, /from "\.\/[^"]+\.js"/, file);
+	}
 });

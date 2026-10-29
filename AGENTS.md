@@ -78,7 +78,8 @@ Use these sections under `## [Unreleased]`:
 
 ### Rules
 - New entries ALWAYS go under `## [Unreleased]`
-- Append to existing subsections, do not create duplicates
+- Add to the existing subsection, never a duplicate one. Put the entry users most need to see
+  first: the "What's new" card shows the first two entries of each section.
 - NEVER modify already-released version sections
 - Start each entry with one short sentence (under 110 characters) that says what changed for the
   person using Tabkyra, in their words: "Settings tabs no longer leave one tab alone on a line."
