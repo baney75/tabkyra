@@ -20,6 +20,10 @@ const entryPoints = {
 	sidepanel: join(packageRoot, "src/sidepanel.ts"),
 	debug: join(packageRoot, "src/debug.ts"),
 	background: join(packageRoot, "src/background.ts"),
+	// Speech to text on this device, in its own worker (src/dictation/worker.ts).
+	"dictation-worker": join(packageRoot, "src/dictation/worker.ts"),
+	// The page that asks for the microphone once: the side panel can't show the prompt.
+	"mic-permission": join(packageRoot, "src/dictation/permission.ts"),
 };
 
 rmSync(outDir, { recursive: true, force: true });
@@ -153,6 +157,26 @@ function frontmatterDescription(text) {
  * The bundled skill library (skills/<name>/SKILL.md, what `tabkyra skill list` shows) as a
  * module, so the side panel's "/" menu can list and run them: `virtual:library-skills`.
  */
+/**
+ * transformers.js defaults the ONNX runtime to jsDelivr at import time. The dictation worker
+ * points it at the copy in dist/ort before any model loads; this makes the default local too, so
+ * no build can reach a CDN for code (src/dictation/worker.ts).
+ */
+const localOnnxRuntime = {
+	name: "local-onnx-runtime",
+	setup(b) {
+		b.onLoad({ filter: /@huggingface[\\/]transformers[\\/]dist[\\/]transformers\.web\.js$/ }, (args) => {
+			const source = readFileSync(args.path, "utf8");
+			const cdn = "https://cdn.jsdelivr.net/npm/onnxruntime-web@${ONNX_ENV.versions.web}/dist/";
+			if (!source.includes(cdn))
+				throw new Error(
+					"transformers.js no longer defaults to jsDelivr in the expected way: recheck the dictation worker's runtime paths",
+				);
+			return { contents: source.replace(cdn, "/ort/"), loader: "js" };
+		});
+	},
+};
+
 const librarySkills = {
 	name: "library-skills",
 	setup(b) {
@@ -205,7 +229,7 @@ function markedEntry() {
 }
 
 const buildOptions = {
-	plugins: [stripRemovedSignIns, librarySkills],
+	plugins: [stripRemovedSignIns, librarySkills, localOnnxRuntime],
 	absWorkingDir: packageRoot,
 	entryPoints,
 	bundle: true,
@@ -342,6 +366,14 @@ const copyStatic = () => {
 	mkdirSync(pdfWorkerDestDir, { recursive: true });
 	const pdfWorkerDest = join(pdfWorkerDestDir, "pdf.worker.min.mjs");
 	copyFileSync(pdfWorkerSource, pdfWorkerDest);
+
+	// The ONNX runtime the dictation worker runs models with, shipped inside the extension so no
+	// code is loaded from a CDN (src/dictation/worker.ts points the runtime here).
+	const ortSource = join(packageRoot, "node_modules/onnxruntime-web/dist");
+	const ortDest = join(outDir, "ort");
+	mkdirSync(ortDest, { recursive: true });
+	for (const file of ["ort-wasm-simd-threaded.asyncify.mjs", "ort-wasm-simd-threaded.asyncify.wasm"])
+		copyFileSync(join(ortSource, file), join(ortDest, file));
 
 	writeFileSync(join(outDir, "build-info.json"), `${JSON.stringify(info, null, "\t")}\n`);
 
