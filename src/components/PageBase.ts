@@ -1,3 +1,4 @@
+import { i18n } from "@mariozechner/mini-lit";
 import { icon } from "@mariozechner/mini-lit/dist/icons.js";
 import { html, LitElement, type TemplateResult } from "lit";
 import { ArrowLeft } from "lucide";
@@ -13,6 +14,8 @@ const stack: PageBase[] = [];
  */
 export abstract class PageBase extends LitElement {
 	private previousFocus?: Element | null;
+	/** What this page made inert beneath it, given back when it closes. */
+	private madeInert: Element[] = [];
 	private resolveClosed!: () => void;
 	/** Settles when the page closes, by the back arrow, Esc or close(). */
 	readonly closed = new Promise<void>((resolve) => {
@@ -33,7 +36,16 @@ export abstract class PageBase extends LitElement {
 	open() {
 		this.previousFocus = document.activeElement;
 		stack.push(this);
-		if (stack.length === 1) window.addEventListener("keydown", onKeyDown);
+		// Capture phase: it runs before a dialog's own Esc handler removes the dialog, so the page
+		// can still see the dialog and leave Esc to it.
+		if (stack.length === 1) window.addEventListener("keydown", onKeyDown, true);
+		// Tab and screen readers stay in the page: the chat and any page beneath it go inert.
+		for (const el of document.body.children) {
+			if (!el.hasAttribute("inert")) {
+				el.setAttribute("inert", "");
+				this.madeInert.push(el);
+			}
+		}
 		document.body.appendChild(this);
 		void this.updateComplete.then(() => {
 			// Keyboard focus moves into the page unless its content already took it (Settings
@@ -45,11 +57,19 @@ export abstract class PageBase extends LitElement {
 	close() {
 		const at = stack.indexOf(this);
 		if (at >= 0) stack.splice(at, 1);
-		if (stack.length === 0) window.removeEventListener("keydown", onKeyDown);
+		if (stack.length === 0) window.removeEventListener("keydown", onKeyDown, true);
+		for (const el of this.madeInert) el.removeAttribute("inert");
+		this.madeInert = [];
 		this.remove();
 		this.resolveClosed();
+		// Focus goes back where it was, unless something opened as the page closed (the model
+		// picker from "Choose a model") and took it.
 		const back = this.previousFocus;
-		if (back instanceof HTMLElement && back.isConnected) requestAnimationFrame(() => back.focus());
+		if (back instanceof HTMLElement)
+			requestAnimationFrame(() => {
+				const now = document.activeElement;
+				if (back.isConnected && (!now || now === document.body || !now.isConnected)) back.focus();
+			});
 	}
 
 	override render() {
@@ -60,8 +80,8 @@ export abstract class PageBase extends LitElement {
 					<button
 						type="button"
 						data-page-back
-						aria-label="Back"
-						title="Back"
+						aria-label=${i18n("Back")}
+						title=${i18n("Back")}
 						class="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						@click=${() => this.close()}
 					>
@@ -83,6 +103,9 @@ function onKeyDown(e: KeyboardEvent) {
 	if (e.key !== "Escape" || e.defaultPrevented) return;
 	const top = stack.at(-1);
 	if (!top) return;
+	// Esc pressed somewhere else, such as a dialog over the page, is not the page's.
+	const target = e.target;
+	if (!(target instanceof Node) || (target !== document.body && !top.contains(target))) return;
 	// A dialog opened over the page (the API key prompt, the model picker) closes first, by its own
 	// Esc handler.
 	for (let el = top.nextElementSibling; el; el = el.nextElementSibling) {

@@ -16,7 +16,7 @@ export class SkillDialog extends PageBase {
 	}
 
 	protected pageTitle(): string {
-		return this.skill?.name ?? "Skill";
+		return this.skill?.name ?? i18n("Skill");
 	}
 
 	protected override renderContent() {

@@ -1,3 +1,4 @@
+import { i18n } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { html, type TemplateResult } from "lit";
@@ -161,7 +162,7 @@ export class RecordSkillDialog extends PageBase {
 	}
 
 	protected pageTitle(): string {
-		return "Save recording as skill";
+		return i18n("Save recording as skill");
 	}
 
 	protected renderContent(): TemplateResult {

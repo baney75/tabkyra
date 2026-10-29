@@ -19,6 +19,7 @@ declare module "@mariozechner/mini-lit" {
 		"Failed to load spreadsheet": string;
 		"Preview not available for this file type.": string;
 		"Click the download button above to view it on your computer.": string;
+		Settings: string;
 
 		// Tabkyra extension keys
 		// Custom provider dialog
@@ -170,6 +171,10 @@ declare module "@mariozechner/mini-lit" {
 		"Search chats": string;
 		Undo: string;
 		"Untitled chat": string;
+		// Pages
+		Back: string;
+		"Save recording as skill": string;
+		Skill: string;
 	}
 }
 
@@ -338,6 +343,9 @@ const tabkyraTranslations = {
 		"Search chats": "Search chats",
 		Undo: "Undo",
 		"Untitled chat": "Untitled chat",
+		Back: "Back",
+		"Save recording as skill": "Save recording as skill",
+		Skill: "Skill",
 	},
 	de: {
 		"A custom provider with that name already exists": "A custom provider with that name already exists",
@@ -505,6 +513,9 @@ const tabkyraTranslations = {
 		"Search chats": "Chats durchsuchen",
 		Undo: "Rückgängig",
 		"Untitled chat": "Chat ohne Titel",
+		Back: "Zurück",
+		"Save recording as skill": "Aufnahme als Skill speichern",
+		Skill: "Skill",
 	},
 };
 

@@ -1,3 +1,4 @@
+import { i18n } from "@mariozechner/mini-lit";
 import type { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { PageBase } from "../components/PageBase.js";
@@ -22,7 +23,7 @@ export class SettingsPage extends PageBase {
 	}
 
 	protected pageTitle(): string {
-		return "Settings";
+		return i18n("Settings");
 	}
 
 	private select(index: number) {
