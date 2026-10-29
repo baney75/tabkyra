@@ -1,6 +1,5 @@
 import { i18n } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
-import { Checkbox } from "@mariozechner/mini-lit/dist/Checkbox.js";
 
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { Label } from "@mariozechner/mini-lit/dist/Label.js";
@@ -246,19 +245,21 @@ export class CustomProviderEditDialog extends PageBase {
 								this.updateModel(index, { maxTokens: Number((e.target as HTMLInputElement).value) }),
 						})}
 					</div>
-					<label class="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-						${Checkbox({
-							checked: model.reasoning,
-							onChange: (checked: boolean) => this.updateModel(index, { reasoning: checked }),
-						})}
-						${i18n("Reasoning")}
+					<label class="flex items-start gap-2 text-sm text-foreground cursor-pointer">
+						<input
+							type="checkbox"
+							.checked=${model.reasoning}
+							@change=${(e: Event) => this.updateModel(index, { reasoning: (e.target as HTMLInputElement).checked })}
+						/>
+						<span>${i18n("Reasoning")}</span>
 					</label>
-					<label class="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-						${Checkbox({
-							checked: model.vision,
-							onChange: (checked: boolean) => this.updateModel(index, { vision: checked }),
-						})}
-						${i18n("Vision")}
+					<label class="flex items-start gap-2 text-sm text-foreground cursor-pointer">
+						<input
+							type="checkbox"
+							.checked=${model.vision}
+							@change=${(e: Event) => this.updateModel(index, { vision: (e.target as HTMLInputElement).checked })}
+						/>
+						<span>${i18n("Vision")}</span>
 					</label>
 				</div>
 			</div>

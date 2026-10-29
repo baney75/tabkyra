@@ -494,11 +494,11 @@ body {
    checkbox. Each one is still a native input, so its label, the Space key and change events work
    as before. */
 :root {
-	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
 	--tk-control-on: var(--tk-brass-deep);
 }
 .dark {
-	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 40%, transparent);
+	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
 	--tk-control-on: var(--tk-brass);
 }
 
@@ -509,12 +509,14 @@ button[role="switch"] {
 	flex-shrink: 0;
 	width: 2.75rem;
 	height: 1.5rem;
-	margin: 0;
 	border: 0;
 	border-radius: 9999px;
 	background: var(--tk-control-off);
 	cursor: pointer;
 	transition: background-color 0.15s ease;
+}
+input[type="checkbox"].tk-switch {
+	margin: 0;
 }
 input[type="checkbox"].tk-switch::before {
 	content: "";
@@ -541,6 +543,14 @@ button[role="switch"] > span {
 	margin-left: 0.125rem;
 }
 
+/* The browser's side margins go, in the base layer, so a utility such as space-x-2 still spaces
+   a box from its label. */
+@layer base {
+	input[type="checkbox"],
+	input[type="radio"] {
+		margin-inline: 0;
+	}
+}
 input[type="checkbox"]:not(.tk-switch),
 input[type="radio"] {
 	appearance: none;
@@ -549,7 +559,7 @@ input[type="radio"] {
 	flex-shrink: 0;
 	width: 1.125rem;
 	height: 1.125rem;
-	margin: 0.0625rem 0 0;
+	margin-block: 0.0625rem 0;
 	border: 1.5px solid var(--muted-foreground);
 	border-radius: 0.3rem;
 	background: var(--background);
@@ -631,6 +641,10 @@ button[role="switch"]:disabled {
 	input[type="checkbox"].tk-switch:checked::before,
 	button[role="switch"][data-state="checked"] > span {
 		background: HighlightText;
+	}
+	input[type="checkbox"].tk-switch:focus-visible,
+	button[role="switch"]:focus-visible {
+		outline-color: Highlight;
 	}
 }
 

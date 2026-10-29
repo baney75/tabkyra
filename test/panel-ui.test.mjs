@@ -216,13 +216,14 @@ test("costs read as money, and the CORS proxy no longer names a sign-in Tabkyra 
 // Donovan, 2026-10-29: "The default check boxes are weird" (bare grey squares beside a switch).
 test("an on/off setting is a switch, and every checkbox and radio is styled", () => {
 	const dir = new URL("../src/dialogs/", import.meta.url);
-	// Boxes that pick items from a list stay checkboxes.
-	const listPicks = { "SkillsTab.ts": 1 };
+	// Boxes that pick items from a list stay checkboxes: skills to import, a model's abilities.
+	const listPicks = { "SkillsTab.ts": 1, "CustomProviderEditDialog.ts": 2 };
 	for (const file of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
 		const src = readFileSync(new URL(file, dir), "utf8");
-		const boxes = [...src.matchAll(/<input\s+(?:[^>]*?\s)?type="checkbox"[^>]*>/g)].map((m) => m[0]);
-		const plain = boxes.filter((b) => !(b.includes('role="switch"') && b.includes('class="tk-switch"')));
-		assert.equal(plain.length, listPicks[file] ?? 0, `${file}: a setting checkbox without role="switch" class="tk-switch"`);
+		// Counted, not parsed: an @change arrow's ">" would end a tag-matching regex early.
+		const boxes = (src.match(/type="checkbox"/g) ?? []).length;
+		const switches = (src.match(/role="switch"\s+class="tk-switch"/g) ?? []).length;
+		assert.equal(boxes - switches, listPicks[file] ?? 0, `${file}: a setting checkbox without role="switch" class="tk-switch"`);
 	}
 	const css = readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
 	for (const rule of ['input[type="checkbox"].tk-switch', 'input[type="checkbox"]:not(.tk-switch)', 'input[type="radio"]', 'button[role="switch"]']) {
