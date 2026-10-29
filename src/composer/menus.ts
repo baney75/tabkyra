@@ -50,12 +50,11 @@ function filterSection<T>(items: T[], query: string, name: (t: T) => string, des
 		.map((x) => x.t);
 }
 
-export const SKILL_MENU_LIMIT = 100;
-
 /**
  * The "/" menu: site skills that match the current page first, then the bundled library,
  * then site skills for other sites. Each section filters by the query (name first, then
- * description). A name appears once, in its first section.
+ * description). A name appears once, in its first section. Every skill is listed; the menu
+ * scrolls, so none is dropped.
  */
 export function skillMenuItems(
 	query: string,
@@ -114,7 +113,7 @@ export function skillMenuItems(
 			value: `/${s.name}`,
 			section: "Other sites",
 		});
-	return out.slice(0, SKILL_MENU_LIMIT);
+	return out;
 }
 
 export interface TabInfoLite {

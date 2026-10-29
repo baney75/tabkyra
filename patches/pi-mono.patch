@@ -1099,9 +1099,18 @@ index 192c3c536..9cdc25848 100644
  						</div>
  					`;
 diff --git a/packages/web-ui/src/dialogs/SettingsDialog.ts b/packages/web-ui/src/dialogs/SettingsDialog.ts
-index 71620552e..0213fc2dc 100644
+index 71620552e..7a0727bba 100644
 --- a/packages/web-ui/src/dialogs/SettingsDialog.ts
 +++ b/packages/web-ui/src/dialogs/SettingsDialog.ts
+@@ -78,7 +78,7 @@ export class ProxyTab extends SettingsTab {
+ 		return html`
+ 			<div class="flex flex-col gap-4">
+ 				<p class="text-sm text-muted-foreground">
+-					${i18n("Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.")}
++					${i18n("Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.")}
+ 				</p>
+ 
+ 				<div class="flex items-center justify-between">
 @@ -152,12 +152,19 @@ export class SettingsDialog extends LitElement {
  		`;
  	}
@@ -1241,7 +1250,7 @@ index 0a5474a7a..05f41d16d 100644
  				(element as HtmlArtifact).runtimeProviders = this.getHtmlArtifactRuntimeProviders();
  				if (this.sandboxUrlProvider) {
 diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
-index 1f50a7d08..01fef28f6 100644
+index 1f50a7d08..352f13723 100644
 --- a/packages/web-ui/src/utils/i18n.ts
 +++ b/packages/web-ui/src/utils/i18n.ts
 @@ -61,6 +61,15 @@ declare module "@mariozechner/mini-lit" {
@@ -1260,6 +1269,15 @@ index 1f50a7d08..01fef28f6 100644
  		"Preparing tool parameters...": string;
  		"(no output)": string;
  		Input: string;
+@@ -142,7 +151,7 @@ declare module "@mariozechner/mini-lit" {
+ 		Clear: string;
+ 		"API Key Required": string;
+ 		"Enter your API key for {provider}": string;
+-		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.": string;
++		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.": string;
+ 		Off: string;
+ 		Minimal: string;
+ 		Low: string;
 @@ -272,6 +281,15 @@ export const translations = {
  		"Call was aborted; no result.": "Call was aborted; no result.",
  		"No session available": "No session available",
@@ -1276,6 +1294,17 @@ index 1f50a7d08..01fef28f6 100644
  		"Preparing tool parameters...": "Preparing tool parameters...",
  		"(no output)": "(no output)",
  		Input: "Input",
+@@ -353,8 +371,8 @@ export const translations = {
+ 		Clear: "Clear",
+ 		"API Key Required": "API Key Required",
+ 		"Enter your API key for {provider}": "Enter your API key for {provider}",
+-		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.":
+-			"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.",
++		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.":
++			"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.",
+ 		Off: "Off",
+ 		Minimal: "Minimal",
+ 		Low: "Low",
 @@ -491,6 +509,15 @@ export const translations = {
  		"Call was aborted; no result.": "Aufruf wurde abgebrochen; kein Ergebnis.",
  		"No session available": "Keine Sitzung verfügbar",
@@ -1292,6 +1321,17 @@ index 1f50a7d08..01fef28f6 100644
  		"Preparing tool parameters...": "Bereite Tool-Parameter vor...",
  		"(no output)": "(keine Ausgabe)",
  		Input: "Eingabe",
+@@ -572,8 +599,8 @@ export const translations = {
+ 		Clear: "Löschen",
+ 		"API Key Required": "API-Schlüssel erforderlich",
+ 		"Enter your API key for {provider}": "Geben Sie Ihren API-Schlüssel für {provider} ein",
+-		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.":
+-			"Ermöglicht browserbasierten Anwendungen, CORS-Einschränkungen beim Aufruf von LLM-Anbietern zu umgehen. Erforderlich für Z-AI und Anthropic mit OAuth-Token.",
++		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.":
++			"Ermöglicht browserbasierten Anwendungen, CORS-Einschränkungen beim Aufruf von LLM-Anbietern zu umgehen. Erforderlich für Z.ai.",
+ 		Off: "Aus",
+ 		Minimal: "Minimal",
+ 		Low: "Niedrig",
 diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
 new file mode 100644
 index 000000000..daa256961

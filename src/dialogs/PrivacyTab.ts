@@ -119,7 +119,8 @@ export class PrivacyTab extends SettingsTab {
 					<label class="flex flex-col gap-1 text-xs text-muted-foreground">
 						<span>Your own machines, comma-separated. Prefer names over IPs (for example mac.tail1234.ts.net): a listed IP is trusted on every network, including one where it belongs to someone else.</span>
 						<input
-							class="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+							class="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							placeholder="mac.tail1234.ts.net, nas.local"
 							.value=${this.trustedHosts}
 							@change=${(e: Event) => this.saveTrustedHosts((e.target as HTMLInputElement).value)}
 						/>
