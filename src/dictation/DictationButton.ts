@@ -11,18 +11,20 @@ import { Loader2, Mic, Square } from "lucide";
 import { Toast } from "../components/Toast.js";
 import type { DictationRequest, DictationResponse, ModelSpec } from "./protocol.js";
 import { MAX_SECONDS, MicPermissionError, type Recording, startRecording, trimSilence } from "./recorder.js";
-import { modelCached, readSetting, resolveModel, writeSetting } from "./settings.js";
+import { modelCached, readSetting, resolveModel, transcribeTimeoutMs, writeSetting } from "./settings.js";
 import { MODELS } from "./tiers.js";
 
 type Phase = "idle" | "starting" | "recording" | "transcribing";
 
 /** A first download at least this big is asked for, not just announced. */
 const ASK_ABOVE_MB = 200;
-/** Longest a transcription may take before the button gives up and recovers. */
-const TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000;
+/** A model load that reports nothing for this long (no download progress) has stalled. */
+const LOAD_IDLE_MS = 3 * 60_000;
 
 let worker: Worker | undefined;
 let seq = 0;
+/** When the worker last said anything; a load's stall timer reads it. */
+let lastHeard = 0;
 const waiting = new Map<number, (r: DictationResponse) => void>();
 const progressListeners = new Set<(loaded: number, total: number) => void>();
 
@@ -39,6 +41,7 @@ function dictationWorker(): Worker {
 	worker = new Worker(chrome.runtime.getURL("dictation-worker.js"), { type: "module" });
 	worker.onmessage = (event: MessageEvent<DictationResponse>) => {
 		const m = event.data;
+		lastHeard = Date.now();
 		if (m.type === "progress") {
 			for (const l of progressListeners) l(m.loaded, m.total);
 			return;
@@ -53,9 +56,22 @@ function dictationWorker(): Worker {
 
 function ask(request: DictationRequest, timeoutMs?: number): Promise<DictationResponse> {
 	return new Promise((resolve) => {
-		const timer = timeoutMs
-			? setTimeout(() => failWorker("transcription took too long; the speech worker was restarted"), timeoutMs)
-			: undefined;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		if (timeoutMs)
+			timer = setTimeout(
+				() => failWorker("transcription took too long; the speech worker was restarted"),
+				timeoutMs,
+			);
+		else if (request.type === "load") {
+			// A download can take many minutes; one that reports nothing for LOAD_IDLE_MS has stalled.
+			lastHeard = Date.now();
+			const check = () => {
+				if (Date.now() - lastHeard >= LOAD_IDLE_MS)
+					failWorker("the speech model stopped downloading; check the connection and try again");
+				else timer = setTimeout(check, 15_000);
+			};
+			timer = setTimeout(check, 15_000);
+		}
 		waiting.set(request.id, (r) => {
 			clearTimeout(timer);
 			resolve(r);
@@ -109,7 +125,7 @@ export class DictationButton extends LitElement {
 
 	/** Esc cancels from anywhere in the panel while recording, not only on the button. */
 	private readonly onDocumentKeydown = (e: KeyboardEvent) => {
-		if (e.key !== "Escape" || this.phase !== "recording") return;
+		if (e.key !== "Escape" || (this.phase !== "recording" && this.phase !== "starting")) return;
 		e.preventDefault();
 		e.stopPropagation();
 		this.cancel();
@@ -137,6 +153,7 @@ export class DictationButton extends LitElement {
 	private async start(): Promise<void> {
 		// Set before any await, so a second click can't open a second microphone.
 		this.phase = "starting";
+		document.addEventListener("keydown", this.onDocumentKeydown, true);
 		let recording: Recording;
 		try {
 			let model = await resolveModel();
@@ -148,6 +165,7 @@ export class DictationButton extends LitElement {
 			});
 		} catch (err) {
 			this.phase = "idle";
+			document.removeEventListener("keydown", this.onDocumentKeydown, true);
 			if (err instanceof MicPermissionError) {
 				Toast.info("Allow the microphone in the tab that opened, then press the microphone again.", 6000);
 				void chrome.tabs.create({ url: chrome.runtime.getURL("mic-permission.html"), active: true });
@@ -161,7 +179,6 @@ export class DictationButton extends LitElement {
 		}
 		this.recording = recording;
 		this.phase = "recording";
-		document.addEventListener("keydown", this.onDocumentKeydown, true);
 		const spec = this.model.spec;
 		if (!(await modelCached(spec)))
 			Toast.info(
@@ -193,7 +210,7 @@ export class DictationButton extends LitElement {
 			if (loaded?.type === "error") throw new Error(loaded.message);
 			const reply = await ask(
 				{ type: "transcribe", id: ++seq, model: model.spec, audio, language: model.language },
-				TRANSCRIBE_TIMEOUT_MS,
+				transcribeTimeoutMs(audio.length / 16_000),
 			);
 			if (reply.type === "error") throw new Error(reply.message);
 			if (reply.type === "text" && reply.text) {

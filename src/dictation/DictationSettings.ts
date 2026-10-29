@@ -4,7 +4,7 @@ import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Toast } from "../components/Toast.js";
 import {
-	cachedModelBytes,
+	cachedModels,
 	DEFAULT_SETTING,
 	type DictationSetting,
 	readSetting,
@@ -40,7 +40,7 @@ export class DictationSettings extends LitElement {
 	@state() private setting: DictationSetting = DEFAULT_SETTING;
 	@state() private auto?: { key: ModelKey; why: string };
 	@state() private gpu = false;
-	@state() private stored = 0;
+	@state() private stored = { files: 0, bytes: 0 };
 	private device?: Awaited<ReturnType<typeof profileDevice>>;
 
 	protected override createRenderRoot(): HTMLElement {
@@ -54,7 +54,7 @@ export class DictationSettings extends LitElement {
 		this.gpu = device.webgpu;
 		this.device = device;
 		this.auto = chooseModel(device, this.setting.language);
-		this.stored = await cachedModelBytes();
+		this.stored = await cachedModels();
 	}
 
 	private async save(next: Partial<DictationSetting>): Promise<void> {
@@ -65,7 +65,7 @@ export class DictationSettings extends LitElement {
 
 	private async removeModels(): Promise<void> {
 		await removeCachedModels();
-		this.stored = await cachedModelBytes();
+		this.stored = await cachedModels();
 		Toast.success("Downloaded speech models removed. The next dictation downloads one again.");
 	}
 
@@ -110,10 +110,23 @@ export class DictationSettings extends LitElement {
 						${LANGUAGES.map(([code, name]) => html`<option value=${code}>${name}</option>`)}
 					</select>
 				</label>
+				${
+					this.setting.model !== "auto" &&
+					!MODELS[this.setting.model].multilingual &&
+					this.setting.language !== "auto" &&
+					this.setting.language !== "en" &&
+					auto
+						? html`<p class="text-xs text-muted-foreground">
+								${MODELS[this.setting.model].label} is English-only, so ${
+									LANGUAGES.find(([code]) => code === this.setting.language)?.[1] ?? this.setting.language
+								} dictation uses ${auto.label}.
+							</p>`
+						: ""
+				}
 				<div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-					<span>Downloaded: ${this.stored ? mb(this.stored) : "nothing yet"}</span>
+					<span>Downloaded: ${this.stored.files ? (this.stored.bytes ? mb(this.stored.bytes) : `${this.stored.files} files`) : "nothing yet"}</span>
 					${
-						this.stored
+						this.stored.files
 							? html`<button
 									type="button"
 									class="h-8 rounded-md px-2 text-xs font-medium text-destructive hover:bg-destructive/10 outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"

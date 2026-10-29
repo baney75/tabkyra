@@ -182,6 +182,11 @@ try {
 	}
 
 	// ---- button ----------------------------------------------------------------------
+	// A first download of 200 MB or more asks with confirm(); accept it and record that it asked.
+	page.on("dialog", (dialog) => {
+		report.dialogs = [...(report.dialogs ?? []), dialog.message()];
+		void dialog.accept();
+	});
 	await page.reload();
 	await page.waitForTimeout(1500);
 	await page.evaluate(() => {

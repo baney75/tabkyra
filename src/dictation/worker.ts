@@ -7,6 +7,7 @@
 
 import { env, pipeline } from "@huggingface/transformers";
 import type { DictationRequest, DictationResponse } from "./protocol.js";
+import { splitAtQuiet } from "./recorder.js";
 
 // Everything from the extension or the pinned model repo; nothing from a CDN.
 env.allowLocalModels = false;
@@ -35,6 +36,8 @@ type Transcriber = (
 
 let loaded: { key: string; run: Transcriber } | undefined;
 const loading = new Map<string, Promise<Transcriber>>();
+/** Loads run one after another, so a model is always disposed before the next one loads. */
+let queue: Promise<unknown> = Promise.resolve();
 
 const post = (message: DictationResponse) => (self as unknown as Worker).postMessage(message);
 
@@ -44,7 +47,8 @@ async function load(request: Extract<DictationRequest, { type: "load" }>): Promi
 	if (loaded?.key === key) return loaded.run;
 	const pending = loading.get(key);
 	if (pending) return pending;
-	const task = (async () => {
+	const task = queue.then(async () => {
+		if (loaded?.key === key) return loaded.run;
 		// One model in memory at a time: the previous one's GPU and wasm memory is freed first.
 		const previous = loaded;
 		loaded = undefined;
@@ -54,9 +58,9 @@ async function load(request: Extract<DictationRequest, { type: "load" }>): Promi
 			revision: model.revision,
 			device: model.device,
 			dtype: model.dtype as never,
+			// Every event is posted, so the side panel can tell a slow download from a stalled one.
 			progress_callback: (p: { status?: string; file?: string; loaded?: number; total?: number }) => {
-				if (p.status !== "progress" || !p.file) return;
-				files.set(p.file, { loaded: p.loaded ?? 0, total: p.total ?? 0 });
+				if (p.status === "progress" && p.file) files.set(p.file, { loaded: p.loaded ?? 0, total: p.total ?? 0 });
 				let done = 0;
 				let total = 0;
 				for (const f of files.values()) {
@@ -68,13 +72,36 @@ async function load(request: Extract<DictationRequest, { type: "load" }>): Promi
 		})) as unknown as Transcriber;
 		loaded = { key, run };
 		return run;
-	})();
+	});
+	queue = task.catch(() => undefined);
 	loading.set(key, task);
 	try {
 		return await task;
 	} finally {
 		loading.delete(key);
 	}
+}
+
+const textOf = (out: { text: string } | Array<{ text: string }>) =>
+	(Array.isArray(out) ? out.map((o) => o.text).join(" ") : out.text).trim();
+
+/** Whisper: the pipeline windows long audio itself, 30 s with overlap, and stitches the text. */
+async function whisper(run: Transcriber, audio: Float32Array, language?: string): Promise<string> {
+	return textOf(
+		await run(audio, {
+			chunk_length_s: 30,
+			stride_length_s: 5,
+			task: "transcribe",
+			...(language ? { language } : {}),
+		}),
+	);
+}
+
+/** Moonshine reads a clip in one pass and the pipeline doesn't window it: pieces of 20 s or less, cut where it's quiet. */
+async function inPieces(run: Transcriber, audio: Float32Array): Promise<string> {
+	const parts: string[] = [];
+	for (const piece of splitAtQuiet(audio, 20)) parts.push(textOf(await run(piece, {})));
+	return parts.filter(Boolean).join(" ");
 }
 
 self.onmessage = async (event: MessageEvent<DictationRequest>) => {
@@ -88,15 +115,9 @@ self.onmessage = async (event: MessageEvent<DictationRequest>) => {
 		if (request.type === "transcribe") {
 			const run = await load({ type: "load", id: request.id, model: request.model });
 			const t0 = performance.now();
-			const out = await run(request.audio, {
-				// Long dictation: 30 s windows with overlap, stitched by the pipeline.
-				chunk_length_s: 30,
-				stride_length_s: 5,
-				...(request.model.multilingual
-					? { task: "transcribe", ...(request.language ? { language: request.language } : {}) }
-					: {}),
-			});
-			const text = (Array.isArray(out) ? out.map((o) => o.text).join(" ") : out.text).trim();
+			const text = request.model.id.includes("whisper")
+				? await whisper(run, request.audio, request.language)
+				: await inPieces(run, request.audio);
 			post({ type: "text", id: request.id, text, ms: Math.round(performance.now() - t0) });
 		}
 	} catch (err) {
