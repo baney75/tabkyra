@@ -95,9 +95,15 @@ export class ApiKeysTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-5">
 				<div class="flex flex-col gap-1.5">
-					<label class="flex items-start gap-2 text-sm font-medium text-foreground">
-						<input type="checkbox" class="mt-1" .checked=${isFreeModeOn()} @change=${(e: Event) => this.toggleFree(e)} />
+					<label class="flex items-start justify-between gap-3 text-sm font-medium text-foreground cursor-pointer">
 						<span>Free mode: use the best free model (OpenRouter)</span>
+						<input
+							type="checkbox"
+							role="switch"
+							class="tk-switch"
+							.checked=${isFreeModeOn()}
+							@change=${(e: Event) => this.toggleFree(e)}
+						/>
 					</label>
 					<p class="text-xs text-muted-foreground">
 						Runs on OpenRouter's free models, ranked by how well they do Tabkyra's browser tasks, with the next ones
