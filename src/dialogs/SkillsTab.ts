@@ -15,7 +15,7 @@ import { Toast } from "../components/Toast.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import { getFaviconUrl } from "../utils/favicon.js";
-import { libraryRows } from "./skill-list.js";
+import { libraryRows, normalizeSkillQuery } from "./skill-list.js";
 
 export class SkillsTab extends SettingsTab {
 	label = "Skills";
@@ -128,7 +128,7 @@ export class SkillsTab extends SettingsTab {
 	}
 
 	filterSkills() {
-		const query = this.searchQuery.toLowerCase();
+		const query = normalizeSkillQuery(this.searchQuery);
 		this.filteredSkills = this.skills.filter(
 			(s) =>
 				s.name.toLowerCase().includes(query) ||
@@ -429,8 +429,9 @@ export class SkillsTab extends SettingsTab {
 	/** Every library skill: bundled with Tabkyra, then the community skills this browser receives. */
 	private renderLibrary(): TemplateResult {
 		const community = communityLibrary(this.community, new Set());
-		const rows = libraryRows(LIBRARY_SKILLS, community, this.searchQuery);
-		const total = libraryRows(LIBRARY_SKILLS, community, "").length;
+		const siteNames = new Set(this.skills.map((s) => s.name));
+		const rows = libraryRows(LIBRARY_SKILLS, community, this.searchQuery, siteNames);
+		const total = libraryRows(LIBRARY_SKILLS, community, "", siteNames).length;
 		return html`
 			<section class="flex flex-col gap-2" aria-labelledby="library-skills-heading">
 				<div>
@@ -451,7 +452,8 @@ export class SkillsTab extends SettingsTab {
 											<span class="font-mono text-sm text-foreground">/${row.name}</span>
 											${row.source === "community" ? html`<span class="rounded-full border border-border px-1.5 text-[10px] text-muted-foreground">community</span>` : nothing}
 										</span>
-										<span class="text-xs text-muted-foreground line-clamp-2" title=${row.summary}>${row.summary}</span>
+										<span class="text-xs text-muted-foreground line-clamp-2" title=${row.description}>${row.summary}</span>
+										${row.sharesNameWithSiteSkill ? html`<span class="text-[11px] text-muted-foreground">A site skill has this name; on its sites, /${row.name} runs the site skill.</span>` : nothing}
 									</li>`,
 								)}
 							</ul>`

@@ -189,7 +189,7 @@ test("Settings > Skills lists every library skill, bundled and community, with n
 	assert.equal(rows.find((r) => r.name === folders[0])?.summary, `${folders[0]} does a thing.`);
 	assert.deepEqual(libraryRows(bundled, [], "/osint").map((r) => r.name), ["osint"]);
 	const tab = readFileSync(new URL("../src/dialogs/SkillsTab.ts", import.meta.url), "utf8");
-	assert.match(tab, /libraryRows\(LIBRARY_SKILLS, community, this\.searchQuery\)/);
+	assert.match(tab, /libraryRows\(LIBRARY_SKILLS, community, this\.searchQuery, siteNames\)/);
 	assert.doesNotMatch(tab, /variant: "destructive"/, "Delete is a quiet button, not a red slab on every card");
 });
 
@@ -212,3 +212,25 @@ test("costs read as money, and the CORS proxy no longer names a sign-in Tabkyra 
 	assert.match(costs, /No costs in this range/);
 	assert.doesNotMatch(costs, /toFixed\(4\)/);
 });
+
+test("Settings > Skills: one search for both lists, full descriptions on hover, name clashes explained", async () => {
+	const { libraryRows, normalizeSkillQuery } = await import("../src/dialogs/skill-list.ts");
+	assert.equal(normalizeSkillQuery(" /GitHub "), "github");
+	const bundled = [{ name: "github", description: "Work with GitHub. Issues, pull requests and more." }];
+	const community = [
+		{ name: "github", description: "A clash with bundled." },
+		{ name: "shop", description: "A clash with a site skill." },
+	];
+	const rows = libraryRows(bundled, community, "/github ", new Set(["github", "shop"]));
+	assert.deepEqual(rows, [
+		{ name: "github", summary: "Work with GitHub.", description: "Work with GitHub. Issues, pull requests and more.", source: "bundled", sharesNameWithSiteSkill: true },
+	]);
+	const tab = readFileSync(new URL("../src/dialogs/SkillsTab.ts", import.meta.url), "utf8");
+	assert.match(tab, /const query = normalizeSkillQuery\(this\.searchQuery\);/);
+	assert.match(tab, /title=\$\{row\.description\}/);
+	const { formatCost } = await import("../src/utils/format-cost.ts");
+	assert.equal(formatCost(0.00003), "<$0.0001");
+	assert.equal(formatCost(-0.0042), "-$0.0042");
+	assert.equal(formatCost(-2.5), "-$2.50");
+});
+
