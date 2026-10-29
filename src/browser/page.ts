@@ -247,24 +247,40 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 	w.__tabkyraRefs = refs;
 	let seq = 0;
 	const interactiveSel =
-		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=option],[role=switch],[role=textbox],[role=combobox],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
-	const headingSel = "h1,h2,h3,h4,label,[role=heading]";
+		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
+	const headingSel = "h1,h2,h3,h4,h5,h6,label,[role=heading],[role=alert],[role=status],[role=dialog]";
 	const selector = filter === "interactive" ? interactiveSel : `${interactiveSel},${headingSel}`;
+	const tagOf = (el: Element) => el.tagName.toLowerCase();
+	// Elements from a frame belong to another realm, so `instanceof` against this window's
+	// classes is false for them: everything below goes by tag name instead.
+	const field = (el: Element) =>
+		el as unknown as {
+			type?: string;
+			value?: string;
+			checked?: boolean;
+			disabled?: boolean;
+			required?: boolean;
+			placeholder?: string;
+			href?: string;
+			selectedIndex?: number;
+			options?: ArrayLike<{ text: string }>;
+		};
 	const isVisible = (el: Element) => {
 		const r = el.getBoundingClientRect();
 		if (r.width === 0 || r.height === 0) return false;
-		const style = getComputedStyle(el);
+		const style = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
 		return style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
 	};
 	const roleOf = (el: Element): string => {
 		const role = el.getAttribute("role");
 		if (role) return role;
-		const tag = el.tagName.toLowerCase();
+		const tag = tagOf(el);
 		if (tag === "a") return "link";
 		if (tag === "input") {
-			const type = (el as HTMLInputElement).type;
-			if (type === "submit" || type === "button") return "button";
+			const type = field(el).type;
+			if (type === "submit" || type === "button" || type === "reset") return "button";
 			if (type === "checkbox" || type === "radio") return type;
+			if (type === "range") return "slider";
 			return "textbox";
 		}
 		if (tag === "textarea") return "textbox";
@@ -272,74 +288,162 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 		if (tag === "button" || tag === "summary") return "button";
 		if (/^h[1-6]$/.test(tag)) return "heading";
 		if (tag === "label") return "label";
+		if (tag === "iframe" || tag === "frame") return "iframe";
 		if (el.getAttribute("contenteditable") === "true") return "textbox";
 		return "generic";
 	};
 	const nameOf = (el: Element): string => {
+		const root = el.getRootNode() as Document | ShadowRoot;
+		const byId = (id: string) => root.getElementById?.(id) ?? el.ownerDocument.getElementById(id);
 		const aria = el.getAttribute("aria-label");
 		if (aria) return aria.trim();
 		const labelledBy = el.getAttribute("aria-labelledby");
 		if (labelledBy) {
 			const t = labelledBy
 				.split(/\s+/)
-				.map((id) => document.getElementById(id)?.textContent ?? "")
+				.map((id) => byId(id)?.textContent ?? "")
 				.join(" ")
 				.trim();
 			if (t) return t;
 		}
-		if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+		const tag = tagOf(el);
+		if (tag === "input" || tag === "textarea" || tag === "select") {
+			const f = field(el);
 			const id = el.id;
 			if (id) {
-				const label = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+				const label = root.querySelector(`label[for="${CSS.escape(id)}"]`);
 				if (label?.textContent?.trim()) return label.textContent.trim();
 			}
 			const parentLabel = el.closest("label");
 			if (parentLabel?.textContent?.trim()) return parentLabel.textContent.trim();
-			if (el instanceof HTMLInputElement && (el.placeholder || el.value) && el.type !== "password")
-				return el.placeholder || el.value;
-			if (el instanceof HTMLTextAreaElement && el.placeholder) return el.placeholder;
+			if (tag === "input" && (f.placeholder || f.value) && f.type !== "password")
+				return (f.placeholder || f.value) ?? "";
+			if (tag === "textarea" && f.placeholder) return f.placeholder;
 			return el.getAttribute("name") ?? el.getAttribute("title") ?? "";
 		}
+		if (tag === "iframe" || tag === "frame") return el.getAttribute("title") ?? el.getAttribute("name") ?? "";
 		const img = el.querySelector("img[alt]");
 		if (img && !el.textContent?.trim()) return img.getAttribute("alt") ?? "";
 		return (el.textContent ?? "").replace(/\s+/g, " ").trim() || (el.getAttribute("title") ?? "");
 	};
+	/** What a control is doing right now: open, on, picked, unavailable. */
+	const statesOf = (el: Element): string[] => {
+		const at = (n: string) => el.getAttribute(n);
+		const out: string[] = [];
+		const expanded =
+			at("aria-expanded") ??
+			(tagOf(el) === "summary" ? String(!!(el.parentElement as { open?: boolean } | null)?.open) : null);
+		if (expanded === "true") out.push("expanded");
+		else if (expanded === "false") out.push("collapsed");
+		if (at("aria-pressed") === "true") out.push("pressed");
+		if (at("aria-selected") === "true") out.push("selected");
+		if (at("aria-checked") === "true") out.push("checked");
+		else if (at("aria-checked") === "mixed") out.push("mixed");
+		if (at("aria-current") && at("aria-current") !== "false") out.push("current");
+		if (field(el).disabled || at("aria-disabled") === "true") out.push("disabled");
+		if (field(el).required || at("aria-required") === "true") out.push("required");
+		if (at("aria-invalid") === "true") out.push("invalid");
+		return out;
+	};
+
+	// Every place elements live: the document, each open shadow root (web components), and
+	// each same-origin frame, with the offset that maps a frame's coordinates to the tab's.
+	type Root = { root: Document | ShadowRoot; dx: number; dy: number; frame?: string };
+	const roots: Root[] = [];
+	const crossFrames: Element[] = [];
+	const visit = (root: Document | ShadowRoot, dx: number, dy: number, frame: string | undefined, depth: number) => {
+		roots.push({ root, dx, dy, frame });
+		if (depth > 12) return;
+		for (const el of Array.from(root.querySelectorAll("*"))) {
+			const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+			if (shadow) visit(shadow, dx, dy, frame, depth + 1);
+			const tag = tagOf(el);
+			if (tag !== "iframe" && tag !== "frame") continue;
+			let doc: Document | null = null;
+			try {
+				doc = (el as HTMLIFrameElement).contentDocument;
+			} catch {
+				doc = null;
+			}
+			if (doc?.documentElement) {
+				const r = el.getBoundingClientRect();
+				const src = el.getAttribute("src") ?? "";
+				visit(doc, dx + r.left + el.clientLeft, dy + r.top + el.clientTop, src || "(inline frame)", depth + 1);
+			} else crossFrames.push(el);
+		}
+	};
+	visit(document, 0, 0, undefined, 0);
+
 	const nodes: unknown[] = [];
 	// Elements in the viewport first, then the rest in document order: on long pages the
 	// cap used to be spent on navigation chrome above the fold and the content was cut.
-	const inView: Element[] = [];
-	const offView: Element[] = [];
-	for (const el of Array.from(document.querySelectorAll(selector))) {
-		if (!isVisible(el)) continue;
+	const inView: Array<{ el: Element; at: Root }> = [];
+	const offView: Array<{ el: Element; at: Root }> = [];
+	const place = (el: Element, at: Root) => {
+		if (!isVisible(el)) return;
 		const r = el.getBoundingClientRect();
-		const onScreen = r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth;
-		(onScreen ? inView : offView).push(el);
-	}
-	for (const el of [...inView, ...offView]) {
+		const left = r.left + at.dx;
+		const top = r.top + at.dy;
+		const onScreen = top + r.height > 0 && top < window.innerHeight && left + r.width > 0 && left < window.innerWidth;
+		(onScreen ? inView : offView).push({ el, at });
+	};
+	for (const at of roots) for (const el of Array.from(at.root.querySelectorAll(selector))) place(el, at);
+	// A frame Tabkyra can't look into (another site) is still listed, so the agent knows it's there.
+	for (const el of crossFrames) place(el, roots[0]);
+	for (const { el, at } of [...inView, ...offView]) {
 		if (nodes.length >= maxNodes) break;
 		const r = el.getBoundingClientRect();
+		const left = r.left + at.dx;
+		const top = r.top + at.dy;
 		const ref = `e${++seq}`;
 		refs.set(ref, el);
+		const tag = tagOf(el);
+		const f = field(el);
 		const node: Record<string, unknown> = {
 			ref,
 			role: roleOf(el),
 			name: nameOf(el).slice(0, 120),
-			x: Math.round(r.left + r.width / 2),
-			y: Math.round(r.top + r.height / 2),
+			x: Math.round(left + r.width / 2),
+			y: Math.round(top + r.height / 2),
 			width: Math.round(r.width),
 			height: Math.round(r.height),
-			visible: r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth,
+			visible: top + r.height > 0 && top < window.innerHeight && left + r.width > 0 && left < window.innerWidth,
 		};
-		if (el instanceof HTMLAnchorElement && el.href) node.href = el.href.slice(0, 200);
-		if (el instanceof HTMLInputElement) {
-			if (el.type === "checkbox" || el.type === "radio") node.value = el.checked ? "checked" : "unchecked";
-			else if (el.type !== "password" && el.value) node.value = el.value.slice(0, 120);
-		} else if (el instanceof HTMLTextAreaElement && el.value) node.value = el.value.slice(0, 120);
-		else if (el instanceof HTMLSelectElement) node.value = el.options[el.selectedIndex]?.text ?? "";
+		if (tag === "a" && f.href) node.href = String(f.href).slice(0, 200);
+		if (tag === "iframe" || tag === "frame") {
+			node.href = (el.getAttribute("src") ?? "").slice(0, 200);
+			node.states = ["cross-origin: read it with navigate to its URL"];
+		}
+		if (tag === "input") {
+			if (f.type === "checkbox" || f.type === "radio") node.value = f.checked ? "checked" : "unchecked";
+			else if (f.type !== "password" && f.value) node.value = String(f.value).slice(0, 120);
+		} else if (tag === "textarea" && f.value) node.value = String(f.value).slice(0, 120);
+		else if (tag === "select" && f.options && f.selectedIndex !== undefined)
+			node.value = f.options[f.selectedIndex]?.text ?? "";
+		const states = statesOf(el);
+		if (states.length && !node.states) node.states = states;
+		if (at.frame) node.frame = at.frame.slice(0, 120);
 		nodes.push(node);
 	}
 	w.__tabkyraRefSeq = seq;
-	const text = (document.body?.innerText ?? "").replace(/\n{3,}/g, "\n\n").slice(0, maxTextChars);
+
+	// Text: the document, then what shadow roots and same-origin frames render, which
+	// document.body.innerText leaves out.
+	const parts = [document.body?.innerText ?? ""];
+	for (const at of roots.slice(1)) {
+		const own =
+			at.root instanceof ShadowRoot || !(at.root as Document).body
+				? Array.from(at.root.children)
+						.filter((c) => tagOf(c) !== "style" && tagOf(c) !== "script")
+						.map((c) => (c as HTMLElement).innerText ?? c.textContent ?? "")
+						.join("\n")
+				: ((at.root as Document).body?.innerText ?? "");
+		if (own.trim()) parts.push(at.frame && !(at.root instanceof ShadowRoot) ? `[frame ${at.frame}]\n${own}` : own);
+	}
+	const text = parts
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.slice(0, maxTextChars);
 	return {
 		url: location.href,
 		title: document.title,
@@ -353,6 +457,132 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 		nodes,
 		text,
 	};
+}
+
+/**
+ * A map of how the page is built, for an agent working out where its data comes from: the
+ * framework, embedded JSON (names and top-level keys, not contents), forms (field names, never
+ * values), frames, web components, script hosts and storage key names (never values).
+ * Self-contained: it runs in the page.
+ */
+function pageInspect(): unknown {
+	const all = Array.from(document.querySelectorAll("*"));
+	const has = (sel: string) => !!document.querySelector(sel);
+	const scripts = Array.from(document.scripts);
+	const srcs = scripts.map((x) => x.src).filter(Boolean);
+	const anySrc = (re: RegExp) => srcs.some((u) => re.test(u));
+	const frameworks: string[] = [];
+	if (has("#__next") || has("script#__NEXT_DATA__") || anySrc(/\/_next\//)) frameworks.push("Next.js");
+	if (has("#__nuxt") || anySrc(/\/_nuxt\//)) frameworks.push("Nuxt");
+	if (has("[data-reactroot]") || all.some((el) => Object.keys(el).some((k) => k.startsWith("__react"))))
+		frameworks.push("React");
+	if (has("[ng-version]"))
+		frameworks.push(`Angular ${document.querySelector("[ng-version]")?.getAttribute("ng-version") ?? ""}`.trim());
+	if (has("[data-v-app]") || all.some((el) => Array.from(el.attributes).some((a) => a.name.startsWith("data-v-"))))
+		frameworks.push("Vue");
+	if (all.some((el) => /\bsvelte-/.test(el.getAttribute("class") ?? ""))) frameworks.push("Svelte");
+	if (anySrc(/wp-content|wp-includes/)) frameworks.push("WordPress");
+	if (anySrc(/cdn\.shopify\.com/)) frameworks.push("Shopify");
+	const generator = document.querySelector('meta[name="generator"]')?.getAttribute("content");
+	if (generator) frameworks.push(`generator: ${generator.slice(0, 60)}`);
+
+	const keysOf = (text: string): string => {
+		try {
+			const v = JSON.parse(text);
+			if (Array.isArray(v)) return `array of ${v.length}`;
+			if (v && typeof v === "object") {
+				const type = (v as Record<string, unknown>)["@type"];
+				const keys = Object.keys(v).slice(0, 12).join(", ");
+				return type ? `@type ${String(type)}; keys ${keys}` : `keys ${keys}`;
+			}
+			return typeof v;
+		} catch {
+			return "not JSON";
+		}
+	};
+	const data = scripts
+		.filter((x) => /json/i.test(x.type))
+		.slice(0, 20)
+		.map((x) => ({ id: x.id || undefined, type: x.type, chars: x.text.length, shape: keysOf(x.text) }));
+
+	const forms = Array.from(document.forms)
+		.slice(0, 15)
+		.map((f) => ({
+			action: f.getAttribute("action") ?? "",
+			method: (f.getAttribute("method") ?? "get").toLowerCase(),
+			fields: Array.from(f.elements)
+				.map((e) => {
+					const name = e.getAttribute("name") ?? e.id;
+					const type = e.getAttribute("type") ?? e.tagName.toLowerCase();
+					return name ? `${name}:${type}` : "";
+				})
+				.filter(Boolean)
+				.slice(0, 25),
+		}));
+
+	const frames = Array.from(document.querySelectorAll("iframe,frame"))
+		.slice(0, 15)
+		.map((f) => {
+			let sameOrigin = false;
+			try {
+				sameOrigin = !!(f as HTMLIFrameElement).contentDocument;
+			} catch {
+				sameOrigin = false;
+			}
+			return { src: (f.getAttribute("src") ?? "").slice(0, 160), sameOrigin };
+		});
+
+	const hosts = all.filter((el) => (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot);
+	const shadowTags = [...new Set(hosts.map((el) => el.tagName.toLowerCase()))].slice(0, 12);
+	const customTags = [...new Set(all.map((el) => el.tagName.toLowerCase()).filter((t) => t.includes("-")))].slice(
+		0,
+		15,
+	);
+
+	const scriptHosts: Record<string, number> = {};
+	for (const u of srcs) {
+		try {
+			const h = new URL(u).host;
+			scriptHosts[h] = (scriptHosts[h] ?? 0) + 1;
+		} catch {
+			/* not a URL */
+		}
+	}
+	const storageKeys = (st: Storage | undefined) => {
+		try {
+			return st ? Array.from({ length: Math.min(st.length, 30) }, (_, i) => st.key(i) ?? "").filter(Boolean) : [];
+		} catch {
+			return [];
+		}
+	};
+	const cookieNames = document.cookie
+		.split(";")
+		.map((c) => c.split("=")[0]?.trim())
+		.filter(Boolean)
+		.slice(0, 30);
+	return {
+		url: location.href,
+		title: document.title,
+		frameworks,
+		data,
+		forms,
+		frames,
+		shadowRoots: hosts.length,
+		shadowTags,
+		customTags,
+		scripts: { inline: scripts.filter((x) => !x.src).length, hosts: scriptHosts },
+		storage: {
+			local: storageKeys(window.localStorage),
+			session: storageKeys(window.sessionStorage),
+			cookies: cookieNames,
+		},
+		serviceWorker: !!navigator.serviceWorker?.controller,
+		elements: all.length,
+	};
+}
+
+export async function inspectPage(tabId: number): Promise<Record<string, unknown>> {
+	return runInPage(tabId, `(${pageInspect.toString()})()`);
 }
 
 export async function snapshot(
@@ -380,9 +610,21 @@ export async function locate(
 		if (!el && sel) el = document.querySelector(sel);
 		if (!el) throw new Error(ref ? "Ref " + ref + " not found: the page changed. Call read_page for fresh refs." : "Selector not found: " + sel + ". read_page or find gives refs.");
 		if (!el.isConnected) throw new Error("Element is no longer in the page. Call read_page for fresh refs.");
+		// An element in a same-origin frame: bring the frame into view, then the element, and
+		// add each frame's offset so the point is in the tab's coordinates.
+		const frames = [];
+		for (let win = el.ownerDocument.defaultView; win && win !== window && win.frameElement; win = win.parent) frames.push(win.frameElement);
+		for (const fr of frames.slice().reverse()) fr.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 		el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 		const r = el.getBoundingClientRect();
-		return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
+		let x = r.left + r.width / 2;
+		let y = r.top + r.height / 2;
+		for (const fr of frames) {
+			const fr0 = fr.getBoundingClientRect();
+			x += fr0.left + fr.clientLeft;
+			y += fr0.top + fr.clientTop;
+		}
+		return { x, y, width: r.width, height: r.height };
 	})()`;
 	return runInPage(tabId, code);
 }
@@ -402,31 +644,34 @@ export async function fillElement(
 		if (!el && sel) el = document.querySelector(sel);
 		if (!el) throw new Error(ref ? "Ref " + ref + " not found: the page changed. Call read_page for fresh refs." : "Selector not found: " + sel + ". read_page or find gives refs.");
 		const value = ${JSON.stringify(value)};
+		// The element's own window: one in a frame belongs to another realm, where this
+		// window's HTMLInputElement and its value setter don't apply.
+		const W = el.ownerDocument.defaultView || window;
 		el.focus();
-		if (el instanceof HTMLSelectElement) {
+		if (el instanceof W.HTMLSelectElement) {
 			const opt = Array.from(el.options).find(o => o.value === value || o.text.trim() === value);
 			if (!opt) throw new Error("No option matches " + value + ". read_page lists the options (value=...).");
 			el.value = opt.value;
-			el.dispatchEvent(new Event("input", { bubbles: true }));
-			el.dispatchEvent(new Event("change", { bubbles: true }));
+			el.dispatchEvent(new W.Event("input", { bubbles: true }));
+			el.dispatchEvent(new W.Event("change", { bubbles: true }));
 			return true;
 		}
-		if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
+		if (el instanceof W.HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
 			const want = value === "true" || value === "checked" || value === "1";
 			if (el.checked !== want) el.click();
 			return true;
 		}
-		if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-			const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+		if (el instanceof W.HTMLInputElement || el instanceof W.HTMLTextAreaElement) {
+			const proto = el instanceof W.HTMLTextAreaElement ? W.HTMLTextAreaElement.prototype : W.HTMLInputElement.prototype;
 			const setter = Object.getOwnPropertyDescriptor(proto, "value");
 			if (setter && setter.set) setter.set.call(el, value); else el.value = value;
-			el.dispatchEvent(new Event("input", { bubbles: true }));
-			el.dispatchEvent(new Event("change", { bubbles: true }));
+			el.dispatchEvent(new W.Event("input", { bubbles: true }));
+			el.dispatchEvent(new W.Event("change", { bubbles: true }));
 			return true;
 		}
 		if (el.isContentEditable) {
 			el.textContent = value;
-			el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+			el.dispatchEvent(new W.InputEvent("input", { bubbles: true }));
 			return true;
 		}
 		throw new Error("Element is not a form control: use click or type on it instead of fill.");
@@ -439,7 +684,30 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 		const sel = ${JSON.stringify(selector ?? "")};
 		const el = sel ? document.querySelector(sel) : document.body;
 		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
-		return (el.innerText || el.textContent || "").slice(0, ${maxChars});
+		// Text inside web components (open shadow roots) and same-origin frames, which innerText
+		// leaves out, follows the element's own text.
+		const parts = [el.innerText || el.textContent || ""];
+		const own = (root) => Array.from(root.children).filter((c) => !/^(style|script)$/i.test(c.tagName)).map((c) => c.innerText ?? c.textContent ?? "").join("\\n");
+		const visit = (root, depth) => {
+			if (depth > 12) return;
+			for (const node of Array.from(root.querySelectorAll("*"))) {
+				if (node.shadowRoot) {
+					const t = own(node.shadowRoot);
+					if (t.trim()) parts.push(t);
+					visit(node.shadowRoot, depth + 1);
+				}
+				if (/^i?frame$/i.test(node.tagName)) {
+					let doc = null;
+					try { doc = node.contentDocument; } catch { doc = null; }
+					if (doc && doc.body) {
+						parts.push("[frame " + (node.getAttribute("src") || "inline") + "]\\n" + (doc.body.innerText || ""));
+						visit(doc, depth + 1);
+					}
+				}
+			}
+		};
+		visit(el, 0);
+		return parts.join("\\n").slice(0, ${maxChars});
 	})()`;
 	return runInPage<string>(tabId, code);
 }

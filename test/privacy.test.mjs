@@ -162,3 +162,26 @@ test("the stream gate applies private mode, the trusted hosts and the proxy chec
 	assert.equal((sidepanel.match(/SettingsDialog\.open\(/g) ?? []).length, 1, "one settings entry point");
 	assert.equal((sidepanel.match(/new PrivacyTab\(\)/g) ?? []).length, 1, "the settings dialog shows the Privacy tab");
 });
+
+test("response bodies an agent reads have the user's secrets masked and the data intact", async () => {
+	const { maskBody } = await import("../src/browser/cdp.ts");
+	const body = JSON.stringify({
+		sku: "A1",
+		price: 4242,
+		tokenCount: 5,
+		access_token: "abc.def.ghi",
+		csrfToken: 'x"y',
+		user: { name: "Ada", password: "hunter2", session_id: "s-1" },
+	});
+	const masked = JSON.parse(maskBody(body));
+	assert.deepEqual(masked, { sku: "A1", price: 4242, tokenCount: 5, access_token: "[secret]", csrfToken: "[secret]", user: { name: "Ada", password: "[secret]", session_id: "[secret]" } });
+	assert.equal(maskBody("user=ada&password=hunter2&next=/home"), "user=ada&password=[secret]&next=/home");
+	assert.match(maskBody("Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345"), /Bearer \[secret\]/);
+});
+
+test("inspect_page reports storage and cookie names, never their values", () => {
+	const page = readFileSync(new URL("../src/browser/page.ts", import.meta.url), "utf8");
+	const inspect = page.slice(page.indexOf("function pageInspect()"), page.indexOf("export async function inspectPage("));
+	assert.ok(inspect.length > 100);
+	assert.doesNotMatch(inspect, /getItem|\.value\b|split\("="\)\[1\]/, "no storage values, field values or cookie values");
+});

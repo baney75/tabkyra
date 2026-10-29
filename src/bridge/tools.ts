@@ -14,10 +14,12 @@ import {
 	enableNetworkCapture,
 	evaluateMain,
 	hover,
+	networkCapturing,
 	openDialog,
 	pressKey,
 	readConsole,
 	readNetwork,
+	readNetworkDetail,
 	screenshotToCss,
 	startScreencast,
 	stopScreencast,
@@ -28,6 +30,7 @@ import {
 	fillElement,
 	goBack,
 	goForward,
+	inspectPage,
 	locate,
 	navigateTabDetailed,
 	pageHtml,
@@ -374,6 +377,27 @@ export const handlers: Record<string, Handler> = {
 		return { ...(await tabSummary(tabId)), html };
 	},
 
+	inspect: async (ctx, params) => {
+		const tabId = await resolveTab(ctx, params, true);
+		const page = await inspectPage(tabId);
+		// The site's own data calls, if this tab has been capturing network (read_network turns it on).
+		const seen = new Map<string, number>();
+		for (const e of readNetwork(tabId)) {
+			if (e.type !== "XHR" && e.type !== "Fetch") continue;
+			let path = e.url;
+			try {
+				const u = new URL(e.url);
+				path = `${u.origin}${u.pathname}`;
+			} catch {
+				/* keep the URL */
+			}
+			const key = `${e.method} ${path}${e.status ? ` ${e.status}` : ""}`;
+			seen.set(key, (seen.get(key) ?? 0) + 1);
+		}
+		const api = [...seen].slice(-30).map(([k, n]) => (n > 1 ? `${k} x${n}` : k));
+		return { ...page, api, capturing: networkCapturing(tabId) };
+	},
+
 	find: async (ctx, params) => {
 		const query = requireStr(params, "query").toLowerCase();
 		const tabId = await resolveTab(ctx, params, false);
@@ -589,12 +613,16 @@ export const handlers: Record<string, Handler> = {
 	"network.read": async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
 		await enableNetworkCapture(tabId);
+		const requestId = str(params, "requestId");
+		if (requestId) return { request: await readNetworkDetail(tabId, requestId) };
 		let entries = readNetwork(tabId, params.clear === true);
 		const pattern = str(params, "urlPattern");
 		if (pattern) {
 			const re = new RegExp(pattern, "i");
 			entries = entries.filter((e) => re.test(e.url));
 		}
+		const type = str(params, "type");
+		if (type) entries = entries.filter((e) => e.type?.toLowerCase() === type.toLowerCase());
 		return { entries: entries.slice(-(num(params, "limit") ?? 100)) };
 	},
 };

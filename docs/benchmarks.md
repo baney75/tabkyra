@@ -146,3 +146,28 @@ group; the client replays a request whose reply a reload cut off, so a click run
 Group titles say "claude 2", "claude 3" and never the project; closing a group leaves its
 session behind; a tab the user drags out or ungroups is pulled back into the group; and
 nothing caps the tabs in a group.
+
+## Seeing pages: perception eval
+
+`node cli/eval/perception.mjs --extension <build> [--out file.json]` drives the MCP tools against
+local fixture pages (no model) and scores 12 probes: open shadow roots (see, click, fill a nested
+field, read text with both `read_page` and `get_page_text`), same-origin and cross-origin frames,
+control states, a page's own `fetch()` and its response body, embedded JSON and forms, and the
+size of a small interactive read. Measured 2026-10-28 in headless Chromium.
+
+| Probe | Before (main + #70) | After | Detail after |
+| --- | --- | --- | --- |
+| `shadow-see` | fail | pass | button listed |
+| `shadow-click` | fail | pass | click ok, __clicked=shadow |
+| `nested-fill` | fail | pass | fill ok, value=a@b.co |
+| `shadow-text` | fail | pass | read_page yes, get_page_text yes |
+| `frame-see` | fail | pass | button listed |
+| `frame-click` | fail | pass | click ok, __clicked=frame |
+| `xorigin-flag` | fail | pass | host yes, word iframe yes |
+| `states` | fail | pass | all five states shown |
+| `api-request` | pass | pass | request and status 200 listed |
+| `api-body` | fail | pass | body for 70024.8 |
+| `embedded-map` | fail | pass | script data and form action listed |
+| `cost` | pass | pass | 335 bytes |
+
+Score: before 2/12, after 12/12.

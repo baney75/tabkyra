@@ -5,6 +5,8 @@
  * on tabs that are not visible; nothing here activates a tab.
  */
 
+import { redactSecrets } from "../privacy/bug-reports.js";
+
 const PROTOCOL_VERSION = "1.3";
 
 /** Tabs where the user cancelled the debugger (closed the infobar). Cleared on navigation. */
@@ -535,6 +537,8 @@ export interface NetworkEntry {
 	url: string;
 	status?: number;
 	mimeType?: string;
+	/** Document, XHR, Fetch, Script, Image, ... (CDP's resource type). */
+	type?: string;
 	timestamp: number;
 	failed?: string;
 }
@@ -575,6 +579,7 @@ function installCaptureListener(): void {
 				requestId: String(p.requestId),
 				method: request.method,
 				url: request.url,
+				type: typeof p.type === "string" ? p.type : undefined,
 				timestamp: Date.now(),
 			});
 			if (buf.size > MAX_ENTRIES) buf.delete(buf.keys().next().value as string);
@@ -615,6 +620,81 @@ export async function enableNetworkCapture(tabId: number): Promise<void> {
 	if (networkBuffers.has(tabId)) return;
 	networkBuffers.set(tabId, new Map());
 	await cdpSend(tabId, "Network.enable");
+}
+
+/** One captured request in full: its entry, the request body and the response body, capped. */
+export interface NetworkDetail extends NetworkEntry {
+	requestBody?: string;
+	responseBody?: string;
+	/** Why there is no body: still loading, evicted, binary, ... */
+	bodyNote?: string;
+}
+
+const MAX_RESPONSE_BODY = 20000;
+const MAX_REQUEST_BODY = 4000;
+const TEXTUAL =
+	/^(text\/|application\/(json|[\w.+-]*\+json|javascript|x-javascript|xml|[\w.+-]*\+xml|x-www-form-urlencoded|graphql))/i;
+
+/**
+ * The bodies of one request this tab made, for reading the JSON a page renders from. The page
+ * already received them; this only shows them to the agent. Binary bodies are described, not sent.
+ */
+export async function readNetworkDetail(tabId: number, requestId: string): Promise<NetworkDetail> {
+	const entry = networkBuffers.get(tabId)?.get(requestId);
+	if (!entry)
+		throw new Error(
+			`No captured request ${requestId}. Call read_network for the current list (capture starts on the first call).`,
+		);
+	const detail: NetworkDetail = { ...entry };
+	try {
+		const post = await cdpSend<{ postData: string }>(tabId, "Network.getRequestPostData", { requestId });
+		detail.requestBody = cap(maskBody(post.postData), MAX_REQUEST_BODY);
+	} catch {
+		/* no request body */
+	}
+	if (entry.failed) detail.bodyNote = `The request failed: ${entry.failed}`;
+	else if (entry.status === undefined) detail.bodyNote = "No response yet; wait and call again.";
+	else if (entry.mimeType && !TEXTUAL.test(entry.mimeType))
+		detail.bodyNote = `Binary response (${entry.mimeType}); not shown.`;
+	else {
+		try {
+			const body = await cdpSend<{ body: string; base64Encoded: boolean }>(tabId, "Network.getResponseBody", {
+				requestId,
+			});
+			detail.responseBody = cap(maskBody(body.base64Encoded ? atob(body.body) : body.body), MAX_RESPONSE_BODY);
+		} catch {
+			detail.bodyNote =
+				"The browser no longer has this response body (it keeps recent ones only). Reload and read again.";
+		}
+	}
+	return detail;
+}
+
+/**
+ * Bodies can carry the user's credentials (a login response, a session refresh). Secret-named
+ * fields and token-shaped strings are masked before an agent sees them; the rest is the data.
+ */
+export function maskBody(text: string): string {
+	return redactSecrets(
+		text
+			.replace(
+				/("[\w-]*(?:token|password|passwd|secret|api_?key|apikey|authorization|session_?id|sessid|csrf|cookie)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi,
+				'$1"[secret]"',
+			)
+			.replace(
+				/\b([\w-]*(?:token|password|passwd|secret|api_?key|apikey|authorization|session_?id|sessid|csrf|cookie)[\w-]*)=[^&\s"]*/gi,
+				"$1=[secret]",
+			),
+	);
+}
+
+function cap(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max)}… (${text.length - max} more characters)` : text;
+}
+
+/** Whether read_network has turned capture on for this tab. */
+export function networkCapturing(tabId: number): boolean {
+	return networkBuffers.has(tabId);
 }
 
 export function readNetwork(tabId: number, clear = false): NetworkEntry[] {
