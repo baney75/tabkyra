@@ -100,7 +100,11 @@ async function whisper(run: Transcriber, audio: Float32Array, language?: string)
 /** Moonshine reads a clip in one pass and the pipeline doesn't window it: pieces of 20 s or less, cut where it's quiet. */
 async function inPieces(run: Transcriber, audio: Float32Array): Promise<string> {
 	const parts: string[] = [];
-	for (const piece of splitAtQuiet(audio, 20)) parts.push(textOf(await run(piece, {})));
+	for (const piece of splitAtQuiet(audio, 20)) {
+		// Moonshine sizes its output by the clip's length; under a second it can return nothing.
+		const input = piece.length >= 16_000 ? piece : Float32Array.from({ length: 16_000 }, (_, i) => piece[i] ?? 0);
+		parts.push(textOf(await run(input, {})));
+	}
 	return parts.filter(Boolean).join(" ");
 }
 

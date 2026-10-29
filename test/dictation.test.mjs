@@ -71,6 +71,11 @@ test("silence is cut before the model, and talk from press to stop is kept whole
 	assert.ok(trimSilence(talking).length >= talking.length * 0.9, "talk from press to stop is kept");
 	const quiet = syllables(0.006, 12);
 	assert.ok(trimSilence(quiet).length >= quiet.length * 0.9, "a quiet microphone still gets through");
+	// Speech over a loud steady noise: it rises and falls, so it's kept, uncut.
+	const noise = (seconds, amp) => Float32Array.from({ length: seconds * rate }, (_, i) => amp * Math.sin(i * 1.7));
+	const hiss = noise(5, 0.08);
+	const noisy = syllables(0.2, 12).map((x, i) => x + hiss[i % hiss.length]);
+	assert.equal(trimSilence(noisy).length, noisy.length, "speech over steady noise reaches the model");
 });
 
 test("long audio is cut into pieces at quiet points for one-pass models, and transcription time scales with it", () => {
@@ -84,6 +89,11 @@ test("long audio is cut into pieces at quiet points for one-pass models, and tra
 		assert.ok(Math.abs(p[p.length - 1]) < 0.01, "cut in a quiet second");
 	}
 	assert.deepEqual(splitAtQuiet(new Float32Array(rate * 5)).length, 1, "short audio is one piece");
+	// Just over the limit with its quietest moment near the end: the last piece still gets 2 s.
+	const near = Float32Array.from({ length: Math.round(20.5 * rate) }, (_, i) => (i > 19.7 * rate && i < 19.9 * rate ? 0 : 0.3 * Math.sin(i / 3)));
+	const tail = splitAtQuiet(near, 20);
+	assert.equal(tail.length, 2);
+	assert.ok(tail[1].length >= 2 * rate, `last piece ${tail[1].length / rate} s`);
 	assert.equal(transcribeTimeoutMs(5), 120_000);
 	assert.equal(transcribeTimeoutMs(300), 2_400_000, "five minutes of audio gets 40");
 });

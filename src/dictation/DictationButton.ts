@@ -114,6 +114,8 @@ export class DictationButton extends LitElement {
 	private meter?: number;
 	private model?: { spec: ModelSpec; language?: string };
 	private loaded?: Promise<DictationResponse>;
+	/** Bumped by every start and cancel: a start whose number is stale was cancelled while it waited. */
+	private startSeq = 0;
 
 	protected override createRenderRoot(): HTMLElement {
 		return this;
@@ -143,6 +145,7 @@ export class DictationButton extends LitElement {
 	}
 
 	private cancel(): void {
+		this.startSeq++;
 		this.recording?.cancel();
 		this.recording = undefined;
 		document.removeEventListener("keydown", this.onDocumentKeydown, true);
@@ -153,17 +156,24 @@ export class DictationButton extends LitElement {
 	private async start(): Promise<void> {
 		// Set before any await, so a second click can't open a second microphone.
 		this.phase = "starting";
+		this.loaded = undefined;
+		const run = ++this.startSeq;
+		// Esc or the panel closing during any wait below abandons this start.
+		const live = () => run === this.startSeq && this.isConnected;
 		document.addEventListener("keydown", this.onDocumentKeydown, true);
 		let recording: Recording;
 		try {
 			let model = await resolveModel();
+			if (!live()) return;
 			if (!(await confirmDownload(model.spec, model.language))) model = await resolveModel();
+			if (!live()) return;
 			this.model = model;
 			recording = await startRecording(() => {
 				Toast.info(`Dictation stops at ${MAX_SECONDS / 60} minutes; here is what you said.`);
 				void this.stop();
 			});
 		} catch (err) {
+			if (!live()) return;
 			this.phase = "idle";
 			document.removeEventListener("keydown", this.onDocumentKeydown, true);
 			if (err instanceof MicPermissionError) {
@@ -173,19 +183,22 @@ export class DictationButton extends LitElement {
 			return;
 		}
 		// Esc, or the panel closing, while the microphone was opening.
-		if (this.phase !== "starting" || !this.isConnected) {
+		if (!live()) {
 			recording.cancel();
 			return;
 		}
+		const spec = this.model.spec;
+		// The load starts before the button can be pressed to stop, so a stop always waits for it.
+		this.loaded = preload(spec);
 		this.recording = recording;
 		this.phase = "recording";
-		const spec = this.model.spec;
-		if (!(await modelCached(spec)))
-			Toast.info(
-				`First dictation: downloading ${spec.label}, about ${spec.downloadMB} MB, once. Keep talking.`,
-				6000,
-			);
-		this.loaded = preload(spec);
+		void modelCached(spec).then((cached) => {
+			if (!cached)
+				Toast.info(
+					`First dictation: downloading ${spec.label}, about ${spec.downloadMB} MB, once. Keep talking.`,
+					6000,
+				);
+		});
 		const tick = () => {
 			this.level = this.recording?.level() ?? 0;
 			if (this.phase === "recording") this.meter = requestAnimationFrame(tick);

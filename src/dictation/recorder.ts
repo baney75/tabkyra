@@ -41,9 +41,13 @@ export function trimSilence(samples: Float32Array, rate = SAMPLE_RATE): Float32A
 	const sorted = Array.from(energy).sort((a, b) => a - b);
 	const floor = sorted[Math.floor(frames * 0.1)] ?? 0;
 	const peak = sorted[frames - 1] ?? 0;
+	const high = sorted[Math.floor(frames * 0.9)] ?? 0;
 	// No speech: everything is near zero (a quiet microphone still clears this), or the level is
-	// flat, which is a fan or a hum: speech always has gaps between words well below its peaks.
-	if (peak < 0.003 || peak < floor * 3) return new Float32Array(0);
+	// flat, which is a fan or a hum: speech rises and falls between words and syllables.
+	if (peak < 0.003 || high <= floor * 1.5) return new Float32Array(0);
+	// Speech over loud steady noise (a car, a cafe): it varies, but no part is quiet enough to
+	// cut, so all of it goes to the model.
+	if (peak < floor * 3) return samples;
 	const threshold = Math.max(0.002, floor * 2.5, peak * 0.05);
 	// A click or a cough is a frame or two; speech is at least a quarter second of them. Whisper
 	// writes words into a clip with no speech, so a near-silent one is not sent.
@@ -60,17 +64,27 @@ export function trimSilence(samples: Float32Array, rate = SAMPLE_RATE): Float32A
 
 /**
  * Cut long audio into pieces of at most `maxSeconds`, each cut at the quietest 30 ms in the last
- * third of its window, for models that read a clip in one pass (Moonshine).
+ * third of its window, for models that read a clip in one pass (Moonshine). No piece is left
+ * shorter than `minSeconds`: Moonshine sizes its output by the clip's length.
  */
-export function splitAtQuiet(samples: Float32Array, maxSeconds = 20, rate = SAMPLE_RATE): Float32Array[] {
+export function splitAtQuiet(
+	samples: Float32Array,
+	maxSeconds = 20,
+	rate = SAMPLE_RATE,
+	minSeconds = 2,
+): Float32Array[] {
 	const max = Math.round(maxSeconds * rate);
+	const min = Math.round(minSeconds * rate);
 	const frame = Math.round(rate * 0.03);
 	const pieces: Float32Array[] = [];
 	let start = 0;
 	while (samples.length - start > max) {
-		let cut = start + max;
+		// Search the last third of the window, but stop early enough to leave a tail of `min`.
+		const end = Math.min(start + max, samples.length - min);
+		const from = Math.min(start + Math.round(max * 0.66), end - frame);
+		let cut = end;
 		let quietest = Number.POSITIVE_INFINITY;
-		for (let at = start + Math.round(max * 0.66); at + frame <= start + max; at += frame) {
+		for (let at = from; at + frame <= end; at += frame) {
 			let sum = 0;
 			for (let i = at; i < at + frame; i++) sum += samples[i] * samples[i];
 			if (sum < quietest) {
@@ -118,23 +132,25 @@ export async function startRecording(onLimit?: () => void): Promise<Recording> {
 	let recorder: MediaRecorder;
 	let meter: AudioContext | undefined;
 	let analyser: AnalyserNode;
+	const chunks: Blob[] = [];
 	try {
 		recorder = new MediaRecorder(stream);
+		recorder.ondataavailable = (e) => {
+			if (e.data.size) chunks.push(e.data);
+		};
 		// A level meter so the user sees the microphone is live.
 		meter = new AudioContext();
 		analyser = meter.createAnalyser();
 		analyser.fftSize = 512;
 		meter.createMediaStreamSource(stream).connect(analyser);
+		// Throws if the track ended between the grant and now (unplugged, taken by another app).
+		recorder.start(1000);
 	} catch (err) {
 		// The microphone is open: close it before reporting the failure.
 		for (const track of stream.getTracks()) track.stop();
 		void meter?.close();
 		throw err;
 	}
-	const chunks: Blob[] = [];
-	recorder.ondataavailable = (e) => {
-		if (e.data.size) chunks.push(e.data);
-	};
 	const samples = new Float32Array(analyser.fftSize);
 	const release = () => {
 		for (const track of stream.getTracks()) track.stop();
@@ -152,7 +168,6 @@ export async function startRecording(onLimit?: () => void): Promise<Recording> {
 			resolve(new Blob(chunks, { type: recorder.mimeType }));
 		};
 	});
-	recorder.start(1000);
 	let cancelled = false;
 	return {
 		async stop() {
