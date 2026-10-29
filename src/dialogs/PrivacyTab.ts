@@ -99,14 +99,15 @@ export class PrivacyTab extends SettingsTab {
 			<div class="flex flex-col gap-6">
 				<div class="space-y-2">
 					<h3 class="text-sm font-semibold text-foreground">Private mode</h3>
-					<label class="flex items-start gap-2 text-sm text-foreground">
+					<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
+						<span>Only use models that don't keep my prompts</span>
 						<input
 							type="checkbox"
-							class="mt-1"
+							role="switch"
+							class="tk-switch"
 							.checked=${this.privateMode}
 							@change=${(e: Event) => this.setPrivateMode((e.target as HTMLInputElement).checked)}
 						/>
-						<span>Only use models that don't keep my prompts</span>
 					</label>
 					<p class="text-xs text-muted-foreground">
 						The side panel agent then runs only OpenRouter models, sent with zero data retention required and no
@@ -130,28 +131,30 @@ export class PrivacyTab extends SettingsTab {
 
 				<div class="space-y-2">
 					<h3 class="text-sm font-semibold text-foreground">Chats on this computer</h3>
-					<label class="flex items-start gap-2 text-sm text-foreground">
+					<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
+						<span>Let my coding agents read my past chats</span>
 						<input
 							type="checkbox"
-							class="mt-1"
+							role="switch"
+							class="tk-switch"
 							.checked=${this.mirror}
 							@change=${(e: Event) => this.setMirror((e.target as HTMLInputElement).checked)}
 						/>
-						<span>Let my coding agents read my past chats</span>
 					</label>
 					${
 						this.mirror && this.sharedSince
-							? html`<label class="flex items-start gap-2 text-sm text-foreground">
-								<input
-									type="checkbox"
-									class="mt-1"
-									.checked=${this.shareOlder}
-									@change=${(e: Event) => this.setShareOlder((e.target as HTMLInputElement).checked)}
-								/>
+							? html`<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
 								<span
 									>Also chats from before ${new Date(this.sharedSince).toLocaleDateString()} (older versions didn't mark
 									private-mode chats, so check none of those were private)</span
 								>
+								<input
+									type="checkbox"
+									role="switch"
+									class="tk-switch"
+									.checked=${this.shareOlder}
+									@change=${(e: Event) => this.setShareOlder((e.target as HTMLInputElement).checked)}
+								/>
 							</label>`
 							: ""
 					}
@@ -167,14 +170,15 @@ export class PrivacyTab extends SettingsTab {
 
 				<div class="space-y-2">
 					<h3 class="text-sm font-semibold text-foreground">Bug reports</h3>
-					<label class="flex items-start gap-2 text-sm text-foreground">
+					<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
+						<span>Keep error reports so I can send them</span>
 						<input
 							type="checkbox"
-							class="mt-1"
+							role="switch"
+							class="tk-switch"
 							.checked=${this.bugReports}
 							@change=${(e: Event) => this.setBugReports((e.target as HTMLInputElement).checked)}
 						/>
-						<span>Keep error reports so I can send them</span>
 					</label>
 					<p class="text-xs text-muted-foreground">
 						Optional and off by default. Errors are kept in this browser with web addresses, emails and keys removed.

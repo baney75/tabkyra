@@ -67,13 +67,15 @@ export class SkillsTab extends SettingsTab {
 		return html`
 			<section class="space-y-2" aria-labelledby="community-skills-heading">
 				<h3 id="community-skills-heading" class="text-sm font-semibold text-foreground">Community skills</h3>
-				<label class="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+				<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
+					<span>Receive community skills</span>
 					<input
 						type="checkbox"
+						role="switch"
+						class="tk-switch"
 						.checked=${checked}
 						@change=${(e: Event) => this.sendCommunity((e.target as HTMLInputElement).checked ? "on" : "off")}
 					/>
-					Receive community skills
 				</label>
 				<p class="text-xs text-muted-foreground">
 					Reviewed by a maintainer, signed, checked about once a day. Each is used only on the sites it names. Your own edits are kept and never overwritten.

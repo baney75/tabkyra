@@ -854,7 +854,7 @@ index 75afda08c..881b06c65 100644
  		let index = 0;
  		for (const msg of this.messages) {
 diff --git a/packages/web-ui/src/components/ProviderKeyInput.ts b/packages/web-ui/src/components/ProviderKeyInput.ts
-index 61dac6068..0f0c0bf7f 100644
+index 61dac6068..67a5e0a2a 100644
 --- a/packages/web-ui/src/components/ProviderKeyInput.ts
 +++ b/packages/web-ui/src/components/ProviderKeyInput.ts
 @@ -24,6 +24,8 @@ const TEST_MODELS: Record<string, string> = {
@@ -876,7 +876,7 @@ index 61dac6068..0f0c0bf7f 100644
  			} catch (error) {
  				console.error("Failed to save API key:", error);
  				this.failed = true;
-@@ -117,7 +121,7 @@ export class ProviderKeyInput extends LitElement {
+@@ -117,12 +121,12 @@ export class ProviderKeyInput extends LitElement {
  		return html`
  			<div class="space-y-3">
  				<div class="flex items-center gap-2">
@@ -885,6 +885,12 @@ index 61dac6068..0f0c0bf7f 100644
  					${
  						this.testing
  							? Badge({ children: i18n("Testing..."), variant: "secondary" })
+ 							: this.hasKey
+-								? html`<span class="text-green-600 dark:text-green-400">✓</span>`
++								? html`<span class="text-xs text-muted-foreground">Key saved</span>`
+ 								: ""
+ 					}
+ 					${this.failed ? Badge({ children: i18n("✗ Invalid"), variant: "destructive" }) : ""}
 @@ -137,6 +141,9 @@ export class ProviderKeyInput extends LitElement {
  							this.inputChanged = true;
  							this.requestUpdate();

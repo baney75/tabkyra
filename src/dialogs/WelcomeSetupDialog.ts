@@ -53,13 +53,14 @@ export class WelcomeSetupDialog extends DialogBase {
 					${
 						this.reportsOn
 							? html`<p class="text-xs text-muted-foreground">Error reports are on. Turn them off in Settings &gt; Privacy.</p>`
-							: html`<label class="flex items-start gap-2 text-xs text-muted-foreground">
+							: html`<label class="flex items-start justify-between gap-3 text-xs text-muted-foreground cursor-pointer">
+									<span>Keep error reports I can choose to send (optional, off by default; Settings &gt; Privacy)</span>
 									<input
 										type="checkbox"
-										class="mt-0.5"
+										role="switch"
+										class="tk-switch"
 										@change=${(e: Event) => void setBugReports(getTabkyraStorage(), (e.target as HTMLInputElement).checked)}
 									/>
-									<span>Keep error reports I can choose to send (optional, off by default; Settings &gt; Privacy)</span>
 								</label>`
 					}
 					<div class="flex justify-end">
