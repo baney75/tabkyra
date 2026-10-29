@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, context } from "esbuild";
@@ -20,6 +21,10 @@ const entryPoints = {
 	sidepanel: join(packageRoot, "src/sidepanel.ts"),
 	debug: join(packageRoot, "src/debug.ts"),
 	background: join(packageRoot, "src/background.ts"),
+	// Speech to text on this device, in its own worker (src/dictation/worker.ts).
+	"dictation-worker": join(packageRoot, "src/dictation/worker.ts"),
+	// The page that asks for the microphone once: the side panel can't show the prompt.
+	"mic-permission": join(packageRoot, "src/dictation/permission.ts"),
 };
 
 rmSync(outDir, { recursive: true, force: true });
@@ -153,6 +158,40 @@ function frontmatterDescription(text) {
  * The bundled skill library (skills/<name>/SKILL.md, what `tabkyra skill list` shows) as a
  * module, so the side panel's "/" menu can list and run them: `virtual:library-skills`.
  */
+/**
+ * transformers.js defaults the ONNX runtime to jsDelivr at import time. The dictation worker
+ * points it at the copy in <out>/ort before any model loads; this makes the default local too, so
+ * no build can reach a CDN for code (src/dictation/worker.ts). The build fails if the default
+ * moves, or if the file holding it is no longer the one bundled.
+ */
+const localOnnxRuntime = {
+	name: "local-onnx-runtime",
+	setup(b) {
+		let applied = false;
+		b.onStart(() => {
+			applied = false;
+		});
+		b.onEnd((result) => {
+			if (!result.errors.length && !applied)
+				return {
+					errors: [
+						{ text: "transformers.web.js wasn't bundled: the ONNX runtime's CDN default was not replaced" },
+					],
+				};
+		});
+		b.onLoad({ filter: /@huggingface[\\/]transformers[\\/]dist[\\/]transformers\.web\.js$/ }, (args) => {
+			const source = readFileSync(args.path, "utf8");
+			const cdn = "https://cdn.jsdelivr.net/npm/onnxruntime-web@${ONNX_ENV.versions.web}/dist/";
+			if (!source.includes(cdn))
+				throw new Error(
+					"transformers.js no longer defaults to jsDelivr in the expected way: recheck the dictation worker's runtime paths",
+				);
+			applied = true;
+			return { contents: source.replace(cdn, "/ort/"), loader: "js" };
+		});
+	},
+};
+
 const librarySkills = {
 	name: "library-skills",
 	setup(b) {
@@ -205,7 +244,7 @@ function markedEntry() {
 }
 
 const buildOptions = {
-	plugins: [stripRemovedSignIns, librarySkills],
+	plugins: [stripRemovedSignIns, librarySkills, localOnnxRuntime],
 	absWorkingDir: packageRoot,
 	entryPoints,
 	bundle: true,
@@ -342,6 +381,22 @@ const copyStatic = () => {
 	mkdirSync(pdfWorkerDestDir, { recursive: true });
 	const pdfWorkerDest = join(pdfWorkerDestDir, "pdf.worker.min.mjs");
 	copyFileSync(pdfWorkerSource, pdfWorkerDest);
+
+	// The ONNX runtime the dictation worker runs models with, shipped inside the extension so no
+	// code is loaded from a CDN (src/dictation/worker.ts points the runtime here).
+	// The copy transformers.js itself resolves, so the wasm matches the JS glue bundled with it.
+	const fromTransformers = createRequire(createRequire(import.meta.url).resolve("@huggingface/transformers"));
+	const ortEntry = fromTransformers.resolve("onnxruntime-web");
+	const ortSource = join(
+		ortEntry.slice(0, ortEntry.lastIndexOf("onnxruntime-web") + "onnxruntime-web".length),
+		"dist",
+	);
+	const ortDest = join(outDir, "ort");
+	mkdirSync(ortDest, { recursive: true });
+	for (const file of ["ort-wasm-simd-threaded.asyncify.mjs", "ort-wasm-simd-threaded.asyncify.wasm"])
+		copyFileSync(join(ortSource, file), join(ortDest, file));
+	if (readFileSync(join(outDir, "dictation-worker.js"), "utf8").includes("cdn.jsdelivr.net/npm/onnxruntime"))
+		throw new Error("dictation-worker.js still points the ONNX runtime at jsDelivr");
 
 	writeFileSync(join(outDir, "build-info.json"), `${JSON.stringify(info, null, "\t")}\n`);
 

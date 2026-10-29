@@ -15,6 +15,7 @@
 		"prepare": "husky"
 	},
 	"dependencies": {
+		"@huggingface/transformers": "4.3.2",
 		"@mariozechner/jailjs": "^0.1.0",
 		"@mariozechner/mini-lit": "file:../mini-lit",
 		"@mariozechner/pi-agent-core": "file:../pi-mono/packages/agent",

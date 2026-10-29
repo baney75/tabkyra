@@ -146,3 +146,34 @@ group; the client replays a request whose reply a reload cut off, so a click run
 Group titles say "claude 2", "claude 3" and never the project; closing a group leaves its
 session behind; a tab the user drags out or ungroups is pulled back into the group; and
 nothing caps the tabs in a group.
+
+# Dictation, 2026-10-29
+
+`cli/eval/dictation.mjs` on the built extension in Playwright's Chromium on an M-series Mac
+(WebGPU with shader-f16, 32 GB, 10 cores). Two clips spoken by macOS `say` (Samantha, 16 kHz),
+6.5 and 6 seconds, with reference transcripts. No language is given, as with the product's default
+("Detect it"), so Whisper detects it. Word error rate (WER) is word edit distance over
+the reference, punctuation and case ignored. Real-time factor (RTF) is transcription time over
+audio length: under 1 is faster than speech.
+
+| Model | Runs on | Download | WER | RTF |
+| --- | --- | --- | --- | --- |
+| Whisper large-v3 turbo | GPU | 1470 MB | 3.3% | 0.42 |
+| Whisper small | GPU | 590 MB | 3.3% | 0.22 |
+| Whisper base | processor | 77 MB | 3.3% | 0.69 |
+| Moonshine base (English) | processor | 63 MB | 6.7% | 0.16 |
+| Moonshine tiny (English) | processor | 28 MB | 10.0% | 0.08 |
+| Whisper tiny | processor | 41 MB | 14.8% | 0.32 |
+
+The strong models missed one word, the name "Tabkyra" ("TabKara", "Tabgira"). Clean synthetic
+speech doesn't separate them; turbo's lead (large-v3 accuracy) shows on accents, noise and other
+languages, which these clips don't test. Turbo's first load took 177 s, almost all of it the
+download.
+
+The button, end to end: Chromium's fake microphone played clip 1, the eval pressed Dictate and
+then Stop as the clip ended. In four runs the automatic model on this device (turbo) put the
+reference sentence in the composer word for word (WER 0%); once it came back without capitals or
+punctuation.
+
+Reproduce: `TABKYRA_NO_BUMP=1 node scripts/build.mjs` (a plain production build bumps the version),
+then `node cli/eval/dictation.mjs --extension dist-chrome --clips <dir of name.wav + name.txt> [--models a,b|none]`.

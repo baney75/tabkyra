@@ -3,6 +3,7 @@ import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Toast } from "../components/Toast.js";
+import "../dictation/DictationSettings.js";
 import { BUG_LOG_KEY, BUG_REPORTS_KEY, type BugEntry, NEW_ISSUE_URL, reportText } from "../privacy/bug-reports.js";
 import { setBugReports } from "../privacy/capture.js";
 import { hostOf, PRIVATE_MODE_KEY, TRUSTED_HOSTS_KEY } from "../privacy/private-mode.js";
@@ -161,6 +162,8 @@ export class PrivacyTab extends SettingsTab {
 						this off deletes the copy and stops agents reading past chats. Agents connected through tabkyra serve need a token with the threads.read scope.
 					</p>
 				</div>
+
+				<tabkyra-dictation-settings></tabkyra-dictation-settings>
 
 				<div class="space-y-2">
 					<h3 class="text-sm font-semibold text-foreground">Bug reports</h3>

@@ -107,6 +107,7 @@ import { bridgeQuestions, watchBridgeQuestions } from "./ask/bridge-panel.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tabkyraTranscript } from "./transcript/render.js";
 import { starters } from "./tutorials.js";
+import "./dictation/DictationButton.js";
 import { BUSY_BEAT_PREFIX, reserveRun } from "./update/gate.js";
 
 // Previews for more file types in the artifacts panel (src/artifacts/)
@@ -1094,6 +1095,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		// "@" lists the window's tabs; a chosen one is shared with the agent on send.
 		chatPanel.agentInterface.mentionProvider = buildTabMentionProvider();
 		chatPanel.agentInterface.composerAccessory = composerChips;
+		// The microphone: speech to text on this device (src/dictation/).
+		chatPanel.agentInterface.composerActions = (value, setValue) =>
+			html`<tabkyra-dictation .value=${value} .setValue=${setValue}></tabkyra-dictation>`;
 		refreshModelLabel(true);
 		// ArrowUp in an empty composer recalls the last prompt for editing or resending.
 		chatPanel.agentInterface.historyProvider = () => {

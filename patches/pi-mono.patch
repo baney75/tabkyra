@@ -130,7 +130,7 @@ index 2c76c391d..73792853a 100644
  								<button
  									class="absolute z-30 top-4 left-1/2 -translate-x-1/2 pointer-events-auto"
 diff --git a/packages/web-ui/src/components/AgentInterface.ts b/packages/web-ui/src/components/AgentInterface.ts
-index b8f6550ec..34358cdd3 100644
+index b8f6550ec..81a8566e6 100644
 --- a/packages/web-ui/src/components/AgentInterface.ts
 +++ b/packages/web-ui/src/components/AgentInterface.ts
 @@ -1,3 +1,4 @@
@@ -151,7 +151,7 @@ index b8f6550ec..34358cdd3 100644
  import { createStreamFn } from "../utils/proxy-utils.js";
  import type { UserMessageWithAttachments } from "./Messages.js";
  import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
-@@ -28,12 +30,24 @@ export class AgentInterface extends LitElement {
+@@ -28,12 +30,26 @@ export class AgentInterface extends LitElement {
  	@property({ attribute: false }) onApiKeyRequired?: (provider: string) => Promise<boolean>;
  	// Optional callback called before sending a message
  	@property({ attribute: false }) onBeforeSend?: () => void | Promise<void>;
@@ -171,12 +171,14 @@ index b8f6550ec..34358cdd3 100644
 +	@property({ attribute: false }) mentionProvider?: SlashCommandProvider;
 +	// Rendered above the composer's text box
 +	@property({ attribute: false }) composerAccessory?: ComposerAccessory;
++	/** Extra composer buttons beside the attachment button (MessageEditor.actions). */
++	@property({ attribute: false }) composerActions?: ComposerAccessory;
 +	/** Names the current model in the composer; the raw model id when unset. */
 +	@property({ attribute: false }) modelLabel?: ModelLabel;
  
  	// References
  	@query("message-editor") private _messageEditor!: MessageEditor;
-@@ -46,6 +60,12 @@ export class AgentInterface extends LitElement {
+@@ -46,6 +62,12 @@ export class AgentInterface extends LitElement {
  	private _resizeObserver?: ResizeObserver;
  	private _unsubscribeSession?: () => void;
  
@@ -189,7 +191,7 @@ index b8f6550ec..34358cdd3 100644
  	public setInput(text: string, attachments?: Attachment[]) {
  		const update = () => {
  			if (!this._messageEditor) requestAnimationFrame(update);
-@@ -150,12 +170,37 @@ export class AgentInterface extends LitElement {
+@@ -150,12 +172,37 @@ export class AgentInterface extends LitElement {
  			};
  		}
  
@@ -228,7 +230,7 @@ index b8f6550ec..34358cdd3 100644
  					this.requestUpdate();
  					break;
  				case "message_end":
-@@ -166,14 +211,16 @@ export class AgentInterface extends LitElement {
+@@ -166,14 +213,16 @@ export class AgentInterface extends LitElement {
  					}
  					this.requestUpdate();
  					break;
@@ -246,7 +248,7 @@ index b8f6550ec..34358cdd3 100644
  				case "message_update":
  					if (this._streamingContainer) {
  						const isStreaming = this.session?.state.isStreaming || false;
-@@ -213,52 +260,167 @@ export class AgentInterface extends LitElement {
+@@ -213,52 +262,167 @@ export class AgentInterface extends LitElement {
  	};
  
  	public async sendMessage(input: string, attachments?: Attachment[]) {
@@ -451,7 +453,7 @@ index b8f6550ec..34358cdd3 100644
  	}
  
  	private renderMessages() {
-@@ -361,6 +523,7 @@ export class AgentInterface extends LitElement {
+@@ -361,6 +525,7 @@ export class AgentInterface extends LitElement {
  				<!-- Input Area -->
  				<div class="shrink-0">
  					<div class="max-w-3xl mx-auto px-2">
@@ -459,7 +461,7 @@ index b8f6550ec..34358cdd3 100644
  						<message-editor
  							.isStreaming=${state.isStreaming}
  							.currentModel=${state.model}
-@@ -368,8 +531,13 @@ export class AgentInterface extends LitElement {
+@@ -368,8 +533,14 @@ export class AgentInterface extends LitElement {
  							.showAttachmentButton=${this.enableAttachments}
  							.showModelSelector=${this.enableModelSelector}
  							.showThinkingSelector=${this.enableThinkingSelector}
@@ -467,6 +469,7 @@ index b8f6550ec..34358cdd3 100644
 +							.slashCommandProvider=${this.slashCommandProvider}
 +							.mentionProvider=${this.mentionProvider}
 +							.accessory=${this.composerAccessory}
++							.actions=${this.composerActions}
 +							.modelLabel=${this.modelLabel}
  							.onSend=${(input: string, attachments: Attachment[]) => {
 -								this.sendMessage(input, attachments);
@@ -475,7 +478,7 @@ index b8f6550ec..34358cdd3 100644
  							.onAbort=${() => session.abort()}
  							.onModelSelect=${() => {
 diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
-index f0987c4d1..790cd3919 100644
+index f0987c4d1..6fc0c0a1c 100644
 --- a/packages/web-ui/src/components/MessageEditor.ts
 +++ b/packages/web-ui/src/components/MessageEditor.ts
 @@ -11,6 +11,35 @@ import { i18n } from "../utils/i18n.js";
@@ -514,7 +517,7 @@ index f0987c4d1..790cd3919 100644
  @customElement("message-editor")
  export class MessageEditor extends LitElement {
  	private _value = "";
-@@ -38,6 +67,12 @@ export class MessageEditor extends LitElement {
+@@ -38,6 +67,14 @@ export class MessageEditor extends LitElement {
  	@property() onAbort?: () => void;
  	@property() onModelSelect?: () => void;
  	@property() onThinkingChange?: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
@@ -523,11 +526,13 @@ index f0987c4d1..790cd3919 100644
 +	/** Suggestions shown after an "@" that starts a word (tab references). */
 +	@property({ attribute: false }) mentionProvider?: SlashCommandProvider;
 +	@property({ attribute: false }) accessory?: ComposerAccessory;
++	/** Extra buttons beside the attachment button (e.g. dictation): they get the text and a setter. */
++	@property({ attribute: false }) actions?: ComposerAccessory;
 +	@property({ attribute: false }) modelLabel?: ModelLabel;
  	@property() onFilesChange?: (files: Attachment[]) => void;
  	@property() attachments: Attachment[] = [];
  	@property() maxFiles = 10;
-@@ -47,6 +82,12 @@ export class MessageEditor extends LitElement {
+@@ -47,6 +84,12 @@ export class MessageEditor extends LitElement {
  
  	@state() processingFiles = false;
  	@state() isDragging = false;
@@ -540,7 +545,7 @@ index f0987c4d1..790cd3919 100644
  	private fileInputRef = createRef<HTMLInputElement>();
  
  	protected override createRenderRoot(): HTMLElement | DocumentFragment {
-@@ -57,12 +98,118 @@ export class MessageEditor extends LitElement {
+@@ -57,12 +100,118 @@ export class MessageEditor extends LitElement {
  		const textarea = e.target as HTMLTextAreaElement;
  		this.value = textarea.value;
  		this.onInput?.(this.value);
@@ -660,7 +665,7 @@ index f0987c4d1..790cd3919 100644
  				this.handleSend();
  			}
  		} else if (e.key === "Escape" && this.isStreaming) {
-@@ -225,6 +372,67 @@ export class MessageEditor extends LitElement {
+@@ -225,6 +374,67 @@ export class MessageEditor extends LitElement {
  		this.processingFiles = false;
  	};
  
@@ -728,7 +733,7 @@ index f0987c4d1..790cd3919 100644
  	override firstUpdated() {
  		const textarea = this.textareaRef.value;
  		if (textarea) {
-@@ -236,6 +444,7 @@ export class MessageEditor extends LitElement {
+@@ -236,6 +446,7 @@ export class MessageEditor extends LitElement {
  		// Check if current model supports thinking/reasoning
  		const model = this.currentModel;
  		const supportsThinking = model?.reasoning === true; // Models with reasoning:true support thinking
@@ -736,7 +741,7 @@ index f0987c4d1..790cd3919 100644
  
  		return html`
  			<div
-@@ -274,13 +483,25 @@ export class MessageEditor extends LitElement {
+@@ -274,13 +485,25 @@ export class MessageEditor extends LitElement {
  						: ""
  				}
  
@@ -762,7 +767,15 @@ index f0987c4d1..790cd3919 100644
  					@keydown=${this.handleKeyDown}
  					@paste=${this.handlePaste}
  					${ref(this.textareaRef)}
-@@ -348,7 +569,7 @@ export class MessageEditor extends LitElement {
+@@ -319,6 +542,7 @@ export class MessageEditor extends LitElement {
+ 									`
+ 								: ""
+ 						}
++						${this.actions ? this.actions(this.value, (v: string) => this.setComposerValue(v)) : ""}
+ 						${
+ 							supportsThinking && this.showThinkingSelector
+ 								? html`
+@@ -348,7 +572,7 @@ export class MessageEditor extends LitElement {
  					</div>
  
  					<!-- Model selector and send on the right -->
@@ -771,7 +784,7 @@ index f0987c4d1..790cd3919 100644
  						${
  							this.showModelSelector && this.currentModel
  								? html`
-@@ -365,9 +586,10 @@ export class MessageEditor extends LitElement {
+@@ -365,9 +589,10 @@ export class MessageEditor extends LitElement {
  										},
  										children: html`
  											${icon(Sparkles, "sm")}
@@ -784,7 +797,7 @@ index f0987c4d1..790cd3919 100644
  									})}
  								`
  								: ""
-@@ -383,17 +605,17 @@ export class MessageEditor extends LitElement {
+@@ -383,17 +608,17 @@ export class MessageEditor extends LitElement {
  										className: "h-8 w-8",
  									})}
  								`
