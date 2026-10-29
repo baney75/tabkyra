@@ -41,6 +41,7 @@ export class DictationSettings extends LitElement {
 	@state() private auto?: { key: ModelKey; why: string };
 	@state() private gpu = false;
 	@state() private stored = 0;
+	private device?: Awaited<ReturnType<typeof profileDevice>>;
 
 	protected override createRenderRoot(): HTMLElement {
 		return this;
@@ -51,12 +52,14 @@ export class DictationSettings extends LitElement {
 		this.setting = await readSetting();
 		const device = await profileDevice();
 		this.gpu = device.webgpu;
-		this.auto = chooseModel(device);
+		this.device = device;
+		this.auto = chooseModel(device, this.setting.language);
 		this.stored = await cachedModelBytes();
 	}
 
 	private async save(next: Partial<DictationSetting>): Promise<void> {
 		this.setting = { ...this.setting, ...next };
+		if (this.device) this.auto = chooseModel(this.device, this.setting.language);
 		await writeSetting(this.setting);
 	}
 

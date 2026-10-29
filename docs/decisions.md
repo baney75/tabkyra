@@ -591,21 +591,26 @@ and merge the codex login and copilot login thing". Sources and details: `docs/a
 
 Owner, 2026-10-29: "add a stt using a strong model that runs on device based on the device".
 
-- **On the device, in the browser.** transformers.js 4.3.2 runs the model in a dedicated module
-  worker (`src/dictation/worker.ts`); the audio never leaves the browser. The onnxruntime-web
-  runtime (wasm and its loader, about 27 MB) ships in the extension under `ort/`; the build
-  rewrites transformers.js's jsDelivr default to it and fails if that default moves. MV3 allows no
+- **On the device, in the browser.** transformers.js 4.3.2 (pinned exactly) runs the model in a
+  dedicated module worker (`src/dictation/worker.ts`); the audio never leaves the browser. The
+  onnxruntime-web runtime (wasm and its loader, about 27 MB) ships in the extension under `ort/`,
+  copied from the onnxruntime-web transformers.js resolves; the build rewrites transformers.js's
+  jsDelivr default to it, fails if that default moves or isn't bundled, and fails if the built
+  worker still names jsDelivr. That runtime is the onnxruntime-web dev build transformers.js 4.3.2
+  depends on (1.31.0-dev.20260914), not a release; overriding it would run untested pairs. The
+  package also installs onnxruntime-node and sharp for developers and CI; neither is bundled. MV3 allows no
   remote code, so nothing executable is fetched. The CSP gains `'wasm-unsafe-eval'`, which wasm
   needs and which allows no JavaScript eval.
 - **Model files come from Hugging Face**, pinned to a commit per model, downloaded on first use
-  and kept in Cache Storage. Settings > Privacy > Dictation shows the size and removes them. The
-  first dictation says what it downloads and how big it is.
+  and kept in Cache Storage. Settings > Privacy > Dictation shows the size and removes them. A
+  first download of 200 MB or more is asked for (OK downloads it; Cancel switches to the processor
+  model for the language and saves that); a smaller one is announced.
 - **The device picks the model** (`chooseModel`, `src/dictation/tiers.ts`): WebGPU with
   shader-f16, 8 GB or more and 1 GiB buffers get Whisper large-v3 turbo (fp16 encoder, q4f16
   decoder, about 1.5 GB); another GPU gets Whisper small (about 590 MB); a processor gets
   Moonshine base for English or Whisper base otherwise (63 and 77 MB); under 4 GB gets the tiny
   ones. 4-bit encoders are left out: they are reported to drop speech. Settings can pick any
-  model and a language.
+  model and a language; a language other than English never gets an English-only model.
 - **Measured, not assumed.** `cli/eval/dictation.mjs` loads each model in the built extension's
   worker and transcribes reference clips, then presses the composer's microphone with Chromium's
   fake microphone and reads the composer. Results in `docs/benchmarks.md`.
@@ -613,7 +618,8 @@ Owner, 2026-10-29: "add a stt using a strong model that runs on device based on 
   extension pages and absent in Helium; it may replace the download where it exists, later.
 - **The microphone permission** is asked for in an extension tab (`mic-permission.html`): a side
   panel can't show the prompt. The grant then covers the panel.
-- **Silence is trimmed before transcription**, and a silent recording sends nothing: Whisper
-  writes words into silence.
+- **Silence is trimmed before transcription**, and a recording with less than a quarter second of
+  sound above the noise floor (silence, a click, a cough) sends nothing: Whisper writes words into
+  silence. Recording stops at 5 minutes and transcribes what was said.
 - **pi-web-ui gains `composerActions`** (`AgentInterface` to `MessageEditor` `actions`), a slot
   for buttons beside the attachment button, through `patches/pi-mono.patch`.

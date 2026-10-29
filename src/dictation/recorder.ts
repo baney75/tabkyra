@@ -46,6 +46,11 @@ export function trimSilence(samples: Float32Array, rate = SAMPLE_RATE): Float32A
 	// Loud all the way through (talking from press to stop, or steady noise): nothing to trim.
 	if (peak < floor * 3) return samples;
 	const threshold = Math.max(0.006, floor * 2.5, peak * 0.05);
+	// A click or a cough is a frame or two; speech is at least a quarter second of them. Whisper
+	// writes words into a clip with no speech, so a near-silent one is not sent.
+	let loud = 0;
+	for (const e of energy) if (e >= threshold) loud++;
+	if (loud < 8) return new Float32Array(0);
 	let first = 0;
 	while (first < frames && energy[first] < threshold) first++;
 	let last = frames - 1;
@@ -72,7 +77,8 @@ export async function toModelInput(encoded: ArrayBuffer): Promise<Float32Array> 
 	}
 }
 
-export async function startRecording(): Promise<Recording> {
+/** Start recording. `onLimit` runs if the recording reaches MAX_SECONDS and stops by itself. */
+export async function startRecording(onLimit?: () => void): Promise<Recording> {
 	let stream: MediaStream;
 	try {
 		stream = await navigator.mediaDevices.getUserMedia({
@@ -99,7 +105,9 @@ export async function startRecording(): Promise<Recording> {
 		void meter.close();
 	};
 	const limit = setTimeout(() => {
-		if (recorder.state === "recording") recorder.stop();
+		if (recorder.state !== "recording") return;
+		if (onLimit) onLimit();
+		else recorder.stop();
 	}, MAX_SECONDS * 1000);
 	const done = new Promise<Blob>((resolve) => {
 		recorder.onstop = () => {

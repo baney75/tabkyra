@@ -159,7 +159,8 @@ try {
 					const audio = (await ctx.decodeAudioData(encoded)).getChannelData(0).slice();
 					await ctx.close();
 					const t1 = performance.now();
-					const reply = await ask({ type: "transcribe", id: ++seq, model: spec, audio, language: spec.multilingual ? "en" : undefined });
+					// No language: what the product sends by default ("auto"), so Whisper detects it.
+						const reply = await ask({ type: "transcribe", id: ++seq, model: spec, audio, language: undefined });
 					out.push({ name: clip.name, seconds: audio.length / 16000, ms: Math.round(performance.now() - t1), text: reply.text ?? "", error: reply.message });
 				}
 				worker.terminate();

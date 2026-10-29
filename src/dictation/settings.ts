@@ -33,7 +33,7 @@ export async function writeSetting(setting: DictationSetting): Promise<void> {
 export async function resolveModel(): Promise<{ spec: ModelSpec; language?: string; why: string }> {
 	const setting = await readSetting();
 	const device = await profileDevice();
-	const auto = chooseModel(device);
+	const auto = chooseModel(device, setting.language);
 	let key: ModelKey = setting.model === "auto" ? auto.key : setting.model;
 	// A chosen GPU model on a device without a GPU can't run: fall back to the automatic one.
 	if (MODELS[key].device === "webgpu" && !device.webgpu) key = auto.key;
@@ -61,12 +61,24 @@ export async function cachedModelBytes(): Promise<number> {
 	}
 }
 
-/** Whether this model's files are already downloaded (transformers.js keys its cache by file URL). */
+/** transformers.js's file name suffix for each dtype (DEFAULT_DTYPE_SUFFIX_MAPPING). */
+const DTYPE_SUFFIX: Record<string, string> = { fp32: "", fp16: "_fp16", q8: "_quantized", q4: "_q4", q4f16: "_q4f16" };
+
+/** The model's weight files, as transformers.js names them in the repo. */
+export function modelFiles(spec: ModelSpec): string[] {
+	return Object.entries(spec.dtype).map(([name, dtype]) => `onnx/${name}${DTYPE_SUFFIX[dtype] ?? `_${dtype}`}.onnx`);
+}
+
+/**
+ * Whether this model's weights are downloaded (transformers.js keys its cache by file URL). Its
+ * small files alone don't count: a download cut off after them still has the weights to fetch.
+ */
 export async function modelCached(spec: ModelSpec): Promise<boolean> {
 	try {
 		const cache = await caches.open(MODEL_CACHE);
-		const prefix = `/${spec.id}/resolve/${spec.revision}/`;
-		return (await cache.keys()).some((request) => request.url.includes(prefix));
+		const base = `/${spec.id}/resolve/${spec.revision}/`;
+		const urls = (await cache.keys()).map((request) => request.url);
+		return modelFiles(spec).every((file) => urls.some((url) => url.includes(base + file)));
 	} catch {
 		return false;
 	}

@@ -43,7 +43,7 @@ export const MODELS = {
 		id: "onnx-community/moonshine-base-ONNX",
 		revision: "b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad",
 		device: "wasm",
-		dtype: { encoder_model: "quantized", decoder_model_merged: "quantized" },
+		dtype: { encoder_model: "q8", decoder_model_merged: "q8" },
 		multilingual: false,
 		downloadMB: 63,
 		label: "Moonshine base (English)",
@@ -52,7 +52,7 @@ export const MODELS = {
 		id: "onnx-community/whisper-base",
 		revision: "1846881b6b3a3024392c1eea3ad983695bc23925",
 		device: "wasm",
-		dtype: { encoder_model: "quantized", decoder_model_merged: "quantized" },
+		dtype: { encoder_model: "q8", decoder_model_merged: "q8" },
 		multilingual: true,
 		downloadMB: 77,
 		label: "Whisper base",
@@ -61,7 +61,7 @@ export const MODELS = {
 		id: "onnx-community/moonshine-tiny-ONNX",
 		revision: "a6da1241cd305dcd64eab1edbd615f2bb9aabb95",
 		device: "wasm",
-		dtype: { encoder_model: "quantized", decoder_model_merged: "quantized" },
+		dtype: { encoder_model: "q8", decoder_model_merged: "q8" },
 		multilingual: false,
 		downloadMB: 28,
 		label: "Moonshine tiny (English)",
@@ -70,7 +70,7 @@ export const MODELS = {
 		id: "onnx-community/whisper-tiny",
 		revision: "ff4177021cc41f7db950912b73ea4fdf7d01d8e7",
 		device: "wasm",
-		dtype: { encoder_model: "quantized", decoder_model_merged: "quantized" },
+		dtype: { encoder_model: "q8", decoder_model_merged: "q8" },
 		multilingual: true,
 		downloadMB: 41,
 		label: "Whisper tiny",
@@ -79,9 +79,12 @@ export const MODELS = {
 
 export type ModelKey = keyof typeof MODELS;
 
-/** The model for this device, and why, in words the setting can show. */
-export function chooseModel(device: DeviceProfile): { key: ModelKey; why: string } {
-	const english = /^en\b/i.test(device.language);
+/**
+ * The model for this device, and why, in words the setting can show. `language` is the one chosen
+ * in Settings: "auto" goes by the browser's language, and only English gets an English-only model.
+ */
+export function chooseModel(device: DeviceProfile, language = "auto"): { key: ModelKey; why: string } {
+	const english = language === "auto" ? /^en\b/i.test(device.language) : language === "en";
 	const memory = device.memoryGB;
 	const bigBuffers = device.maxBufferBytes === undefined || device.maxBufferBytes >= 1024 ** 3;
 	if (device.webgpu && device.f16 && (memory === undefined || memory >= 8) && bigBuffers)

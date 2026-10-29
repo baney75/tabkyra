@@ -2,7 +2,7 @@
  * Dictation worker: speech to text on this device, off the side panel's thread. The audio never
  * leaves the browser; only the model's files are downloaded, once, from Hugging Face at a pinned
  * revision and cached in this extension's storage. The ONNX runtime is the copy shipped inside the
- * extension (dist/ort/): no code is fetched from anywhere.
+ * extension (<out>/ort/): no code is fetched from anywhere.
  */
 
 import { env, pipeline } from "@huggingface/transformers";
@@ -34,8 +34,7 @@ type Transcriber = (
 ) => Promise<{ text: string } | Array<{ text: string }>>;
 
 let loaded: { key: string; run: Transcriber } | undefined;
-let loading: Promise<Transcriber> | undefined;
-let loadingKey = "";
+const loading = new Map<string, Promise<Transcriber>>();
 
 const post = (message: DictationResponse) => (self as unknown as Worker).postMessage(message);
 
@@ -43,9 +42,13 @@ async function load(request: Extract<DictationRequest, { type: "load" }>): Promi
 	const { model } = request;
 	const key = `${model.id}@${model.revision}:${model.device}:${JSON.stringify(model.dtype)}`;
 	if (loaded?.key === key) return loaded.run;
-	if (loading && loadingKey === key) return loading;
-	loadingKey = key;
-	loading = (async () => {
+	const pending = loading.get(key);
+	if (pending) return pending;
+	const task = (async () => {
+		// One model in memory at a time: the previous one's GPU and wasm memory is freed first.
+		const previous = loaded;
+		loaded = undefined;
+		await (previous?.run as { dispose?: () => Promise<void> } | undefined)?.dispose?.();
 		const files = new Map<string, { loaded: number; total: number }>();
 		const run = (await pipeline("automatic-speech-recognition", model.id, {
 			revision: model.revision,
@@ -66,10 +69,11 @@ async function load(request: Extract<DictationRequest, { type: "load" }>): Promi
 		loaded = { key, run };
 		return run;
 	})();
+	loading.set(key, task);
 	try {
-		return await loading;
+		return await task;
 	} finally {
-		loading = undefined;
+		loading.delete(key);
 	}
 }
 
