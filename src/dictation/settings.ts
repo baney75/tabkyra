@@ -46,7 +46,8 @@ export async function resolveModel(): Promise<{ spec: ModelSpec; language?: stri
 	let key: ModelKey = setting.model === "auto" ? auto.key : setting.model;
 	// A chosen model that can't do the job falls back to the automatic one: a GPU model on a device
 	// without a GPU, or an English-only model asked for another language.
-	const otherLanguage = setting.language !== "auto" && setting.language !== "en";
+	// "auto" means the browser's language, as in chooseModel.
+	const otherLanguage = setting.language === "auto" ? !/^en\b/i.test(device.language) : setting.language !== "en";
 	if (MODELS[key].device === "webgpu" && !device.webgpu) key = auto.key;
 	if (otherLanguage && !MODELS[key].multilingual) key = auto.key;
 	const spec = MODELS[key];

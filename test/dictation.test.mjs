@@ -76,6 +76,10 @@ test("silence is cut before the model, and talk from press to stop is kept whole
 	const hiss = noise(5, 0.08);
 	const noisy = syllables(0.2, 12).map((x, i) => x + hiss[i % hiss.length]);
 	assert.equal(trimSilence(noisy).length, noisy.length, "speech over steady noise reaches the model");
+	// A short phrase in a long, mostly quiet recording: a few loud frames among hundreds of quiet ones.
+	const phrase = join(tone(5, 0.0005), syllables(0.3, 2), tone(5, 0.0005));
+	const kept = trimSilence(phrase);
+	assert.ok(kept.length >= 0.6 * rate && kept.length <= 1.3 * rate, `kept ${kept.length / rate} s of a 0.7 s phrase`);
 });
 
 test("long audio is cut into pieces at quiet points for one-pass models, and transcription time scales with it", () => {
@@ -117,6 +121,13 @@ test("the setting falls back to automatic, and a GPU model on a device without o
 	assert.equal((await readSetting()).model, "auto", "prototype names aren't models");
 	stored.value = { model: "moonshine", language: "es" };
 	assert.equal((await resolveModel()).spec.multilingual, true, "an English-only model chosen with Spanish gives way");
+	// "Detect it" on a German browser is German: an English-only model gives way there too.
+	const browserLanguage = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), "language");
+	Object.defineProperty(navigator, "language", { value: "de-DE", configurable: true });
+	stored.value = { model: "moonshine", language: "auto" };
+	assert.equal((await resolveModel()).spec.multilingual, true, "auto on a German browser");
+	delete navigator.language;
+	if (browserLanguage) assert.equal(navigator.language, browserLanguage.get.call(navigator));
 	stored.value = { model: "auto", language: "de" };
 	const german = await resolveModel();
 	assert.equal(german.spec.multilingual, true, "automatic with German picks a multilingual model");

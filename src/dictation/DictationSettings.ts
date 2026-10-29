@@ -113,8 +113,9 @@ export class DictationSettings extends LitElement {
 				${
 					this.setting.model !== "auto" &&
 					!MODELS[this.setting.model].multilingual &&
-					this.setting.language !== "auto" &&
-					this.setting.language !== "en" &&
+					(this.setting.language === "auto"
+						? !/^en\b/i.test(navigator.language)
+						: this.setting.language !== "en") &&
 					auto
 						? html`<p class="text-xs text-muted-foreground">
 								${MODELS[this.setting.model].label} is English-only, so ${

@@ -603,8 +603,9 @@ Owner, 2026-10-29: "add a stt using a strong model that runs on device based on 
   needs and which allows no JavaScript eval.
 - **Model files come from Hugging Face**, pinned to a commit per model, downloaded on first use
   and kept in Cache Storage. Settings > Privacy > Dictation shows the size and removes them. A
-  first download of 200 MB or more is asked for (OK downloads it; Cancel switches to the processor
-  model for the language and saves that); a smaller one is announced.
+  first download of 200 MB or more is asked for (OK downloads it; Cancel, or Esc, only stops this
+  dictation, since a native dialog can't tell the two apart; a smaller model is chosen in
+  Settings); a smaller download is announced.
 - **The device picks the model** (`chooseModel`, `src/dictation/tiers.ts`): WebGPU with
   shader-f16, 8 GB or more and 1 GiB buffers get Whisper large-v3 turbo (fp16 encoder, q4f16
   decoder, about 1.5 GB); another GPU gets Whisper small (about 590 MB); a processor gets

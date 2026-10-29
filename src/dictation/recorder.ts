@@ -41,9 +41,11 @@ export function trimSilence(samples: Float32Array, rate = SAMPLE_RATE): Float32A
 	const sorted = Array.from(energy).sort((a, b) => a - b);
 	const floor = sorted[Math.floor(frames * 0.1)] ?? 0;
 	const peak = sorted[frames - 1] ?? 0;
-	const high = sorted[Math.floor(frames * 0.9)] ?? 0;
+	// The quietest of the 8 loudest frames: the quarter second the speech gate below needs. A
+	// short phrase in a long quiet recording is a few frames, so a percentile would miss it.
+	const high = sorted[Math.max(0, frames - 8)] ?? 0;
 	// No speech: everything is near zero (a quiet microphone still clears this), or the level is
-	// flat, which is a fan or a hum: speech rises and falls between words and syllables.
+	// flat, which is a fan or a hum: speech rises well above the quiet between words.
 	if (peak < 0.003 || high <= floor * 1.5) return new Float32Array(0);
 	// Speech over loud steady noise (a car, a cafe): it varies, but no part is quiet enough to
 	// cut, so all of it goes to the model.

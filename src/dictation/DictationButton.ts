@@ -11,7 +11,7 @@ import { Loader2, Mic, Square } from "lucide";
 import { Toast } from "../components/Toast.js";
 import type { DictationRequest, DictationResponse, ModelSpec } from "./protocol.js";
 import { MAX_SECONDS, MicPermissionError, type Recording, startRecording, trimSilence } from "./recorder.js";
-import { modelCached, readSetting, resolveModel, transcribeTimeoutMs, writeSetting } from "./settings.js";
+import { modelCached, resolveModel, transcribeTimeoutMs } from "./settings.js";
 import { MODELS } from "./tiers.js";
 
 type Phase = "idle" | "starting" | "recording" | "transcribing";
@@ -87,19 +87,18 @@ function preload(model: ModelSpec): Promise<DictationResponse> {
 }
 
 /**
- * A large first download is the user's call: download it, or switch Settings to the
- * processor model for their language (asked once; the choice is saved).
+ * A large first download is the user's call. Cancel (or Esc, which a native dialog reads as
+ * Cancel) only stops this dictation and changes no setting; a smaller model is a choice made in
+ * Settings. `live` is false once the start was cancelled: then no prompt is shown.
  */
-async function confirmDownload(spec: ModelSpec, language?: string): Promise<boolean> {
+async function confirmDownload(spec: ModelSpec, live: () => boolean): Promise<boolean> {
 	if (spec.downloadMB < ASK_ABOVE_MB || (await modelCached(spec))) return true;
-	const english = !language ? /^en\b/i.test(navigator.language) : language === "en";
-	const light = english ? MODELS.moonshine : MODELS.base;
-	const yes = confirm(
+	if (!live()) return false;
+	const light = [MODELS.moonshine, MODELS.base].map((m) => `${m.label} (${m.downloadMB} MB)`).join(" or ");
+	return confirm(
 		`Dictation runs ${spec.label} on this computer. It's a ${spec.downloadMB} MB download, once.\n\n` +
-			`OK downloads it now. Cancel uses ${light.label} (${light.downloadMB} MB) instead; Settings > Privacy changes it later.`,
+			`OK downloads it now. Cancel stops; for a smaller model, such as ${light}, pick one in Settings > Privacy > Dictation.`,
 	);
-	if (!yes) await writeSetting({ ...(await readSetting()), model: english ? "moonshine" : "base" });
-	return yes;
 }
 
 @customElement("tabkyra-dictation")
@@ -163,9 +162,12 @@ export class DictationButton extends LitElement {
 		document.addEventListener("keydown", this.onDocumentKeydown, true);
 		let recording: Recording;
 		try {
-			let model = await resolveModel();
+			const model = await resolveModel();
 			if (!live()) return;
-			if (!(await confirmDownload(model.spec, model.language))) model = await resolveModel();
+			if (!(await confirmDownload(model.spec, live))) {
+				if (live()) this.cancel();
+				return;
+			}
 			if (!live()) return;
 			this.model = model;
 			recording = await startRecording(() => {
