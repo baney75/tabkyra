@@ -1,3 +1,4 @@
+import { LIBRARY_SKILLS } from "virtual:library-skills";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
@@ -6,6 +7,7 @@ import type { HostCommunityStatus } from "../bridge/protocol.js";
 import {
 	COMMUNITY_STATUS_KEY,
 	type CommunityAction,
+	communityLibrary,
 	PANEL_COMMUNITY_MESSAGE,
 	readCommunityStatus,
 } from "../community/status.js";
@@ -13,6 +15,7 @@ import { Toast } from "../components/Toast.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import { getFaviconUrl } from "../utils/favicon.js";
+import { libraryRows } from "./skill-list.js";
 
 export class SkillsTab extends SettingsTab {
 	label = "Skills";
@@ -62,8 +65,8 @@ export class SkillsTab extends SettingsTab {
 		const checked = status?.enabled ?? true;
 		const lastCheck = status?.lastCheck ? new Date(status.lastCheck).toLocaleString() : "never";
 		return html`
-			<div class="border border-border rounded-lg p-4 bg-card space-y-3">
-				<h3 class="font-semibold text-foreground">Community skills</h3>
+			<section class="space-y-2" aria-labelledby="community-skills-heading">
+				<h3 id="community-skills-heading" class="text-sm font-semibold text-foreground">Community skills</h3>
 				<label class="flex items-center gap-2 text-sm text-foreground cursor-pointer">
 					<input
 						type="checkbox"
@@ -72,7 +75,7 @@ export class SkillsTab extends SettingsTab {
 					/>
 					Receive community skills
 				</label>
-				<p class="text-sm text-muted-foreground">
+				<p class="text-xs text-muted-foreground">
 					Reviewed by a maintainer, signed, checked about once a day. Each is used only on the sites it names. Your own edits are kept and never overwritten.
 				</p>
 				${
@@ -86,11 +89,11 @@ export class SkillsTab extends SettingsTab {
 									children: "Check now",
 								})}
 							</div>`
-						: html`<p class="text-sm text-muted-foreground">
+						: html`<p class="text-xs text-muted-foreground">
 								No word from the native host yet; community skills sync through it (tabkyra doctor).
 							</p>`
 				}
-				${status?.error ? html`<p class="text-sm text-destructive">${status.error}</p>` : nothing}
+				${status?.error ? html`<p class="text-xs text-destructive">${status.error}</p>` : nothing}
 				${
 					status && status.skills.length > 0
 						? html`<div class="flex flex-col gap-2">
@@ -98,17 +101,17 @@ export class SkillsTab extends SettingsTab {
 									(skill) => html`<div class="space-y-1">
 										<div class="font-semibold text-foreground">${skill.name}</div>
 										<div class="text-xs text-muted-foreground font-mono">${skill.provenance}; ${skill.sites.join(", ")}</div>
-										<p class="text-sm text-muted-foreground">${skill.description}</p>
+										<p class="text-xs text-muted-foreground">${skill.description}</p>
 									</div>`,
 								)}
 							</div>`
 						: nothing
 				}
-				${status?.notes.map((note) => html`<p class="text-sm text-muted-foreground">${note}</p>`)}
+				${status?.notes.map((note) => html`<p class="text-xs text-muted-foreground">${note}</p>`)}
 				${status?.removed
 					.slice(-5)
-					.map((r) => html`<p class="text-sm text-muted-foreground">Removed ${r.name}: ${r.reason}</p>`)}
-			</div>
+					.map((r) => html`<p class="text-xs text-muted-foreground">Removed ${r.name}: ${r.reason}</p>`)}
+			</section>
 		`;
 	}
 
@@ -273,28 +276,29 @@ export class SkillsTab extends SettingsTab {
 
 	renderSkillInfo(skill: Skill) {
 		return html`
-			<div class="border border-border rounded-lg p-4 bg-card">
+			<div class="border border-border rounded-lg p-3 bg-card">
 				<div class="flex items-start gap-3">
-					<img src=${getFaviconUrl(skill.domainPatterns[0])} width="24" height="24" alt="" class="rounded mt-1" />
-					<div class="flex-1 space-y-2">
-						<h3 class="font-semibold text-foreground">${skill.name}</h3>
-						<div class="text-xs text-muted-foreground font-mono">
+					<img src=${getFaviconUrl(skill.domainPatterns[0])} width="20" height="20" alt="" class="rounded mt-0.5" />
+					<div class="flex-1 min-w-0 space-y-1">
+						<h4 class="text-sm font-semibold text-foreground">${skill.name}</h4>
+						<div class="text-xs text-muted-foreground font-mono break-words">
 							${skill.domainPatterns.join(", ")}
 						</div>
-						<p class="text-sm text-muted-foreground">${skill.shortDescription}</p>
-						<div class="flex gap-2 pt-2">
+						<p class="text-xs text-muted-foreground">${skill.shortDescription}</p>
+						<div class="flex gap-2 pt-1">
 							${Button({
 								variant: "outline",
 								size: "sm",
 								onClick: () => this.editSkill(skill),
 								children: "Edit",
 							})}
-							${Button({
-								variant: "destructive",
-								size: "sm",
-								onClick: () => this.deleteSkill(skill),
-								children: "Delete",
-							})}
+							<button
+								type="button"
+								class="h-8 rounded-md px-3 text-xs font-medium text-destructive hover:bg-destructive/10 outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+								@click=${() => this.deleteSkill(skill)}
+							>
+								Delete
+							</button>
 						</div>
 					</div>
 				</div>
@@ -422,6 +426,40 @@ export class SkillsTab extends SettingsTab {
 		`;
 	}
 
+	/** Every library skill: bundled with Tabkyra, then the community skills this browser receives. */
+	private renderLibrary(): TemplateResult {
+		const community = communityLibrary(this.community, new Set());
+		const rows = libraryRows(LIBRARY_SKILLS, community, this.searchQuery);
+		const total = libraryRows(LIBRARY_SKILLS, community, "").length;
+		return html`
+			<section class="flex flex-col gap-2" aria-labelledby="library-skills-heading">
+				<div>
+					<h3 id="library-skills-heading" class="text-sm font-semibold text-foreground mb-1">
+						Library <span class="font-normal text-muted-foreground">· ${this.searchQuery ? `${rows.length} of ${total}` : total}</span>
+					</h3>
+					<p class="text-xs text-muted-foreground">
+						Type / in the chat to run one. <code class="font-mono">tabkyra skill install</code> also installs them for Claude Code, Codex and OpenCode.
+					</p>
+				</div>
+				${
+					rows.length === 0
+						? html`<p class="text-sm text-muted-foreground py-2">No library skill matches.</p>`
+						: html`<ul class="flex flex-col divide-y divide-border rounded-lg border border-border" data-testid="library-skills">
+								${rows.map(
+									(row) => html`<li class="flex flex-col gap-0.5 px-3 py-2" data-skill=${row.name}>
+										<span class="flex items-center gap-2">
+											<span class="font-mono text-sm text-foreground">/${row.name}</span>
+											${row.source === "community" ? html`<span class="rounded-full border border-border px-1.5 text-[10px] text-muted-foreground">community</span>` : nothing}
+										</span>
+										<span class="text-xs text-muted-foreground line-clamp-2" title=${row.summary}>${row.summary}</span>
+									</li>`,
+								)}
+							</ul>`
+				}
+			</section>
+		`;
+	}
+
 	render() {
 		// Show conflict resolution UI if there are conflicts
 		if (this.importConflicts.length > 0) {
@@ -433,45 +471,45 @@ export class SkillsTab extends SettingsTab {
 		}
 
 		return html`
-			<div class="flex flex-col gap-6">
-				${this.renderCommunity()}
-				<p class="text-sm text-muted-foreground">
-					Manage site skills - reusable JavaScript libraries for domain-specific automation.
-				</p>
+			<div class="flex flex-col gap-5">
+				<input
+					type="search"
+					aria-label="Find a skill"
+					placeholder="Find a skill"
+					.value=${this.searchQuery}
+					@input=${(e: Event) => this.onSearchInput(e)}
+					class="w-full h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				/>
 
-				<div class="flex gap-2">
-					${Button({
-						variant: "outline",
-						onClick: () => this.exportSkills(),
-						children: "Export Skills",
-					})}
-					${Button({
-						variant: "outline",
-						onClick: () => this.importSkills(),
-						children: "Import Skills",
-					})}
-				</div>
+				${this.renderLibrary()}
 
-				${Input({
-					type: "text",
-					placeholder: "Search skills by name, domain, or description...",
-					value: this.searchQuery,
-					onInput: (e) => this.onSearchInput(e),
-				})}
+				<section class="flex flex-col gap-3 pt-5 border-t border-border" aria-labelledby="site-skills-heading">
+					<div>
+						<h3 id="site-skills-heading" class="text-sm font-semibold text-foreground mb-1">
+							Site skills <span class="font-normal text-muted-foreground">· ${this.searchQuery ? `${this.filteredSkills.length} of ${this.skills.length}` : this.skills.length}</span>
+						</h3>
+						<p class="text-xs text-muted-foreground">JavaScript helpers the agent loads on the sites they name.</p>
+					</div>
+					<div class="flex gap-2">
+						${Button({ variant: "outline", size: "sm", onClick: () => this.exportSkills(), children: "Export" })}
+						${Button({ variant: "outline", size: "sm", onClick: () => this.importSkills(), children: "Import" })}
+					</div>
+					${
+						this.filteredSkills.length === 0
+							? html`<p class="text-sm text-muted-foreground py-2">
+									${this.searchQuery ? "No site skill matches." : "No site skills yet. Record one from the side panel's More menu."}
+								</p>`
+							: html`<div class="flex flex-col gap-2">
+									${this.filteredSkills.map((skill) =>
+										this.editingSkill && this.editingSkill.name === skill.name
+											? this.renderSkillEditor(this.editingSkill)
+											: this.renderSkillInfo(skill),
+									)}
+								</div>`
+					}
+				</section>
 
-				${
-					this.filteredSkills.length === 0
-						? html`<div class="text-center text-muted-foreground py-8">
-							${this.searchQuery ? "No skills match your search" : "No skills created yet"}
-						</div>`
-						: html`<div class="flex flex-col gap-3">
-							${this.filteredSkills.map((skill) =>
-								this.editingSkill && this.editingSkill.name === skill.name
-									? this.renderSkillEditor(this.editingSkill)
-									: this.renderSkillInfo(skill),
-							)}
-						</div>`
-				}
+				<div class="pt-5 border-t border-border">${this.renderCommunity()}</div>
 			</div>
 		`;
 	}

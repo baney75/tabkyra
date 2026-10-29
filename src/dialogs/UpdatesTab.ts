@@ -155,8 +155,8 @@ export class UpdatesTab extends SettingsTab {
 						: nothing
 				}
 
-				<div class="space-y-2">
-					<div class="text-sm font-medium text-foreground">Updates</div>
+				<fieldset class="space-y-2">
+					<legend class="text-sm font-medium text-foreground mb-2">When there's an update</legend>
 					${(Object.keys(POLICY_LABELS) as UpdatePolicy[]).map(
 						(value) => html`<label class="flex items-center gap-2 text-sm text-foreground">
 							<input
@@ -174,7 +174,7 @@ export class UpdatesTab extends SettingsTab {
 						Install automatically waits until no agent has run for a few minutes, and checks again right before it
 						reloads.
 					</p>
-				</div>
+				</fieldset>
 			</div>
 		`;
 	}

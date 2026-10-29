@@ -3,6 +3,7 @@ import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { Chart, type ChartConfiguration, registerables } from "chart.js";
 import { html, type PropertyValues } from "lit";
 import { getTabkyraStorage } from "../storage/app-storage.js";
+import { formatCost } from "../utils/format-cost.js";
 
 // Register Chart.js components
 Chart.register(...registerables);
@@ -287,26 +288,26 @@ export class CostsTab extends SettingsTab {
 		// Date range labels
 		const dateRangeLabels = {
 			today: "Today",
-			week: "Last 7 Days",
-			"30days": "Last 30 Days",
-			"90days": "Last 90 Days",
-			alltime: "All Time",
+			week: "Last 7 days",
+			"30days": "Last 30 days",
+			"90days": "Last 90 days",
+			alltime: "All time",
 		};
 
 		// Date range options for Select component
 		const dateRangeOptions: SelectOption[] = [
 			{ value: "today", label: "Today" },
-			{ value: "week", label: "Last 7 Days" },
-			{ value: "30days", label: "Last 30 Days" },
-			{ value: "90days", label: "Last 90 Days" },
-			{ value: "alltime", label: "All Time" },
+			{ value: "week", label: "Last 7 days" },
+			{ value: "30days", label: "Last 30 days" },
+			{ value: "90days", label: "Last 90 days" },
+			{ value: "alltime", label: "All time" },
 		];
 
 		return html`
 			<div class="space-y-6">
-				<!-- Date Range Selector -->
-				<div class="flex items-center gap-4">
-					<label class="text-sm font-medium text-foreground">Date Range:</label>
+				<!-- Date range -->
+				<div class="flex items-center gap-3">
+					<span class="text-sm font-medium text-foreground">Date range</span>
 					${Select({
 						value: this.dateRange,
 						options: dateRangeOptions,
@@ -320,59 +321,69 @@ export class CostsTab extends SettingsTab {
 				<!-- Summary Card -->
 				<div class="p-4 rounded-lg border border-border bg-background">
 					<div class="text-sm text-muted-foreground">${dateRangeLabels[this.dateRange]}</div>
-					<div class="text-2xl font-bold text-foreground">$${this.totalCost.toFixed(4)}</div>
+					<div class="text-2xl font-bold text-foreground">${formatCost(this.totalCost)}</div>
 				</div>
 
-				<!-- Stacked Bar Chart -->
-				<div class="p-4 rounded-lg border border-border bg-background">
-					<h3 class="text-sm font-medium mb-4">Daily Costs by Model</h3>
-					<div style="height: min(400px, 40vh)">
-						<canvas id="line-chart"></canvas>
-					</div>
-				</div>
+				${
+					this.loading || this.totalCost > 0 || Object.keys(this.byProvider).length > 0
+						? html`
+						<!-- Stacked Bar Chart -->
+						<div class="p-4 rounded-lg border border-border bg-background">
+							<h3 class="text-sm font-medium mb-4">Daily cost by model</h3>
+							<div style="height: min(400px, 40vh)">
+								<canvas id="line-chart"></canvas>
+							</div>
+						</div>
 
-				<!-- Charts Row -->
-				<div class="grid grid-cols-2 gap-4">
-					<!-- Provider Breakdown -->
-					<div class="p-4 rounded-lg border border-border bg-background">
-						<h3 class="text-sm font-medium mb-4">By Provider</h3>
-						${
-							Object.keys(this.byProvider).length > 0
-								? html`
-										<div style="height: 200px">
-											<canvas id="provider-chart"></canvas>
-										</div>
-									`
-								: html`<div class="text-center py-8 text-muted-foreground text-sm">No cost data yet</div>`
-						}
-					</div>
+						<!-- Charts Row -->
+						<div class="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(13rem,1fr))]">
+							<!-- Provider Breakdown -->
+							<div class="p-4 rounded-lg border border-border bg-background">
+								<h3 class="text-sm font-medium mb-4">By provider</h3>
+								${
+									Object.keys(this.byProvider).length > 0
+										? html`
+												<div style="height: 200px">
+													<canvas id="provider-chart"></canvas>
+												</div>
+											`
+										: html`<div class="text-center py-8 text-muted-foreground text-sm">No cost data yet</div>`
+								}
+							</div>
 
-					<!-- Model Breakdown Table -->
-					<div class="p-4 rounded-lg border border-border bg-background">
-						<h3 class="text-sm font-medium mb-4">By Model</h3>
-						${
-							sortedModels.length > 0
-								? html`
-										<div class="space-y-2 max-h-[200px] overflow-y-auto">
-											${sortedModels.map(
-												([modelKey, cost]) => html`
-													<div class="flex justify-between items-center text-sm">
-														<span class="text-foreground truncate" title="${modelKey}">${modelKey}</span>
-														<span class="font-semibold text-foreground ml-2">$${cost.toFixed(4)}</span>
-													</div>
-												`,
-											)}
-										</div>
-									`
-								: html`<div class="text-center py-8 text-muted-foreground text-sm">No cost data yet</div>`
-						}
-					</div>
-				</div>
+							<!-- Model Breakdown Table -->
+							<div class="p-4 rounded-lg border border-border bg-background">
+								<h3 class="text-sm font-medium mb-4">By model</h3>
+								${
+									sortedModels.length > 0
+										? html`
+												<div class="space-y-2 max-h-[200px] overflow-y-auto">
+													${sortedModels.map(
+														([modelKey, cost]) => html`
+															<div class="flex justify-between items-center text-sm">
+																<span class="text-foreground truncate" title="${modelKey}">${modelKey}</span>
+																<span class="font-semibold text-foreground ml-2">${formatCost(cost)}</span>
+															</div>
+														`,
+													)}
+												</div>
+											`
+										: html`<div class="text-center py-8 text-muted-foreground text-sm">No cost data yet</div>`
+								}
+							</div>
+						</div>
+
+							`
+						: html`<div class="p-6 rounded-lg border border-border bg-background text-center space-y-1">
+								<p class="text-sm font-medium text-foreground">No costs in this range</p>
+								<p class="text-xs text-muted-foreground">Costs show here after the side panel's agent uses a paid model. Free models cost nothing.</p>
+							</div>`
+				}
 
 				<!-- Info note -->
 				<div class="text-xs text-muted-foreground p-3 rounded-lg border border-border bg-secondary/20">
-					<strong>Note:</strong> Costs are tracked independently from sessions. Deleting sessions will not affect cost
-					history. Aborted requests may not capture full token usage.
+					Costs are kept apart from chats, so deleting a chat keeps its cost here. A stopped request may not record all
+					of its tokens.
 				</div>
 			</div>
 		`;

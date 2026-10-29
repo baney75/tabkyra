@@ -1,7 +1,7 @@
 // The side panel's display helpers: readable model and provider names, prices that stay
 // prices, how the active tab reaches the agent, and the starter chips.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { escapeCurrency } from "../src/transcript/currency.ts";
 import { modelDisplayName, modelLabelParts, providerDisplayName } from "../src/models/display.ts";
@@ -174,4 +174,41 @@ test("subscription commands are copyable blocks, and a failed copy is a toast th
 test("opening Settings doesn't scroll Providers past Free mode to reach the search box", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
 	assert.match(tab, /\.focus\(\{ preventScroll: true \}\)/);
+});
+
+test("Settings > Skills lists every library skill, bundled and community, with no cap", async () => {
+	const { libraryRows } = await import("../src/dialogs/skill-list.ts");
+	const folders = readdirSync(new URL("../skills/", import.meta.url), { withFileTypes: true })
+		.filter((d) => d.isDirectory())
+		.map((d) => d.name);
+	const bundled = folders.map((name) => ({ name, description: `${name} does a thing. More detail.` }));
+	const many = Array.from({ length: 150 }, (_, i) => ({ name: `community-${i}`, description: "Shared. Detail." }));
+	const rows = libraryRows(bundled, [...many, { name: folders[0], description: "A clash." }], "");
+	assert.equal(rows.length, folders.length + 150, "every bundled and community skill, a clash listed once");
+	for (const name of folders) assert.ok(rows.some((r) => r.name === name && r.source === "bundled"), name);
+	assert.equal(rows.find((r) => r.name === folders[0])?.summary, `${folders[0]} does a thing.`);
+	assert.deepEqual(libraryRows(bundled, [], "/osint").map((r) => r.name), ["osint"]);
+	const tab = readFileSync(new URL("../src/dialogs/SkillsTab.ts", import.meta.url), "utf8");
+	assert.match(tab, /libraryRows\(LIBRARY_SKILLS, community, this\.searchQuery\)/);
+	assert.doesNotMatch(tab, /variant: "destructive"/, "Delete is a quiet button, not a red slab on every card");
+});
+
+test("the / menu lists every skill: no cap drops any", async () => {
+	const { skillMenuItems } = await import("../src/composer/menus.ts");
+	const site = Array.from({ length: 150 }, (_, i) => ({ name: `site-${i}`, shortDescription: "x", domainPatterns: [`s${i}.example`] }));
+	const library = Array.from({ length: 40 }, (_, i) => ({ name: `lib-${i}`, description: "y." }));
+	assert.equal(skillMenuItems("", site, new Set(), library).length, 190);
+});
+
+test("costs read as money, and the CORS proxy no longer names a sign-in Tabkyra refuses", async () => {
+	const { formatCost } = await import("../src/utils/format-cost.ts");
+	assert.equal(formatCost(0), "$0.00");
+	assert.equal(formatCost(0.0042), "$0.0042");
+	assert.equal(formatCost(1.5), "$1.50");
+	assert.equal(formatCost(Number.NaN), "$0.00");
+	const patch = readFileSync(new URL("../patches/pi-mono.patch", import.meta.url), "utf8");
+	assert.match(patch, /\+.*Required for Z\.ai\./);
+	const costs = readFileSync(new URL("../src/dialogs/CostsTab.ts", import.meta.url), "utf8");
+	assert.match(costs, /No costs in this range/);
+	assert.doesNotMatch(costs, /toFixed\(4\)/);
 });
