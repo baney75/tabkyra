@@ -637,7 +637,10 @@ export async function enableNetworkCapture(tabId: number): Promise<void> {
 export interface NetworkDetail extends NetworkEntry {
 	/** Keys and value types of what was sent, never the values (mask-body.ts). */
 	requestShape?: string;
+	/** The complete response, masked, when it fits; otherwise responseShape. */
 	responseBody?: string;
+	/** Keys and value types of a JSON response too long to show whole. */
+	responseShape?: string;
 	/** Why there is no body: still loading, evicted, binary, ... */
 	bodyNote?: string;
 }
@@ -691,7 +694,7 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 		throw new Error(
 			`No captured request ${requestId}. Call read_network for the current list (capture starts on the first call).`,
 		);
-	const detail: NetworkDetail = { ...entry, url: maskUrl(entry.url) };
+	const detail: NetworkDetail = { ...entry, ...maskedUrls(entry) };
 	const pageUrl = (await chrome.tabs.get(tabId)).url;
 	if (!pageCouldRead(entry, pageUrl)) {
 		detail.bodyNote =
@@ -721,13 +724,23 @@ export async function readNetworkDetail(tabId: number, requestId: string): Promi
 					text.length > BODY_CEILING
 						? `The response is ${Math.round(text.length / 1e6)} MB, over the 2 MB this reads; fetch it with run_js.`
 						: "The response isn't complete JSON, so it isn't shown; fetch it with run_js.";
-			else detail.responseBody = cap(masked, MAX_RESPONSE_BODY);
+			else if (masked.length <= MAX_RESPONSE_BODY) detail.responseBody = masked;
+			else {
+				// A cut-off fragment isn't the complete JSON promised: the shape, and where the rest is.
+				detail.responseShape = cap(bodyShape(masked, "application/json"), MAX_REQUEST_SHAPE);
+				detail.bodyNote = `The JSON response is ${masked.length} characters, more than the ${MAX_RESPONSE_BODY} shown; its shape is below. Fetch the values you need with run_js.`;
+			}
 		} catch {
 			detail.bodyNote =
 				"The browser no longer has this response body (it keeps recent ones only). Reload and read again.";
 		}
 	}
 	return detail;
+}
+
+/** Query strings and fragments can carry tokens (?token=..., #token=...): masked for every reader. */
+function maskedUrls(entry: NetworkEntry): Pick<NetworkEntry, "url" | "documentURL"> {
+	return { url: maskUrl(entry.url), documentURL: entry.documentURL && maskUrl(entry.documentURL) };
 }
 
 function cap(text: string, max: number): string {
@@ -742,8 +755,7 @@ export function networkCapturing(tabId: number): boolean {
 export function readNetwork(tabId: number, clear = false): NetworkEntry[] {
 	const buf = networkBuffers.get(tabId);
 	if (!buf) return [];
-	// Query strings can carry tokens (?token=...): masked for every reader.
-	const out = [...buf.values()].map((e) => ({ ...e, url: maskUrl(e.url) }));
+	const out = [...buf.values()].map((e) => ({ ...e, ...maskedUrls(e) }));
 	if (clear) buf.clear();
 	return out;
 }

@@ -211,6 +211,51 @@ test("what read_network shows of bodies: request shapes without values, JSON res
 	assert.ok(performance.now() - t0 < 500, "linear on a 1 MB body");
 });
 
+test("review 4 (#73): request bodies guess no layout, schemes in any case, URLs masked wherever they appear", async () => {
+	const { maskJsonResponse, bodyShape, isSecretName, holdsCredential, maskUrl } = await import("../src/browser/mask-body.ts");
+	// A body whose content type promises no fields shows no names: base64, GraphQL, a cut-off JSON body.
+	for (const [body, type] of [
+		["YWRhOmh1bnRlcjI=", "text/plain;charset=UTF-8"],
+		['mutation{login(input:{password:"hunter2",note:"a=b"}){id}}', "application/graphql"],
+		['{"password":"hunter2","avatar":"iVBOR', "application/json"],
+		["password=hunter2", ""],
+	])
+		assert.doesNotMatch(bodyShape(body, type), /hunter2|YWRh/, body);
+	// Multipart names come from each part's header, never from a value that looks like one.
+	const multipart = '--b\r\nContent-Disposition: form-data; name="note"\r\n\r\nContent-Disposition: form-data; name="hunter2-private"\r\n--b\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\n\r\nx\r\n--b--';
+	assert.equal(bodyShape(multipart, "multipart/form-data; boundary=b"), "multipart fields: note, file");
+	// Schemes in any case, with or without a digit; one-time codes; signed URLs; tokens used as keys.
+	for (const text of ["Bearer abcdefghijklmnopqrstuvwxyz", "bearer abc123def456ghi789jkl0"]) assert.ok(holdsCredential(text), text);
+	for (const name of ["one_time_code", "pin_code", "X-Amz-Signature", "X-Goog-Signature", "cachedToken"]) assert.ok(isSecretName(name), name);
+	assert.equal(isSecretName("cached_tokens"), false);
+	const keyed = maskJsonResponse('{"sessions":{"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3OCJ9.c2lnbmF0dXJlMTIz":{"device":"x"}}}');
+	assert.doesNotMatch(keyed, /eyJhbGci/);
+	assert.deepEqual(JSON.parse(keyed), { sessions: { "[secret]": { device: "x" } } });
+	// URLs: fragments, OAuth codes, presigned signatures and relative addresses.
+	assert.equal(maskUrl("https://app.example/cb#access_token=abc&state=1"), "https://app.example/cb#access_token=%5Bsecret%5D&state=1");
+	assert.equal(maskUrl("https://app.example/cb?code=4/0Aabc&state=1"), "https://app.example/cb?code=%5Bsecret%5D&state=1");
+	assert.doesNotMatch(maskUrl("https://b.s3.amazonaws.com/k?X-Amz-Signature=deadbeef&X-Amz-Expires=60"), /deadbeef/);
+	assert.equal(maskUrl("/password/reset?token=abc123"), "/password/reset?token=%5Bsecret%5D");
+	assert.equal(maskUrl("/plain/path?page=2"), "/plain/path?page=2");
+	// Linear on a run of JWT prefixes, the worst case for an unanchored token regex.
+	const t0 = performance.now();
+	holdsCredential("eyJ-".repeat(250000));
+	maskJsonResponse(JSON.stringify({ blob: "eyJ-".repeat(250000) }));
+	assert.ok(performance.now() - t0 < 500, "linear on 1 MB of eyJ-");
+});
+
+test("read_network masks the page address of each request; read_page and inspect_page mask frame and form addresses", () => {
+	const cdp = readFileSync(new URL("../src/browser/cdp.ts", import.meta.url), "utf8");
+	assert.match(cdp, /documentURL: entry\.documentURL && maskUrl\(entry\.documentURL\)/);
+	assert.doesNotMatch(cdp, /\{ \.\.\.e(ntry)?, url: maskUrl/, "every serialized entry goes through maskedUrls");
+	assert.doesNotMatch(cdp, /responseBody = cap\(/, "a cut fragment is never sent as the response body");
+	const page = readFileSync(new URL("../src/browser/page.ts", import.meta.url), "utf8");
+	assert.match(page, /f\.action = maskUrl\(f\.action\)/);
+	assert.match(page, /f\.src = maskUrl\(f\.src\)/);
+	assert.match(page, /snap\.url = maskUrl\(snap\.url\)/);
+	assert.match(page, /split\(\/\[\?#\]\/\)\[0\]/, "frame labels drop the query and fragment");
+});
+
 test("a response the page itself couldn't read stays unread: same origin only", async () => {
 	const { pageCouldRead } = await import("../src/browser/cdp.ts");
 	const page = "https://shop.example/cart";

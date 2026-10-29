@@ -2,11 +2,15 @@
  * What an agent sees of a request's bodies through read_network, kept to promises that hold:
  *
  * - A request body is shown as its shape only: keys and value types, never a value. It carries
- *   what the user typed, passwords included, and no name list catches every password field.
+ *   what the user typed, passwords included, and no name list catches every password field. Form
+ *   and multipart field names are read only when the content type says so; anything else is a
+ *   length and a type.
  * - A response body is shown only when it is complete JSON. Values under credential-named keys
  *   become "[secret]", edited in place so every other byte (64-bit ids, key order, duplicate
- *   keys) comes back as sent. A string value that holds a credential as text ("token=...",
- *   'password:"..."', a bearer token, a JWT) is masked whole, never partly parsed.
+ *   keys) comes back as sent. A string (value or key) that holds a credential as text
+ *   ("token=...", 'password:"..."', a bearer token, a JWT) is masked whole, never partly parsed.
+ *   A secret stored as data, such as {"name":"session_id","value":"..."}, has no credential name
+ *   or shape to go by and is shown: the masking is by name and shape, not by meaning.
  * - Anything else (HTML, plain text, a body cut off) isn't shown; get_page_html and run_js cover it.
  *
  * Every pass is linear in the text.
@@ -16,14 +20,16 @@ export const SECRET = "[secret]";
 
 /** Names that contain a credential word but hold counts and settings. */
 const DATA_NAMES =
-	/^(?:(?:max|min|total|input|output|prompt|completion|cached|reasoning|remaining|used)tokens?|tokens?(?:count|limit|usage|used|total|budget|remaining|type)|tokenizer|tokenized)$/;
+	/^(?:(?:max|min|total|input|output|prompt|completion|cached|reasoning|remaining|used)tokens|tokens?(?:count|limit|usage|used|total|budget|remaining|type)|tokenizer|tokenized)$/;
 /** Exact names that are credentials. */
 const EXACT = /^(?:sid|pin|pw|pwd|pass|key|session|otp|auth|sig|signature|code2fa|cvv|cvc|csc)$/;
 /** Credential words anywhere in a name: password_confirmation, secretKey, x-csrf-token. */
 const ANYWHERE =
-	/password|passwd|passphrase|passcode|secret|token|apikey|accesskey|privatekey|signingkey|authkey|credential|csrf|xsrf|cookie|sessionid|sessid|sessionkey|authorization|codeverifier|authcode|jwt|recoverycode|backupcode|verificationcode|smscode|twofactor|2fa|mfacode|totp|cardnumber|cardno|iban|ssn/;
-/** Credential words at the end of a name: user_pw, loginPwd, confirm_pass, cardPin, mfa_otp. */
-const ENDING = /(?:pw|pwd|pass|pin|otp|cvv|cvc)$/;
+	/password|passwd|passphrase|passcode|secret|token|apikey|accesskey|privatekey|signingkey|authkey|credential|csrf|xsrf|cookie|sessionid|sessid|sessionkey|authorization|codeverifier|authcode|jwt|recoverycode|backupcode|verificationcode|smscode|onetimecode|otpcode|pincode|securitycode|resetcode|logincode|confirmationcode|twofactor|2fa|mfacode|totp|cardnumber|cardno|iban|ssn/;
+/** Credential words at the end of a name: user_pw, loginPwd, confirm_pass, cardPin, mfa_otp, X-Amz-Signature. */
+const ENDING = /(?:pw|pwd|pass|pin|otp|cvv|cvc|signature)$/;
+/** Query parameters that are credentials in a URL but ordinary data in a body: an OAuth code. */
+const URL_ONLY = /^(?:code|ticket|nonce)$/;
 
 /** A field name that holds a credential: compared with punctuation, case and trailing digits removed. */
 export function isSecretName(name: string): boolean {
@@ -36,9 +42,10 @@ export function isSecretName(name: string): boolean {
 /** A string that carries a credential: a token shape, or a credential name followed by : or =. */
 export function holdsCredential(text: string): boolean {
 	if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text)) return true;
-	// A scheme and a token: long, with a digit, so "Basic Subscription" stays.
-	if (/\b(?:Bearer|Basic|Digest)\s+(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{16,}/.test(text)) return true;
-	if (/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/.test(text)) return true;
+	// A scheme and a token of 16 or more characters, any case: "Basic Subscription" stays.
+	if (/\b(?:bearer|basic|digest)\s+[A-Za-z0-9._~+/=-]{16,}/i.test(text)) return true;
+	// Anchored at a token's start, so a run like "eyJ-eyJ-..." is scanned once, not from every eyJ.
+	if (/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/.test(text)) return true;
 	if (
 		/\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{16,}|xox[abprs]-[\w-]{10,}|AKIA[0-9A-Z]{16}|AIza[\w-]{30,}|ya29\.[\w-]{20,}|npm_\w{30,}|hf_\w{30,})/.test(
 			text,
@@ -71,7 +78,9 @@ export function bodyShape(text: string, contentType = ""): string {
 			/* not JSON */
 		}
 	}
-	if (type.includes("x-www-form-urlencoded") || /^[^\s=&]+=[^\s]*$/.test(t)) {
+	// Field names only where the content type promises them: guessing a form from other text
+	// (GraphQL, base64, a cut-off JSON body) would report values as names.
+	if (type.includes("x-www-form-urlencoded")) {
 		const keys = t.split("&").map((pair) => {
 			const key = pair.split("=")[0] ?? "";
 			try {
@@ -82,8 +91,16 @@ export function bodyShape(text: string, contentType = ""): string {
 		});
 		return `form fields: ${keys.join(", ")}`;
 	}
-	if (type.includes("multipart/")) {
-		const names = [...t.matchAll(/Content-Disposition:[^\r\n]*\bname="([^"\r\n]*)"/gi)].map((m) => m[1]);
+	const boundary = type.includes("multipart/") ? contentType.match(/boundary="?([^";]+)"?/i)?.[1] : undefined;
+	if (boundary) {
+		// Each part's own header block, never its contents: a field value can contain text that
+		// looks like a header.
+		const names = text
+			.split(`--${boundary}`)
+			.slice(1)
+			.map((part) => part.replace(/^\r?\n/, "").split(/\r?\n\r?\n/)[0] ?? "")
+			.map((head) => head.match(/^Content-Disposition:[^\r\n]*\bname="([^"\r\n]*)"/im)?.[1])
+			.filter((name): name is string => name !== undefined);
 		return `multipart fields: ${names.join(", ")}`;
 	}
 	return `${t.length} characters of ${type || "text"}; values not shown`;
@@ -144,7 +161,8 @@ export function maskJsonResponse(text: string): string | undefined {
 			const token = text.slice(i, end);
 			if (top?.obj && top.key) {
 				lastKey = JSON.parse(token) as string;
-				out += token;
+				// A credential used as a key (a session map keyed by token) is masked like a value.
+				out += holdsCredential(lastKey) ? `"${SECRET}"` : token;
 			} else out += holdsCredential(JSON.parse(token) as string) ? `"${SECRET}"` : token;
 			i = end;
 			continue;
@@ -169,14 +187,33 @@ export function maskJsonResponse(text: string): string | undefined {
 	return out;
 }
 
-/** A URL with credential-named query parameters, token-shaped values and userinfo masked. */
+/**
+ * A URL with credential-named query parameters, token-shaped values and userinfo masked, in the
+ * query and in a fragment written as parameters (an OAuth implicit flow's #token=...).
+ */
 export function maskUrl(url: string): string {
 	try {
-		const u = new URL(url);
+		// A relative address (a form's action="/reset?token=...") is read against a stand-in base.
+		const relative = !/^[a-z][a-z0-9+.-]*:/i.test(url);
+		const u = new URL(url, "https://relative.invalid");
 		let changed = false;
+		const secret = (key: string, value: string) => isSecretName(key) || URL_ONLY.test(key) || holdsCredential(value);
 		for (const [key, value] of [...u.searchParams]) {
-			if (isSecretName(key) || holdsCredential(value)) {
+			if (secret(key, value)) {
 				u.searchParams.set(key, SECRET);
+				changed = true;
+			}
+		}
+		if (u.hash.includes("=")) {
+			const fragment = new URLSearchParams(u.hash.slice(1));
+			let masked = false;
+			for (const [key, value] of [...fragment])
+				if (secret(key, value)) {
+					fragment.set(key, SECRET);
+					masked = true;
+				}
+			if (masked) {
+				u.hash = fragment.toString();
 				changed = true;
 			}
 		}
@@ -185,7 +222,8 @@ export function maskUrl(url: string): string {
 			u.password = "";
 			changed = true;
 		}
-		return changed ? u.toString() : url;
+		if (!changed) return url;
+		return relative ? `${u.pathname}${u.search}${u.hash}` : u.toString();
 	} catch {
 		return url;
 	}

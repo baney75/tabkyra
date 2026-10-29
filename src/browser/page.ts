@@ -6,6 +6,7 @@
  */
 
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
+import { maskUrl } from "./mask-body.js";
 
 const SNAPSHOT_WORLD_ID = "tabkyra-snapshot";
 const SNAPSHOT_CSP = "script-src 'unsafe-eval' 'unsafe-inline'; default-src 'none';";
@@ -354,7 +355,9 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 	const roots: Root[] = [];
 	const crossFrames: Array<{ el: Element; at: Root }> = [];
 	const isShadow = (root: Node) => root.nodeType === 11;
-	const frameUrl = (el: Element) => String((el as HTMLIFrameElement).src || el.getAttribute("src") || "");
+	// A frame's address without its query or fragment, which can carry a token (?secret=...).
+	const frameUrl = (el: Element) =>
+		String((el as HTMLIFrameElement).src || el.getAttribute("src") || "").split(/[?#]/)[0];
 	const inner = (fr: Element, at: Root) => {
 		const r = fr.getBoundingClientRect();
 		const style = (fr.ownerDocument.defaultView ?? window).getComputedStyle(fr);
@@ -374,12 +377,11 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 		if (depth > 12) return;
 		for (const el of Array.from(at.root.querySelectorAll("*"))) {
 			const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
-			// A web component that isn't rendered (hidden, display:none) adds nothing a user sees. One
-			// with display:contents has no box of its own: its children decide.
-			const contents = shadow
-				? (el.ownerDocument.defaultView ?? window).getComputedStyle(el).display === "contents"
-				: false;
-			if (shadow && (contents || isVisible(el))) visit({ ...at, root: shadow }, depth + 1);
+			// A web component with display:none adds nothing a user sees. Any other host is entered,
+			// even one with no box (display:contents, a zero-size fixed overlay): each element inside
+			// is checked on its own, and text is kept only where it renders.
+			if (shadow && (el.ownerDocument.defaultView ?? window).getComputedStyle(el).display !== "none")
+				visit({ ...at, root: shadow }, depth + 1);
 			const tag = tagOf(el);
 			if (tag !== "iframe" && tag !== "frame") continue;
 			let doc: Document | null = null;
@@ -460,19 +462,25 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 	// so the nearest ancestor with one decides.
 	const rendered = (c: Element): boolean => {
 		const view = c.ownerDocument.defaultView ?? window;
-		if (view.getComputedStyle(c).display === "contents") {
+		const style = view.getComputedStyle(c);
+		if (style.display === "contents") {
+			// No box, but its visibility still applies to what it holds.
+			if (style.visibility !== "visible") return false;
 			const up = c.parentElement ?? ((c.getRootNode() as ShadowRoot).host as Element | undefined);
 			return up ? rendered(up) : true;
 		}
 		const check = (c as Element & { checkVisibility?: (o?: Record<string, boolean>) => boolean }).checkVisibility;
 		return check ? check.call(c, { visibilityProperty: true, opacityProperty: true }) : isVisible(c);
 	};
-	// A shadow root's own text: element children that render, and text written straight into it.
+	// A shadow root's own text: element children that render, and text written straight into it
+	// when the host renders.
 	const shadowText = (root: Document | ShadowRoot) =>
 		Array.from(root.childNodes)
 			.map((c) =>
 				c.nodeType === 3
-					? (c.textContent ?? "").trim()
+					? isShadow(root) && rendered((root as ShadowRoot).host)
+						? (c.textContent ?? "").trim()
+						: ""
 					: c.nodeType === 1 &&
 							tagOf(c as Element) !== "style" &&
 							tagOf(c as Element) !== "script" &&
@@ -578,7 +586,7 @@ function pageInspect(): unknown {
 			} catch {
 				sameOrigin = false;
 			}
-			return { src: (f.getAttribute("src") ?? "").slice(0, 160), sameOrigin };
+			return { src: f.getAttribute("src") ?? "", sameOrigin };
 		});
 
 	const hosts = all.filter((el) => (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot);
@@ -648,7 +656,12 @@ function pageInspect(): unknown {
 }
 
 export async function inspectPage(tabId: number): Promise<Record<string, unknown>> {
-	return runInPage(tabId, `(${pageInspect.toString()})()`);
+	const map = await runInPage<Record<string, unknown>>(tabId, `(${pageInspect.toString()})()`);
+	// Addresses can carry tokens (/reset?token=..., an embed's ?secret=...).
+	if (typeof map.url === "string") map.url = maskUrl(map.url);
+	for (const f of (map.forms ?? []) as Array<{ action: string }>) f.action = maskUrl(f.action);
+	for (const f of (map.frames ?? []) as Array<{ src: string }>) f.src = maskUrl(f.src).slice(0, 160);
+	return map;
 }
 
 export async function snapshot(
@@ -656,10 +669,12 @@ export async function snapshot(
 	options: { maxNodes?: number; maxTextChars?: number; filter?: "interactive" | "all" } = {},
 ): Promise<Snapshot> {
 	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
-	return runInPage<Snapshot>(
+	const snap = await runInPage<Snapshot>(
 		tabId,
 		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)})`,
 	);
+	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
+	return snap;
 }
 
 /** Resolve a ref (from a snapshot) or CSS selector to its viewport center. */
@@ -765,7 +780,9 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 		// nearest ancestor with one decides.
 		const shown = (c) => {
 			const view = c.ownerDocument && c.ownerDocument.defaultView;
-			if (view && view.getComputedStyle(c).display === "contents") {
+			const style = view && view.getComputedStyle(c);
+			if (style && style.display === "contents") {
+				if (style.visibility !== "visible") return false;
 				const up = c.parentElement || (c.getRootNode && c.getRootNode().host);
 				return up ? shown(up) : true;
 			}
@@ -788,7 +805,7 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 					let doc = null;
 					try { doc = node.contentDocument; } catch { doc = null; }
 					if (doc && doc.body) {
-						parts.push("[frame " + (node.src || node.getAttribute("src") || "inline") + "]\\n" + (doc.body.innerText || ""));
+						parts.push("[frame " + (String(node.src || node.getAttribute("src") || "inline").split(/[?#]/)[0]) + "]\\n" + (doc.body.innerText || ""));
 						visit(doc, depth + 1);
 					}
 				}
