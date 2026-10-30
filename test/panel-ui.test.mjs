@@ -156,7 +156,7 @@ test("native controls follow the theme: dark mode declares color-scheme dark", (
 
 test("Settings > Providers reads top to bottom: Free mode, subscriptions, API keys with their search and list, custom providers", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
-	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", "agentSetupPromptButton(", ">API keys</h3>", 'placeholder="Find a provider"', "<provider-key-input", "${this.custom}"].map((s) => tab.indexOf(s));
+	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", "agentSetupPromptButton(", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "${this.custom}"].map((s) => tab.indexOf(s));
 	assert.ok(order.every((i) => i > 0), JSON.stringify(order));
 	assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
@@ -171,9 +171,35 @@ test("subscription commands are copyable blocks, and a failed copy is a toast th
 	assert.doesNotMatch(copy, /this\.notice/);
 });
 
-test("opening Settings doesn't scroll Providers past Free mode to reach the search box", () => {
+test("a provider's key error reads as a sentence, not the raw response", async () => {
+	const { plainReason } = await import("../src/models/key-reason.ts");
+	assert.equal(
+		plainReason('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'),
+		"the provider turned it down (invalid x-api-key).",
+	);
+	assert.match(plainReason('429 {"error":{"message":"Rate limit reached"}}'), /out of credit or over its limit \(Rate limit reached\)/);
+	assert.equal(plainReason("Failed to fetch"), "Failed to fetch.");
+	assert.equal(plainReason(undefined), "the provider didn't say why.");
+});
+
+test("opening Settings doesn't scroll Providers or light up the search box far below", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
-	assert.match(tab, /\.focus\(\{ preventScroll: true \}\)/);
+	assert.doesNotMatch(tab, /\.focus\(/, "nothing in Providers takes focus on open");
+});
+
+test("API keys are one line per provider: the key field opens on Add key, a bad key says why and stays, and a key can be removed", () => {
+	const row = readFileSync(new URL("../src/components/ProviderKeyRow.ts", import.meta.url), "utf8");
+	assert.match(row, /this\.editing \? this\.renderEditor\(\) : nothing/, "no key field until asked for");
+	assert.match(row, /Add key/);
+	assert.match(row, /providerKeys\.delete\(this\.provider\)/, "Remove deletes the key");
+	assert.match(row, /That key didn't work: /);
+	assert.doesNotMatch(row, /setTimeout/, "the reason doesn't vanish on a timer");
+	assert.doesNotMatch(row, /stopReason === "stop"/, "a reasoning model that hits the token limit still proves the key");
+	for (const file of ["../src/dialogs/ApiKeysTab.ts", "../src/dialogs/ApiKeyDialog.ts"]) {
+		const source = readFileSync(new URL(file, import.meta.url), "utf8");
+		assert.match(source, /<tabkyra-provider-key /, file);
+		assert.doesNotMatch(source, /<provider-key-input/, file);
+	}
 });
 
 test("Settings > Skills lists every library skill, bundled and community, with no cap", async () => {

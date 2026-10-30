@@ -1,6 +1,6 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { type CustomProvider, SettingsTab } from "@mariozechner/pi-web-ui";
-import { html, type TemplateResult } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { Toast } from "../components/Toast.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import { syncCustomProviderCorsRules } from "../utils/custom-provider-cors.js";
@@ -58,10 +58,10 @@ export class CustomProvidersTab extends SettingsTab {
 	private renderProvider(provider: CustomProvider): TemplateResult {
 		const modelCount = provider.models?.length ?? 0;
 		return html`
-			<div class="flex items-center justify-between p-4 rounded-lg border border-border bg-card">
+			<div class="flex items-center justify-between gap-2 rounded-md border border-border p-3">
 				<div class="flex-1 min-w-0">
 					<div class="text-sm font-medium text-foreground truncate">${provider.name}</div>
-					<div class="text-xs text-muted-foreground mt-1 truncate">
+					<div class="text-xs text-muted-foreground mt-0.5 truncate">
 						<span class="capitalize">${provider.type}</span>
 						${provider.baseUrl ? html` • ${provider.baseUrl}` : ""}
 						• ${modelCount} ${modelCount === 1 ? "model" : "models"}
@@ -77,27 +77,20 @@ export class CustomProvidersTab extends SettingsTab {
 
 	render(): TemplateResult {
 		return html`
-			<div class="flex flex-col gap-4">
-				<div class="flex items-start justify-between gap-4">
-					<div>
-						<h3 class="text-sm font-semibold text-foreground mb-2">Custom Providers</h3>
-						<p class="text-sm text-muted-foreground">
-							Add OpenAI- or Anthropic-compatible endpoints (e.g. OpenRouter, Together, or a self-hosted server)
-							by base URL and API key. Defined models appear in the model selector. Keys are stored locally.
-						</p>
-					</div>
-					${Button({ variant: "default", size: "sm", onClick: () => this.add(), children: "Add Provider" })}
+			<div class="flex flex-col gap-3">
+				<div>
+					<h3 class="text-sm font-semibold text-foreground mb-1">Custom providers</h3>
+					<p class="text-xs text-muted-foreground">
+						Any OpenAI- or Anthropic-compatible endpoint, such as Together or a server you run, by base URL and key.
+						Its models join the model picker. Keys stay in this browser.
+					</p>
 				</div>
-
 				${
 					this.providers.length === 0
-						? html`<div class="text-sm text-muted-foreground text-center py-8">
-								No custom providers yet. Click "Add Provider" to get started.
-							</div>`
-						: html`<div class="flex flex-col gap-3">
-								${this.providers.map((p) => this.renderProvider(p))}
-							</div>`
+						? nothing
+						: html`<div class="flex flex-col gap-2">${this.providers.map((p) => this.renderProvider(p))}</div>`
 				}
+				<div>${Button({ variant: "outline", size: "sm", onClick: () => this.add(), children: "Add Provider" })}</div>
 			</div>
 		`;
 	}

@@ -2,7 +2,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Toast } from "../components/Toast.js";
-import { request, type SubscriptionStatus, subscriptionStatus } from "./client.js";
+import { request, SubscriptionRequestError, type SubscriptionStatus, subscriptionStatus } from "./client.js";
 import { CLI_MCP_SETUP, COPILOT, SIWC } from "./constants.js";
 import { refreshSubscriptionModels } from "./stream.js";
 
@@ -18,6 +18,8 @@ export const CHATGPT_WELCOME_KEY = "tabkyra.chatgptPlanWelcomeShown";
 export class SubscriptionsSection extends LitElement {
 	@state() private status?: SubscriptionStatus;
 	@state() private error?: string;
+	/** The native host isn't connected: the usual reason, and a setup step, not a failure. */
+	@state() private noHost = false;
 	@state() private busy?: "chatgpt" | "copilot";
 	@state() private deviceCode?: { userCode: string; verificationUri: string };
 	@state() private welcome = false;
@@ -40,8 +42,10 @@ export class SubscriptionsSection extends LitElement {
 		try {
 			this.status = await subscriptionStatus(true);
 			this.error = undefined;
+			this.noHost = false;
 		} catch (err) {
 			this.error = err instanceof Error ? err.message : String(err);
+			this.noHost = err instanceof SubscriptionRequestError && err.code === "no_host";
 		}
 	}
 
@@ -225,8 +229,14 @@ export class SubscriptionsSection extends LitElement {
 				</div>
 				${
 					this.error
-						? html`<div class="flex flex-col gap-2">
-								<p class="text-xs text-destructive">Subscription sign-ins need Tabkyra's native host. Run this in a terminal, then reopen Settings. (${this.error})</p>
+						? html`<div class="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3" data-subscription-setup>
+								<p class="text-xs text-foreground">
+									${
+										this.noHost
+											? "Subscription sign-ins run in Tabkyra's helper on this computer, which isn't connected. Run this in a terminal, then reopen Settings."
+											: html`Subscription sign-ins aren't available: ${this.error} Running this in a terminal usually fixes it.`
+									}
+								</p>
 								${this.command("Set up Tabkyra", "tabkyra setup")}
 							</div>`
 						: nothing
