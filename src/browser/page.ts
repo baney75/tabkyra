@@ -335,10 +335,20 @@ export function refPoint(el: Element): { x: number; y: number } | { cover: strin
 		typeof root.elementFromPoint === "function"
 			? root.elementFromPoint(x, y)
 			: el.ownerDocument.elementFromPoint(x, y);
+	// Up the composed tree: slotted content goes to its slot, a shadow root to its host.
+	const up = (n: Node): Node | null => (n as Element).assignedSlot ?? n.parentNode ?? (n as ShadowRoot).host ?? null;
 	const inside = (node: Node | null, target: Node) => {
-		for (let n: Node | null = node; n; n = n.parentNode ?? (n as ShadowRoot).host ?? null)
-			if (n === target) return true;
+		for (let n: Node | null = node; n; n = up(n)) if (n === target) return true;
 		return false;
+	};
+	// A control nested in the target (a row's Delete button, an option's checkbox) takes the
+	// click for itself, so a point on it doesn't reach the target.
+	const CONTROL =
+		"a[href],button,input,select,textarea,[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=menuitem],[role=option]";
+	const nestedControl = (at: Element) => {
+		for (let n: Node | null = at; n && n !== el; n = up(n))
+			if (n.nodeType === 1 && (n as Element).matches(CONTROL)) return n as Element;
+		return null;
 	};
 	const labels = Array.from((el as HTMLInputElement).labels ?? []);
 	// A card whose whole area is one overlay link to the same address as the title link under
@@ -354,7 +364,7 @@ export function refPoint(el: Element): { x: number; y: number } | { cover: strin
 		return mine.split("#")[0] !== here;
 	};
 	const reaches = (at: Element | null) =>
-		!!at && (inside(at, el) || labels.some((l) => inside(at, l)) || sameLink(at));
+		!!at && ((inside(at, el) && !nestedControl(at)) || labels.some((l) => inside(at, l)) || sameLink(at));
 	const r = el.getBoundingClientRect();
 	const points: Array<[number, number]> = [];
 	for (const box of Array.from(el.getClientRects()).slice(0, 4))
@@ -382,6 +392,41 @@ export function refPoint(el: Element): { x: number; y: number } | { cover: strin
 		.slice(0, 40);
 	const role = first.getAttribute("role");
 	return { cover: `${first.tagName.toLowerCase()}${role ? ` (${role})` : ""}${name ? ` "${name}"` : ""}` };
+}
+/**
+ * What covers a same-origin frame at the point a click inside it would use, in any page above
+ * it: a banner over the frame takes the click even when nothing covers the element inside.
+ * (x, y) is in the element's own document. Hit tests run in the frame's own tree, so a frame
+ * inside a shadow root is compared within that root. Null when every level is clear or can't
+ * be tested. Self-contained.
+ */
+export function refFrameCover(el: Element, x: number, y: number): string | null {
+	for (
+		let win: Window | null = el.ownerDocument.defaultView;
+		win && win !== win.parent && win.frameElement;
+		win = win.parent
+	) {
+		const fr = win.frameElement as HTMLElement;
+		const fr0 = fr.getBoundingClientRect();
+		const st = (fr.ownerDocument.defaultView || window).getComputedStyle(fr);
+		const kx = fr0.width / (fr.offsetWidth || fr0.width || 1);
+		const ky = fr0.height / (fr.offsetHeight || fr0.height || 1);
+		x = fr0.left + (fr.clientLeft + Number.parseFloat(st.paddingLeft || "0") + x) * kx;
+		y = fr0.top + (fr.clientTop + Number.parseFloat(st.paddingTop || "0") + y) * ky;
+		const root = fr.getRootNode() as Document | ShadowRoot;
+		const over =
+			typeof root.elementFromPoint === "function"
+				? root.elementFromPoint(x, y)
+				: fr.ownerDocument.elementFromPoint(x, y);
+		if (over && over !== fr && !fr.contains(over)) {
+			const name = (over.getAttribute("aria-label") || over.textContent || "")
+				.replace(/\s+/g, " ")
+				.trim()
+				.slice(0, 40);
+			return over.tagName.toLowerCase() + (name ? ` "${name}"` : "");
+		}
+	}
+	return null;
 }
 
 /**
@@ -930,6 +975,8 @@ export async function locate(
 		const covered = (by) => new Error(who + " is covered by " + by + ", which would take the click. Close or dismiss it, or click that instead, then call read_page.");
 		if (spot.offscreen) throw new Error(who + " is outside the visible page (kept off screen), so a click can't reach it.");
 		if (spot.cover) throw covered(spot.cover);
+		const frameCover = (${refFrameCover.toString()})(el, spot.x, spot.y);
+		if (frameCover) throw covered(frameCover);
 		let x = spot.x;
 		let y = spot.y;
 		let w = r.width;
@@ -943,13 +990,6 @@ export async function locate(
 			y = fr0.top + (fr.clientTop + parseFloat(st.paddingTop || "0") + y) * ky;
 			w *= kx;
 			h *= ky;
-			// The frame itself must be on top at that point in its parent page: a banner over the
-			// frame takes the click even when nothing covers the element inside it.
-			const over = fr.ownerDocument.elementFromPoint(x, y);
-			if (over && over !== fr && !fr.contains(over)) {
-				const name = (over.getAttribute("aria-label") || over.textContent || "").replace(/s+/g, " ").trim().slice(0, 40);
-				throw covered(over.tagName.toLowerCase() + (name ? ' "' + name + '"' : ""));
-			}
 		}
 		return { x, y, width: w, height: h };
 	})()`;
@@ -962,7 +1002,7 @@ export async function fillElement(
 	target: { ref?: string; selector?: string },
 	value: string,
 ): Promise<void> {
-	const code = `(() => {
+	const code = `(async () => {
 		let el = null;
 		const ref = ${JSON.stringify(target.ref ?? "")};
 		const sel = ${JSON.stringify(target.selector ?? "")};
@@ -982,9 +1022,12 @@ export async function fillElement(
 				throw new Error("Ref " + ref + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
 			// A field under a modal, or one a dialog slid off screen as it closed.
 			el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+			if (document.visibilityState === "visible")
+				await Promise.race([new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))), new Promise((ok) => setTimeout(ok, 200))]);
 			const spot = (${refPoint.toString()})(el);
 			if (spot.offscreen) throw new Error("Ref " + ref + " is outside the visible page, so it can't be filled. Call read_page for fresh refs.");
-			if (spot.cover) throw new Error("Ref " + ref + " is covered by " + spot.cover + ". Close or dismiss it, then call read_page.");
+			const cover = spot.cover || (${refFrameCover.toString()})(el, spot.x, spot.y);
+			if (cover) throw new Error("Ref " + ref + " is covered by " + cover + ". Close or dismiss it, then call read_page.");
 		}
 		const value = ${JSON.stringify(value)};
 		// The element's own window: one in a frame belongs to another realm, where this
