@@ -62,6 +62,19 @@ const STALE_PAGE = `<!doctype html><title>Tabkyra stale</title>
 const FRAME_A = `<!doctype html><button onclick="parent.document.getElementById('r').textContent='frame A saved'">Frame save</button>`;
 const FRAME_B = `<!doctype html><button onclick="parent.document.getElementById('r').textContent='frame B other'">Frame other</button>`;
 
+// Where a click lands: a modal over a button, a link that wraps lines, a virtualized row whose
+// "Delete" button is reused for another row, a rich editor, a field in a closed dialog.
+const HIT_PAGE = `<!doctype html><title>Tabkyra hits</title><style>body{font:16px sans-serif} #col{width:140px}</style>
+<button id="under" onclick="document.getElementById('r').textContent='under clicked'">Pay now</button>
+<div id="modal" style="position:fixed;inset:0;background:rgba(0,0,0,.3)"><button onclick="this.parentNode.remove()">Dismiss</button></div>
+<p id="col">Read the <a href="#wrap" onclick="document.getElementById('r').textContent='wrap clicked'">long policy link that wraps</a> today.</p>
+<ul><li data-key="3">Invoice 3 <button onclick="document.getElementById('r').textContent='deleted '+this.parentNode.dataset.key">Delete</button></li></ul>
+<button id="virt" onclick="const li=document.querySelector('li');li.dataset.key='40';li.firstChild.textContent='Invoice 40 '">Scroll rows</button>
+<div id="ed" contenteditable="true" role="textbox" aria-label="Note" style="border:1px solid;min-height:20px"></div>
+<div id="dlg2"><input aria-label="Type DELETE"></div>
+<button onclick="document.getElementById('dlg2').style.display='none'">Close prompt</button>
+<p id="r">untouched</p>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -200,6 +213,7 @@ before(async () => {
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
 		if (req.url === "/refs") return res.end(REFS_PAGE);
 		if (req.url === "/stale") return res.end(STALE_PAGE);
+		if (req.url === "/hits") return res.end(HIT_PAGE);
 		if (req.url === "/frame-a") return res.end(FRAME_A);
 		if (req.url === "/frame-b") return res.end(FRAME_B);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
@@ -381,6 +395,41 @@ test("an old ref fails, never acting elsewhere: navigated frame, reused node, cl
 	await clickFails(confirm, "a ref to a button in a closed dialog");
 
 	assert.match(await tool("get_page_text"), /untouched/);
+});
+
+test("a click lands on its element or fails: modal, wrapped link, reused row, editor, closed field", async () => {
+	await tool("navigate", { url: `${pageUrl}hits` });
+	const page = await tool("read_page", { filter: "interactive" });
+	const call = async (name, args) => {
+		const res = await mcp.callTool({ name, arguments: args });
+		return { error: res.isError === true, text: res.content.map((c) => c.text).join("\n") };
+	};
+	const pay = await call("click", { ref: refFor(page, "Pay now") });
+	assert.equal(pay.error, true, pay.text);
+	assert.match(pay.text, /covered by/);
+	await tool("click", { ref: refFor(page, "Dismiss") });
+	await tool("click", { ref: refFor(page, "Pay now") });
+	assert.match(await tool("get_page_text"), /under clicked/);
+
+	await tool("click", { ref: refFor(page, "long policy link") });
+	assert.match(await tool("get_page_text"), /wrap clicked/);
+
+	const del = refFor(page, "Delete");
+	await tool("click", { ref: refFor(page, "Scroll rows") });
+	const reused = await call("click", { ref: del });
+	assert.equal(reused.error, true, reused.text);
+	assert.doesNotMatch(await tool("get_page_text"), /deleted 40/);
+
+	const note = refFor(page, "Note");
+	await tool("fill", { ref: note, value: "Ada" });
+	await tool("type", { ref: note, text: "!" });
+	assert.match(await tool("get_page_text"), /Ada!/);
+
+	const field = refFor(page, "Type DELETE");
+	await tool("click", { ref: refFor(page, "Close prompt") });
+	const hidden = await call("fill", { ref: field, value: "DELETE" });
+	assert.equal(hidden.error, true, hidden.text);
+	assert.match(hidden.text, /isn't shown now/);
 });
 
 test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {

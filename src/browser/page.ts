@@ -265,11 +265,104 @@ function refLive(el: Element): boolean {
 function refPrint(el: Element): string {
 	const tag = el.tagName.toLowerCase();
 	const a = (n: string) => el.getAttribute(n) ?? "";
-	const editable = tag === "input" || tag === "textarea" || tag === "select" || a("contenteditable") === "true";
-	const text = editable ? "" : (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
-	return [tag, a("role"), a("aria-label"), a("title"), a("name"), a("placeholder"), a("type"), a("href"), text].join(
-		"|",
+	const role = a("role");
+	const editable =
+		tag === "input" ||
+		tag === "textarea" ||
+		tag === "select" ||
+		(el as HTMLElement).isContentEditable ||
+		role === "textbox" ||
+		role === "searchbox" ||
+		role === "combobox";
+	const squash = (t: string | null) => (t ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+	const text = editable ? "" : squash(el.textContent);
+	// The row a control sits in: a virtualized list reuses a row's "Delete" button for another
+	// row, and only the row's text or key tells them apart.
+	const row = el.parentElement?.closest(
+		"tr,li,[role=row],[role=listitem],[role=option],[role=gridcell],[role=article]",
 	);
+	const key = (n: Element | null | undefined) =>
+		n
+			? ["data-key", "data-id", "data-index", "aria-rowindex", "aria-posinset"]
+					.map((k) => n.getAttribute(k) ?? "")
+					.join(",")
+			: "";
+	const rowText =
+		row && !row.contains(el.ownerDocument.activeElement) ? squash(row.textContent) : row ? "(editing)" : "";
+	return [
+		tag,
+		role,
+		a("aria-label"),
+		a("title"),
+		a("name"),
+		a("placeholder"),
+		a("type"),
+		a("href"),
+		text,
+		key(el),
+		key(row),
+		rowText,
+	].join("|");
+}
+
+/**
+ * Where to click an element so the click lands on it: the center of each line box it
+ * occupies, then its box's center and quarter points, taking the first point where the
+ * element (or its label) is on top. A link that wraps lines has its box center between the
+ * lines, over the paragraph or another link. An overlay link to the same address counts as
+ * reaching it. Returns what covers it instead when no point
+ * reaches it (a cookie banner, a modal, a closed menu left in the page), or the box center
+ * when the points can't be tested. Coordinates are in the element's own document.
+ * Self-contained.
+ */
+export function refPoint(el: Element): { x: number; y: number } | { cover: string } {
+	const root = el.getRootNode() as Document | ShadowRoot;
+	const hitAt = (x: number, y: number) =>
+		typeof root.elementFromPoint === "function"
+			? root.elementFromPoint(x, y)
+			: el.ownerDocument.elementFromPoint(x, y);
+	const inside = (node: Node | null, target: Node) => {
+		for (let n: Node | null = node; n; n = n.parentNode ?? (n as ShadowRoot).host ?? null)
+			if (n === target) return true;
+		return false;
+	};
+	const labels = Array.from((el as HTMLInputElement).labels ?? []);
+	// A card whose whole area is one overlay link to the same address as the title link under
+	// it: the click goes where the agent meant.
+	const link = (n: Element | null) => n?.closest("a[href]") as HTMLAnchorElement | null;
+	const sameLink = (at: Element) => {
+		const mine = link(el);
+		const theirs = link(at);
+		return !!mine && !!theirs && mine.href === theirs.href;
+	};
+	const reaches = (at: Element | null) =>
+		!!at && (inside(at, el) || labels.some((l) => inside(at, l)) || sameLink(at));
+	const r = el.getBoundingClientRect();
+	const points: Array<[number, number]> = [];
+	for (const box of Array.from(el.getClientRects()).slice(0, 4))
+		if (box.width > 0 && box.height > 0) points.push([box.left + box.width / 2, box.top + box.height / 2]);
+	points.push([r.left + r.width / 2, r.top + r.height / 2]);
+	for (const [fx, fy] of [
+		[0.25, 0.25],
+		[0.75, 0.25],
+		[0.25, 0.75],
+		[0.75, 0.75],
+	])
+		points.push([r.left + r.width * fx, r.top + r.height * fy]);
+	let first: Element | null = null;
+	for (const [x, y] of points) {
+		const at = hitAt(x, y);
+		if (reaches(at)) return { x, y };
+		first ??= at;
+	}
+	// Nothing to test against (off screen, or no hit testing here): keep the old center.
+	if (!first) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+	const name = (first.getAttribute("aria-label") || (first.textContent ?? ""))
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 40);
+	const role = first.getAttribute("role");
+	return { cover: `${first.tagName.toLowerCase()}${role ? ` (${role})` : ""}${name ? ` "${name}"` : ""}` };
 }
 
 /**
@@ -523,7 +616,8 @@ function pageSnapshot(
 			ref = undefined;
 		}
 		if (!ref) {
-			ref = `e${++seq}`;
+			do ref = `e${++seq}`;
+			while (refs.has(ref));
 			refOf.set(el, ref);
 		}
 		refs.set(ref, el);
@@ -808,8 +902,10 @@ export async function locate(
 		const st0 = (el.ownerDocument.defaultView || window).getComputedStyle(el);
 		if ((r.width === 0 && r.height === 0) || st0.visibility === "hidden")
 			throw new Error((ref ? "Ref " + ref : "That element") + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
-		let x = r.left + r.width / 2;
-		let y = r.top + r.height / 2;
+		const spot = (${refPoint.toString()})(el);
+		if (spot.cover) throw new Error((ref ? "Ref " + ref : "That element") + " is covered by " + spot.cover + ", which would take the click. Close or dismiss it, or click that instead, then call read_page.");
+		let x = spot.x;
+		let y = spot.y;
 		let w = r.width;
 		let h = r.height;
 		for (const fr of frames) {
@@ -844,6 +940,13 @@ export async function fillElement(
 		}
 		if (!el && sel) el = document.querySelector(sel);
 		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
+		if (ref) {
+			// A field in a dialog that closed keeps its ref; writing into it would put a value
+			// the user can't see into the next submit.
+			const r0 = el.getBoundingClientRect();
+			if ((r0.width === 0 && r0.height === 0) || (el.ownerDocument.defaultView || window).getComputedStyle(el).visibility === "hidden")
+				throw new Error("Ref " + ref + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
+		}
 		const value = ${JSON.stringify(value)};
 		// The element's own window: one in a frame belongs to another realm, where this
 		// window's HTMLInputElement and its value setter don't apply.
@@ -946,8 +1049,12 @@ export async function scrollPage(
 	const code = `(() => {
 		const o = ${JSON.stringify(options)};
 		let target = null;
-		if (o.ref) target = (${resolveRef.toString()})(o.ref, ${refLive.toString()}, ${refPrint.toString()});
-		else if (o.selector) target = document.querySelector(o.selector);
+		// A ref that no longer resolves falls back to a selector given with it, as click and fill do.
+		if (o.ref) {
+			try { target = (${resolveRef.toString()})(o.ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch (e) { if (!o.selector) throw e; }
+		}
+		if (!target && o.selector) target = document.querySelector(o.selector);
 		if (target) target.scrollIntoView({ block: "center", behavior: "instant" });
 		else if (o.to === "top") window.scrollTo(0, 0);
 		else if (o.to === "bottom") window.scrollTo(0, document.documentElement.scrollHeight);
