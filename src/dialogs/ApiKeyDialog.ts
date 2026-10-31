@@ -3,8 +3,8 @@ import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { getAppStorage } from "@mariozechner/pi-web-ui";
 import { html } from "lit";
 import { API_BILLING_NOTE, REMOVED_SIGN_IN_PROVIDERS } from "../auth/policy.js";
-// ProviderKeyInput custom element is registered via pi-web-ui main export
-import "@mariozechner/pi-web-ui";
+import "../components/ProviderKeyRow.js";
+import { providerDisplayName } from "../models/display.js";
 
 /**
  * Prompt dialog shown when trying to use a provider with no key. API keys only:
@@ -65,7 +65,7 @@ export class ApiKeyDialog extends DialogBase {
 				className: "flex flex-col gap-4",
 				children: html`
 					${DialogHeader({
-						title: `Connect to ${this.provider}`,
+						title: `Connect to ${providerDisplayName(this.provider)}`,
 						description: removed
 							? "Subscription sign-in for this provider was removed. Pick a provider that takes an API key in Settings."
 							: (this.note ?? "Add an API key to use this provider's models."),
@@ -75,8 +75,7 @@ export class ApiKeyDialog extends DialogBase {
 							? ""
 							: html`
 								<div class="flex flex-col gap-3">
-									<h3 class="text-sm font-semibold text-foreground">API Key</h3>
-									<provider-key-input .provider=${this.provider}></provider-key-input>
+									<tabkyra-provider-key .provider=${this.provider} .label=${providerDisplayName(this.provider)} .startOpen=${true}></tabkyra-provider-key>
 									<p class="text-xs text-muted-foreground">${API_BILLING_NOTE}</p>
 								</div>
 							`

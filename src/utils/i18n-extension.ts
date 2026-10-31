@@ -173,6 +173,7 @@ declare module "@mariozechner/mini-lit" {
 		"Untitled chat": string;
 		// Pages
 		Back: string;
+		"Key saved": string;
 		"Save recording as skill": string;
 		Skill: string;
 	}
