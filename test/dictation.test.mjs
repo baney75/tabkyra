@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { trimSilence } from "../src/dictation/recorder.ts";
-import { modelFiles, readSetting, resolveModel } from "../src/dictation/settings.ts";
+import { splitAtQuiet, trimSilence } from "../src/dictation/recorder.ts";
+import { modelFiles, readSetting, resolveModel, transcribeTimeoutMs } from "../src/dictation/settings.ts";
 import { chooseModel, MODELS } from "../src/dictation/tiers.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -64,8 +64,42 @@ test("silence is cut before the model, and talk from press to stop is kept whole
 	const speech = join(tone(2, 0.0005), tone(1, 0.3), tone(2, 0.0005));
 	const trimmed = trimSilence(speech);
 	assert.ok(trimmed.length >= rate && trimmed.length <= rate * 1.6, `kept ${trimmed.length / rate} s of 5 s`);
-	const talking = tone(4, 0.3);
-	assert.equal(trimSilence(talking).length, talking.length, "no quiet part: nothing is cut");
+	// Steady sound (a fan, a hum) is flat; speech has gaps between words well below its peaks.
+	assert.equal(trimSilence(tone(4, 0.3)).length, 0, "a steady sound sends nothing");
+	const syllables = (amp, count) => join(...Array.from({ length: count }, () => join(tone(0.25, amp), tone(0.1, amp / 30))));
+	const talking = syllables(0.3, 12);
+	assert.ok(trimSilence(talking).length >= talking.length * 0.9, "talk from press to stop is kept");
+	const quiet = syllables(0.006, 12);
+	assert.ok(trimSilence(quiet).length >= quiet.length * 0.9, "a quiet microphone still gets through");
+	// Speech over a loud steady noise: it rises and falls, so it's kept, uncut.
+	const noise = (seconds, amp) => Float32Array.from({ length: seconds * rate }, (_, i) => amp * Math.sin(i * 1.7));
+	const hiss = noise(5, 0.08);
+	const noisy = syllables(0.2, 12).map((x, i) => x + hiss[i % hiss.length]);
+	assert.equal(trimSilence(noisy).length, noisy.length, "speech over steady noise reaches the model");
+	// A short phrase in a long, mostly quiet recording: a few loud frames among hundreds of quiet ones.
+	const phrase = join(tone(5, 0.0005), syllables(0.3, 2), tone(5, 0.0005));
+	const kept = trimSilence(phrase);
+	assert.ok(kept.length >= 0.6 * rate && kept.length <= 1.3 * rate, `kept ${kept.length / rate} s of a 0.7 s phrase`);
+});
+
+test("long audio is cut into pieces at quiet points for one-pass models, and transcription time scales with it", () => {
+	const rate = 16000;
+	const audio = Float32Array.from({ length: 50 * rate }, (_, i) => (Math.floor(i / rate) % 7 === 6 ? 0 : 0.3 * Math.sin(i / 3)));
+	const pieces = splitAtQuiet(audio, 20);
+	assert.ok(pieces.length >= 3);
+	assert.equal(pieces.reduce((n, p) => n + p.length, 0), audio.length, "nothing lost or repeated");
+	for (const p of pieces.slice(0, -1)) {
+		assert.ok(p.length <= 20 * rate);
+		assert.ok(Math.abs(p[p.length - 1]) < 0.01, "cut in a quiet second");
+	}
+	assert.deepEqual(splitAtQuiet(new Float32Array(rate * 5)).length, 1, "short audio is one piece");
+	// Just over the limit with its quietest moment near the end: the last piece still gets 2 s.
+	const near = Float32Array.from({ length: Math.round(20.5 * rate) }, (_, i) => (i > 19.7 * rate && i < 19.9 * rate ? 0 : 0.3 * Math.sin(i / 3)));
+	const tail = splitAtQuiet(near, 20);
+	assert.equal(tail.length, 2);
+	assert.ok(tail[1].length >= 2 * rate, `last piece ${tail[1].length / rate} s`);
+	assert.equal(transcribeTimeoutMs(5), 120_000);
+	assert.equal(transcribeTimeoutMs(300), 2_400_000, "five minutes of audio gets 40");
 });
 
 test("the setting falls back to automatic, and a GPU model on a device without one isn't used", async () => {
@@ -79,8 +113,21 @@ test("the setting falls back to automatic, and a GPU model on a device without o
 	stored.value = { model: "turbo", language: "auto" };
 	const resolved = await resolveModel();
 	assert.equal(resolved.spec.device, "wasm");
-	stored.value = { model: "moonshine", language: "de" };
-	assert.equal((await resolveModel()).language, undefined, "an English-only model gets no language");
+	stored.value = { model: "moonshine", language: "en" };
+	const english = await resolveModel();
+	assert.equal(english.spec.id, MODELS.moonshine.id, "English keeps the English-only model");
+	assert.equal(english.language, undefined, "an English-only model gets no language");
+	stored.value = { model: "toString", language: "auto" };
+	assert.equal((await readSetting()).model, "auto", "prototype names aren't models");
+	stored.value = { model: "moonshine", language: "es" };
+	assert.equal((await resolveModel()).spec.multilingual, true, "an English-only model chosen with Spanish gives way");
+	// "Detect it" on a German browser is German: an English-only model gives way there too.
+	const browserLanguage = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), "language");
+	Object.defineProperty(navigator, "language", { value: "de-DE", configurable: true });
+	stored.value = { model: "moonshine", language: "auto" };
+	assert.equal((await resolveModel()).spec.multilingual, true, "auto on a German browser");
+	delete navigator.language;
+	if (browserLanguage) assert.equal(navigator.language, browserLanguage.get.call(navigator));
 	stored.value = { model: "auto", language: "de" };
 	const german = await resolveModel();
 	assert.equal(german.spec.multilingual, true, "automatic with German picks a multilingual model");

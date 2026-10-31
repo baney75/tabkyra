@@ -7,6 +7,12 @@ export const DICTATION_KEY = "tabkyra.dictation";
 /** Where transformers.js keeps downloaded model files (its default Cache Storage name). */
 export const MODEL_CACHE = "transformers-cache";
 
+/**
+ * Longest a transcription may take before the button gives up and recovers: scaled to the audio,
+ * since a processor model with one thread can take several times the clip's length.
+ */
+export const transcribeTimeoutMs = (seconds: number) => Math.max(2 * 60_000, seconds * 8_000);
+
 export interface DictationSetting {
 	model: "auto" | ModelKey;
 	/** "auto" lets a multilingual model detect it; otherwise an ISO code such as "de". */
@@ -19,7 +25,10 @@ export async function readSetting(): Promise<DictationSetting> {
 	const stored = (await chrome.storage.local.get(DICTATION_KEY))[DICTATION_KEY] as
 		| Partial<DictationSetting>
 		| undefined;
-	const model = stored?.model && (stored.model === "auto" || stored.model in MODELS) ? stored.model : "auto";
+	const model =
+		stored?.model === "auto" || (typeof stored?.model === "string" && Object.hasOwn(MODELS, stored.model))
+			? stored.model
+			: "auto";
 	const language =
 		typeof stored?.language === "string" && /^(auto|[a-z]{2,3})$/.test(stored.language) ? stored.language : "auto";
 	return { model, language };
@@ -35,8 +44,12 @@ export async function resolveModel(): Promise<{ spec: ModelSpec; language?: stri
 	const device = await profileDevice();
 	const auto = chooseModel(device, setting.language);
 	let key: ModelKey = setting.model === "auto" ? auto.key : setting.model;
-	// A chosen GPU model on a device without a GPU can't run: fall back to the automatic one.
+	// A chosen model that can't do the job falls back to the automatic one: a GPU model on a device
+	// without a GPU, or an English-only model asked for another language.
+	// "auto" means the browser's language, as in chooseModel.
+	const otherLanguage = setting.language === "auto" ? !/^en\b/i.test(device.language) : setting.language !== "en";
 	if (MODELS[key].device === "webgpu" && !device.webgpu) key = auto.key;
+	if (otherLanguage && !MODELS[key].multilingual) key = auto.key;
 	const spec = MODELS[key];
 	return {
 		spec,
@@ -45,19 +58,23 @@ export async function resolveModel(): Promise<{ spec: ModelSpec; language?: stri
 	};
 }
 
-/** Bytes of downloaded model files, and a way to remove them. */
-export async function cachedModelBytes(): Promise<number> {
+/**
+ * Downloaded model files: how many, and their size where the cached response says it (reading a
+ * cached model to measure it would load hundreds of MB). Files without a size still count, so
+ * Remove is offered.
+ */
+export async function cachedModels(): Promise<{ files: number; bytes: number }> {
 	try {
 		const cache = await caches.open(MODEL_CACHE);
-		let total = 0;
-		for (const request of await cache.keys()) {
+		const requests = await cache.keys();
+		let bytes = 0;
+		for (const request of requests) {
 			const response = await cache.match(request);
-			// The size header only: reading a cached model to measure it would load hundreds of MB.
-			total += Number(response?.headers.get("content-length") ?? 0);
+			bytes += Number(response?.headers.get("content-length") ?? 0);
 		}
-		return total;
+		return { files: requests.length, bytes };
 	} catch {
-		return 0;
+		return { files: 0, bytes: 0 };
 	}
 }
 

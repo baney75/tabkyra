@@ -223,5 +223,12 @@ then Stop as the clip ended. In four runs the automatic model on this device (tu
 reference sentence in the composer word for word (WER 0%); once it came back without capitals or
 punctuation.
 
+A third clip, 27 seconds (a spoken request for a report summary), checks long dictation after
+#75: Whisper windows it itself, and Moonshine, which reads a clip in one pass, gets pieces of 20
+seconds or less cut at quiet points. Every model returned the whole passage; with it, WER is
+turbo 4.1%, small 4.1%, base 4.1%, Moonshine base 6.3%, Moonshine tiny 8.5%, Whisper tiny 12.0%.
+Most of the added errors are numbers written as digits ("10", "8%") against a reference that
+spells them out.
+
 Reproduce: `TABKYRA_NO_BUMP=1 node scripts/build.mjs` (a plain production build bumps the version),
 then `node cli/eval/dictation.mjs --extension dist-chrome --clips <dir of name.wav + name.txt> [--models a,b|none]`.
