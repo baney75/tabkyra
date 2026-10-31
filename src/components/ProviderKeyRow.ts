@@ -1,3 +1,4 @@
+import { i18n } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { icon } from "@mariozechner/mini-lit/dist/icons.js";
 import { type Context, complete, getModel } from "@mariozechner/pi-ai";
@@ -5,7 +6,8 @@ import { applyProxyIfNeeded, getAppStorage } from "@mariozechner/pi-web-ui";
 import { html, LitElement, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { property, state } from "lit/decorators.js";
 import { Check } from "lucide";
-import { plainReason } from "../models/key-reason.js";
+import { type KeyFailure, keyFailure } from "../models/key-reason.js";
+import { Toast } from "./Toast.js";
 
 /** A cheap model per provider, sent one short message to check a key before it's saved. */
 const TEST_MODELS: Record<string, string> = {
@@ -25,26 +27,44 @@ export function canCheckKey(provider: string): boolean {
 	return provider in TEST_MODELS;
 }
 
-/** Sends one short message with the key. Returns why it failed, or undefined when the key works. */
-export async function checkKey(provider: string, apiKey: string): Promise<string | undefined> {
+/** How long a key check may take before Tabkyra gives up on it. */
+const CHECK_TIMEOUT_MS = 30_000;
+const TIMED_OUT: KeyFailure = { kind: "unchecked", reason: "the provider didn't answer within 30 seconds." };
+
+/**
+ * Sends one short message with the key. Returns undefined when the key works (or the provider
+ * can't be checked), else what went wrong.
+ */
+export async function checkKey(
+	provider: string,
+	apiKey: string,
+	signal?: AbortSignal,
+): Promise<KeyFailure | undefined> {
 	const modelId = TEST_MODELS[provider];
 	if (!modelId) return undefined;
-	let model = getModel(provider as never, modelId as never);
-	if (!model) return `Tabkyra has no model to test ${provider} keys with.`;
+	const timeout = AbortSignal.timeout(CHECK_TIMEOUT_MS);
 	try {
+		let model = getModel(provider as never, modelId as never);
+		if (!model) return { kind: "unchecked", reason: `Tabkyra has no model to test ${provider} keys with.` };
 		const settings = getAppStorage().settings;
 		const proxyUrl = (await settings.get<boolean>("proxy.enabled"))
 			? (await settings.get<string>("proxy.url")) || undefined
 			: undefined;
 		model = applyProxyIfNeeded(model, apiKey, proxyUrl);
 		const context: Context = { messages: [{ role: "user", content: "Reply with: ok", timestamp: Date.now() }] };
-		const result = await complete(model, context, { apiKey, maxTokens: 200 } as never);
+		const result = await complete(model, context, {
+			apiKey,
+			maxTokens: 200,
+			signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+		} as never);
+		if (timeout.aborted) return TIMED_OUT;
 		// A reasoning model can spend the 200 tokens thinking and stop at the length limit; the key
 		// still worked.
-		if (result.stopReason === "error" || result.stopReason === "aborted") return plainReason(result.errorMessage);
+		if (result.stopReason === "error" || result.stopReason === "aborted") return keyFailure(result.errorMessage);
 		return undefined;
 	} catch (error) {
-		return plainReason(error instanceof Error ? error.message : String(error));
+		if (timeout.aborted) return TIMED_OUT;
+		return keyFailure(error instanceof Error ? error.message : String(error));
 	}
 }
 
@@ -63,8 +83,11 @@ export class ProviderKeyRow extends LitElement {
 	@state() private editing = false;
 	@state() private checking = false;
 	@state() private value = "";
-	/** Why the last key didn't work. It stays until the key is edited. */
-	@state() private problem?: string;
+	/** What went wrong with the last check. It stays until the key is edited. */
+	@state() private problem?: KeyFailure;
+	/** A note about the saved key, such as an account out of credit. */
+	@state() private note?: string;
+	private abort?: AbortController;
 
 	protected override createRenderRoot(): HTMLElement {
 		return this;
@@ -87,6 +110,7 @@ export class ProviderKeyRow extends LitElement {
 
 	private async edit() {
 		this.editing = true;
+		this.note = undefined;
 		this.value = "";
 		this.problem = undefined;
 		await this.updateComplete;
@@ -94,6 +118,7 @@ export class ProviderKeyRow extends LitElement {
 	}
 
 	private async cancel() {
+		this.abort?.abort();
 		this.editing = false;
 		this.problem = undefined;
 		this.value = "";
@@ -101,23 +126,41 @@ export class ProviderKeyRow extends LitElement {
 		this.querySelector<HTMLElement>("[data-key-action]")?.focus();
 	}
 
-	private async save() {
+	/** Checks the key, then saves it; `force` saves without the check. */
+	private async save(force = false) {
 		const key = this.value.trim();
 		if (!key || this.checking) return;
+		const abort = new AbortController();
+		this.abort = abort;
 		this.checking = true;
 		this.problem = undefined;
-		const problem = await checkKey(this.provider, key);
-		if (!problem) {
-			try {
+		let problem: KeyFailure | undefined;
+		try {
+			problem = force ? undefined : await checkKey(this.provider, key, abort.signal);
+			// Cancel closed the editor while the check ran: nothing to save or show.
+			if (abort.signal.aborted) return;
+			// A key the provider knows but whose account is out of credit or over a limit is still
+			// the right key (a free OpenRouter key has no credit): it's saved, with the reason as a note.
+			if (!problem || problem.kind === "limited") {
 				await getAppStorage().providerKeys.set(this.provider, key);
-			} catch (error) {
-				this.problem = `it checked out, but saving failed (${error instanceof Error ? error.message : String(error)}).`;
+				this.note = !problem
+					? undefined
+					: this.provider === "openrouter"
+						? `Saved. ${capitalize(problem.reason)} Free mode still works with this key; paid models need credit.`
+						: `Saved, but ${problem.reason}`;
+				problem = undefined;
 			}
-		} else {
-			this.problem = problem;
+		} catch (error) {
+			problem = {
+				kind: "unchecked",
+				reason: `saving failed (${error instanceof Error ? error.message : String(error)}).`,
+			};
+		} finally {
+			this.checking = false;
+			if (this.abort === abort) this.abort = undefined;
 		}
-		this.checking = false;
-		if (!this.problem) {
+		this.problem = problem;
+		if (!problem) {
 			this.hasKey = true;
 			this.editing = false;
 			this.value = "";
@@ -126,7 +169,7 @@ export class ProviderKeyRow extends LitElement {
 		await this.updateComplete;
 		// The field was disabled during the check and lost focus: it gets it back to fix the key,
 		// or the row's button does once the key is saved.
-		if (this.problem) this.querySelector<HTMLInputElement>("input[type=password]")?.focus();
+		if (problem) this.querySelector<HTMLInputElement>("input[type=password]")?.focus();
 		else this.querySelector<HTMLElement>("[data-key-action]")?.focus();
 	}
 
@@ -136,10 +179,15 @@ export class ProviderKeyRow extends LitElement {
 		try {
 			await getAppStorage().providerKeys.delete(this.provider);
 			this.hasKey = false;
+			this.note = undefined;
 			this.dispatchEvent(new CustomEvent("provider-key-removed", { detail: this.provider, bubbles: true }));
 		} catch (error) {
 			console.error("Failed to remove the key:", error);
+			Toast.error(`Couldn't remove the ${this.label} key`);
 		}
+		// The Remove button is gone: Add key (or Replace, if removing failed) takes focus.
+		await this.updateComplete;
+		this.querySelector<HTMLElement>("[data-key-action]")?.focus();
 	}
 
 	private renderEditor(): TemplateResult {
@@ -179,15 +227,21 @@ export class ProviderKeyRow extends LitElement {
 						size: "sm",
 						variant: "ghost",
 						onClick: () => void this.cancel(),
-						disabled: this.checking,
 						children: "Cancel",
 					})}
 				</div>
 				${
 					this.problem
-						? html`<p id=${`${id}-note`} role="alert" class="text-xs text-destructive break-words">
-								That key didn't work: ${this.problem}
-							</p>`
+						? html`<div id=${`${id}-note`} role="alert" class="flex flex-wrap items-center gap-x-3 gap-y-1">
+								<p class="text-xs text-destructive break-words">
+									${this.problem.kind === "rejected" ? "That key didn't work: " : "Couldn't check the key: "}${this.problem.reason}
+								</p>
+								${
+									this.problem.kind === "unchecked"
+										? html`<button type="button" class=${QUIET} @click=${() => void this.save(true)}>Save anyway</button>`
+										: nothing
+								}
+							</div>`
 						: html`<p id=${`${id}-note`} class="text-xs text-muted-foreground">
 								${
 									canCheckKey(this.provider)
@@ -207,7 +261,7 @@ export class ProviderKeyRow extends LitElement {
 				${
 					this.hasKey
 						? html`<span class="inline-flex flex-shrink-0 items-center gap-1 text-xs font-medium text-[var(--tk-brass-text)]"
-								>${icon(Check, "sm")}Key saved</span
+								>${icon(Check, "sm")}${i18n("Key saved")}</span
 							>`
 						: nothing
 				}
@@ -227,7 +281,7 @@ export class ProviderKeyRow extends LitElement {
 									type="button"
 									data-key-action
 									class="flex-shrink-0 h-8 rounded-md border border-input px-3 text-xs font-medium text-foreground hover:bg-secondary outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-									aria-label=${`Add a ${this.label} key`}
+									aria-label=${`Add ${this.label} key`}
 									@click=${() => void this.edit()}
 								>
 									Add key
@@ -235,8 +289,17 @@ export class ProviderKeyRow extends LitElement {
 				}
 			</div>
 			${this.editing ? this.renderEditor() : nothing}
+			${
+				this.note && this.hasKey && !this.editing
+					? html`<p class="pb-2 text-xs text-muted-foreground" role="status">${this.note}</p>`
+					: nothing
+			}
 		`;
 	}
+}
+
+function capitalize(text: string): string {
+	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** A quiet text button for the less common actions on a saved key. */

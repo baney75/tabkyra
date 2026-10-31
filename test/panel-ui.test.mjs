@@ -171,15 +171,26 @@ test("subscription commands are copyable blocks, and a failed copy is a toast th
 	assert.doesNotMatch(copy, /this\.notice/);
 });
 
-test("a provider's key error reads as a sentence, not the raw response", async () => {
-	const { plainReason } = await import("../src/models/key-reason.ts");
-	assert.equal(
-		plainReason('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'),
-		"the provider turned it down (invalid x-api-key).",
-	);
-	assert.match(plainReason('429 {"error":{"message":"Rate limit reached"}}'), /out of credit or over its limit \(Rate limit reached\)/);
-	assert.equal(plainReason("Failed to fetch"), "Failed to fetch.");
-	assert.equal(plainReason(undefined), "the provider didn't say why.");
+test("a provider's key error reads as a sentence and says whether the key itself is bad", async () => {
+	const { keyFailure } = await import("../src/models/key-reason.ts");
+	assert.deepEqual(keyFailure('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'), {
+		kind: "rejected",
+		reason: "the provider turned it down (invalid x-api-key).",
+	});
+	// A free OpenRouter key has no credit: the provider knows the key, so it's saved with a note.
+	const broke = keyFailure('402 {"error":{"message":"Insufficient credits"}}');
+	assert.equal(broke.kind, "limited");
+	assert.match(broke.reason, /out of credit or over its limit \(Insufficient credits\)/);
+	assert.equal(keyFailure('429 {"error":{"message":"Rate limit reached"}}').kind, "limited");
+	// No network says nothing about the key: "Couldn't check", with Save anyway.
+	assert.deepEqual(keyFailure("Failed to fetch"), { kind: "unchecked", reason: "Failed to fetch." });
+	assert.deepEqual(keyFailure(undefined), { kind: "unchecked", reason: "the provider didn't say why." });
+	const row = readFileSync(new URL("../src/components/ProviderKeyRow.ts", import.meta.url), "utf8");
+	assert.match(row, /problem\.kind === "limited"\) \{\s*await getAppStorage\(\)\.providerKeys\.set/, "a limited key is saved");
+	assert.match(row, /Save anyway/);
+	assert.match(row, /AbortSignal\.timeout\(CHECK_TIMEOUT_MS\)/, "a check can't hang on Checking… forever");
+	assert.match(row, /\} finally \{\s*this\.checking = false;/);
+	assert.match(row, /i18n\("Key saved"\)/, "Key saved stays translated");
 });
 
 test("opening Settings doesn't scroll Providers or light up the search box far below", () => {
@@ -193,6 +204,7 @@ test("API keys are one line per provider: the key field opens on Add key, a bad 
 	assert.match(row, /Add key/);
 	assert.match(row, /providerKeys\.delete\(this\.provider\)/, "Remove deletes the key");
 	assert.match(row, /That key didn't work: /);
+	assert.match(row, /Toast\.error\(/, "a failed removal says so");
 	assert.doesNotMatch(row, /setTimeout/, "the reason doesn't vanish on a timer");
 	assert.doesNotMatch(row, /stopReason === "stop"/, "a reasoning model that hits the token limit still proves the key");
 	for (const file of ["../src/dialogs/ApiKeysTab.ts", "../src/dialogs/ApiKeyDialog.ts"]) {

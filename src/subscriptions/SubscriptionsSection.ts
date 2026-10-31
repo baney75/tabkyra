@@ -234,7 +234,7 @@ export class SubscriptionsSection extends LitElement {
 									${
 										this.noHost
 											? "Subscription sign-ins run in Tabkyra's helper on this computer, which isn't connected. Run this in a terminal, then reopen Settings."
-											: html`Subscription sign-ins aren't available: ${this.error} Running this in a terminal usually fixes it.`
+											: html`Subscription sign-ins aren't available: ${this.error?.replace(/\.?$/, ".")} Running this in a terminal usually fixes it.`
 									}
 								</p>
 								${this.command("Set up Tabkyra", "tabkyra setup")}
