@@ -124,6 +124,19 @@ test("a read-only session can't rename its tab group through session_info", asyn
 	}
 });
 
+test("a read-only session sees inspect_page but can't read response bodies through read_network", async () => {
+	const reader = await connect(token("reader-bodies", "browser.read"));
+	try {
+		const { tools } = await reader.listTools();
+		assert.ok(tools.some((t) => t.name === "inspect_page"), "inspect_page is a read tool");
+		const r = await reader.callTool({ name: "read_network", arguments: { requestId: "1.2" } });
+		assert.equal(r.isError, true);
+		assert.match(r.content[0].text, /^permission_denied: .*browser\.script/);
+	} finally {
+		await reader.close();
+	}
+});
+
 test("a revoked token is refused at once, and another token can't reuse a session", async () => {
 	const a = token("alpha", "browser.read");
 	const b = token("beta", "library.read");

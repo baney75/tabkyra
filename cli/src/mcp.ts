@@ -33,7 +33,14 @@ interface SnapNode {
 	value?: string;
 	href?: string;
 	visible: boolean;
+	/** expanded, pressed, selected, checked, disabled, ... */
+	states?: string[];
+	/** The same-origin frame the element is in. */
+	frame?: string;
 }
+
+/** Page-supplied text on one line: a URL or frame label can't start a fake element line. */
+const oneLine = (text: string) => text.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]/g, " ");
 
 /** One line per element; same-origin links shortened to their path. */
 function formatNodes(nodes: SnapNode[], pageUrl: string): string {
@@ -45,9 +52,11 @@ function formatNodes(nodes: SnapNode[], pageUrl: string): string {
 	}
 	return nodes
 		.map((n) => {
-			let line = `${n.ref} ${n.role} ${JSON.stringify(n.name)}`;
-			if (n.value) line += ` value=${JSON.stringify(n.value)}`;
-			if (n.href) line += ` -> ${origin && n.href.startsWith(origin) ? n.href.slice(origin.length) || "/" : n.href}`;
+			let line = `${n.ref} ${oneLine(n.role)} ${JSON.stringify(oneLine(n.name))}`;
+			if (n.value) line += ` value=${JSON.stringify(oneLine(n.value))}`;
+			if (n.states?.length) line += ` [${oneLine(n.states.join(", "))}]`;
+			if (n.href) line += ` -> ${oneLine(origin && n.href.startsWith(origin) ? n.href.slice(origin.length) || "/" : n.href)}`;
+			if (n.frame) line += ` (in frame ${JSON.stringify(oneLine(n.frame))})`;
 			if (!n.visible) line += " (offscreen)";
 			return line;
 		})
@@ -666,15 +675,30 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"read_network",
 		{
 			title: "Read network requests",
-			description: "Network requests from your tab: method, URL, status, type, failures. The first call starts capturing. Example: {\"urlPattern\":\"/api/\"}",
+			description: "Your tab's requests (id, method, URL, status, type). Capture starts on the first call: call it before loading. requestId gives what it sent (keys only) and a JSON response, secrets masked. Example: {\"type\":\"Fetch\"}",
 			inputSchema: {
 				tabId,
 				urlPattern: z.string().optional().describe("Substring or regex the URL must match"),
+				type: z.string().optional().describe("XHR, Fetch, Document, ..."),
+				requestId: z.string().optional().describe("One request's bodies"),
 				clear: z.boolean().optional().describe("Clear after reading"),
 				limit: z.number().int().optional().describe("Most recent requests to return (default 100)"),
 			},
 		},
-		(args) => call("network.read", args),
+		(args) =>
+			// A body can hold what the page fetched with the user's sign-in: as much as run_js could read.
+			args.requestId !== undefined && allowedTools && !allowedTools.has("run_js")
+				? { content: [{ type: "text" as const, text: "permission_denied: Reading response bodies needs the browser.script scope. Call read_network without requestId." }], isError: true }
+				: call("network.read", args),
+	);
+	server.registerTool(
+		"inspect_page",
+		{
+			title: "Map the page",
+			description: "Where a page's data comes from: framework, embedded JSON keys, forms, frames, web components, storage key names, API calls read_network saw. Example: {}",
+			inputSchema: { tabId },
+		},
+		(args) => call("inspect", args),
 	);
 
 	// Library tools work without the browser: they talk to doi.org, OpenAlex and Crossref.

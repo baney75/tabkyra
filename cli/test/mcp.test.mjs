@@ -62,8 +62,10 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// thread tools add about 2,000. A change that grows it past the budget has to earn it.
 	// skill_manage (D27) adds 1,153: managing and submitting skills in one tool, not five
 	// (4,137 as five), so agents can do it without a shell.
+	// inspect_page and read_network's requestId/type add 593 (26,748 to 27,341): reading the JSON a
+	// page is built from and a map of the page, which took several run_js calls each before.
 	const bytes = Buffer.byteLength(JSON.stringify(tools));
-	assert.ok(bytes <= 26800, `tools/list is ${bytes} bytes, over the 26,800 budget`);
+	assert.ok(bytes <= 27400, `tools/list is ${bytes} bytes, over the 27,400 budget`);
 	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
 });
 

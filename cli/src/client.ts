@@ -37,7 +37,7 @@ const MAX_ATTEMPTS = 3;
 const RECONNECT_BUDGET_MS = Number(process.env.TABKYRA_RECONNECT_BUDGET_MS) || 40000;
 
 /** Bridge methods under the MCP tool names agents know them by. */
-const TOOL_NAMES: Record<string, string> = { evaluate: "run_js", dialog: "handle_dialog", snapshot: "read_page", text: "get_page_text", html: "get_page_html" };
+const TOOL_NAMES: Record<string, string> = { evaluate: "run_js", dialog: "handle_dialog", snapshot: "read_page", text: "get_page_text", html: "get_page_html", inspect: "inspect_page" };
 
 /** What an agent is told when a side-effecting call was cut off: it may have run. */
 export function interruptedMessage(method: string): string {
