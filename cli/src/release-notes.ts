@@ -55,7 +55,7 @@ export function fitNotes(body: string, max = MAX_NOTES_CHARS): string {
 	}
 	const kept = lines.filter((_, i) => !dropped.has(i)).join("\n");
 	const out = dropped.size ? `${kept}\n\n${moreLine(dropped.size)}` : kept;
-	return out.length <= max ? out : `${out.slice(0, max)}...`;
+	return out.length <= max ? out : `${out.slice(0, max - 3)}...`;
 }
 
 /** What the host keeps of a release body: the summary above the full notes, fitted. */

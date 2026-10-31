@@ -854,7 +854,7 @@ index 75afda08c..881b06c65 100644
  		let index = 0;
  		for (const msg of this.messages) {
 diff --git a/packages/web-ui/src/components/ProviderKeyInput.ts b/packages/web-ui/src/components/ProviderKeyInput.ts
-index 61dac6068..0f0c0bf7f 100644
+index 61dac6068..1b4b908d6 100644
 --- a/packages/web-ui/src/components/ProviderKeyInput.ts
 +++ b/packages/web-ui/src/components/ProviderKeyInput.ts
 @@ -24,6 +24,8 @@ const TEST_MODELS: Record<string, string> = {
@@ -876,7 +876,7 @@ index 61dac6068..0f0c0bf7f 100644
  			} catch (error) {
  				console.error("Failed to save API key:", error);
  				this.failed = true;
-@@ -117,7 +121,7 @@ export class ProviderKeyInput extends LitElement {
+@@ -117,12 +121,12 @@ export class ProviderKeyInput extends LitElement {
  		return html`
  			<div class="space-y-3">
  				<div class="flex items-center gap-2">
@@ -885,6 +885,12 @@ index 61dac6068..0f0c0bf7f 100644
  					${
  						this.testing
  							? Badge({ children: i18n("Testing..."), variant: "secondary" })
+ 							: this.hasKey
+-								? html`<span class="text-green-600 dark:text-green-400">✓</span>`
++								? html`<span class="text-xs text-muted-foreground">${i18n("Key saved")}</span>`
+ 								: ""
+ 					}
+ 					${this.failed ? Badge({ children: i18n("✗ Invalid"), variant: "destructive" }) : ""}
 @@ -137,6 +141,9 @@ export class ProviderKeyInput extends LitElement {
  							this.inputChanged = true;
  							this.requestUpdate();
@@ -1263,10 +1269,18 @@ index 0a5474a7a..05f41d16d 100644
  				(element as HtmlArtifact).runtimeProviders = this.getHtmlArtifactRuntimeProviders();
  				if (this.sandboxUrlProvider) {
 diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
-index 1f50a7d08..352f13723 100644
+index 1f50a7d08..dad235a65 100644
 --- a/packages/web-ui/src/utils/i18n.ts
 +++ b/packages/web-ui/src/utils/i18n.ts
-@@ -61,6 +61,15 @@ declare module "@mariozechner/mini-lit" {
+@@ -22,6 +22,7 @@ declare module "@mariozechner/mini-lit" {
+ 		"✓ Valid": string;
+ 		"✗ Invalid": string;
+ 		"Testing...": string;
++		"Key saved": string;
+ 		Update: string;
+ 		Test: string;
+ 		Remove: string;
+@@ -61,6 +62,15 @@ declare module "@mariozechner/mini-lit" {
  		"Call was aborted; no result.": string;
  		"No session available": string;
  		"No session set": string;
@@ -1282,7 +1296,7 @@ index 1f50a7d08..352f13723 100644
  		"Preparing tool parameters...": string;
  		"(no output)": string;
  		Input: string;
-@@ -142,7 +151,7 @@ declare module "@mariozechner/mini-lit" {
+@@ -142,7 +152,7 @@ declare module "@mariozechner/mini-lit" {
  		Clear: string;
  		"API Key Required": string;
  		"Enter your API key for {provider}": string;
@@ -1291,7 +1305,15 @@ index 1f50a7d08..352f13723 100644
  		Off: string;
  		Minimal: string;
  		Low: string;
-@@ -272,6 +281,15 @@ export const translations = {
+@@ -231,6 +241,7 @@ export const translations = {
+ 		"✓ Valid": "✓ Valid",
+ 		"✗ Invalid": "✗ Invalid",
+ 		"Testing...": "Testing...",
++		"Key saved": "Key saved",
+ 		Update: "Update",
+ 		Test: "Test",
+ 		Remove: "Remove",
+@@ -272,6 +283,15 @@ export const translations = {
  		"Call was aborted; no result.": "Call was aborted; no result.",
  		"No session available": "No session available",
  		"No session set": "No session set",
@@ -1307,7 +1329,7 @@ index 1f50a7d08..352f13723 100644
  		"Preparing tool parameters...": "Preparing tool parameters...",
  		"(no output)": "(no output)",
  		Input: "Input",
-@@ -353,8 +371,8 @@ export const translations = {
+@@ -353,8 +373,8 @@ export const translations = {
  		Clear: "Clear",
  		"API Key Required": "API Key Required",
  		"Enter your API key for {provider}": "Enter your API key for {provider}",
@@ -1318,7 +1340,15 @@ index 1f50a7d08..352f13723 100644
  		Off: "Off",
  		Minimal: "Minimal",
  		Low: "Low",
-@@ -491,6 +509,15 @@ export const translations = {
+@@ -450,6 +470,7 @@ export const translations = {
+ 		"✓ Valid": "✓ Gültig",
+ 		"✗ Invalid": "✗ Ungültig",
+ 		"Testing...": "Teste...",
++		"Key saved": "Schlüssel gespeichert",
+ 		Update: "Aktualisieren",
+ 		Test: "Testen",
+ 		Remove: "Entfernen",
+@@ -491,6 +512,15 @@ export const translations = {
  		"Call was aborted; no result.": "Aufruf wurde abgebrochen; kein Ergebnis.",
  		"No session available": "Keine Sitzung verfügbar",
  		"No session set": "Keine Sitzung gesetzt",
@@ -1334,7 +1364,7 @@ index 1f50a7d08..352f13723 100644
  		"Preparing tool parameters...": "Bereite Tool-Parameter vor...",
  		"(no output)": "(keine Ausgabe)",
  		Input: "Eingabe",
-@@ -572,8 +599,8 @@ export const translations = {
+@@ -572,8 +602,8 @@ export const translations = {
  		Clear: "Löschen",
  		"API Key Required": "API-Schlüssel erforderlich",
  		"Enter your API key for {provider}": "Geben Sie Ihren API-Schlüssel für {provider} ein",

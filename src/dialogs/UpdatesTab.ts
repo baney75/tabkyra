@@ -158,7 +158,7 @@ export class UpdatesTab extends SettingsTab {
 				<fieldset class="space-y-2">
 					<legend class="text-sm font-medium text-foreground mb-2">When there's an update</legend>
 					${(Object.keys(POLICY_LABELS) as UpdatePolicy[]).map(
-						(value) => html`<label class="flex items-center gap-2 text-sm text-foreground">
+						(value) => html`<label class="flex items-start gap-2 text-sm text-foreground cursor-pointer">
 							<input
 								type="radio"
 								name="update-policy"

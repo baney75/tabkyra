@@ -147,6 +147,54 @@ Group titles say "claude 2", "claude 3" and never the project; closing a group l
 session behind; a tab the user drags out or ungroups is pulled back into the group; and
 nothing caps the tabs in a group.
 
+## Seeing pages: perception eval
+
+`node cli/eval/perception.mjs --extension <build> [--out file.json]` drives the MCP tools against
+local fixture pages (no model) and scores 20 probes:
+- open shadow roots: see, click, fill a nested field, and read their text with `read_page`,
+  `get_page_text`, and `get_page_text` on the host; a `display: contents` component
+- same-origin and cross-origin frames, including a scaled, padded frame
+- control states, including a disabled fieldset
+- a page's own `fetch()` and its response body
+- embedded JSON and forms
+- the size of a small interactive read
+- the review cases from #73:
+  - hidden web-component text stays out
+  - opaque cross-site responses are refused, with and without `Access-Control-Allow-Origin: *`
+  - login passwords in multipart and form bodies are masked
+  - `fill` reaches a listener outside the shadow root
+  - a newline in a frame URL or a `role` can't fake an element line
+
+Measured 2026-10-28 in headless Chromium, each build with the current CLI. Each review
+column is the head that review saw; its high findings show as that column's failures.
+
+| Probe | main | review 1 (328e9f6) | review 2 (8a21dfc) | review 3 (c2f4df9) | now |
+| --- | --- | --- | --- | --- | --- |
+| `shadow-see` | fail | pass | pass | pass | pass |
+| `shadow-click` | fail | pass | pass | pass | pass |
+| `nested-fill` | fail | pass | pass | pass | pass |
+| `shadow-text` | fail | fail | pass | pass | pass |
+| `frame-see` | fail | pass | pass | pass | pass |
+| `frame-click` | fail | pass | pass | pass | pass |
+| `xorigin-flag` | fail | pass | pass | pass | pass |
+| `states` | fail | pass | pass | pass | pass |
+| `api-request` | pass | pass | pass | pass | pass |
+| `api-body` | fail | pass | pass | pass | pass |
+| `embedded-map` | fail | pass | pass | pass | pass |
+| `cost` | pass | pass | pass | pass | pass |
+| `scaled-click` | fail | fail | pass | pass | pass |
+| `hidden-text` | fail | fail | fail | fail | pass |
+| `xorigin-body` | pass | fail | fail | pass | pass |
+| `login-masked` | fail | fail | fail | fail | pass |
+| `composed-fill` | fail | fail | pass | pass | pass |
+| `fieldset-disabled` | fail | fail | pass | pass | pass |
+| `hostile-src` | pass | pass | pass | pass | pass |
+| `contents-host` | fail | fail | fail | fail | pass |
+
+Score: main 4/20, review 1 (328e9f6) 12/20, review 2 (8a21dfc) 16/20, review 3 (c2f4df9) 17/20, now 20/20. The cross-site fixture serves text/plain:
+Chromium aborts an opaque JSON or HTML response before a body exists, which would make that
+probe pass on any build.
+
 # Dictation, 2026-10-29
 
 `cli/eval/dictation.mjs` on the built extension in Playwright's Chromium on an M-series Mac

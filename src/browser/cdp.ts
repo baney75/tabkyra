@@ -5,6 +5,8 @@
  * on tabs that are not visible; nothing here activates a tab.
  */
 
+import { bodyShape, maskJsonResponse, maskUrl } from "./mask-body.js";
+
 const PROTOCOL_VERSION = "1.3";
 
 /** Tabs where the user cancelled the debugger (closed the infobar). Cleared on navigation. */
@@ -535,6 +537,14 @@ export interface NetworkEntry {
 	url: string;
 	status?: number;
 	mimeType?: string;
+	/** Document, XHR, Fetch, Script, Image, ... (CDP's resource type). */
+	type?: string;
+	/** The request's Content-Type, for masking its body by structure. */
+	requestType?: string;
+	/** The document that made the request: whose own scripts could read the response. */
+	documentURL?: string;
+	/** The response finished loading (a streaming or long-poll response may never). */
+	finished?: boolean;
 	timestamp: number;
 	failed?: string;
 }
@@ -575,15 +585,21 @@ function installCaptureListener(): void {
 				requestId: String(p.requestId),
 				method: request.method,
 				url: request.url,
+				type: typeof p.type === "string" ? p.type : undefined,
+				requestType: headerValue((p.request as { headers?: Record<string, string> }).headers, "content-type"),
+				documentURL: typeof p.documentURL === "string" ? p.documentURL : undefined,
 				timestamp: Date.now(),
 			});
 			if (buf.size > MAX_ENTRIES) buf.delete(buf.keys().next().value as string);
 		} else if (method === "Network.responseReceived") {
 			const entry = networkBuffers.get(tabId)?.get(String(p.requestId));
 			if (!entry) return;
-			const response = p.response as { status: number; mimeType: string };
+			const response = p.response as { status: number; mimeType: string; headers?: Record<string, string> };
 			entry.status = response.status;
 			entry.mimeType = response.mimeType;
+		} else if (method === "Network.loadingFinished") {
+			const entry = networkBuffers.get(tabId)?.get(String(p.requestId));
+			if (entry) entry.finished = true;
 		} else if (method === "Network.loadingFailed") {
 			const entry = networkBuffers.get(tabId)?.get(String(p.requestId));
 			if (entry) entry.failed = String(p.errorText ?? "failed");
@@ -617,10 +633,129 @@ export async function enableNetworkCapture(tabId: number): Promise<void> {
 	await cdpSend(tabId, "Network.enable");
 }
 
+/** One captured request in full: its entry, the request body's shape and a JSON response, capped. */
+export interface NetworkDetail extends NetworkEntry {
+	/** Keys and value types of what was sent, never the values (mask-body.ts). */
+	requestShape?: string;
+	/** The complete response, masked, when it fits; otherwise responseShape. */
+	responseBody?: string;
+	/** Keys and value types of a JSON response too long to show whole. */
+	responseShape?: string;
+	/** Why there is no body: still loading, evicted, binary, ... */
+	bodyNote?: string;
+}
+
+const MAX_RESPONSE_BODY = 20000;
+const MAX_REQUEST_SHAPE = 4000;
+/** Largest response read and masked; a bigger one isn't shown (a cut body isn't complete JSON). */
+const BODY_CEILING = 2_000_000;
+const JSON_TYPE = /^application\/(?:json|[\w.+-]*\+json)\b/i;
+
+function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
+	if (!headers) return undefined;
+	for (const [k, v] of Object.entries(headers)) if (k.toLowerCase() === name) return String(v);
+	return undefined;
+}
+
+function originOf(url: string | undefined): string | undefined {
+	try {
+		return url ? new URL(url).origin : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The page could read this response itself: the request went to the same origin as the tab's
+ * page, from a document of that origin. A cross-origin response is out: even with
+ * Access-Control-Allow-Origin a credentialed no-cors fetch stays opaque to the page, and the
+ * capture can't tell the modes apart. Cross-origin API data is still one run_js fetch away,
+ * where the browser enforces CORS itself.
+ */
+export function pageCouldRead(entry: Pick<NetworkEntry, "url" | "documentURL">, pageUrl: string | undefined): boolean {
+	const page = originOf(pageUrl);
+	if (!page) return false;
+	return originOf(entry.url) === page && (entry.documentURL === undefined || originOf(entry.documentURL) === page);
+}
+
+function decodeBody(body: string, base64: boolean): string {
+	if (!base64) return body;
+	const bytes = Uint8Array.from(atob(body), (c) => c.charCodeAt(0));
+	return new TextDecoder().decode(bytes);
+}
+
+/**
+ * One request in detail: what was sent, as its shape only, and the response when it is complete
+ * JSON the page itself could read, credentials masked in place (src/browser/mask-body.ts).
+ */
+export async function readNetworkDetail(tabId: number, requestId: string): Promise<NetworkDetail> {
+	const entry = networkBuffers.get(tabId)?.get(requestId);
+	if (!entry)
+		throw new Error(
+			`No captured request ${requestId}. Call read_network for the current list (capture starts on the first call).`,
+		);
+	const detail: NetworkDetail = { ...entry, ...maskedUrls(entry) };
+	const pageUrl = (await chrome.tabs.get(tabId)).url;
+	if (!pageCouldRead(entry, pageUrl)) {
+		detail.bodyNote =
+			"Another origin's response: its body isn't shown. Fetch it with run_js (CORS applies, as for the page) or navigate to its URL.";
+		return detail;
+	}
+	try {
+		const post = await cdpSend<{ postData: string }>(tabId, "Network.getRequestPostData", { requestId });
+		detail.requestShape = cap(bodyShape(post.postData.slice(0, BODY_CEILING), entry.requestType), MAX_REQUEST_SHAPE);
+	} catch {
+		/* no request body */
+	}
+	if (entry.failed) detail.bodyNote = `The request failed: ${entry.failed}`;
+	else if (entry.status === undefined) detail.bodyNote = "No response yet; wait and call again.";
+	else if (!entry.finished) detail.bodyNote = "Still loading (a streaming or large response); wait and call again.";
+	else if (!entry.mimeType || !JSON_TYPE.test(entry.mimeType))
+		detail.bodyNote = `Only JSON responses are shown; this one is ${entry.mimeType || "untyped"}. Read the page with get_page_text or get_page_html, or fetch it with run_js.`;
+	else {
+		try {
+			const body = await cdpSend<{ body: string; base64Encoded: boolean }>(tabId, "Network.getResponseBody", {
+				requestId,
+			});
+			const text = decodeBody(body.body, body.base64Encoded);
+			const masked = text.length <= BODY_CEILING ? maskJsonResponse(text) : undefined;
+			if (masked === undefined)
+				detail.bodyNote =
+					text.length > BODY_CEILING
+						? `The response is ${Math.round(text.length / 1e6)} MB, over the 2 MB this reads; fetch it with run_js.`
+						: "The response isn't complete JSON, so it isn't shown; fetch it with run_js.";
+			else if (masked.length <= MAX_RESPONSE_BODY) detail.responseBody = masked;
+			else {
+				// A cut-off fragment isn't the complete JSON promised: the shape, and where the rest is.
+				detail.responseShape = cap(bodyShape(masked, "application/json"), MAX_REQUEST_SHAPE);
+				detail.bodyNote = `The JSON response is ${masked.length} characters, more than the ${MAX_RESPONSE_BODY} shown; its shape is below. Fetch the values you need with run_js.`;
+			}
+		} catch {
+			detail.bodyNote =
+				"The browser no longer has this response body (it keeps recent ones only). Reload and read again.";
+		}
+	}
+	return detail;
+}
+
+/** Query strings and fragments can carry tokens (?token=..., #token=...): masked for every reader. */
+function maskedUrls(entry: NetworkEntry): Pick<NetworkEntry, "url" | "documentURL"> {
+	return { url: maskUrl(entry.url), documentURL: entry.documentURL && maskUrl(entry.documentURL) };
+}
+
+function cap(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max)}… (cut at ${max} characters)` : text;
+}
+
+/** Whether read_network has turned capture on for this tab. */
+export function networkCapturing(tabId: number): boolean {
+	return networkBuffers.has(tabId);
+}
+
 export function readNetwork(tabId: number, clear = false): NetworkEntry[] {
 	const buf = networkBuffers.get(tabId);
 	if (!buf) return [];
-	const out = [...buf.values()];
+	const out = [...buf.values()].map((e) => ({ ...e, ...maskedUrls(e) }));
 	if (clear) buf.clear();
 	return out;
 }

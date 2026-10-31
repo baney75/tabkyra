@@ -496,10 +496,14 @@ test("notes too long even with short bullets drop the longest sections' last bul
 });
 
 test("the CLI's local imports name .ts files, so source runs resolve them", () => {
+	const localJs = /(?:\bfrom\s*|\bimport\s*\(?\s*)["']\.{1,2}\/[^"']+\.js["']/;
+	for (const form of ['import { a } from "./a.js";', "import { a } from '../a.js';", 'import "./polyfill.js";', 'await import("./lazy.js")'])
+		assert.match(form, localJs, form);
+	assert.doesNotMatch('import { Button } from "@mariozechner/mini-lit/dist/Button.js";', localJs);
 	const src = join(here, "..", "src");
 	for (const file of readdirSync(src, { recursive: true }).filter((f) => String(f).endsWith(".ts"))) {
 		const text = readFileSync(join(src, String(file)), "utf8");
-		assert.doesNotMatch(text, /(?:from|import\()\s*"\.{1,2}\/[^"]+\.js"/, String(file));
+		assert.doesNotMatch(text, localJs, String(file));
 	}
 });
 
@@ -526,3 +530,9 @@ test("release bodies open with a summary of every section that fits what an inst
 	assert.match(body, /Updates from the side panel \(docs\/updates\.md\)\. "Update available" has an \*\*Update now\*\* button/, "the full notes are all there");
 	assert.equal(releaseSummary(body), fitNotes(summary.trim()));
 });
+
+test("fitNotes never returns more than max, even when it has to cut", () => {
+	const many = Array.from({ length: 200 }, (_, i) => `### Section ${i}\n- Entry ${i} ${"word ".repeat(30)}`).join("\n");
+	assert.ok(fitNotes(many, 2000).length <= 2000);
+});
+

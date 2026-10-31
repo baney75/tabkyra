@@ -6,6 +6,7 @@
  */
 
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
+import { maskUrl } from "./mask-body.js";
 
 const SNAPSHOT_WORLD_ID = "tabkyra-snapshot";
 const SNAPSHOT_CSP = "script-src 'unsafe-eval' 'unsafe-inline'; default-src 'none';";
@@ -247,24 +248,41 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 	w.__tabkyraRefs = refs;
 	let seq = 0;
 	const interactiveSel =
-		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=option],[role=switch],[role=textbox],[role=combobox],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
-	const headingSel = "h1,h2,h3,h4,label,[role=heading]";
+		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
+	const headingSel = "h1,h2,h3,h4,h5,h6,label,[role=heading],[role=alert],[role=status],[role=dialog]";
 	const selector = filter === "interactive" ? interactiveSel : `${interactiveSel},${headingSel}`;
+	const tagOf = (el: Element) => el.tagName.toLowerCase();
+	// Elements from a frame belong to another realm, so `instanceof` against this window's
+	// classes is false for them: everything below goes by tag name instead.
+	const field = (el: Element) =>
+		el as unknown as {
+			type?: string;
+			value?: string;
+			checked?: boolean;
+			disabled?: boolean;
+			required?: boolean;
+			placeholder?: string;
+			href?: string;
+			selectedIndex?: number;
+			options?: ArrayLike<{ text: string }>;
+		};
 	const isVisible = (el: Element) => {
 		const r = el.getBoundingClientRect();
 		if (r.width === 0 || r.height === 0) return false;
-		const style = getComputedStyle(el);
+		const style = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
 		return style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
 	};
 	const roleOf = (el: Element): string => {
-		const role = el.getAttribute("role");
-		if (role) return role;
-		const tag = el.tagName.toLowerCase();
+		// The page writes this attribute: only a plain role token, so it can't break the line.
+		const role = (el.getAttribute("role") ?? "").trim().split(/\s+/)[0];
+		if (role) return /^[a-z-]{1,30}$/.test(role) ? role : "generic";
+		const tag = tagOf(el);
 		if (tag === "a") return "link";
 		if (tag === "input") {
-			const type = (el as HTMLInputElement).type;
-			if (type === "submit" || type === "button") return "button";
+			const type = field(el).type;
+			if (type === "submit" || type === "button" || type === "reset") return "button";
 			if (type === "checkbox" || type === "radio") return type;
+			if (type === "range") return "slider";
 			return "textbox";
 		}
 		if (tag === "textarea") return "textbox";
@@ -272,74 +290,215 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 		if (tag === "button" || tag === "summary") return "button";
 		if (/^h[1-6]$/.test(tag)) return "heading";
 		if (tag === "label") return "label";
+		if (tag === "iframe" || tag === "frame") return "iframe";
 		if (el.getAttribute("contenteditable") === "true") return "textbox";
 		return "generic";
 	};
 	const nameOf = (el: Element): string => {
+		const root = el.getRootNode() as Document | ShadowRoot;
+		const byId = (id: string) => root.getElementById?.(id) ?? el.ownerDocument.getElementById(id);
 		const aria = el.getAttribute("aria-label");
 		if (aria) return aria.trim();
 		const labelledBy = el.getAttribute("aria-labelledby");
 		if (labelledBy) {
 			const t = labelledBy
 				.split(/\s+/)
-				.map((id) => document.getElementById(id)?.textContent ?? "")
+				.map((id) => byId(id)?.textContent ?? "")
 				.join(" ")
 				.trim();
 			if (t) return t;
 		}
-		if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+		const tag = tagOf(el);
+		if (tag === "input" || tag === "textarea" || tag === "select") {
+			const f = field(el);
 			const id = el.id;
 			if (id) {
-				const label = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+				const label = root.querySelector(`label[for="${CSS.escape(id)}"]`);
 				if (label?.textContent?.trim()) return label.textContent.trim();
 			}
 			const parentLabel = el.closest("label");
 			if (parentLabel?.textContent?.trim()) return parentLabel.textContent.trim();
-			if (el instanceof HTMLInputElement && (el.placeholder || el.value) && el.type !== "password")
-				return el.placeholder || el.value;
-			if (el instanceof HTMLTextAreaElement && el.placeholder) return el.placeholder;
+			if (tag === "input" && (f.placeholder || f.value) && f.type !== "password")
+				return (f.placeholder || f.value) ?? "";
+			if (tag === "textarea" && f.placeholder) return f.placeholder;
 			return el.getAttribute("name") ?? el.getAttribute("title") ?? "";
 		}
+		if (tag === "iframe" || tag === "frame") return el.getAttribute("title") ?? el.getAttribute("name") ?? "";
 		const img = el.querySelector("img[alt]");
 		if (img && !el.textContent?.trim()) return img.getAttribute("alt") ?? "";
 		return (el.textContent ?? "").replace(/\s+/g, " ").trim() || (el.getAttribute("title") ?? "");
 	};
+	/** What a control is doing right now: open, on, picked, unavailable. */
+	const statesOf = (el: Element): string[] => {
+		const at = (n: string) => el.getAttribute(n);
+		const out: string[] = [];
+		const expanded =
+			at("aria-expanded") ??
+			(tagOf(el) === "summary" ? String(!!(el.parentElement as { open?: boolean } | null)?.open) : null);
+		if (expanded === "true") out.push("expanded");
+		else if (expanded === "false") out.push("collapsed");
+		if (at("aria-pressed") === "true") out.push("pressed");
+		if (at("aria-selected") === "true") out.push("selected");
+		if (at("aria-checked") === "true") out.push("checked");
+		else if (at("aria-checked") === "mixed") out.push("mixed");
+		if (at("aria-current") && at("aria-current") !== "false") out.push("current");
+		if (el.matches(":disabled") || at("aria-disabled") === "true") out.push("disabled");
+		if (field(el).required || at("aria-required") === "true") out.push("required");
+		if (at("aria-invalid") === "true") out.push("invalid");
+		return out;
+	};
+
+	// Every place elements live: the document, each open shadow root (web components), and
+	// each same-origin frame. A frame's own transform (scale), border and padding map its
+	// coordinates to the tab's: x_tab = dx + sx * x_frame.
+	type Root = { root: Document | ShadowRoot; dx: number; dy: number; sx: number; sy: number; frame?: string };
+	const roots: Root[] = [];
+	const crossFrames: Array<{ el: Element; at: Root }> = [];
+	const isShadow = (root: Node) => root.nodeType === 11;
+	// A frame's address without its query or fragment, which can carry a token (?secret=...).
+	const frameUrl = (el: Element) =>
+		String((el as HTMLIFrameElement).src || el.getAttribute("src") || "").split(/[?#]/)[0];
+	const inner = (fr: Element, at: Root) => {
+		const r = fr.getBoundingClientRect();
+		const style = (fr.ownerDocument.defaultView ?? window).getComputedStyle(fr);
+		const layoutW = (fr as HTMLElement).offsetWidth || r.width || 1;
+		const layoutH = (fr as HTMLElement).offsetHeight || r.height || 1;
+		const kx = r.width / layoutW;
+		const ky = r.height / layoutH;
+		return {
+			dx: at.dx + at.sx * (r.left + (fr.clientLeft + Number.parseFloat(style.paddingLeft || "0")) * kx),
+			dy: at.dy + at.sy * (r.top + (fr.clientTop + Number.parseFloat(style.paddingTop || "0")) * ky),
+			sx: at.sx * kx,
+			sy: at.sy * ky,
+		};
+	};
+	const visit = (at: Root, depth: number) => {
+		roots.push(at);
+		if (depth > 12) return;
+		for (const el of Array.from(at.root.querySelectorAll("*"))) {
+			const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+			// A web component with display:none adds nothing a user sees. Any other host is entered,
+			// even one with no box (display:contents, a zero-size fixed overlay): each element inside
+			// is checked on its own, and text is kept only where it renders.
+			if (shadow && (el.ownerDocument.defaultView ?? window).getComputedStyle(el).display !== "none")
+				visit({ ...at, root: shadow }, depth + 1);
+			const tag = tagOf(el);
+			if (tag !== "iframe" && tag !== "frame") continue;
+			let doc: Document | null = null;
+			try {
+				doc = (el as HTMLIFrameElement).contentDocument;
+			} catch {
+				doc = null;
+			}
+			if (doc?.documentElement) {
+				if (isVisible(el))
+					visit({ root: doc, ...inner(el, at), frame: frameUrl(el) || "(inline frame)" }, depth + 1);
+			} else crossFrames.push({ el, at });
+		}
+	};
+	visit({ root: document, dx: 0, dy: 0, sx: 1, sy: 1 }, 0);
+	const cross = new Set(crossFrames.map((c) => c.el));
+
 	const nodes: unknown[] = [];
 	// Elements in the viewport first, then the rest in document order: on long pages the
 	// cap used to be spent on navigation chrome above the fold and the content was cut.
-	const inView: Element[] = [];
-	const offView: Element[] = [];
-	for (const el of Array.from(document.querySelectorAll(selector))) {
-		if (!isVisible(el)) continue;
+	const inView: Array<{ el: Element; at: Root }> = [];
+	const offView: Array<{ el: Element; at: Root }> = [];
+	const box = (el: Element, at: Root) => {
 		const r = el.getBoundingClientRect();
-		const onScreen = r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth;
-		(onScreen ? inView : offView).push(el);
-	}
-	for (const el of [...inView, ...offView]) {
+		const left = at.dx + at.sx * r.left;
+		const top = at.dy + at.sy * r.top;
+		const width = r.width * at.sx;
+		const height = r.height * at.sy;
+		const onScreen = top + height > 0 && top < window.innerHeight && left + width > 0 && left < window.innerWidth;
+		return { left, top, width, height, onScreen };
+	};
+	const place = (el: Element, at: Root) => {
+		if (!isVisible(el)) return;
+		(box(el, at).onScreen ? inView : offView).push({ el, at });
+	};
+	for (const at of roots)
+		for (const el of Array.from(at.root.querySelectorAll(selector))) if (!cross.has(el)) place(el, at);
+	// A frame Tabkyra can't look into (another site) is still listed, so the agent knows it's there.
+	for (const { el, at } of crossFrames) place(el, at);
+	for (const { el, at } of [...inView, ...offView]) {
 		if (nodes.length >= maxNodes) break;
-		const r = el.getBoundingClientRect();
+		const b = box(el, at);
 		const ref = `e${++seq}`;
 		refs.set(ref, el);
+		const tag = tagOf(el);
+		const f = field(el);
 		const node: Record<string, unknown> = {
 			ref,
 			role: roleOf(el),
 			name: nameOf(el).slice(0, 120),
-			x: Math.round(r.left + r.width / 2),
-			y: Math.round(r.top + r.height / 2),
-			width: Math.round(r.width),
-			height: Math.round(r.height),
-			visible: r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth,
+			x: Math.round(b.left + b.width / 2),
+			y: Math.round(b.top + b.height / 2),
+			width: Math.round(b.width),
+			height: Math.round(b.height),
+			visible: b.onScreen,
 		};
-		if (el instanceof HTMLAnchorElement && el.href) node.href = el.href.slice(0, 200);
-		if (el instanceof HTMLInputElement) {
-			if (el.type === "checkbox" || el.type === "radio") node.value = el.checked ? "checked" : "unchecked";
-			else if (el.type !== "password" && el.value) node.value = el.value.slice(0, 120);
-		} else if (el instanceof HTMLTextAreaElement && el.value) node.value = el.value.slice(0, 120);
-		else if (el instanceof HTMLSelectElement) node.value = el.options[el.selectedIndex]?.text ?? "";
+		if (tag === "a" && f.href) node.href = String(f.href).slice(0, 200);
+		if (cross.has(el)) {
+			node.href = frameUrl(el).slice(0, 200);
+			node.states = ["cross-origin: read it with navigate to its URL"];
+		}
+		if (tag === "input") {
+			if (f.type === "checkbox" || f.type === "radio") node.value = f.checked ? "checked" : "unchecked";
+			else if (f.type !== "password" && f.value) node.value = String(f.value).slice(0, 120);
+		} else if (tag === "textarea" && f.value) node.value = String(f.value).slice(0, 120);
+		else if (tag === "select" && f.options && f.selectedIndex !== undefined)
+			node.value = f.options[f.selectedIndex]?.text ?? "";
+		const states = statesOf(el);
+		if (states.length && !node.states) node.states = states;
+		if (at.frame) node.frame = at.frame.slice(0, 120);
 		nodes.push(node);
 	}
 	w.__tabkyraRefSeq = seq;
-	const text = (document.body?.innerText ?? "").replace(/\n{3,}/g, "\n\n").slice(0, maxTextChars);
+
+	// Text: the document, then what shadow roots and same-origin frames render, which
+	// document.body.innerText leaves out. Rendered text only: nothing hidden reaches the agent.
+	// Hidden includes visibility:hidden and opacity:0; display:contents has no box of its own,
+	// so the nearest ancestor with one decides.
+	const rendered = (c: Element): boolean => {
+		const view = c.ownerDocument.defaultView ?? window;
+		const style = view.getComputedStyle(c);
+		if (style.display === "contents") {
+			// No box, but its visibility still applies to what it holds.
+			if (style.visibility !== "visible") return false;
+			const up = c.parentElement ?? ((c.getRootNode() as ShadowRoot).host as Element | undefined);
+			return up ? rendered(up) : true;
+		}
+		const check = (c as Element & { checkVisibility?: (o?: Record<string, boolean>) => boolean }).checkVisibility;
+		return check ? check.call(c, { visibilityProperty: true, opacityProperty: true }) : isVisible(c);
+	};
+	// A shadow root's own text: element children that render, and text written straight into it
+	// when the host renders.
+	const shadowText = (root: Document | ShadowRoot) =>
+		Array.from(root.childNodes)
+			.map((c) =>
+				c.nodeType === 3
+					? isShadow(root) && rendered((root as ShadowRoot).host)
+						? (c.textContent ?? "").trim()
+						: ""
+					: c.nodeType === 1 &&
+							tagOf(c as Element) !== "style" &&
+							tagOf(c as Element) !== "script" &&
+							rendered(c as Element)
+						? ((c as HTMLElement).innerText ?? "")
+						: "",
+			)
+			.filter(Boolean)
+			.join("\n");
+	const parts = [document.body?.innerText ?? ""];
+	for (const at of roots.slice(1)) {
+		const own = isShadow(at.root) ? shadowText(at.root) : ((at.root as Document).body?.innerText ?? "");
+		if (own.trim()) parts.push(at.frame && !isShadow(at.root) ? `[frame ${at.frame}]\n${own}` : own);
+	}
+	const text = parts
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.slice(0, maxTextChars);
 	return {
 		url: location.href,
 		title: document.title,
@@ -355,15 +514,167 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 	};
 }
 
+/**
+ * A map of how the page is built, for an agent working out where its data comes from: the
+ * framework, embedded JSON (names and top-level keys, not contents), forms (field names, never
+ * values), frames, web components, script hosts and storage key names (never values).
+ * Self-contained: it runs in the page.
+ */
+function pageInspect(): unknown {
+	const all = Array.from(document.querySelectorAll("*"));
+	const has = (sel: string) => !!document.querySelector(sel);
+	const scripts = Array.from(document.scripts);
+	const srcs = scripts.map((x) => x.src).filter(Boolean);
+	const anySrc = (re: RegExp) => srcs.some((u) => re.test(u));
+	const frameworks: string[] = [];
+	if (has("#__next") || has("script#__NEXT_DATA__") || anySrc(/\/_next\//)) frameworks.push("Next.js");
+	if (has("#__nuxt") || anySrc(/\/_nuxt\//)) frameworks.push("Nuxt");
+	// Modern React leaves no markup; the bridge checks its expando properties in the page's own world.
+	if (has("[data-reactroot]")) frameworks.push("React");
+	if (has("[ng-version]"))
+		frameworks.push(`Angular ${document.querySelector("[ng-version]")?.getAttribute("ng-version") ?? ""}`.trim());
+	if (has("[data-v-app]") || all.some((el) => Array.from(el.attributes).some((a) => a.name.startsWith("data-v-"))))
+		frameworks.push("Vue");
+	if (all.some((el) => /\bsvelte-/.test(el.getAttribute("class") ?? ""))) frameworks.push("Svelte");
+	if (anySrc(/wp-content|wp-includes/)) frameworks.push("WordPress");
+	if (anySrc(/cdn\.shopify\.com/)) frameworks.push("Shopify");
+	const generator = document.querySelector('meta[name="generator"]')?.getAttribute("content");
+	if (generator) frameworks.push(`generator: ${generator.slice(0, 60)}`);
+
+	const keysOf = (text: string): string => {
+		try {
+			const v = JSON.parse(text);
+			if (Array.isArray(v)) return `array of ${v.length}`;
+			if (v && typeof v === "object") {
+				// A schema.org type name (Product, Recipe) says what the blob is; any other value stays out.
+				const type = (v as Record<string, unknown>)["@type"];
+				const schemaType = typeof type === "string" && /^[A-Z][A-Za-z]{1,40}$/.test(type) ? type : undefined;
+				const keys = Object.keys(v).slice(0, 12).join(", ");
+				return schemaType ? `@type ${schemaType}; keys ${keys}` : `keys ${keys}`;
+			}
+			return typeof v;
+		} catch {
+			return "not JSON";
+		}
+	};
+	const data = scripts
+		.filter((x) => /json/i.test(x.type))
+		.slice(0, 20)
+		.map((x) => ({ id: x.id || undefined, type: x.type, chars: x.text.length, shape: keysOf(x.text) }));
+
+	const forms = Array.from(document.forms)
+		.slice(0, 15)
+		.map((f) => ({
+			action: f.getAttribute("action") ?? "",
+			method: (f.getAttribute("method") ?? "get").toLowerCase(),
+			fields: Array.from(f.elements)
+				.map((e) => {
+					const name = e.getAttribute("name") ?? e.id;
+					const type = e.getAttribute("type") ?? e.tagName.toLowerCase();
+					return name ? `${name}:${type}` : "";
+				})
+				.filter(Boolean)
+				.slice(0, 25),
+		}));
+
+	const frames = Array.from(document.querySelectorAll("iframe,frame"))
+		.slice(0, 15)
+		.map((f) => {
+			let sameOrigin = false;
+			try {
+				sameOrigin = !!(f as HTMLIFrameElement).contentDocument;
+			} catch {
+				sameOrigin = false;
+			}
+			return { src: f.getAttribute("src") ?? "", sameOrigin };
+		});
+
+	const hosts = all.filter((el) => (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot);
+	const shadowTags = [...new Set(hosts.map((el) => el.tagName.toLowerCase()))].slice(0, 12);
+	const customTags = [...new Set(all.map((el) => el.tagName.toLowerCase()).filter((t) => t.includes("-")))].slice(
+		0,
+		15,
+	);
+
+	const scriptHosts: Record<string, number> = {};
+	for (const u of srcs) {
+		try {
+			const h = new URL(u).host;
+			scriptHosts[h] = (scriptHosts[h] ?? 0) + 1;
+		} catch {
+			/* not a URL */
+		}
+	}
+	// Names only, and a name's account-specific parts (an email, a UUID, a long id) become [id]:
+	// some sites put the signed-in user in key names.
+	const anonymous = (name: string) =>
+		name
+			.replace(/[^\s.:/|]*@[^\s.:/|]+(?:\.[^\s.:/|]+)*/g, "[id]")
+			.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[id]")
+			.replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "[id]")
+			.slice(0, 120);
+	// Reading window.localStorage itself throws on some pages (sandboxed, storage blocked).
+	const storageKeys = (get: () => Storage | undefined) => {
+		try {
+			const st = get();
+			return st
+				? Array.from({ length: Math.min(st.length, 30) }, (_, i) => anonymous(st.key(i) ?? "")).filter(Boolean)
+				: [];
+		} catch {
+			return [];
+		}
+	};
+	let cookieNames: string[] = [];
+	try {
+		cookieNames = document.cookie
+			.split(";")
+			.map((c) => anonymous(c.split("=")[0]?.trim() ?? ""))
+			.filter(Boolean)
+			.slice(0, 30);
+	} catch {
+		cookieNames = [];
+	}
+	return {
+		url: location.href,
+		title: document.title,
+		frameworks,
+		data,
+		forms,
+		frames,
+		shadowRoots: hosts.length,
+		shadowTags,
+		customTags,
+		scripts: { inline: scripts.filter((x) => !x.src).length, hosts: scriptHosts },
+		storage: {
+			local: storageKeys(() => window.localStorage),
+			session: storageKeys(() => window.sessionStorage),
+			cookies: cookieNames,
+		},
+		serviceWorker: !!navigator.serviceWorker?.controller,
+		elements: all.length,
+	};
+}
+
+export async function inspectPage(tabId: number): Promise<Record<string, unknown>> {
+	const map = await runInPage<Record<string, unknown>>(tabId, `(${pageInspect.toString()})()`);
+	// Addresses can carry tokens (/reset?token=..., an embed's ?secret=...).
+	if (typeof map.url === "string") map.url = maskUrl(map.url);
+	for (const f of (map.forms ?? []) as Array<{ action: string }>) f.action = maskUrl(f.action);
+	for (const f of (map.frames ?? []) as Array<{ src: string }>) f.src = maskUrl(f.src).slice(0, 160);
+	return map;
+}
+
 export async function snapshot(
 	tabId: number,
 	options: { maxNodes?: number; maxTextChars?: number; filter?: "interactive" | "all" } = {},
 ): Promise<Snapshot> {
 	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
-	return runInPage<Snapshot>(
+	const snap = await runInPage<Snapshot>(
 		tabId,
 		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)})`,
 	);
+	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
+	return snap;
 }
 
 /** Resolve a ref (from a snapshot) or CSS selector to its viewport center. */
@@ -380,9 +691,30 @@ export async function locate(
 		if (!el && sel) el = document.querySelector(sel);
 		if (!el) throw new Error(ref ? "Ref " + ref + " not found: the page changed. Call read_page for fresh refs." : "Selector not found: " + sel + ". read_page or find gives refs.");
 		if (!el.isConnected) throw new Error("Element is no longer in the page. Call read_page for fresh refs.");
+		// An element in a same-origin frame: bring the frame into view, then the element, and
+		// add each frame's offset so the point is in the tab's coordinates.
+		const frames = [];
+		for (let win = el.ownerDocument.defaultView; win && win !== window && win.frameElement; win = win.parent) frames.push(win.frameElement);
+		for (const fr of frames.slice().reverse()) fr.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 		el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+		// Innermost frame outward: each frame scales the point by its transform, then adds its own
+		// position, border and padding (the same mapping read_page uses).
 		const r = el.getBoundingClientRect();
-		return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
+		let x = r.left + r.width / 2;
+		let y = r.top + r.height / 2;
+		let w = r.width;
+		let h = r.height;
+		for (const fr of frames) {
+			const fr0 = fr.getBoundingClientRect();
+			const st = (fr.ownerDocument.defaultView || window).getComputedStyle(fr);
+			const kx = fr0.width / (fr.offsetWidth || fr0.width || 1);
+			const ky = fr0.height / (fr.offsetHeight || fr0.height || 1);
+			x = fr0.left + (fr.clientLeft + parseFloat(st.paddingLeft || "0") + x) * kx;
+			y = fr0.top + (fr.clientTop + parseFloat(st.paddingTop || "0") + y) * ky;
+			w *= kx;
+			h *= ky;
+		}
+		return { x, y, width: w, height: h };
 	})()`;
 	return runInPage(tabId, code);
 }
@@ -402,31 +734,34 @@ export async function fillElement(
 		if (!el && sel) el = document.querySelector(sel);
 		if (!el) throw new Error(ref ? "Ref " + ref + " not found: the page changed. Call read_page for fresh refs." : "Selector not found: " + sel + ". read_page or find gives refs.");
 		const value = ${JSON.stringify(value)};
+		// The element's own window: one in a frame belongs to another realm, where this
+		// window's HTMLInputElement and its value setter don't apply.
+		const W = el.ownerDocument.defaultView || window;
 		el.focus();
-		if (el instanceof HTMLSelectElement) {
+		if (el instanceof W.HTMLSelectElement) {
 			const opt = Array.from(el.options).find(o => o.value === value || o.text.trim() === value);
 			if (!opt) throw new Error("No option matches " + value + ". read_page lists the options (value=...).");
 			el.value = opt.value;
-			el.dispatchEvent(new Event("input", { bubbles: true }));
-			el.dispatchEvent(new Event("change", { bubbles: true }));
+			el.dispatchEvent(new W.Event("input", { bubbles: true, composed: true }));
+			el.dispatchEvent(new W.Event("change", { bubbles: true }));
 			return true;
 		}
-		if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
+		if (el instanceof W.HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
 			const want = value === "true" || value === "checked" || value === "1";
 			if (el.checked !== want) el.click();
 			return true;
 		}
-		if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-			const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+		if (el instanceof W.HTMLInputElement || el instanceof W.HTMLTextAreaElement) {
+			const proto = el instanceof W.HTMLTextAreaElement ? W.HTMLTextAreaElement.prototype : W.HTMLInputElement.prototype;
 			const setter = Object.getOwnPropertyDescriptor(proto, "value");
 			if (setter && setter.set) setter.set.call(el, value); else el.value = value;
-			el.dispatchEvent(new Event("input", { bubbles: true }));
-			el.dispatchEvent(new Event("change", { bubbles: true }));
+			el.dispatchEvent(new W.InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: value }));
+			el.dispatchEvent(new W.Event("change", { bubbles: true }));
 			return true;
 		}
 		if (el.isContentEditable) {
 			el.textContent = value;
-			el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+			el.dispatchEvent(new W.InputEvent("input", { bubbles: true, composed: true }));
 			return true;
 		}
 		throw new Error("Element is not a form control: use click or type on it instead of fill.");
@@ -439,7 +774,45 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 		const sel = ${JSON.stringify(selector ?? "")};
 		const el = sel ? document.querySelector(sel) : document.body;
 		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
-		return (el.innerText || el.textContent || "").slice(0, ${maxChars});
+		// Text inside web components (open shadow roots) and same-origin frames, which innerText
+		// leaves out, follows the element's own text. Rendered text only: nothing hidden.
+		// Hidden includes visibility:hidden and opacity:0; display:contents has no box, so the
+		// nearest ancestor with one decides.
+		const shown = (c) => {
+			const view = c.ownerDocument && c.ownerDocument.defaultView;
+			const style = view && view.getComputedStyle(c);
+			if (style && style.display === "contents") {
+				if (style.visibility !== "visible") return false;
+				const up = c.parentElement || (c.getRootNode && c.getRootNode().host);
+				return up ? shown(up) : true;
+			}
+			return c.checkVisibility ? c.checkVisibility({ visibilityProperty: true, opacityProperty: true }) : !!(c.getClientRects && c.getClientRects().length);
+		};
+		const parts = [el.innerText || ""];
+		const own = (root) => Array.from(root.childNodes).map((c) => c.nodeType === 3 ? (c.textContent || "").trim() : c.nodeType === 1 && !/^(style|script)$/i.test(c.tagName) && shown(c) ? (c.innerText ?? "") : "").filter(Boolean).join("\\n");
+		const visit = (root, depth) => {
+			if (depth > 12) return;
+			const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll("*")) : [];
+			// The selected element itself can be the host or the frame.
+			if (depth === 0 && root.nodeType === 1) nodes.unshift(root);
+			for (const node of nodes) {
+				if (node.shadowRoot && shown(node)) {
+					const t = own(node.shadowRoot);
+					if (t.trim()) parts.push(t);
+					visit(node.shadowRoot, depth + 1);
+				}
+				if (/^i?frame$/i.test(node.tagName) && shown(node)) {
+					let doc = null;
+					try { doc = node.contentDocument; } catch { doc = null; }
+					if (doc && doc.body) {
+						parts.push("[frame " + (String(node.src || node.getAttribute("src") || "inline").split(/[?#]/)[0]) + "]\\n" + (doc.body.innerText || ""));
+						visit(doc, depth + 1);
+					}
+				}
+			}
+		};
+		visit(el, 0);
+		return parts.join("\\n").slice(0, ${maxChars});
 	})()`;
 	return runInPage<string>(tabId, code);
 }

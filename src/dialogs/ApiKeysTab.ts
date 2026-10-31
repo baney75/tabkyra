@@ -10,6 +10,7 @@ import { FREE_PRIVACY_NOTE } from "../models/free-mode.js";
 import { isFreeModeOn, setFreeMode } from "../models/free-panel.js";
 import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/constants.js";
 import { CustomProvidersTab } from "./CustomProvidersTab.js";
+import "../components/ProviderKeyRow.js";
 import "../subscriptions/SubscriptionsSection.js";
 
 // Providers to hide from the API key list: removed sign-ins, and clouds that need more than a key.
@@ -27,14 +28,16 @@ const HIDDEN_PROVIDERS = new Set([
 
 /**
  * Settings > Providers, in four sections: Free mode, subscriptions (and connecting your own
- * agent), API keys for the built-in providers, then custom providers. A search box finds a
- * provider without scrolling, providers with a key come first, and saving a key offers
- * "Choose a model" right there.
+ * agent), API keys for the built-in providers, then custom providers. Each provider is one line
+ * (its key field opens on Add key), providers with a key come first, a search box narrows the
+ * list, and saving a key offers "Choose a model" right there.
  */
 export class ApiKeysTab extends SettingsTab {
 	/** Opens the model picker (the composer's own); set by the side panel. */
 	onChooseModel?: () => void;
 	private query = "";
+	/** Providers with a key when the tab opened. They sort first; a key saved now doesn't move its
+	 * row out from under the pointer. */
 	private withKeys = new Set<string>();
 	/** The provider whose key was just saved: it gets the "Choose a model" prompt. */
 	private justSaved?: string;
@@ -47,10 +50,9 @@ export class ApiKeysTab extends SettingsTab {
 	override async connectedCallback() {
 		super.connectedCallback();
 		this.addEventListener("provider-key-saved", this.onSaved);
-		// Typing a provider's name finds it at once, without scrolling the tab past Free mode and
-		// the subscriptions when Settings opens.
-		await this.updateComplete;
-		this.querySelector<HTMLInputElement>("input[type=search]")?.focus({ preventScroll: true });
+		this.addEventListener("provider-key-removed", this.onRemoved);
+		// Nothing takes focus when Settings opens: a focused search box far down the tab drew a ring
+		// and caught typing while out of sight.
 		try {
 			const storage = getAppStorage();
 			for (const p of await storage.providerKeys.list()) if (await storage.providerKeys.get(p)) this.withKeys.add(p);
@@ -63,12 +65,16 @@ export class ApiKeysTab extends SettingsTab {
 	override disconnectedCallback() {
 		super.disconnectedCallback();
 		this.removeEventListener("provider-key-saved", this.onSaved);
+		this.removeEventListener("provider-key-removed", this.onRemoved);
 	}
 
 	private onSaved = (e: Event) => {
-		const provider = (e as CustomEvent<string>).detail;
-		this.withKeys.add(provider);
-		this.justSaved = provider;
+		this.justSaved = (e as CustomEvent<string>).detail;
+		this.requestUpdate();
+	};
+
+	private onRemoved = (e: Event) => {
+		if (this.justSaved === (e as CustomEvent<string>).detail) this.justSaved = undefined;
 		this.requestUpdate();
 	};
 
@@ -95,14 +101,19 @@ export class ApiKeysTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-5">
 				<div class="flex flex-col gap-1.5">
-					<label class="flex items-start gap-2 text-sm font-medium text-foreground">
-						<input type="checkbox" class="mt-1" .checked=${isFreeModeOn()} @change=${(e: Event) => this.toggleFree(e)} />
+					<label class="flex items-start justify-between gap-3 text-sm font-medium text-foreground cursor-pointer">
 						<span>Free mode: use the best free model (OpenRouter)</span>
+						<input
+							type="checkbox"
+							role="switch"
+							class="tk-switch"
+							.checked=${isFreeModeOn()}
+							@change=${(e: Event) => this.toggleFree(e)}
+						/>
 					</label>
 					<p class="text-xs text-muted-foreground">
-						Runs on OpenRouter's free models, ranked by how well they do Tabkyra's browser tasks, with the next ones
-						as fallbacks when one is rate-limited. Free models never cost money, need a free OpenRouter key, and are
-						limited per day. ${FREE_PRIVACY_NOTE}
+						Picks the free model that does Tabkyra's browser tasks best and falls back to the next when one is busy.
+						Never costs money; needs a free OpenRouter key; limited per day. ${FREE_PRIVACY_NOTE}
 					</p>
 				</div>
 				<section class="flex flex-col gap-4 pt-5 border-t border-border">
@@ -138,9 +149,9 @@ export class ApiKeysTab extends SettingsTab {
 							this.query = (e.target as HTMLInputElement).value;
 							this.requestUpdate();
 						}}
-						class="w-full h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						class="w-full h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 					/>
-					<div class="flex flex-col gap-5">
+					<div class="flex flex-col divide-y divide-border">
 						${
 							providers.length === 0
 								? html`<p class="text-sm text-muted-foreground">No provider matches. Add any OpenAI- or Anthropic-compatible endpoint under Custom providers below.</p>`
@@ -148,7 +159,7 @@ export class ApiKeysTab extends SettingsTab {
 										providers,
 										(provider) => provider,
 										(provider) =>
-											html`<provider-key-input .provider=${provider} .label=${providerDisplayName(provider)}></provider-key-input>`,
+											html`<tabkyra-provider-key .provider=${provider} .label=${providerDisplayName(provider)}></tabkyra-provider-key>`,
 									)
 						}
 					</div>
