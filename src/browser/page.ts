@@ -238,6 +238,57 @@ export interface Snapshot {
 }
 
 /**
+ * Whether a ref's element is still part of the page: attached, and in a document that is
+ * still shown, through every same-origin frame up to the tab. A frame that navigated or was
+ * removed leaves its old document attached to itself, so isConnected alone says yes.
+ * Stringified and injected, so it must be self-contained.
+ */
+function refLive(el: Element): boolean {
+	if (!el.isConnected) return false;
+	let doc: Document = el.ownerDocument;
+	for (let hops = 0; hops < 20; hops++) {
+		const win = doc.defaultView;
+		if (!win) return false;
+		if (win === win.parent) return true;
+		const frame = win.frameElement;
+		if (!frame || !frame.isConnected || (frame as HTMLIFrameElement).contentDocument !== doc) return false;
+		doc = frame.ownerDocument;
+	}
+	return false;
+}
+
+/**
+ * What an element is, for telling whether a ref still names the same control: tag, role,
+ * label attributes, link target and, for anything but a text field, its first 80 characters
+ * of text. A list that reuses a row's node for another row changes it. Self-contained.
+ */
+function refPrint(el: Element): string {
+	const tag = el.tagName.toLowerCase();
+	const a = (n: string) => el.getAttribute(n) ?? "";
+	const editable = tag === "input" || tag === "textarea" || tag === "select" || a("contenteditable") === "true";
+	const text = editable ? "" : (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+	return [tag, a("role"), a("aria-label"), a("title"), a("name"), a("placeholder"), a("type"), a("href"), text].join(
+		"|",
+	);
+}
+
+/**
+ * The element a ref names, or an error the agent can act on. Refuses a ref whose element left
+ * the page or now shows something else, rather than acting on whatever holds it now.
+ * Self-contained; refLive and refPrint come in as arguments.
+ */
+function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Element) => string): Element {
+	const w = window as unknown as { __tabkyraRefs?: unknown; __tabkyraRefPrints?: unknown };
+	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
+	const prints = w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : undefined;
+	const el = refs?.get(ref);
+	if (!el || !live(el)) throw new Error(`Ref ${ref} not found: the page changed. Call read_page for fresh refs.`);
+	if (prints?.get(ref) !== print(el))
+		throw new Error(`Ref ${ref} now shows something else: the page reused it. Call read_page for fresh refs.`);
+	return el;
+}
+
+/**
  * Page-side snapshot function. Stringified and injected, so it must be
  * self-contained. Stores element refs on window.__tabkyraRefs (same world),
  * so a later click/fill by ref resolves without a second scan.
@@ -249,17 +300,42 @@ export interface Snapshot {
  * Numbering starts at a random block per document, so a ref kept from the previous page
  * is very unlikely to name anything on the next one.
  */
-function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): unknown {
+function pageSnapshot(
+	maxNodes: number,
+	maxTextChars: number,
+	filter: string,
+	live: (el: Element) => boolean,
+	print: (el: Element) => string,
+): unknown {
 	const w = window as unknown as {
-		__tabkyraRefs?: Map<string, Element>;
-		__tabkyraRefOf?: WeakMap<Element, string>;
-		__tabkyraRefSeq?: number;
+		__tabkyraRefs?: unknown;
+		__tabkyraRefPrints?: unknown;
+		__tabkyraRefOf?: unknown;
+		__tabkyraRefSeq?: unknown;
 	};
-	const refOf = (w.__tabkyraRefOf ??= new WeakMap<Element, string>());
-	const refs = (w.__tabkyraRefs ??= new Map<string, Element>());
+	// Adopt earlier state only when it is what this function wrote.
+	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : new Map<string, Element>();
+	const prints =
+		w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : new Map<string, string>();
+	const refOf =
+		w.__tabkyraRefOf instanceof WeakMap
+			? (w.__tabkyraRefOf as WeakMap<Element, string>)
+			: new WeakMap<Element, string>();
+	w.__tabkyraRefs = refs;
+	w.__tabkyraRefPrints = prints;
+	w.__tabkyraRefOf = refOf;
 	// Forget elements that left the page, so their refs fail instead of piling up.
-	for (const [ref, el] of refs) if (!el.isConnected) refs.delete(ref);
-	let seq = w.__tabkyraRefSeq ?? (1 + Math.floor(Math.random() * 900)) * 1000;
+	for (const [ref, el] of refs)
+		if (!live(el)) {
+			refs.delete(ref);
+			prints.delete(ref);
+		}
+	// A random start among about a billion, so a ref kept from the last page almost never
+	// names something on this one.
+	let seq =
+		typeof w.__tabkyraRefSeq === "number" && Number.isSafeInteger(w.__tabkyraRefSeq) && w.__tabkyraRefSeq > 0
+			? w.__tabkyraRefSeq
+			: 1_000_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000_000);
 	const interactiveSel =
 		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
 	const headingSel = "h1,h2,h3,h4,h5,h6,label,[role=heading],[role=alert],[role=status],[role=dialog]";
@@ -437,12 +513,21 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 	for (const { el, at } of [...inView, ...offView]) {
 		if (nodes.length >= maxNodes) break;
 		const b = box(el, at);
+		// The same element keeps its ref; one that now shows something else (a reused list
+		// row) gets a new one, and its old ref stops resolving.
+		const fp = print(el);
 		let ref = refOf.get(el);
+		if (ref && prints.get(ref) !== fp) {
+			refs.delete(ref);
+			prints.delete(ref);
+			ref = undefined;
+		}
 		if (!ref) {
 			ref = `e${++seq}`;
 			refOf.set(el, ref);
 		}
 		refs.set(ref, el);
+		prints.set(ref, fp);
 		const tag = tagOf(el);
 		const f = field(el);
 		const node: Record<string, unknown> = {
@@ -688,7 +773,7 @@ export async function snapshot(
 	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
 	const snap = await runInPage<Snapshot>(
 		tabId,
-		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)})`,
+		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()})`,
 	);
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	return snap;
@@ -700,13 +785,16 @@ export async function locate(
 	target: { ref?: string; selector?: string },
 ): Promise<{ x: number; y: number; width: number; height: number }> {
 	const code = `(() => {
-		const refs = window.__tabkyraRefs;
 		let el = null;
 		const ref = ${JSON.stringify(target.ref ?? "")};
 		const sel = ${JSON.stringify(target.selector ?? "")};
-		if (ref) el = refs ? refs.get(ref) : null;
+		// A ref that no longer resolves falls back to a selector given with it, as before.
+		if (ref) {
+			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch (e) { if (!sel) throw e; }
+		}
 		if (!el && sel) el = document.querySelector(sel);
-		if (!el) throw new Error(ref ? "Ref " + ref + " not found: the page changed. Call read_page for fresh refs." : "Selector not found: " + sel + ". read_page or find gives refs.");
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
 		if (!el.isConnected) throw new Error("Element is no longer in the page. Call read_page for fresh refs.");
 		// An element in a same-origin frame: bring the frame into view, then the element, and
 		// add each frame's offset so the point is in the tab's coordinates.
@@ -717,6 +805,9 @@ export async function locate(
 		// Innermost frame outward: each frame scales the point by its transform, then adds its own
 		// position, border and padding (the same mapping read_page uses).
 		const r = el.getBoundingClientRect();
+		const st0 = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+		if ((r.width === 0 && r.height === 0) || st0.visibility === "hidden")
+			throw new Error((ref ? "Ref " + ref : "That element") + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
 		let x = r.left + r.width / 2;
 		let y = r.top + r.height / 2;
 		let w = r.width;
@@ -743,13 +834,16 @@ export async function fillElement(
 	value: string,
 ): Promise<void> {
 	const code = `(() => {
-		const refs = window.__tabkyraRefs;
 		let el = null;
 		const ref = ${JSON.stringify(target.ref ?? "")};
 		const sel = ${JSON.stringify(target.selector ?? "")};
-		if (ref) el = refs ? refs.get(ref) : null;
+		// A ref that no longer resolves falls back to a selector given with it, as before.
+		if (ref) {
+			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch (e) { if (!sel) throw e; }
+		}
 		if (!el && sel) el = document.querySelector(sel);
-		if (!el) throw new Error(ref ? "Ref " + ref + " not found: the page changed. Call read_page for fresh refs." : "Selector not found: " + sel + ". read_page or find gives refs.");
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
 		const value = ${JSON.stringify(value)};
 		// The element's own window: one in a frame belongs to another realm, where this
 		// window's HTMLInputElement and its value setter don't apply.
@@ -852,8 +946,8 @@ export async function scrollPage(
 	const code = `(() => {
 		const o = ${JSON.stringify(options)};
 		let target = null;
-		if (o.ref && window.__tabkyraRefs) target = window.__tabkyraRefs.get(o.ref);
-		if (!target && o.selector) target = document.querySelector(o.selector);
+		if (o.ref) target = (${resolveRef.toString()})(o.ref, ${refLive.toString()}, ${refPrint.toString()});
+		else if (o.selector) target = document.querySelector(o.selector);
 		if (target) target.scrollIntoView({ block: "center", behavior: "instant" });
 		else if (o.to === "top") window.scrollTo(0, 0);
 		else if (o.to === "bottom") window.scrollTo(0, document.documentElement.scrollHeight);

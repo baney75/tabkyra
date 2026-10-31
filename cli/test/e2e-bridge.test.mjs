@@ -50,6 +50,18 @@ const REFS_PAGE = `<!doctype html><title>Tabkyra refs</title><h1>Account</h1><la
 <button id="add" onclick="const b=document.createElement('button');b.textContent='Danger';b.onclick=()=>document.getElementById('r').textContent='danger';document.getElementById('rows').prepend(b)">Add row</button>
 <p id="r">untouched</p>`;
 
+// Old refs that must fail: a frame that navigated, a node a list reused, a dialog that closed.
+const STALE_PAGE = `<!doctype html><title>Tabkyra stale</title>
+<iframe id="fr" src="/frame-a" style="width:300px;height:80px"></iframe>
+<button id="swap" onclick="document.getElementById('fr').src='/frame-b'">Swap frame</button>
+<button id="row" onclick="document.getElementById('r').textContent='invoice 5 deleted'">Delete invoice 5</button>
+<button id="recycle" onclick="const b=document.getElementById('row');b.textContent='Delete invoice 55';b.onclick=()=>document.getElementById('r').textContent='invoice 55 deleted'">Scroll list</button>
+<div id="dlg"><button onclick="document.getElementById('r').textContent='confirmed'">Confirm delete</button></div>
+<button id="close" onclick="document.getElementById('dlg').style.visibility='hidden'">Close dialog</button>
+<p id="r">untouched</p>`;
+const FRAME_A = `<!doctype html><button onclick="parent.document.getElementById('r').textContent='frame A saved'">Frame save</button>`;
+const FRAME_B = `<!doctype html><button onclick="parent.document.getElementById('r').textContent='frame B other'">Frame other</button>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -187,6 +199,9 @@ before(async () => {
 		res.writeHead(200, { "content-type": "text/html" });
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
 		if (req.url === "/refs") return res.end(REFS_PAGE);
+		if (req.url === "/stale") return res.end(STALE_PAGE);
+		if (req.url === "/frame-a") return res.end(FRAME_A);
+		if (req.url === "/frame-b") return res.end(FRAME_B);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
 	});
 	await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -336,6 +351,36 @@ test("a ref keeps pointing at its element after find and after the page adds an 
 	const text = await tool("get_page_text");
 	assert.match(text, /kept/);
 	assert.doesNotMatch(text, /danger/);
+});
+
+test("an old ref fails, never acting elsewhere: navigated frame, reused node, closed dialog", async () => {
+	await tool("navigate", { url: `${pageUrl}stale` });
+	const first = await until(async () => {
+		const t = await tool("read_page", { filter: "interactive" });
+		return t.includes("Frame save") ? t : undefined;
+	}, 10_000, "the frame's button");
+	const frameSave = refFor(first, "Frame save");
+	const row = refFor(first, "Delete invoice 5");
+	const confirm = refFor(first, "Confirm delete");
+	assert.ok(frameSave && row && confirm, first);
+	const clickFails = async (ref, why) => {
+		const res = await mcp.callTool({ name: "click", arguments: { ref } });
+		assert.equal(res.isError, true, `${why}: ${res.content.map((c) => c.text).join("\n")}`);
+		assert.match(res.content.map((c) => c.text).join("\n"), /read_page/, why);
+	};
+
+	await tool("click", { ref: refFor(first, "Swap frame") });
+	await until(async () => ((await tool("read_page", { filter: "interactive" })).includes("Frame other") ? true : undefined), 10_000, "frame B");
+	await clickFails(frameSave, "a ref into the frame's old document");
+
+	await tool("click", { ref: refFor(first, "Scroll list") });
+	await tool("read_page", { filter: "interactive" });
+	await clickFails(row, "a ref to a node now showing invoice 55");
+
+	await tool("click", { ref: refFor(first, "Close dialog") });
+	await clickFails(confirm, "a ref to a button in a closed dialog");
+
+	assert.match(await tool("get_page_text"), /untouched/);
 });
 
 test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {
