@@ -456,3 +456,25 @@ export const BRIDGE_METHODS = [
 ] as const;
 
 export type BridgeMethod = (typeof BRIDGE_METHODS)[number];
+
+// bridge.debug `userScripts`: why in-page scripts can or can't use chrome.userScripts
+// (probe and classifier in src/browser/userscripts-status.ts; read by `tabkyra doctor`).
+
+/**
+ * - ready: the API is present and a call into it succeeded.
+ * - not_granted: the optional permission is not granted (the toggle alone is not enough).
+ * - toggle_off: the permission is granted but the browser hides or blocks the API.
+ * - probe_error: something else failed; `error` has the browser's text.
+ */
+export type UserScriptsState = "ready" | "not_granted" | "toggle_off" | "probe_error";
+
+export interface UserScriptsStatus {
+	state: UserScriptsState;
+	/** `chrome.permissions.contains({permissions:["userScripts"]})`; null when that call failed. */
+	permissionGranted: boolean | null;
+	/** `chrome.userScripts.execute` is a function: the injection path's own check. */
+	apiPresent: boolean;
+	/** `chrome.userScripts.getScripts()` resolved (execute needs a tab, so this stands in). */
+	callWorks: boolean;
+	error?: string;
+}
