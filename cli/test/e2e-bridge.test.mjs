@@ -62,6 +62,36 @@ const STALE_PAGE = `<!doctype html><title>Tabkyra stale</title>
 const FRAME_A = `<!doctype html><button onclick="parent.document.getElementById('r').textContent='frame A saved'">Frame save</button>`;
 const FRAME_B = `<!doctype html><button onclick="parent.document.getElementById('r').textContent='frame B other'">Frame other</button>`;
 
+// Where a click lands: a modal over a button, a link that wraps lines, a virtualized row whose
+// "Delete" button is reused for another row, a rich editor, a field in a closed dialog.
+const HIT_PAGE = `<!doctype html><title>Tabkyra hits</title><style>body{font:16px sans-serif} #col{width:140px}</style>
+<button id="under" onclick="document.getElementById('r').textContent='under clicked'">Pay now</button>
+<div id="modal" style="position:fixed;inset:0;background:rgba(0,0,0,.3)"><button onclick="this.parentNode.remove()">Dismiss</button></div>
+<p id="col">Read the <a href="#wrap" onclick="document.getElementById('r').textContent='wrap clicked'">long policy link that wraps</a> today.</p>
+<ul><li data-key="3">Invoice 3 <button onclick="document.getElementById('r').textContent='deleted '+this.parentNode.dataset.key">Delete</button></li></ul>
+<button id="virt" onclick="const li=document.querySelector('li');li.dataset.key='40';li.firstChild.textContent='Invoice 40 '">Scroll rows</button>
+<div id="ed" contenteditable="true" role="textbox" aria-label="Note" style="border:1px solid;min-height:20px"></div>
+<div id="dlg2"><input aria-label="Type DELETE"></div>
+<button onclick="document.getElementById('dlg2').style.display='none'">Close prompt</button>
+<p id="r">untouched</p>`;
+
+// The cases #88's review named: keyless rows that share a long prefix, a grid row, focus inside a
+// row, a checkbox under its label's artwork, a card's overlay link, an off-screen control, and a
+// frame under a banner in its parent page.
+const R = "document.getElementById('r').textContent";
+const LONG = "notifications@github.com [baney75/tabkyra] Pull request review requested on a very long subject line number ";
+const HIT2_PAGE = `<!doctype html><title>Tabkyra hits 2</title><style>body{font:16px sans-serif}</style>
+<ul><li id="mail">${LONG}1 <button onclick="${R}='archived 1'">Archive mail</button></li></ul>
+<button onclick="document.getElementById('mail').firstChild.textContent='${LONG}2 '">Next mail</button>
+<div role="grid"><div role="row" aria-rowindex="7"><div role="gridcell"><button onclick="${R}='grid '+this.closest('[role=row]').getAttribute('aria-rowindex')">Archive row</button></div></div></div>
+<button onclick="document.querySelector('[role=row]').setAttribute('aria-rowindex','70')">Scroll grid</button>
+<ul><li>Buy milk <input type="checkbox" aria-label="Done"> <button onclick="${R}='removed'">Remove item</button></li></ul>
+<label><input type="checkbox" aria-label="Agree" onchange="${R}='agreed'"><span style="position:relative;left:-22px;display:inline-block;width:20px;height:20px;background:#ccc"></span>Agree</label>
+<div style="position:relative;width:320px;padding:12px;border:1px solid"><a href="/counter">Card title</a> <button onclick="${R}='saved'">Save card</button><a href="/counter" aria-label="Open card" style="position:absolute;inset:0"></a></div>
+<button style="position:absolute;left:-10000px" onclick="${R}='skipped'">Off screen</button>
+<div style="position:relative;width:320px;height:90px"><iframe src="/frame-a" style="width:300px;height:80px;border:0"></iframe><div style="position:absolute;inset:0;background:rgba(0,0,0,.2)">Banner</div></div>
+<p id="r">untouched</p>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -200,6 +230,8 @@ before(async () => {
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
 		if (req.url === "/refs") return res.end(REFS_PAGE);
 		if (req.url === "/stale") return res.end(STALE_PAGE);
+		if (req.url === "/hits") return res.end(HIT_PAGE);
+		if (req.url === "/hits2") return res.end(HIT2_PAGE);
 		if (req.url === "/frame-a") return res.end(FRAME_A);
 		if (req.url === "/frame-b") return res.end(FRAME_B);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
@@ -381,6 +413,84 @@ test("an old ref fails, never acting elsewhere: navigated frame, reused node, cl
 	await clickFails(confirm, "a ref to a button in a closed dialog");
 
 	assert.match(await tool("get_page_text"), /untouched/);
+});
+
+test("a click lands on its element or fails: modal, wrapped link, reused row, editor, closed field", async () => {
+	await tool("navigate", { url: `${pageUrl}hits` });
+	const page = await tool("read_page", { filter: "interactive" });
+	const call = async (name, args) => {
+		const res = await mcp.callTool({ name, arguments: args });
+		return { error: res.isError === true, text: res.content.map((c) => c.text).join("\n") };
+	};
+	const pay = await call("click", { ref: refFor(page, "Pay now") });
+	assert.equal(pay.error, true, pay.text);
+	assert.match(pay.text, /covered by/);
+	await tool("click", { ref: refFor(page, "Dismiss") });
+	await tool("click", { ref: refFor(page, "Pay now") });
+	assert.match(await tool("get_page_text"), /under clicked/);
+
+	await tool("click", { ref: refFor(page, "long policy link") });
+	assert.match(await tool("get_page_text"), /wrap clicked/);
+
+	const del = refFor(page, "Delete");
+	await tool("click", { ref: refFor(page, "Scroll rows") });
+	const reused = await call("click", { ref: del });
+	assert.equal(reused.error, true, reused.text);
+	assert.match(reused.text, /now shows something else/);
+	assert.doesNotMatch(await tool("get_page_text"), /deleted 40/);
+
+	const note = refFor(page, "Note");
+	await tool("fill", { ref: note, value: "Ada" });
+	await tool("type", { ref: note, text: "!" });
+	assert.match(await tool("get_page_text"), /Ada!/);
+
+	const field = refFor(page, "Type DELETE");
+	await tool("click", { ref: refFor(page, "Close prompt") });
+	const hidden = await call("fill", { ref: field, value: "DELETE" });
+	assert.equal(hidden.error, true, hidden.text);
+	assert.match(hidden.text, /isn't shown now/);
+});
+
+test("refs follow rows and clicks reach only their target: prefix rows, grid, focus, label, card, off screen, frame", async () => {
+	await tool("navigate", { url: `${pageUrl}hits2` });
+	const page = await until(async () => {
+		const t = await tool("read_page", { filter: "interactive" });
+		return t.includes("Frame save") ? t : undefined;
+	}, 10_000, "the frame's button");
+	const call = async (name, args) => {
+		const res = await mcp.callTool({ name, arguments: args });
+		return { error: res.isError === true, text: res.content.map((c) => c.text).join("\n") };
+	};
+	const refused = async (ref, pattern, why) => {
+		const res = await call("click", { ref });
+		assert.equal(res.error, true, `${why}: ${res.text}`);
+		assert.match(res.text, pattern, why);
+	};
+
+	const mail = refFor(page, "Archive mail");
+	await tool("click", { ref: refFor(page, "Next mail") });
+	await refused(mail, /now shows something else/, "a keyless row whose text changed after a long shared prefix");
+
+	const grid = refFor(page, "Archive row");
+	await tool("click", { ref: refFor(page, "Scroll grid") });
+	await refused(grid, /now shows something else/, "a grid row reused for row 70");
+
+	await tool("click", { ref: refFor(page, "Done") });
+	await tool("click", { ref: refFor(page, "Remove item") });
+	assert.match(await tool("get_page_text"), /removed/);
+
+	await tool("click", { ref: refFor(page, "Agree") });
+	assert.match(await tool("get_page_text"), /agreed/);
+
+	await refused(refFor(page, "Save card"), /covered by a/, "a button under the card's overlay link");
+	await refused(refFor(page, "Off screen"), /outside the visible page/, "an off-screen button");
+	await refused(refFor(page, "Frame save"), /covered by div "Banner"/, "a frame under a banner");
+	assert.doesNotMatch(await tool("get_page_text"), /saved|skipped|frame A/);
+
+	// The title link under an overlay to the same address: the click goes where it meant.
+	const title = await call("click", { ref: refFor(page, "Card title") });
+	assert.equal(title.error, false, title.text);
+	await until(async () => ((await tool("get_page_text")).includes("Tabkyra counter") ? true : undefined), 10_000, "the card's page");
 });
 
 test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {
