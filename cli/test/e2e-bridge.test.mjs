@@ -92,6 +92,26 @@ const HIT2_PAGE = `<!doctype html><title>Tabkyra hits 2</title><style>body{font:
 <div style="position:relative;width:320px;height:90px"><iframe src="/frame-a" style="width:300px;height:80px;border:0"></iframe><div style="position:absolute;inset:0;background:rgba(0,0,0,.2)">Banner</div></div>
 <p id="r">untouched</p>`;
 
+// #89: a web component's slotted label, a frame inside a shadow root, a clickable row holding
+// its own Delete button, and a field in a frame under a banner whose name has an "s".
+const HIT3_PAGE = `<!doctype html><title>Tabkyra hits 3</title><style>body{font:16px sans-serif}</style>
+<script>
+customElements.define("my-btn", class extends HTMLElement { constructor() { super(); const r = this.attachShadow({ mode: "open" });
+  r.innerHTML = '<button aria-label="Shadow save" style="padding:6px 20px"><slot></slot></button>';
+  r.querySelector("button").onclick = () => { ${R} = "shadow saved"; }; } });
+customElements.define("x-frame", class extends HTMLElement { constructor() { super();
+  this.attachShadow({ mode: "open" }).innerHTML = '<iframe src="/frame-a" style="width:300px;height:60px;border:0"></iframe>'; } });
+</script>
+<my-btn><span>Save it</span></my-btn>
+<x-frame></x-frame>
+<div role="option" aria-label="Open order" onclick="${R}='opened'" style="position:relative;width:320px;height:60px;border:1px solid">
+<span>Order 12 details</span><button onclick="event.stopPropagation();${R}='deleted order'" style="position:absolute;left:110px;top:15px;width:100px;height:30px">Delete order</button></div>
+<div style="position:relative;width:320px;height:70px"><iframe src="/frame-c" style="width:300px;height:60px;border:0"></iframe><div style="position:absolute;inset:0;background:rgba(0,0,0,.2)">Cookie settings</div></div>
+<label style="position:relative;display:inline-block;width:240px;height:40px"><input type="checkbox" aria-label="Consent" onchange="${R}='consented'" style="position:absolute;left:0;top:0;width:240px;height:40px;margin:0;z-index:-1"><a href="/counter" style="position:absolute;left:60px;top:0;width:100px;height:40px">Terms of use</a></label>
+<input id="plain" aria-label="Plain field">
+<p id="r">untouched</p>`;
+const FRAME_C = `<!doctype html><input aria-label="Frame field">`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -232,6 +252,8 @@ before(async () => {
 		if (req.url === "/stale") return res.end(STALE_PAGE);
 		if (req.url === "/hits") return res.end(HIT_PAGE);
 		if (req.url === "/hits2") return res.end(HIT2_PAGE);
+		if (req.url === "/hits3") return res.end(HIT3_PAGE);
+		if (req.url === "/frame-c") return res.end(FRAME_C);
 		if (req.url === "/frame-a") return res.end(FRAME_A);
 		if (req.url === "/frame-b") return res.end(FRAME_B);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
@@ -491,6 +513,44 @@ test("refs follow rows and clicks reach only their target: prefix rows, grid, fo
 	const title = await call("click", { ref: refFor(page, "Card title") });
 	assert.equal(title.error, false, title.text);
 	await until(async () => ((await tool("get_page_text")).includes("Tabkyra counter") ? true : undefined), 10_000, "the card's page");
+});
+
+test("web components, a frame in a shadow root, a row's own button, a frame field under a banner", async () => {
+	await tool("navigate", { url: `${pageUrl}hits3` });
+	const page = await until(async () => {
+		const t = await tool("read_page", { filter: "interactive" });
+		return t.includes("Frame save") && t.includes("Frame field") ? t : undefined;
+	}, 10_000, "both frames");
+	const call = async (name, args) => {
+		const res = await mcp.callTool({ name, arguments: args });
+		return { error: res.isError === true, text: res.content.map((c) => c.text).join("\n") };
+	};
+	const text = () => tool("get_page_text");
+
+	const save = await call("click", { ref: refFor(page, "Shadow save") });
+	assert.equal(save.error, false, save.text);
+	assert.match(await text(), /shadow saved/);
+
+	const frame = await call("click", { ref: refFor(page, "Frame save") });
+	assert.equal(frame.error, false, frame.text);
+	assert.match(await text(), /frame A saved/);
+
+	await tool("click", { ref: refFor(page, "Open order") });
+	assert.match(await text(), /opened/);
+	assert.doesNotMatch(await text(), /deleted order/);
+
+	// A checkbox under its label, where the label also holds a link: the click ticks the box.
+	await tool("click", { ref: refFor(page, "Consent") });
+	assert.match(await text(), /consented/);
+	assert.doesNotMatch(await text(), /Tabkyra counter/);
+
+	// A dead ref with a selector falls back to the selector, as before.
+	const plain = await call("fill", { ref: "e1", selector: "#plain", value: "fallback" });
+	assert.equal(plain.error, false, plain.text);
+
+	const field = await call("fill", { ref: refFor(page, "Frame field"), value: "x" });
+	assert.equal(field.error, true, field.text);
+	assert.match(field.text, /covered by div "Cookie settings"/);
 });
 
 test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {
