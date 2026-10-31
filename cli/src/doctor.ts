@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
+import { NATIVE_HOST_NAME, type UserScriptsStatus } from "../../src/bridge/protocol.ts";
 import { BridgeClient, listSockets } from "./client.ts";
 import { harnesses, launcherValid, shellJoin } from "./harness.ts";
 import { browserDirs, cliLauncherPath, EXTENSION_ID, launcherPath } from "./install.ts";
@@ -148,10 +148,66 @@ function hostChecks(): Check[] {
 	});
 }
 
-interface DebugInfo {
+export interface DebugInfo {
 	version?: string;
+	/** Every extension version sends this; true only when user scripts work. */
 	userScriptsApi?: boolean;
+	/** Newer extensions only: why they do not work. */
+	userScripts?: UserScriptsStatus;
+	workerUptimeS?: number;
 }
+
+const GRANT_STEPS =
+	"Open the Tabkyra side panel > Settings > Bridge > Page scripts and click Allow, then accept the browser's prompt.";
+
+/** The "Allow user scripts" row of `tabkyra doctor`, or undefined when there is nothing to say. */
+export function userScriptsCheck(info: DebugInfo): Check | undefined {
+	const status = info.userScripts;
+	if (!status) {
+		// An extension older than the structured status: only the boolean is known.
+		if (info.userScriptsApi !== false) return undefined;
+		return {
+			id: "user-scripts",
+			status: "warn",
+			label: "User scripts are unavailable",
+			detail: `Page scripts fall back to a slower path. Either the userScripts permission is not granted or "Allow user scripts" is off on the extension's Details page.`,
+			fix: "tabkyra reload, then tabkyra doctor again for the exact cause",
+		};
+	}
+	const slow = "Page scripts fall back to a slower path (the debugger).";
+	switch (status.state) {
+		case "ready":
+			return undefined;
+		case "not_granted":
+			return {
+				id: "user-scripts",
+				status: "warn",
+				label: "The userScripts permission is not granted",
+				detail: `${slow} The "Allow user scripts" toggle on the Details page is not enough: the extension must also be granted the optional userScripts permission.`,
+				fix: GRANT_STEPS,
+			};
+		case "toggle_off":
+			return {
+				id: "user-scripts",
+				status: "warn",
+				label: '"Allow user scripts" is off',
+				detail: `${slow} The permission is granted, but the browser keeps the API off until the toggle is on.${status.error ? ` Browser said: ${status.error}` : ""}`,
+				fix: "Turn on \"Allow user scripts\" on the extension's Details page (chrome://extensions > Tabkyra > Details), then tabkyra reload",
+			};
+		case "probe_error":
+			return {
+				id: "user-scripts",
+				status: "warn",
+				label: "Couldn't tell whether user scripts work",
+				detail: `${slow} The check failed: ${status.error ?? "no error text"}`,
+				fix: "tabkyra reload, then tabkyra doctor",
+			};
+	}
+}
+
+/** A worker this young may not have settled since `tabkyra reload`; ask it again once. */
+const SETTLE_S = 10;
+const RETRY_MS = 1500;
 
 async function connectionChecks(): Promise<Check[]> {
 	const notConnected: Check = {
@@ -180,7 +236,11 @@ async function connectionChecks(): Promise<Check[]> {
 			continue;
 		}
 		try {
-			const info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
+			let info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
+			if (userScriptsCheck(info) && (info.workerUptimeS ?? SETTLE_S) < SETTLE_S) {
+				await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+				info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
+			}
 			const checks: Check[] = [{ id: "connected", status: "ok", label: `Extension connected (${info.version ?? "unknown version"})`, detail: path }];
 			const built = builtVersion();
 			if (built && info.version && built !== info.version) {
@@ -191,14 +251,8 @@ async function connectionChecks(): Promise<Check[]> {
 					fix: "tabkyra reload",
 				});
 			}
-			if (info.userScriptsApi === false) {
-				checks.push({
-					id: "user-scripts",
-					status: "warn",
-					label: '"Allow user scripts" is off',
-					detail: "Page scripts fall back to a slower path. Turn it on in the extension's Details page.",
-				});
-			}
+			const userScripts = userScriptsCheck(info);
+			if (userScripts) checks.push(userScripts);
 			return checks;
 		} catch (err) {
 			return [

@@ -16,24 +16,7 @@
  */
 
 import { cdpSend, ensureAttached } from "./cdp.js";
-
-interface UserScriptsApi {
-	configureWorld(config: { worldId: string; messaging?: boolean; csp?: string }): Promise<void>;
-	execute(config: {
-		js: Array<{ code: string }>;
-		target: { tabId: number; allFrames?: boolean };
-		world: "USER_SCRIPT";
-		worldId?: string;
-		injectImmediately?: boolean;
-		executionId?: string;
-	}): Promise<Array<{ result?: unknown; error?: unknown }>>;
-	terminate?(tabId: number, executionId: string): Promise<void>;
-}
-
-export function userScriptsApi(): UserScriptsApi | undefined {
-	const api = (chrome as unknown as { userScripts?: UserScriptsApi }).userScripts;
-	return api && typeof api.execute === "function" ? api : undefined;
-}
+import { userScriptsApi } from "./userscripts-status.js";
 
 export function hasUserScripts(): boolean {
 	return userScriptsApi() !== undefined;

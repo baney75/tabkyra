@@ -18,6 +18,7 @@ import {
 	type SessionMeta,
 	sanitizeLabel,
 } from "../browser/session.js";
+import { probeUserScripts } from "../browser/userscripts-status.js";
 import { COMMUNITY_STATUS_KEY } from "../community/status.js";
 import { handleThreads } from "../threads/bridge.js";
 import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
@@ -485,22 +486,6 @@ async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<vo
 	}
 }
 
-/**
- * True when "Allow user scripts" is on. The API object exists whenever the permission is
- * declared; only a call tells whether the toggle is on (it throws while off).
- */
-async function userScriptsAvailable(): Promise<boolean> {
-	try {
-		// Reading the property can itself throw while the toggle is off, so it is inside the try.
-		const api = (chrome as { userScripts?: { getScripts?: () => Promise<unknown> } }).userScripts;
-		if (!api?.getScripts) return false;
-		await api.getScripts();
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 /** Subscription sign-in frames go to the relay (src/subscriptions/relay.ts); "disconnected" when the host goes. */
 let subscriptionHandler: ((message: HostSubscription | "disconnected") => void) | undefined;
 
@@ -651,16 +636,18 @@ function onHostMessage(message: HostToExt): void {
 						const options = await chrome.sidePanel.getOptions({ tabId: tab.id }).catch(() => null);
 						return { tabId: tab.id, url: tab.url, groupId: tab.groupId, options };
 					}),
-					userScriptsAvailable(),
+					probeUserScripts(),
 				])
-					.then(([sessions, perms, panelState, groups, windows, activeTab, userScriptsApi]) =>
+					.then(([sessions, perms, panelState, groups, windows, activeTab, userScripts]) =>
 						send({
 							type: "response",
 							clientId: message.clientId,
 							id: message.id,
 							result: {
 								version: chrome.runtime.getManifest().version,
-								userScriptsApi,
+								// Old CLIs read only this boolean; newer ones read `userScripts` for the cause.
+								userScriptsApi: userScripts.state === "ready",
+								userScripts,
 								sidePanel: { ...panelState, activeTab, groups },
 								windows,
 								grantedPermissions: perms.permissions ?? [],

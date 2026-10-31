@@ -16,8 +16,11 @@ import {
 	setBridgeEnabled,
 	setPermissionMode,
 } from "../bridge/permissions.js";
+import type { UserScriptsStatus } from "../bridge/protocol.js";
 import { listSessions } from "../browser/session.js";
+import { probeUserScripts } from "../browser/userscripts-status.js";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
+import { requestUserScriptsPermission } from "../tools/repl/userscripts-helpers.js";
 
 /**
  * Settings > Bridge: who may drive the browser from outside (omp, pi, Claude
@@ -32,6 +35,8 @@ export class BridgeTab extends SettingsTab {
 	@state() private pending: PendingRequest[] = [];
 	@state() private sessions: Array<{ id: string; label: string; tabs: number }> = [];
 	@state() private newHost = "";
+	@state() private userScripts?: UserScriptsStatus;
+	@state() private userScriptsNote = "";
 
 	private storageListener = (_changes: Record<string, chrome.storage.StorageChange>, area: string) => {
 		if (area === "session" || area === "local") this.load();
@@ -41,15 +46,21 @@ export class BridgeTab extends SettingsTab {
 		return "Bridge";
 	}
 
+	private permissionListener = () => this.load();
+
 	override async connectedCallback() {
 		super.connectedCallback();
 		chrome.storage.onChanged.addListener(this.storageListener);
+		chrome.permissions.onAdded.addListener(this.permissionListener);
+		chrome.permissions.onRemoved.addListener(this.permissionListener);
 		await this.load();
 	}
 
 	override disconnectedCallback() {
 		super.disconnectedCallback();
 		chrome.storage.onChanged.removeListener(this.storageListener);
+		chrome.permissions.onAdded.removeListener(this.permissionListener);
+		chrome.permissions.onRemoved.removeListener(this.permissionListener);
 	}
 
 	private async load() {
@@ -60,6 +71,49 @@ export class BridgeTab extends SettingsTab {
 		this.sessions = (await listSessions())
 			.filter((s) => s.id.startsWith("bridge-"))
 			.map((s) => ({ id: s.id, label: s.label, tabs: s.tabIds.length }));
+		this.userScripts = await probeUserScripts();
+	}
+
+	/** Called straight from the click: chrome.permissions.request needs the user gesture. */
+	private async grantUserScripts() {
+		const result = await requestUserScriptsPermission();
+		this.userScriptsNote = result.message ?? "";
+		await this.load();
+	}
+
+	private renderUserScripts(): TemplateResult {
+		const status = this.userScripts;
+		if (!status) return html``;
+		const line = (text: string) => html`<div class="text-xs text-muted-foreground">${text}</div>`;
+		let body: TemplateResult;
+		switch (status.state) {
+			case "ready":
+				body = line("On. Agents run page scripts through the userScripts API.");
+				break;
+			case "not_granted":
+				body = html`
+					${line(
+						'Off: Tabkyra has not been granted the userScripts permission. The "Allow user scripts" toggle on the extension\'s Details page is not enough on its own. Without it, page scripts run through the debugger, which is slower.',
+					)}
+					<div>${Button({ size: "sm", variant: "secondary", children: "Allow", onClick: () => this.grantUserScripts() })}</div>
+				`;
+				break;
+			case "toggle_off":
+				body = line(
+					'Off: the permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Tabkyra > Details.',
+				);
+				break;
+			case "probe_error":
+				body = line(`Couldn't check: ${status.error ?? "unknown error"}`);
+				break;
+		}
+		return html`
+			<div class="space-y-2">
+				<div class="text-sm font-medium text-foreground">Page scripts</div>
+				${body}
+				${this.userScriptsNote ? line(this.userScriptsNote) : ""}
+			</div>
+		`;
 	}
 
 	private async decide(request: PendingRequest, decision: "allow_once" | "allow_host" | "deny") {
@@ -183,6 +237,8 @@ export class BridgeTab extends SettingsTab {
 						${Button({ size: "sm", variant: "secondary", children: "Add", onClick: () => this.addHost() })}
 					</div>
 				</div>
+
+				${this.renderUserScripts()}
 
 				<div class="space-y-2">
 					<div class="text-sm font-medium text-foreground">Agent sessions in this browser</div>

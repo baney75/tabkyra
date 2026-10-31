@@ -7,6 +7,7 @@
 
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
 import { maskUrl } from "./mask-body.js";
+import { userScriptsApi } from "./userscripts-status.js";
 
 const SNAPSHOT_WORLD_ID = "tabkyra-snapshot";
 const SNAPSHOT_CSP = "script-src 'unsafe-eval' 'unsafe-inline'; default-src 'none';";
@@ -129,25 +130,6 @@ export async function goForward(tabId: number): Promise<boolean> {
 	return waitForLoad(tabId);
 }
 
-interface UserScriptsApi {
-	configureWorld(config: { worldId: string; messaging?: boolean; csp?: string }): Promise<void>;
-	execute(config: {
-		js: Array<{ code: string }>;
-		target: { tabId: number; allFrames?: boolean };
-		world: "USER_SCRIPT";
-		worldId: string;
-		injectImmediately?: boolean;
-	}): Promise<Array<{ result?: unknown; error?: unknown }>>;
-}
-
-function userScripts(): UserScriptsApi {
-	const api = (chrome as unknown as { userScripts?: UserScriptsApi }).userScripts;
-	if (!api || typeof api.execute !== "function") {
-		throw new Error('userScripts API not available. Enable "Allow user scripts" for the extension.');
-	}
-	return api;
-}
-
 const configuredWorlds = new Set<string>();
 
 /**
@@ -162,12 +144,7 @@ export async function runInPage<T = unknown>(tabId: number, code: string, worldI
 	const wrapped = `(async () => { try { const __v = await (${code}); return { ok: true, value: __v }; } catch (e) { return { ok: false, error: String(e && e.stack || e) }; } })()`;
 	// userScripts needs the "Allow user scripts" toggle; without it, evaluate through the
 	// debugger in the main world (CSP does not apply to Runtime.evaluate).
-	let api: UserScriptsApi | undefined;
-	try {
-		api = userScripts();
-	} catch {
-		api = undefined;
-	}
+	const api = userScriptsApi();
 	if (!api) return cdpEvaluate<T>(tabId, wrapped);
 	if (!configuredWorlds.has(worldId)) {
 		try {
