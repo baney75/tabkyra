@@ -185,6 +185,22 @@ test("a provider's key error reads as a sentence and says whether the key itself
 	// No network says nothing about the key: "Couldn't check", with Save anyway.
 	assert.deepEqual(keyFailure("Failed to fetch"), { kind: "unchecked", reason: "Failed to fetch." });
 	assert.deepEqual(keyFailure(undefined), { kind: "unchecked", reason: "the provider didn't say why." });
+	// Google's SDK: bare JSON, code 400, for a bad key.
+	assert.equal(
+		keyFailure('{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}').kind,
+		"rejected",
+	);
+	// Google's SDK as it really arrives: the API's JSON error inside its own error's message.
+	const google = JSON.stringify({ error: { message: JSON.stringify({ error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }, null, 2), code: 400, status: "Bad Request" } });
+	assert.deepEqual(keyFailure(google), { kind: "rejected", reason: "the provider turned it down (API key not valid. Please pass a valid API key)." });
+	// xAI as it really arrives: the message as a quoted JSON string.
+	assert.deepEqual(keyFailure('400 "Incorrect API key provided. You can obtain an API key from https://console.x.ai."'), {
+		kind: "rejected",
+		reason: "the provider turned it down (Incorrect API key provided. You can obtain an API key from https://console.x.ai).",
+	});
+	// A 403 for the test model alone isn't proof the key is bad.
+	assert.equal(keyFailure('403 {"error":{"message":"Project does not have access to model gpt-4o-mini"}}').kind, "unchecked");
+	assert.equal(keyFailure('400 {"error":{"message":"max_tokens is too large"}}').kind, "unchecked");
 	const row = readFileSync(new URL("../src/components/ProviderKeyRow.ts", import.meta.url), "utf8");
 	assert.match(row, /problem\.kind === "limited"\) \{\s*await getAppStorage\(\)\.providerKeys\.set/, "a limited key is saved");
 	assert.match(row, /Save anyway/);
@@ -205,6 +221,7 @@ test("API keys are one line per provider: the key field opens on Add key, a bad 
 	assert.match(row, /providerKeys\.delete\(this\.provider\)/, "Remove deletes the key");
 	assert.match(row, /That key didn't work: /);
 	assert.match(row, /Toast\.error\(/, "a failed removal says so");
+	assert.match(row, /disconnectedCallback\(\) \{\s*super\.disconnectedCallback\(\);[^}]*this\.abort\?\.abort\(\)/, "a row that goes away stops its check");
 	assert.doesNotMatch(row, /setTimeout/, "the reason doesn't vanish on a timer");
 	assert.doesNotMatch(row, /stopReason === "stop"/, "a reasoning model that hits the token limit still proves the key");
 	for (const file of ["../src/dialogs/ApiKeysTab.ts", "../src/dialogs/ApiKeyDialog.ts"]) {

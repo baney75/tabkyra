@@ -93,6 +93,12 @@ export class ProviderKeyRow extends LitElement {
 		return this;
 	}
 
+	override disconnectedCallback() {
+		super.disconnectedCallback();
+		// The search filtered the row out or Settings closed: a check in progress stops.
+		this.abort?.abort();
+	}
+
 	protected override willUpdate(changed: PropertyValues<this>) {
 		if (changed.has("provider") && this.provider) void this.loadStatus(this.provider);
 	}
