@@ -201,6 +201,12 @@ test("a provider's key error reads as a sentence and says whether the key itself
 	// A 403 for the test model alone isn't proof the key is bad.
 	assert.equal(keyFailure('403 {"error":{"message":"Project does not have access to model gpt-4o-mini"}}').kind, "unchecked");
 	assert.equal(keyFailure('400 {"error":{"message":"max_tokens is too large"}}').kind, "unchecked");
+	// Naming the key isn't enough; it has to say the key is wrong.
+	assert.equal(keyFailure('403 {"error":{"message":"This API key does not have access to model gpt-4o-mini"}}').kind, "unchecked");
+	assert.equal(keyFailure("400 invalid keyword in request").kind, "unchecked");
+	assert.equal(keyFailure('400 {"error":{"message":"Invalid API Key"}}').kind, "rejected");
+	// The test reads the whole message, not the 160 characters shown.
+	assert.equal(keyFailure(`400 ${"x".repeat(170)} API key not valid`).kind, "rejected");
 	const row = readFileSync(new URL("../src/components/ProviderKeyRow.ts", import.meta.url), "utf8");
 	assert.match(row, /problem\.kind === "limited"\) \{\s*await getAppStorage\(\)\.providerKeys\.set/, "a limited key is saved");
 	assert.match(row, /Save anyway/);
@@ -221,7 +227,8 @@ test("API keys are one line per provider: the key field opens on Add key, a bad 
 	assert.match(row, /providerKeys\.delete\(this\.provider\)/, "Remove deletes the key");
 	assert.match(row, /That key didn't work: /);
 	assert.match(row, /Toast\.error\(/, "a failed removal says so");
-	assert.match(row, /disconnectedCallback\(\) \{\s*super\.disconnectedCallback\(\);[^}]*this\.abort\?\.abort\(\)/, "a row that goes away stops its check");
+	assert.match(row, /disconnectedCallback\(\) \{\s*super\.disconnectedCallback\(\);[\s\S]*?this\.abort\.abort\(\)/, "a row that goes away stops its check");
+	assert.match(row, /providerKeys\.set\(provider, key\)/, "a key is saved under the provider it was checked for");
 	assert.doesNotMatch(row, /setTimeout/, "the reason doesn't vanish on a timer");
 	assert.doesNotMatch(row, /stopReason === "stop"/, "a reasoning model that hits the token limit still proves the key");
 	for (const file of ["../src/dialogs/ApiKeysTab.ts", "../src/dialogs/ApiKeyDialog.ts"]) {

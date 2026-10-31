@@ -41,10 +41,11 @@ export function keyFailure(raw: string | undefined): KeyFailure {
 		detail = found.trim();
 	}
 	detail = detail.trim().replace(/\.$/, "");
+	// Read the whole message before it's shortened for display.
+	const badKey = BAD_KEY.test(detail);
 	if (detail.length > 160) detail = `${detail.slice(0, 160)}…`;
 	const why = detail ? ` (${detail})` : "";
-	const namesKey = KEY_WORDS.test(detail);
-	if (status === 401 || ((status === 400 || status === 403 || status === undefined) && namesKey))
+	if (status === 401 || ((status === 400 || status === 403 || status === undefined) && badKey))
 		return { kind: "rejected", reason: `the provider turned it down${why}.` };
 	if (status === 402 || status === 429)
 		return { kind: "limited", reason: `the provider says the account is out of credit or over its limit${why}.` };
@@ -53,6 +54,10 @@ export function keyFailure(raw: string | undefined): KeyFailure {
 	return { kind: "unchecked", reason: detail ? `${detail}.` : "the provider didn't say why." };
 }
 
-/** Words a provider uses when the key itself is wrong. */
-const KEY_WORDS =
-	/api[ _-]?key|x-api-key|(invalid|incorrect|wrong|bad)[ _-]?(api[ _-]?)?key|authenticat|unauthori[sz]ed/i;
+/**
+ * Phrases a provider uses when the key itself is wrong ("Invalid API Key", "Incorrect API key
+ * provided", "API key not valid", "invalid x-api-key"). A bare mention of an API key isn't enough:
+ * "This API key has no access to model X" is about the model.
+ */
+const BAD_KEY =
+	/\b(invalid|incorrect|wrong|bad|expired|revoked)[ _-]?(x-)?(api[ _-]?)?key\b|\bapi[ _-]?key\b[^.]{0,40}?\b(not valid|invalid|expired|revoked|incorrect)\b|\bapi_key_invalid\b|\bauthenticat|\bunauthori[sz]ed\b/i;

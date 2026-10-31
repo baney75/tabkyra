@@ -95,12 +95,27 @@ export class ProviderKeyRow extends LitElement {
 
 	override disconnectedCallback() {
 		super.disconnectedCallback();
-		// The search filtered the row out or Settings closed: a check in progress stops.
-		this.abort?.abort();
+		// The search filtered the row out or Settings closed: a check in progress stops, and the
+		// editor doesn't come back half done.
+		if (this.abort) {
+			this.abort.abort();
+			this.editing = false;
+			this.value = "";
+		}
 	}
 
 	protected override willUpdate(changed: PropertyValues<this>) {
-		if (changed.has("provider") && this.provider) void this.loadStatus(this.provider);
+		if (!changed.has("provider")) return;
+		// A row given another provider drops whatever it was doing for the old one.
+		if (changed.get("provider")) {
+			this.abort?.abort();
+			this.editing = false;
+			this.value = "";
+			this.problem = undefined;
+			this.note = undefined;
+			this.hasKey = false;
+		}
+		if (this.provider) void this.loadStatus(this.provider);
 	}
 
 	private async loadStatus(provider: string) {
@@ -135,6 +150,7 @@ export class ProviderKeyRow extends LitElement {
 	/** Checks the key, then saves it; `force` saves without the check. */
 	private async save(force = false) {
 		const key = this.value.trim();
+		const provider = this.provider;
 		if (!key || this.checking) return;
 		const abort = new AbortController();
 		this.abort = abort;
@@ -142,16 +158,16 @@ export class ProviderKeyRow extends LitElement {
 		this.problem = undefined;
 		let problem: KeyFailure | undefined;
 		try {
-			problem = force ? undefined : await checkKey(this.provider, key, abort.signal);
+			problem = force ? undefined : await checkKey(provider, key, abort.signal);
 			// Cancel closed the editor while the check ran: nothing to save or show.
 			if (abort.signal.aborted) return;
 			// A key the provider knows but whose account is out of credit or over a limit is still
 			// the right key (a free OpenRouter key has no credit): it's saved, with the reason as a note.
 			if (!problem || problem.kind === "limited") {
-				await getAppStorage().providerKeys.set(this.provider, key);
+				await getAppStorage().providerKeys.set(provider, key);
 				this.note = !problem
 					? undefined
-					: this.provider === "openrouter"
+					: provider === "openrouter"
 						? `Saved. ${capitalize(problem.reason)} Free mode still works with this key; paid models need credit.`
 						: `Saved, but ${problem.reason}`;
 				problem = undefined;
@@ -170,7 +186,7 @@ export class ProviderKeyRow extends LitElement {
 			this.hasKey = true;
 			this.editing = false;
 			this.value = "";
-			this.dispatchEvent(new CustomEvent("provider-key-saved", { detail: this.provider, bubbles: true }));
+			this.dispatchEvent(new CustomEvent("provider-key-saved", { detail: provider, bubbles: true }));
 		}
 		await this.updateComplete;
 		// The field was disabled during the check and lost focus: it gets it back to fix the key,
