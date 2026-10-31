@@ -28,7 +28,7 @@ retry in a loop. `status` adds the site permissions when you need them.
 ## Step 2: the core loop
 
 1. `navigate` with a full URL (`https://...`). The first call opens your tab.
-2. `read_page` with `{"filter":"interactive"}`. Each control gets a ref (`e1`, `e2`, ...).
+2. `read_page` with `{"filter":"interactive"}`. Each control gets a ref like `e417003` (examples shorten it).
    Use plain `read_page` (no filter) or `get_page_text` when you need the text.
 3. Act by ref: `click {"ref":"e12"}`, `fill {"ref":"e4","value":"Ada"}`,
    `type {"ref":"e4","text":"Ada","submit":true}`, `press {"key":"Enter"}`.

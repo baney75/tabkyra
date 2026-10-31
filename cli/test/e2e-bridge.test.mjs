@@ -43,6 +43,25 @@ const DIALOG_PAGE = `<!doctype html><title>Tabkyra dialog</title>
 
 const COUNTER_PAGE = `<!doctype html><title>Tabkyra counter</title>
 <button id="hit" onclick="fetch('/hit',{method:'POST'}).then(r=>r.text()).then(t=>document.getElementById('n').textContent=t)">Hit</button><p id="n">0</p>`;
+// Re-reading must not move a ref to another element: "Add row" puts a new button in front of Keep.
+const REFS_PAGE = `<!doctype html><title>Tabkyra refs</title><h1>Account</h1><label>Notes</label>
+<div id="rows"><button id="keep" onclick="document.getElementById('r').textContent='kept'">Keep</button>
+<button id="del" onclick="document.getElementById('r').textContent='deleted'">Delete</button></div>
+<button id="add" onclick="const b=document.createElement('button');b.textContent='Danger';b.onclick=()=>document.getElementById('r').textContent='danger';document.getElementById('rows').prepend(b)">Add row</button>
+<p id="r">untouched</p>`;
+
+// Old refs that must fail: a frame that navigated, a node a list reused, a dialog that closed.
+const STALE_PAGE = `<!doctype html><title>Tabkyra stale</title>
+<iframe id="fr" src="/frame-a" style="width:300px;height:80px"></iframe>
+<button id="swap" onclick="document.getElementById('fr').src='/frame-b'">Swap frame</button>
+<button id="row" onclick="document.getElementById('r').textContent='invoice 5 deleted'">Delete invoice 5</button>
+<button id="recycle" onclick="const b=document.getElementById('row');b.textContent='Delete invoice 55';b.onclick=()=>document.getElementById('r').textContent='invoice 55 deleted'">Scroll list</button>
+<div id="dlg"><button onclick="document.getElementById('r').textContent='confirmed'">Confirm delete</button></div>
+<button id="close" onclick="document.getElementById('dlg').style.visibility='hidden'">Close dialog</button>
+<p id="r">untouched</p>`;
+const FRAME_A = `<!doctype html><button onclick="parent.document.getElementById('r').textContent='frame A saved'">Frame save</button>`;
+const FRAME_B = `<!doctype html><button onclick="parent.document.getElementById('r').textContent='frame B other'">Frame other</button>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -179,6 +198,10 @@ before(async () => {
 		}
 		res.writeHead(200, { "content-type": "text/html" });
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
+		if (req.url === "/refs") return res.end(REFS_PAGE);
+		if (req.url === "/stale") return res.end(STALE_PAGE);
+		if (req.url === "/frame-a") return res.end(FRAME_A);
+		if (req.url === "/frame-b") return res.end(FRAME_B);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
 	});
 	await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -299,6 +322,65 @@ test("open a page, snapshot, type, click and read back through MCP", async () =>
 		"the greeting",
 	);
 	assert.match(text, /Hello, Donovan!/);
+});
+
+/** The ref of the first line in a read_page result that names `label`. */
+function refFor(snapshot, label) {
+	const line = snapshot.split("\n").find((l) => l.includes(label));
+	return line?.match(/\b(e\d+)\b/)?.[1];
+}
+
+test("a ref keeps pointing at its element after find and after the page adds an element", async () => {
+	await tool("navigate", { url: `${pageUrl}refs` });
+	const first = await tool("read_page", { filter: "interactive" });
+	const keep = refFor(first, "Keep");
+	const del = refFor(first, "Delete");
+	assert.ok(keep && del, first);
+
+	// find reads the whole page (headings and labels too); before stable refs it renumbered,
+	// so Delete's old ref landed on the "Notes" label and nothing happened.
+	await tool("find", { query: "account" });
+	await tool("click", { ref: del });
+	assert.match(await tool("get_page_text"), /deleted/);
+
+	// A new button in front of Keep: before stable refs, Keep's old ref clicked "Danger".
+	await tool("click", { ref: refFor(first, "Add row") });
+	const second = await tool("read_page", { filter: "interactive" });
+	assert.equal(refFor(second, "Keep"), keep, second);
+	await tool("click", { ref: keep });
+	const text = await tool("get_page_text");
+	assert.match(text, /kept/);
+	assert.doesNotMatch(text, /danger/);
+});
+
+test("an old ref fails, never acting elsewhere: navigated frame, reused node, closed dialog", async () => {
+	await tool("navigate", { url: `${pageUrl}stale` });
+	const first = await until(async () => {
+		const t = await tool("read_page", { filter: "interactive" });
+		return t.includes("Frame save") ? t : undefined;
+	}, 10_000, "the frame's button");
+	const frameSave = refFor(first, "Frame save");
+	const row = refFor(first, "Delete invoice 5");
+	const confirm = refFor(first, "Confirm delete");
+	assert.ok(frameSave && row && confirm, first);
+	const clickFails = async (ref, why) => {
+		const res = await mcp.callTool({ name: "click", arguments: { ref } });
+		assert.equal(res.isError, true, `${why}: ${res.content.map((c) => c.text).join("\n")}`);
+		assert.match(res.content.map((c) => c.text).join("\n"), /read_page/, why);
+	};
+
+	await tool("click", { ref: refFor(first, "Swap frame") });
+	await until(async () => ((await tool("read_page", { filter: "interactive" })).includes("Frame other") ? true : undefined), 10_000, "frame B");
+	await clickFails(frameSave, "a ref into the frame's old document");
+
+	await tool("click", { ref: refFor(first, "Scroll list") });
+	await tool("read_page", { filter: "interactive" });
+	await clickFails(row, "a ref to a node now showing invoice 55");
+
+	await tool("click", { ref: refFor(first, "Close dialog") });
+	await clickFails(confirm, "a ref to a button in a closed dialog");
+
+	assert.match(await tool("get_page_text"), /untouched/);
 });
 
 test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {
