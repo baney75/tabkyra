@@ -107,6 +107,8 @@ customElements.define("x-frame", class extends HTMLElement { constructor() { sup
 <div role="option" aria-label="Open order" onclick="${R}='opened'" style="position:relative;width:320px;height:60px;border:1px solid">
 <span>Order 12 details</span><button onclick="event.stopPropagation();${R}='deleted order'" style="position:absolute;left:110px;top:15px;width:100px;height:30px">Delete order</button></div>
 <div style="position:relative;width:320px;height:70px"><iframe src="/frame-c" style="width:300px;height:60px;border:0"></iframe><div style="position:absolute;inset:0;background:rgba(0,0,0,.2)">Cookie settings</div></div>
+<label style="position:relative;display:inline-block;width:240px;height:40px"><input type="checkbox" aria-label="Consent" onchange="${R}='consented'" style="position:absolute;left:0;top:0;width:240px;height:40px;margin:0;z-index:-1"><a href="/counter" style="position:absolute;left:60px;top:0;width:100px;height:40px">Terms of use</a></label>
+<input id="plain" aria-label="Plain field">
 <p id="r">untouched</p>`;
 const FRAME_C = `<!doctype html><input aria-label="Frame field">`;
 
@@ -536,6 +538,15 @@ test("web components, a frame in a shadow root, a row's own button, a frame fiel
 	await tool("click", { ref: refFor(page, "Open order") });
 	assert.match(await text(), /opened/);
 	assert.doesNotMatch(await text(), /deleted order/);
+
+	// A checkbox under its label, where the label also holds a link: the click ticks the box.
+	await tool("click", { ref: refFor(page, "Consent") });
+	assert.match(await text(), /consented/);
+	assert.doesNotMatch(await text(), /Tabkyra counter/);
+
+	// A dead ref with a selector falls back to the selector, as before.
+	const plain = await call("fill", { ref: "e1", selector: "#plain", value: "fallback" });
+	assert.equal(plain.error, false, plain.text);
 
 	const field = await call("fill", { ref: refFor(page, "Frame field"), value: "x" });
 	assert.equal(field.error, true, field.text);

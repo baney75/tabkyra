@@ -344,9 +344,9 @@ export function refPoint(el: Element): { x: number; y: number } | { cover: strin
 	// A control nested in the target (a row's Delete button, an option's checkbox) takes the
 	// click for itself, so a point on it doesn't reach the target.
 	const CONTROL =
-		"a[href],button,input,select,textarea,[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=menuitem],[role=option]";
-	const nestedControl = (at: Element) => {
-		for (let n: Node | null = at; n && n !== el; n = up(n))
+		"a[href],button,input,select,textarea,summary,[onclick],[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=treeitem],[role=option]";
+	const nestedControl = (at: Element, stop: Node = el) => {
+		for (let n: Node | null = at; n && n !== stop && n !== el; n = up(n))
 			if (n.nodeType === 1 && (n as Element).matches(CONTROL)) return n as Element;
 		return null;
 	};
@@ -364,7 +364,10 @@ export function refPoint(el: Element): { x: number; y: number } | { cover: strin
 		return mine.split("#")[0] !== here;
 	};
 	const reaches = (at: Element | null) =>
-		!!at && ((inside(at, el) && !nestedControl(at)) || labels.some((l) => inside(at, l)) || sameLink(at));
+		!!at &&
+		((inside(at, el) && !nestedControl(at)) ||
+			labels.some((l) => inside(at, l) && !nestedControl(at, l)) ||
+			sameLink(at));
 	const r = el.getBoundingClientRect();
 	const points: Array<[number, number]> = [];
 	for (const box of Array.from(el.getClientRects()).slice(0, 4))
@@ -398,9 +401,9 @@ export function refPoint(el: Element): { x: number; y: number } | { cover: strin
  * it: a banner over the frame takes the click even when nothing covers the element inside.
  * (x, y) is in the element's own document. Hit tests run in the frame's own tree, so a frame
  * inside a shadow root is compared within that root. Null when every level is clear or can't
- * be tested. Self-contained.
+ * be tested, or offscreen when the point falls outside a page's window. Self-contained.
  */
-export function refFrameCover(el: Element, x: number, y: number): string | null {
+export function refFrameCover(el: Element, x: number, y: number): string | { offscreen: true } | null {
 	for (
 		let win: Window | null = el.ownerDocument.defaultView;
 		win && win !== win.parent && win.frameElement;
@@ -418,7 +421,9 @@ export function refFrameCover(el: Element, x: number, y: number): string | null 
 			typeof root.elementFromPoint === "function"
 				? root.elementFromPoint(x, y)
 				: fr.ownerDocument.elementFromPoint(x, y);
-		if (over && over !== fr && !fr.contains(over)) {
+		// The point is outside this page's window: the click would reach nothing.
+		if (!over) return { offscreen: true };
+		if (over !== fr && !fr.contains(over)) {
 			const name = (over.getAttribute("aria-label") || over.textContent || "")
 				.replace(/\s+/g, " ")
 				.trim()
@@ -976,6 +981,7 @@ export async function locate(
 		if (spot.offscreen) throw new Error(who + " is outside the visible page (kept off screen), so a click can't reach it.");
 		if (spot.cover) throw covered(spot.cover);
 		const frameCover = (${refFrameCover.toString()})(el, spot.x, spot.y);
+		if (frameCover && typeof frameCover === "object") throw new Error(who + " is outside the visible page (kept off screen), so a click can't reach it.");
 		if (frameCover) throw covered(frameCover);
 		let x = spot.x;
 		let y = spot.y;
@@ -1004,16 +1010,24 @@ export async function fillElement(
 ): Promise<void> {
 	const code = `(async () => {
 		let el = null;
+		let byRef = false;
 		const ref = ${JSON.stringify(target.ref ?? "")};
 		const sel = ${JSON.stringify(target.selector ?? "")};
 		// A ref that no longer resolves falls back to a selector given with it, as before.
 		if (ref) {
-			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); byRef = true; }
 			catch (e) { if (!sel) throw e; }
 		}
 		if (!el && sel) el = document.querySelector(sel);
 		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
-		if (ref) {
+		if (byRef) {
+			// Bring the field into view and let the page react, then make sure the ref still names
+			// it: a list that re-renders on scroll can hand the node to another row meanwhile.
+			el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+			if (document.visibilityState === "visible")
+				await Promise.race([new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))), new Promise((ok) => setTimeout(ok, 200))]);
+			const again = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()});
+			if (again !== el) throw new Error("Ref " + ref + " now shows something else: the page reused it. Call read_page for fresh refs.");
 			// A field in a dialog that closed keeps its ref; writing into it would put a value
 			// the user can't see into the next submit.
 			const r0 = el.getBoundingClientRect();
@@ -1021,12 +1035,11 @@ export async function fillElement(
 			if ((r0.width === 0 && r0.height === 0) || st0.visibility === "hidden")
 				throw new Error("Ref " + ref + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
 			// A field under a modal, or one a dialog slid off screen as it closed.
-			el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
-			if (document.visibilityState === "visible")
-				await Promise.race([new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))), new Promise((ok) => setTimeout(ok, 200))]);
 			const spot = (${refPoint.toString()})(el);
-			if (spot.offscreen) throw new Error("Ref " + ref + " is outside the visible page, so it can't be filled. Call read_page for fresh refs.");
-			const cover = spot.cover || (${refFrameCover.toString()})(el, spot.x, spot.y);
+			const frame = spot.offscreen || spot.cover ? null : (${refFrameCover.toString()})(el, spot.x, spot.y);
+			if (spot.offscreen || (frame && typeof frame === "object"))
+				throw new Error("Ref " + ref + " is outside the visible page, so it can't be filled. Call read_page for fresh refs.");
+			const cover = spot.cover || frame;
 			if (cover) throw new Error("Ref " + ref + " is covered by " + cover + ". Close or dismiss it, then call read_page.");
 		}
 		const value = ${JSON.stringify(value)};
