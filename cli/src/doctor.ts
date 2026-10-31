@@ -158,24 +158,13 @@ export interface DebugInfo {
 }
 
 const GRANT_STEPS =
-	"Open the Tabkyra side panel > Settings > Bridge > Page scripts and click Allow, then accept the browser's prompt.";
+	"Open the Tabkyra side panel > Settings > Bridge > Page scripts and click Allow, then accept the browser's prompt. If doctor still warns, run tabkyra reload.";
 
 /** The "Allow user scripts" row of `tabkyra doctor`, or undefined when there is nothing to say. */
 export function userScriptsCheck(info: DebugInfo): Check | undefined {
 	const status = info.userScripts;
-	if (!status) {
-		// An extension older than the structured status: only the boolean is known.
-		if (info.userScriptsApi !== false) return undefined;
-		return {
-			id: "user-scripts",
-			status: "warn",
-			label: "User scripts are unavailable",
-			detail: `Page scripts fall back to a slower path. Either the userScripts permission is not granted or "Allow user scripts" is off on the extension's Details page.`,
-			fix: "tabkyra reload, then tabkyra doctor again for the exact cause",
-		};
-	}
 	const slow = "Page scripts fall back to a slower path (the debugger).";
-	switch (status.state) {
+	switch (status?.state) {
 		case "ready":
 			return undefined;
 		case "not_granted":
@@ -187,12 +176,22 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 				fix: GRANT_STEPS,
 			};
 		case "toggle_off":
+			if (!status.apiPresent) {
+				// Granted but missing: the toggle is off, or the extension hasn't restarted since the grant.
+				return {
+					id: "user-scripts",
+					status: "warn",
+					label: "The userScripts permission is granted but the browser hides the API",
+					detail: `${slow} Either "Allow user scripts" is off on the extension's Details page, or Tabkyra hasn't restarted since the permission was granted.`,
+					fix: 'Check "Allow user scripts" at chrome://extensions > Tabkyra > Details, then tabkyra reload',
+				};
+			}
 			return {
 				id: "user-scripts",
 				status: "warn",
 				label: '"Allow user scripts" is off',
-				detail: `${slow} The permission is granted, but the browser keeps the API off until the toggle is on.${status.error ? ` Browser said: ${status.error}` : ""}`,
-				fix: "Turn on \"Allow user scripts\" on the extension's Details page (chrome://extensions > Tabkyra > Details), then tabkyra reload",
+				detail: `${slow} The permission is granted, but the browser refuses userScripts calls until the toggle is on.${status.error ? ` Browser said: ${status.error}` : ""}`,
+				fix: 'Turn on "Allow user scripts" at chrome://extensions > Tabkyra > Details, then tabkyra reload',
 			};
 		case "probe_error":
 			return {
@@ -203,6 +202,16 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 				fix: "tabkyra reload, then tabkyra doctor",
 			};
 	}
+	// No structured status (an older extension) or a state this CLI doesn't know (a newer one):
+	// only the boolean is certain.
+	if (info.userScriptsApi !== false) return undefined;
+	return {
+		id: "user-scripts",
+		status: "warn",
+		label: "User scripts are unavailable",
+		detail: `Page scripts fall back to a slower path. Either the userScripts permission is not granted or "Allow user scripts" is off on the extension's Details page.`,
+		fix: "tabkyra update or rebuild the CLI so doctor can name the cause",
+	};
 }
 
 /** A worker this young may not have settled since `tabkyra reload`; ask it again once. */
@@ -239,7 +248,8 @@ async function connectionChecks(): Promise<Check[]> {
 			let info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
 			if (userScriptsCheck(info) && (info.workerUptimeS ?? SETTLE_S) < SETTLE_S) {
 				await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
-				info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
+				// A worker still restarting may not answer again; the first answer stands then.
+				info = ((await client.call("bridge.debug", {}, 5000).catch(() => undefined)) as DebugInfo | undefined) ?? info;
 			}
 			const checks: Check[] = [{ id: "connected", status: "ok", label: `Extension connected (${info.version ?? "unknown version"})`, detail: path }];
 			const built = builtVersion();

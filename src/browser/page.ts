@@ -7,7 +7,7 @@
 
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
 import { maskUrl } from "./mask-body.js";
-import { userScriptsApi } from "./userscripts-status.js";
+import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
 
 const SNAPSHOT_WORLD_ID = "tabkyra-snapshot";
 const SNAPSHOT_CSP = "script-src 'unsafe-eval' 'unsafe-inline'; default-src 'none';";
@@ -146,21 +146,29 @@ export async function runInPage<T = unknown>(tabId: number, code: string, worldI
 	// debugger in the main world (CSP does not apply to Runtime.evaluate).
 	const api = userScriptsApi();
 	if (!api) return cdpEvaluate<T>(tabId, wrapped);
-	if (!configuredWorlds.has(worldId)) {
-		try {
-			await api.configureWorld({ worldId, messaging: true, csp: SNAPSHOT_CSP });
-		} catch {
-			/* already configured with the same settings */
+	let results: Awaited<ReturnType<typeof api.execute>>;
+	try {
+		if (!configuredWorlds.has(worldId)) {
+			try {
+				await api.configureWorld({ worldId, messaging: true, csp: SNAPSHOT_CSP });
+			} catch (err) {
+				if (isUserScriptsGated(err)) throw err;
+				/* already configured with the same settings */
+			}
+			configuredWorlds.add(worldId);
 		}
-		configuredWorlds.add(worldId);
+		results = await api.execute({
+			js: [{ code: wrapped }],
+			target: { tabId, allFrames: false },
+			world: "USER_SCRIPT",
+			worldId,
+			injectImmediately: true,
+		});
+	} catch (err) {
+		// Present but refused (permission or toggle): the code never ran, so evaluate it through the debugger.
+		if (isUserScriptsGated(err)) return cdpEvaluate<T>(tabId, wrapped);
+		throw err;
 	}
-	const results = await api.execute({
-		js: [{ code: wrapped }],
-		target: { tabId, allFrames: false },
-		world: "USER_SCRIPT",
-		worldId,
-		injectImmediately: true,
-	});
 	const first = results[0];
 	if (!first) throw new Error("Script returned no result");
 	if (first.error) throw new Error(String((first.error as { message?: string }).message ?? first.error));

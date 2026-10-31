@@ -45,7 +45,9 @@ before(async () => {
 				if (msg.method === "bridge.debug") {
 					const result = answers[Math.min(debugCalls, answers.length - 1)];
 					debugCalls++;
-					socket.write(frame({ type: "response", id: msg.id, result }));
+					// "fail" answers with an RPC error, as a worker that is still restarting might.
+					if (result === "fail") socket.write(frame({ type: "response", id: msg.id, error: { code: "internal", message: "bridge.debug: worker restarting" } }));
+					else socket.write(frame({ type: "response", id: msg.id, result }));
 				}
 			}
 		});
@@ -112,6 +114,13 @@ test("toggle_off: points at the Details-page toggle and shows the browser's text
 	assert.match(row.detail, /blocked by toggle/);
 });
 
+test("granted but hidden: names both causes and the restart, not just the toggle", async () => {
+	const row = await userScriptsRow(status("toggle_off", { apiPresent: false }));
+	assert.match(row.label, /granted but the browser hides/);
+	assert.match(row.detail, /hasn't restarted/);
+	assert.match(row.fix, /tabkyra reload/);
+});
+
 test("probe_error: shows the error text", async () => {
 	const row = await userScriptsRow(status("probe_error", { error: "worker shutting down" }));
 	assert.match(row.label, /Couldn't tell/);
@@ -125,6 +134,19 @@ test("a worker that just started is asked again once before warning", async () =
 	// Still not granted on the second ask: warn, and don't keep asking.
 	assert.match((await userScriptsRow(young, young)).label, /not granted/);
 	assert.equal(debugCalls, 2);
+});
+
+test("a retry that fails keeps the first answer instead of failing the connection", async () => {
+	const young = { ...status("not_granted", { permissionGranted: false }), workerUptimeS: 1 };
+	const row = await userScriptsRow(young, "fail");
+	assert.match(row.label, /not granted/);
+	assert.equal(debugCalls, 2);
+});
+
+test("a state this CLI doesn't know falls back to the boolean", async () => {
+	const row = await userScriptsRow({ ...status("ready"), userScriptsApi: false, userScripts: { state: "something_new" } });
+	assert.equal(row.label, "User scripts are unavailable");
+	assert.equal(await userScriptsRow({ ...status("ready"), userScripts: { state: "something_new" } }), undefined);
 });
 
 test("a settled worker is asked once", async () => {

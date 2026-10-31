@@ -16,7 +16,7 @@
  */
 
 import { cdpSend, ensureAttached } from "./cdp.js";
-import { userScriptsApi } from "./userscripts-status.js";
+import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
 
 export function hasUserScripts(): boolean {
 	return userScriptsApi() !== undefined;
@@ -184,22 +184,30 @@ export async function injectScript<T = unknown>(tabId: number, code: string, opt
 	const api = userScriptsApi();
 	if (!api) return cdpInject<T>(tabId, code, options);
 	const worldId = options.worldId ?? "tabkyra";
-	if (!configuredWorlds.has(worldId)) {
-		try {
-			await api.configureWorld({ worldId, messaging: true, csp: options.csp });
-		} catch {
-			/* already configured */
+	let results: Awaited<ReturnType<typeof api.execute>>;
+	try {
+		if (!configuredWorlds.has(worldId)) {
+			try {
+				await api.configureWorld({ worldId, messaging: true, csp: options.csp });
+			} catch (err) {
+				if (isUserScriptsGated(err)) throw err;
+				/* already configured */
+			}
+			configuredWorlds.add(worldId);
 		}
-		configuredWorlds.add(worldId);
+		results = await api.execute({
+			js: [{ code }],
+			target: { tabId, allFrames: false },
+			world: "USER_SCRIPT",
+			worldId,
+			injectImmediately: true,
+			...(options.executionId && api.terminate ? { executionId: options.executionId } : {}),
+		});
+	} catch (err) {
+		// Present but refused (permission or toggle): the code never ran, so the debugger path runs it.
+		if (isUserScriptsGated(err)) return cdpInject<T>(tabId, code, options);
+		throw err;
 	}
-	const results = await api.execute({
-		js: [{ code }],
-		target: { tabId, allFrames: false },
-		world: "USER_SCRIPT",
-		worldId,
-		injectImmediately: true,
-		...(options.executionId && api.terminate ? { executionId: options.executionId } : {}),
-	});
 	const first = results[0];
 	if (first?.error) throw new Error(String((first.error as { message?: string }).message ?? first.error));
 	return first?.result as T;

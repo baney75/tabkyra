@@ -20,7 +20,6 @@ import type { UserScriptsStatus } from "../bridge/protocol.js";
 import { listSessions } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
-import { requestUserScriptsPermission } from "../tools/repl/userscripts-helpers.js";
 
 /**
  * Settings > Bridge: who may drive the browser from outside (omp, pi, Claude
@@ -71,14 +70,26 @@ export class BridgeTab extends SettingsTab {
 		this.sessions = (await listSessions())
 			.filter((s) => s.id.startsWith("bridge-"))
 			.map((s) => ({ id: s.id, label: s.label, tabs: s.tabIds.length }));
-		this.userScripts = await probeUserScripts();
+		const userScripts = await probeUserScripts();
+		// A note answers one click; it goes once the state moves on.
+		if (userScripts.state !== this.userScripts?.state) this.userScriptsNote = "";
+		this.userScripts = userScripts;
 	}
 
-	/** Called straight from the click: chrome.permissions.request needs the user gesture. */
+	/**
+	 * Called straight from the click: chrome.permissions.request must be the first await to keep
+	 * the user gesture. No extension reload here: that would cut off every agent session.
+	 */
 	private async grantUserScripts() {
-		const result = await requestUserScriptsPermission();
-		this.userScriptsNote = result.message ?? "";
+		let note = "";
+		try {
+			const granted = await chrome.permissions.request({ permissions: ["userScripts"] });
+			if (!granted) note = "The browser did not grant the permission. Click Allow again and accept the prompt.";
+		} catch (err) {
+			note = `Couldn't ask for the permission: ${err instanceof Error ? err.message : String(err)}`;
+		}
 		await this.load();
+		this.userScriptsNote = note;
 	}
 
 	private renderUserScripts(): TemplateResult {
@@ -100,7 +111,9 @@ export class BridgeTab extends SettingsTab {
 				break;
 			case "toggle_off":
 				body = line(
-					'Off: the permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Tabkyra > Details.',
+					status.apiPresent
+						? 'Off: the permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Tabkyra > Details.'
+						: 'Off: the permission is granted, but the browser hides the API. Check "Allow user scripts" at chrome://extensions > Tabkyra > Details, then restart Tabkyra (tabkyra reload; agent sessions reconnect).',
 				);
 				break;
 			case "probe_error":

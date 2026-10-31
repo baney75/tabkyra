@@ -44,12 +44,21 @@ export type UserScriptsProbe = Omit<UserScriptsStatus, "state">;
 // What Chromium says when a call is blocked by the toggle (or developer mode before 138).
 const TOGGLE_ERROR = /toggle|allow user scripts|developer mode/i;
 
+/**
+ * True when `err` is the browser refusing a userScripts call (permission or toggle). Check only
+ * errors thrown by the API call itself: a refused call never reached the page, so the debugger
+ * path can run the code instead without running it twice. A script's own error is not this.
+ */
+export function isUserScriptsGated(err: unknown): boolean {
+	return TOGGLE_ERROR.test(err instanceof Error ? err.message : String(err));
+}
+
 export function classifyUserScripts(probe: UserScriptsProbe): UserScriptsStatus {
 	if (probe.apiPresent && probe.callWorks) return { ...probe, state: "ready" };
 	if (probe.permissionGranted === false) return { ...probe, state: "not_granted" };
 	if (probe.permissionGranted === true) {
 		if (!probe.apiPresent) return { ...probe, state: "toggle_off" };
-		if (!probe.error || TOGGLE_ERROR.test(probe.error)) return { ...probe, state: "toggle_off" };
+		if (!probe.error || isUserScriptsGated(probe.error)) return { ...probe, state: "toggle_off" };
 	}
 	return { ...probe, state: "probe_error", error: probe.error ?? "chrome.permissions.contains failed" };
 }
@@ -72,7 +81,7 @@ export async function probeUserScripts(): Promise<UserScriptsStatus> {
 			await api.getScripts();
 			callWorks = true;
 		} catch (err) {
-			error = message(err);
+			error = error ? `${error}; ${message(err)}` : message(err);
 		}
 	}
 	return classifyUserScripts({ permissionGranted, apiPresent: api !== undefined, callWorks, error });

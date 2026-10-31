@@ -3,7 +3,7 @@
 // scripts" toggle is on; each combination must map to its own cause.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyUserScripts, probeUserScripts, userScriptsApi } from "../src/browser/userscripts-status.ts";
+import { classifyUserScripts, isUserScriptsGated, probeUserScripts, userScriptsApi } from "../src/browser/userscripts-status.ts";
 
 /** A chrome with just what the probe touches. `api` undefined means no userScripts namespace. */
 function fakeChrome({ granted = false, containsThrows, api, getterThrows } = {}) {
@@ -81,6 +81,17 @@ test("permissions.contains itself fails: probe_error, unless the API works anywa
 
 	fakeChrome({ containsThrows: "no permissions API", api: workingApi() });
 	assert.equal((await probeUserScripts()).state, "ready");
+
+	// Both calls fail: both reasons are kept.
+	fakeChrome({ containsThrows: "no permissions API", api: { ...workingApi(), getScripts: async () => Promise.reject(new Error("boom")) } });
+	assert.equal((await probeUserScripts()).error, "permissions.contains: no permissions API; boom");
+});
+
+test("only the browser's refusal sends a script to the debugger path", () => {
+	assert.ok(isUserScriptsGated(new Error("The 'userScripts' API is only available when the 'Allow User Scripts' toggle is enabled.")));
+	assert.ok(isUserScriptsGated("requires developer mode"));
+	assert.ok(!isUserScriptsGated(new Error("No tab with id: 12")));
+	assert.ok(!isUserScriptsGated(new Error("Cannot access contents of the page")));
 });
 
 test("injection path and doctor share one presence check; a throwing getter counts as absent", () => {
