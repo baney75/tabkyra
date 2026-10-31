@@ -1,7 +1,6 @@
 import { i18n } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
-import { Checkbox } from "@mariozechner/mini-lit/dist/Checkbox.js";
-import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
+
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { Label } from "@mariozechner/mini-lit/dist/Label.js";
 import { Select } from "@mariozechner/mini-lit/dist/Select.js";
@@ -9,6 +8,7 @@ import { getProviders, type Model } from "@mariozechner/pi-ai";
 import type { CustomProvider, CustomProviderType } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
+import { PageBase } from "../components/PageBase.js";
 import { Toast } from "../components/Toast.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import { syncCustomProviderCorsRules } from "../utils/custom-provider-cors.js";
@@ -59,7 +59,7 @@ function modelToRow(model: Model<any>): ModelRow {
  * provider-keys store (keyed by provider name) so the existing model selector,
  * send gate, and API-key resolution all pick it up unchanged.
  */
-export class CustomProviderEditDialog extends DialogBase {
+export class CustomProviderEditDialog extends PageBase {
 	private provider?: CustomProvider;
 	private onSaveCallback?: () => void;
 
@@ -69,14 +69,12 @@ export class CustomProviderEditDialog extends DialogBase {
 	@state() private apiKey = "";
 	@state() private models: ModelRow[] = [emptyModelRow()];
 
-	protected override modalWidth = "min(720px, 92vw)";
-	protected override modalHeight = "min(760px, 92vh)";
+	protected override fillsHeight = true;
 
 	static open(provider: CustomProvider | undefined, onSave?: () => void) {
 		const dialog = new CustomProviderEditDialog();
 		dialog.provider = provider;
 		dialog.onSaveCallback = onSave;
-		document.body.appendChild(dialog);
 		dialog.initializeFromProvider();
 		dialog.open();
 		dialog.requestUpdate();
@@ -247,36 +245,36 @@ export class CustomProviderEditDialog extends DialogBase {
 								this.updateModel(index, { maxTokens: Number((e.target as HTMLInputElement).value) }),
 						})}
 					</div>
-					<label class="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-						${Checkbox({
-							checked: model.reasoning,
-							onChange: (checked: boolean) => this.updateModel(index, { reasoning: checked }),
-						})}
-						${i18n("Reasoning")}
+					<label class="flex items-start gap-2 text-sm text-foreground cursor-pointer">
+						<input
+							type="checkbox"
+							.checked=${model.reasoning}
+							@change=${(e: Event) => this.updateModel(index, { reasoning: (e.target as HTMLInputElement).checked })}
+						/>
+						<span>${i18n("Reasoning")}</span>
 					</label>
-					<label class="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-						${Checkbox({
-							checked: model.vision,
-							onChange: (checked: boolean) => this.updateModel(index, { vision: checked }),
-						})}
-						${i18n("Vision")}
+					<label class="flex items-start gap-2 text-sm text-foreground cursor-pointer">
+						<input
+							type="checkbox"
+							.checked=${model.vision}
+							@change=${(e: Event) => this.updateModel(index, { vision: (e.target as HTMLInputElement).checked })}
+						/>
+						<span>${i18n("Vision")}</span>
 					</label>
 				</div>
 			</div>
 		`;
 	}
 
+	protected pageTitle(): string {
+		return this.provider ? i18n("Edit Custom Provider") : i18n("Add Custom Provider");
+	}
+
 	protected override renderContent(): TemplateResult {
 		return html`
-			<div class="flex flex-col h-full overflow-hidden">
-				<div class="p-6 flex-shrink-0 border-b border-border">
-					<h2 class="text-lg font-semibold text-foreground">
-						${this.provider ? i18n("Edit Custom Provider") : i18n("Add Custom Provider")}
-					</h2>
-				</div>
-
-				<div class="flex-1 overflow-y-auto p-6">
-					<div class="flex flex-col gap-4">
+			<div class="flex min-h-0 flex-1 flex-col">
+				<div class="tk-page-body min-h-0 flex-1 overflow-y-auto">
+					<div class="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-5">
 						<div class="flex flex-col gap-2">
 							${Label({ children: i18n("Provider Name") })}
 							${Input({
@@ -349,7 +347,7 @@ export class CustomProviderEditDialog extends DialogBase {
 					</div>
 				</div>
 
-				<div class="p-6 flex-shrink-0 border-t border-border flex justify-end gap-2">
+				<div class="flex flex-shrink-0 justify-end gap-2 border-t border-border px-4 py-3">
 					${Button({ variant: "ghost", onClick: () => this.close(), children: i18n("Cancel") })}
 					${Button({ variant: "default", onClick: () => this.save(), children: i18n("Save") })}
 				</div>

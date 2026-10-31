@@ -158,9 +158,9 @@ test("the stream gate applies private mode, the trusted hosts and the proxy chec
 	const sidepanel = readFileSync(join(repo, "src", "sidepanel.ts"), "utf8");
 	assert.match(sidepanel, /assertPrivateProxy\(/);
 	assert.match(sidepanel, /model = privateModel\(model, trusted\);/);
-	// Every way into Settings (header button, first run, no key) goes through one dialog that has the Privacy tab.
-	assert.equal((sidepanel.match(/SettingsDialog\.open\(/g) ?? []).length, 1, "one settings entry point");
-	assert.equal((sidepanel.match(/new PrivacyTab\(\)/g) ?? []).length, 1, "the settings dialog shows the Privacy tab");
+	// Every way into Settings (header button, first run, no key) goes through one page that has the Privacy tab.
+	assert.equal((sidepanel.match(/SettingsPage\.open\(/g) ?? []).length, 1, "one settings entry point");
+	assert.equal((sidepanel.match(/new PrivacyTab\(\)/g) ?? []).length, 1, "the settings page shows the Privacy tab");
 });
 
 test("what read_network shows of bodies: request shapes without values, JSON responses masked in place", async () => {

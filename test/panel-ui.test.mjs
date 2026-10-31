@@ -156,7 +156,7 @@ test("native controls follow the theme: dark mode declares color-scheme dark", (
 
 test("Settings > Providers reads top to bottom: Free mode, subscriptions, API keys with their search and list, custom providers", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
-	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", "agentSetupPromptButton(", ">API keys</h3>", 'placeholder="Find a provider"', "<provider-key-input", "${this.custom}"].map((s) => tab.indexOf(s));
+	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", "agentSetupPromptButton(", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "${this.custom}"].map((s) => tab.indexOf(s));
 	assert.ok(order.every((i) => i > 0), JSON.stringify(order));
 	assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
@@ -171,9 +171,71 @@ test("subscription commands are copyable blocks, and a failed copy is a toast th
 	assert.doesNotMatch(copy, /this\.notice/);
 });
 
-test("opening Settings doesn't scroll Providers past Free mode to reach the search box", () => {
+test("a provider's key error reads as a sentence and says whether the key itself is bad", async () => {
+	const { keyFailure } = await import("../src/models/key-reason.ts");
+	assert.deepEqual(keyFailure('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'), {
+		kind: "rejected",
+		reason: "the provider turned it down (invalid x-api-key).",
+	});
+	// A free OpenRouter key has no credit: the provider knows the key, so it's saved with a note.
+	const broke = keyFailure('402 {"error":{"message":"Insufficient credits"}}');
+	assert.equal(broke.kind, "limited");
+	assert.match(broke.reason, /out of credit or over its limit \(Insufficient credits\)/);
+	assert.equal(keyFailure('429 {"error":{"message":"Rate limit reached"}}').kind, "limited");
+	// No network says nothing about the key: "Couldn't check", with Save anyway.
+	assert.deepEqual(keyFailure("Failed to fetch"), { kind: "unchecked", reason: "Failed to fetch." });
+	assert.deepEqual(keyFailure(undefined), { kind: "unchecked", reason: "the provider didn't say why." });
+	// Google's SDK: bare JSON, code 400, for a bad key.
+	assert.equal(
+		keyFailure('{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}').kind,
+		"rejected",
+	);
+	// Google's SDK as it really arrives: the API's JSON error inside its own error's message.
+	const google = JSON.stringify({ error: { message: JSON.stringify({ error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }, null, 2), code: 400, status: "Bad Request" } });
+	assert.deepEqual(keyFailure(google), { kind: "rejected", reason: "the provider turned it down (API key not valid. Please pass a valid API key)." });
+	// xAI as it really arrives: the message as a quoted JSON string.
+	assert.deepEqual(keyFailure('400 "Incorrect API key provided. You can obtain an API key from https://console.x.ai."'), {
+		kind: "rejected",
+		reason: "the provider turned it down (Incorrect API key provided. You can obtain an API key from https://console.x.ai).",
+	});
+	// A 403 for the test model alone isn't proof the key is bad.
+	assert.equal(keyFailure('403 {"error":{"message":"Project does not have access to model gpt-4o-mini"}}').kind, "unchecked");
+	assert.equal(keyFailure('400 {"error":{"message":"max_tokens is too large"}}').kind, "unchecked");
+	// Naming the key isn't enough; it has to say the key is wrong.
+	assert.equal(keyFailure('403 {"error":{"message":"This API key does not have access to model gpt-4o-mini"}}').kind, "unchecked");
+	assert.equal(keyFailure("400 invalid keyword in request").kind, "unchecked");
+	assert.equal(keyFailure('400 {"error":{"message":"Invalid API Key"}}').kind, "rejected");
+	// The test reads the whole message, not the 160 characters shown.
+	assert.equal(keyFailure(`400 ${"x".repeat(170)} API key not valid`).kind, "rejected");
+	const row = readFileSync(new URL("../src/components/ProviderKeyRow.ts", import.meta.url), "utf8");
+	assert.match(row, /problem\.kind === "limited"\) \{\s*await getAppStorage\(\)\.providerKeys\.set/, "a limited key is saved");
+	assert.match(row, /Save anyway/);
+	assert.match(row, /AbortSignal\.timeout\(CHECK_TIMEOUT_MS\)/, "a check can't hang on Checking… forever");
+	assert.match(row, /\} finally \{\s*this\.checking = false;/);
+	assert.match(row, /i18n\("Key saved"\)/, "Key saved stays translated");
+});
+
+test("opening Settings doesn't scroll Providers or light up the search box far below", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
-	assert.match(tab, /\.focus\(\{ preventScroll: true \}\)/);
+	assert.doesNotMatch(tab, /\.focus\(/, "nothing in Providers takes focus on open");
+});
+
+test("API keys are one line per provider: the key field opens on Add key, a bad key says why and stays, and a key can be removed", () => {
+	const row = readFileSync(new URL("../src/components/ProviderKeyRow.ts", import.meta.url), "utf8");
+	assert.match(row, /this\.editing \? this\.renderEditor\(\) : nothing/, "no key field until asked for");
+	assert.match(row, /Add key/);
+	assert.match(row, /providerKeys\.delete\(this\.provider\)/, "Remove deletes the key");
+	assert.match(row, /That key didn't work: /);
+	assert.match(row, /Toast\.error\(/, "a failed removal says so");
+	assert.match(row, /disconnectedCallback\(\) \{\s*super\.disconnectedCallback\(\);[\s\S]*?this\.abort\.abort\(\)/, "a row that goes away stops its check");
+	assert.match(row, /providerKeys\.set\(provider, key\)/, "a key is saved under the provider it was checked for");
+	assert.doesNotMatch(row, /setTimeout/, "the reason doesn't vanish on a timer");
+	assert.doesNotMatch(row, /stopReason === "stop"/, "a reasoning model that hits the token limit still proves the key");
+	for (const file of ["../src/dialogs/ApiKeysTab.ts", "../src/dialogs/ApiKeyDialog.ts"]) {
+		const source = readFileSync(new URL(file, import.meta.url), "utf8");
+		assert.match(source, /<tabkyra-provider-key /, file);
+		assert.doesNotMatch(source, /<provider-key-input/, file);
+	}
 });
 
 test("Settings > Skills lists every library skill, bundled and community, with no cap", async () => {
@@ -239,3 +301,37 @@ test("Settings > Skills: one search for both lists, full descriptions on hover, 
 	assert.equal(formatCost(-2.5), "-$2.50");
 });
 
+// Donovan, 2026-10-29: "The default check boxes are weird" (bare grey squares beside a switch).
+test("an on/off setting is a switch, and every checkbox and radio is styled", () => {
+	const dir = new URL("../src/dialogs/", import.meta.url);
+	// Boxes that pick items from a list stay checkboxes: skills to import, a model's abilities.
+	const listPicks = { "SkillsTab.ts": 1, "CustomProviderEditDialog.ts": 2 };
+	for (const file of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
+		const src = readFileSync(new URL(file, dir), "utf8");
+		// Counted, not parsed: an @change arrow's ">" would end a tag-matching regex early.
+		const boxes = (src.match(/type="checkbox"/g) ?? []).length;
+		const switches = (src.match(/role="switch"\s+class="tk-switch"/g) ?? []).length;
+		assert.equal(boxes - switches, listPicks[file] ?? 0, `${file}: a setting checkbox without role="switch" class="tk-switch"`);
+	}
+	const css = readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
+	for (const rule of ['input[type="checkbox"].tk-switch', 'input[type="checkbox"]:not(.tk-switch)', 'input[type="radio"]', 'button[role="switch"]']) {
+		assert.ok(css.includes(`${rule} {`) || css.includes(`${rule},`), `app.css styles ${rule}`);
+	}
+	const patch = readFileSync(new URL("../patches/pi-mono.patch", import.meta.url), "utf8");
+	assert.match(patch, /^\+.*Key saved/m, "a saved provider key reads Key saved, not a green ✓");
+});
+
+// Donovan, 2026-10-29: Settings and the skill screens are "full screen with a back arrow, NOT a
+// weird overlay thing".
+test("Settings, the skill screens and the provider editor are pages, not overlay dialogs", () => {
+	const read = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
+	for (const file of ["SettingsPage", "SkillDialog", "RecordSkillDialog", "CustomProviderEditDialog"]) {
+		const src = read(`dialogs/${file}.ts`);
+		assert.match(src, /extends PageBase\b/, `${file} is a page`);
+		assert.doesNotMatch(src, /DialogBase|mini-lit\/dist\/Dialog\.js/, `${file} uses no overlay dialog`);
+	}
+	assert.doesNotMatch(read("sidepanel.ts"), /\bSettingsDialog\b/, "the side panel opens SettingsPage, not pi-web-ui's dialog");
+	const page = read("components/PageBase.ts");
+	assert.match(page, /aria-label=\$\{i18n\("Back"\)\}/, "every page has a back arrow");
+	assert.match(page, /fixed inset-0/, "a page fills the panel");
+});

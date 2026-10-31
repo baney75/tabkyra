@@ -91,28 +91,30 @@ export class BridgeTab extends SettingsTab {
 				</div>
 				${agentSetupPromptButton()}
 
-				<label class="flex items-center gap-2 text-sm text-foreground">
+				<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
+					<span>Allow external agents to use the browser</span>
 					<input
 						type="checkbox"
+						role="switch"
+						class="tk-switch"
 						.checked=${this.enabled}
 						@change=${async (e: Event) => {
 							await setBridgeEnabled((e.target as HTMLInputElement).checked);
 							await this.load();
 						}}
 					/>
-					Allow external agents to use the browser
 				</label>
 
 				<div class="space-y-2">
 					<div class="text-sm font-medium text-foreground">Site access</div>
-					<label class="flex items-center gap-2 text-sm text-foreground">
+					<label class="flex items-start gap-2 text-sm text-foreground cursor-pointer">
 						<input type="radio" name="bridge-mode" value="ask" .checked=${this.mode === "ask"} @change=${async () => {
 							await setPermissionMode("ask");
 							await this.load();
 						}} />
 						Ask before opening a new site (the agent prompts you, or you answer here)
 					</label>
-					<label class="flex items-center gap-2 text-sm text-foreground">
+					<label class="flex items-start gap-2 text-sm text-foreground cursor-pointer">
 						<input type="radio" name="bridge-mode" value="allow_all" .checked=${this.mode === "allow_all"} @change=${async () => {
 							await setPermissionMode("allow_all");
 							await this.load();

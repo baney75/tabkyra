@@ -488,11 +488,183 @@ body {
 	}
 }
 
+/* Checkboxes, switches and radio buttons share one look in both themes. Bare native checkboxes
+   were small grey squares beside the CORS proxy's switch. An on/off setting is a switch
+   (.tk-switch, the same size as that switch); a box that picks items from a list stays a
+   checkbox. Each one is still a native input, so its label, the Space key and change events work
+   as before. */
+:root {
+	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
+	--tk-control-on: var(--tk-brass-deep);
+}
+.dark {
+	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
+	--tk-control-on: var(--tk-brass);
+}
+
+input[type="checkbox"].tk-switch,
+button[role="switch"] {
+	appearance: none;
+	position: relative;
+	flex-shrink: 0;
+	width: 2.75rem;
+	height: 1.5rem;
+	border: 0;
+	border-radius: 9999px;
+	background: var(--tk-control-off);
+	cursor: pointer;
+	transition: background-color 0.15s ease;
+}
+input[type="checkbox"].tk-switch {
+	margin: 0;
+}
+input[type="checkbox"].tk-switch::before {
+	content: "";
+	position: absolute;
+	top: 0.125rem;
+	left: 0.125rem;
+	width: 1.25rem;
+	height: 1.25rem;
+	border-radius: 9999px;
+	background: #fff;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+	transition: transform 0.15s ease;
+}
+input[type="checkbox"].tk-switch:checked,
+button[role="switch"][data-state="checked"] {
+	background: var(--tk-control-on);
+}
+input[type="checkbox"].tk-switch:checked::before {
+	transform: translateX(1.25rem);
+}
+/* mini-lit's switch (the CORS proxy) draws its own thumb; only its track colour is set above. */
+button[role="switch"] > span {
+	background: #fff;
+	margin-left: 0.125rem;
+}
+
+/* The browser's side margins go, in the base layer, so a utility such as space-x-2 still spaces
+   a box from its label. */
+@layer base {
+	input[type="checkbox"],
+	input[type="radio"] {
+		margin-inline: 0;
+	}
+}
+input[type="checkbox"]:not(.tk-switch),
+input[type="radio"] {
+	appearance: none;
+	display: inline-grid;
+	place-content: center;
+	flex-shrink: 0;
+	width: 1.125rem;
+	height: 1.125rem;
+	margin-block: 0.0625rem 0;
+	border: 1.5px solid var(--muted-foreground);
+	border-radius: 0.3rem;
+	background: var(--background);
+	cursor: pointer;
+}
+input[type="radio"] {
+	border-radius: 9999px;
+}
+input[type="checkbox"]:not(.tk-switch):checked,
+input[type="radio"]:checked {
+	border-color: var(--tk-control-on);
+}
+input[type="checkbox"]:not(.tk-switch):checked {
+	background: var(--tk-control-on);
+}
+input[type="checkbox"]:not(.tk-switch):checked::before {
+	content: "";
+	width: 0.75rem;
+	height: 0.75rem;
+	background: #fff;
+	mask:
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2 5 8.7 9.6 3.6' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+		center / contain no-repeat;
+}
+.dark input[type="checkbox"]:not(.tk-switch):checked::before {
+	background: var(--tk-ink);
+}
+input[type="radio"]:checked::before {
+	content: "";
+	width: 0.5rem;
+	height: 0.5rem;
+	border-radius: 9999px;
+	background: var(--tk-control-on);
+}
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible,
+button[role="switch"]:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled,
+button[role="switch"]:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* High contrast (forced colors) replaces background colors, which carry every state above. The
+   checkboxes and radios go back to the system's own; the switches keep their shape in system
+   colors, on Highlight when on. */
+@media (forced-colors: active) {
+	input[type="checkbox"]:not(.tk-switch),
+	input[type="radio"] {
+		appearance: auto;
+	}
+	input[type="checkbox"]:not(.tk-switch):checked::before,
+	input[type="radio"]:checked::before {
+		content: none;
+	}
+	input[type="checkbox"].tk-switch,
+	button[role="switch"] {
+		forced-color-adjust: none;
+		border: 1px solid ButtonText;
+		background: ButtonFace;
+	}
+	input[type="checkbox"].tk-switch::before,
+	button[role="switch"] > span {
+		background: ButtonText;
+		box-shadow: none;
+	}
+	input[type="checkbox"].tk-switch::before {
+		top: calc(0.125rem - 1px);
+		left: calc(0.125rem - 1px);
+	}
+	input[type="checkbox"].tk-switch:checked,
+	button[role="switch"][data-state="checked"] {
+		background: Highlight;
+	}
+	input[type="checkbox"].tk-switch:checked::before,
+	button[role="switch"][data-state="checked"] > span {
+		background: HighlightText;
+	}
+	input[type="checkbox"].tk-switch:focus-visible,
+	button[role="switch"]:focus-visible {
+		outline-color: Highlight;
+	}
+}
+
+/* A page (Settings, a skill) scrolls under its top bar. Its content has side padding wider than
+   a macOS overlay scrollbar, and the gutter keeps a classic scrollbar off the Save buttons. */
+.tk-page-body {
+	scrollbar-gutter: stable;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,
 	*::after {
 		transition-duration: 0.01ms;
+	}
+	input[type="checkbox"].tk-switch,
+	input[type="checkbox"].tk-switch::before,
+	button[role="switch"],
+	button[role="switch"] > span {
+		transition: none;
 	}
 	.welcome-container,
 	.tutorial-pill::before,
