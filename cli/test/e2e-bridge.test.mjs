@@ -43,6 +43,13 @@ const DIALOG_PAGE = `<!doctype html><title>Tabkyra dialog</title>
 
 const COUNTER_PAGE = `<!doctype html><title>Tabkyra counter</title>
 <button id="hit" onclick="fetch('/hit',{method:'POST'}).then(r=>r.text()).then(t=>document.getElementById('n').textContent=t)">Hit</button><p id="n">0</p>`;
+// Re-reading must not move a ref to another element: "Add row" puts a new button in front of Keep.
+const REFS_PAGE = `<!doctype html><title>Tabkyra refs</title><h1>Account</h1><label>Notes</label>
+<div id="rows"><button id="keep" onclick="document.getElementById('r').textContent='kept'">Keep</button>
+<button id="del" onclick="document.getElementById('r').textContent='deleted'">Delete</button></div>
+<button id="add" onclick="const b=document.createElement('button');b.textContent='Danger';b.onclick=()=>document.getElementById('r').textContent='danger';document.getElementById('rows').prepend(b)">Add row</button>
+<p id="r">untouched</p>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -179,6 +186,7 @@ before(async () => {
 		}
 		res.writeHead(200, { "content-type": "text/html" });
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
+		if (req.url === "/refs") return res.end(REFS_PAGE);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
 	});
 	await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -299,6 +307,35 @@ test("open a page, snapshot, type, click and read back through MCP", async () =>
 		"the greeting",
 	);
 	assert.match(text, /Hello, Donovan!/);
+});
+
+/** The ref of the first line in a read_page result that names `label`. */
+function refFor(snapshot, label) {
+	const line = snapshot.split("\n").find((l) => l.includes(label));
+	return line?.match(/\b(e\d+)\b/)?.[1];
+}
+
+test("a ref keeps pointing at its element after find and after the page adds an element", async () => {
+	await tool("navigate", { url: `${pageUrl}refs` });
+	const first = await tool("read_page", { filter: "interactive" });
+	const keep = refFor(first, "Keep");
+	const del = refFor(first, "Delete");
+	assert.ok(keep && del, first);
+
+	// find reads the whole page (headings and labels too); before stable refs it renumbered,
+	// so Delete's old ref landed on the "Notes" label and nothing happened.
+	await tool("find", { query: "account" });
+	await tool("click", { ref: del });
+	assert.match(await tool("get_page_text"), /deleted/);
+
+	// A new button in front of Keep: before stable refs, Keep's old ref clicked "Danger".
+	await tool("click", { ref: refFor(first, "Add row") });
+	const second = await tool("read_page", { filter: "interactive" });
+	assert.equal(refFor(second, "Keep"), keep, second);
+	await tool("click", { ref: keep });
+	const text = await tool("get_page_text");
+	assert.match(text, /kept/);
+	assert.doesNotMatch(text, /danger/);
 });
 
 test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {

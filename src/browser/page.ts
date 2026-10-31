@@ -241,12 +241,25 @@ export interface Snapshot {
  * Page-side snapshot function. Stringified and injected, so it must be
  * self-contained. Stores element refs on window.__tabkyraRefs (same world),
  * so a later click/fill by ref resolves without a second scan.
+ *
+ * A ref names one element for the life of the document: a second read_page, or the
+ * whole-page read find does, gives an element it already named the same ref, and a new
+ * element the next unused number. Restarting at e1 each read moved old refs onto other
+ * elements, so a click by a ref from an earlier read could land on the wrong control.
+ * Numbering starts at a random block per document, so a ref kept from the previous page
+ * is very unlikely to name anything on the next one.
  */
 function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): unknown {
-	const w = window as unknown as { __tabkyraRefs?: Map<string, Element>; __tabkyraRefSeq?: number };
-	const refs = new Map<string, Element>();
-	w.__tabkyraRefs = refs;
-	let seq = 0;
+	const w = window as unknown as {
+		__tabkyraRefs?: Map<string, Element>;
+		__tabkyraRefOf?: WeakMap<Element, string>;
+		__tabkyraRefSeq?: number;
+	};
+	const refOf = (w.__tabkyraRefOf ??= new WeakMap<Element, string>());
+	const refs = (w.__tabkyraRefs ??= new Map<string, Element>());
+	// Forget elements that left the page, so their refs fail instead of piling up.
+	for (const [ref, el] of refs) if (!el.isConnected) refs.delete(ref);
+	let seq = w.__tabkyraRefSeq ?? (1 + Math.floor(Math.random() * 900)) * 1000;
 	const interactiveSel =
 		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
 	const headingSel = "h1,h2,h3,h4,h5,h6,label,[role=heading],[role=alert],[role=status],[role=dialog]";
@@ -424,7 +437,11 @@ function pageSnapshot(maxNodes: number, maxTextChars: number, filter: string): u
 	for (const { el, at } of [...inView, ...offView]) {
 		if (nodes.length >= maxNodes) break;
 		const b = box(el, at);
-		const ref = `e${++seq}`;
+		let ref = refOf.get(el);
+		if (!ref) {
+			ref = `e${++seq}`;
+			refOf.set(el, ref);
+		}
 		refs.set(ref, el);
 		const tag = tagOf(el);
 		const f = field(el);
