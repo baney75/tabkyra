@@ -50,9 +50,11 @@ export function requireFirecrawlApiUrl(): string {
 	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
 		throw new Error(`FIRECRAWL_API_URL must be http(s), got ${parsed.protocol}`);
 	}
-	if (HOSTED.test(parsed.hostname)) {
+	// URL keeps a trailing DNS dot; strip so api.firecrawl.dev. still matches HOSTED.
+	const host = parsed.hostname.replace(/\.+$/, "");
+	if (HOSTED.test(host)) {
 		throw new Error(
-			`FIRECRAWL_API_URL refuses hosted Firecrawl (${parsed.hostname}). Run your own instance and point FIRECRAWL_API_URL at it (loopback or tailnet only).`,
+			`FIRECRAWL_API_URL refuses hosted Firecrawl (${host}). Run your own instance and point FIRECRAWL_API_URL at it (loopback or tailnet only).`,
 		);
 	}
 	return url.replace(/\/+$/, "");
@@ -84,7 +86,8 @@ async function firecrawlPost(path: string, body: Record<string, unknown>): Promi
 		headers,
 		body: JSON.stringify(body),
 		signal: AbortSignal.timeout(60_000),
-		redirect: "follow",
+		// Never follow redirects: a 3xx to api.firecrawl.dev would bypass the hostname guard.
+		redirect: "error",
 	});
 	const text = await res.text();
 	let json: unknown = text;

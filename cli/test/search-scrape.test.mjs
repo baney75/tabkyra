@@ -61,6 +61,8 @@ describe("firecrawl self-host only", () => {
 			"http://api.firecrawl.dev",
 			"https://API.Firecrawl.dev",
 			"https://foo.api.firecrawl.dev",
+			"https://api.firecrawl.dev.",
+			"https://api.firecrawl.dev./v2",
 		]) {
 			assert.throws(() => assertSelfHostedFirecrawlUrl(bad), /refuses hosted Firecrawl/, bad);
 		}
@@ -101,6 +103,20 @@ describe("firecrawl self-host only", () => {
 		srv.close();
 		assert.equal(out.markdown, "# Hi");
 		assert.equal(out.title, "Hi");
+	});
+
+	it("page_markdown does not follow redirects (hosted bypass)", async () => {
+		const { createServer } = await import("node:http");
+		const srv = createServer((req, res) => {
+			res.writeHead(302, { Location: "https://api.firecrawl.dev/v2/scrape" });
+			res.end();
+		});
+		await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+		const { port } = srv.address();
+		process.env.FIRECRAWL_API_URL = `http://127.0.0.1:${port}`;
+		await assert.rejects(() => pageMarkdown("https://example.com/"), /redirect|Failed|fetch/i);
+		delete process.env.FIRECRAWL_API_URL;
+		await new Promise((r) => srv.close(r));
 	});
 
 	it("map and crawl hit their paths", async () => {
