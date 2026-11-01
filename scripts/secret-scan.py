@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Fail when added lines look like credentials.
 
-    python3 tools/secret_scan.py --diff origin/main...HEAD   # lines a branch adds (CI, rsi gate)
-    python3 tools/secret_scan.py --commits A..B              # lines each commit adds (hooks/pre-push)
-    python3 tools/secret_scan.py --staged                    # lines staged for commit (hooks/pre-commit)
-    python3 tools/secret_scan.py FILE...                     # whole files
+    python3 scripts/secret-scan.py --diff origin/main...HEAD   # lines a branch adds (CI, rsi gate)
+    python3 scripts/secret-scan.py --commits A..B              # lines each commit adds (pre-push)
+    python3 scripts/secret-scan.py --staged                    # lines staged for commit (.husky/pre-commit)
+    python3 scripts/secret-scan.py FILE...                     # whole files
 
 Prints the file, line number and pattern name, never the matched value.
 Exit 1 on any hit. Test fixtures assemble fake credentials at runtime
