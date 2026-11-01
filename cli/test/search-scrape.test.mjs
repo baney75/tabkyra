@@ -106,17 +106,41 @@ describe("firecrawl self-host only", () => {
 	});
 
 	it("page_markdown does not follow redirects (hosted bypass)", async () => {
-		const { createServer } = await import("node:http");
-		const srv = createServer((req, res) => {
-			res.writeHead(302, { Location: "https://api.firecrawl.dev/v2/scrape" });
+		let destHits = 0;
+		const dest = createServer((_req, res) => {
+			destHits += 1;
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(
+				JSON.stringify({
+					success: true,
+					data: { markdown: "# leaked", metadata: { title: "leaked", sourceURL: "https://example.com/" } },
+				}),
+			);
+		});
+		await new Promise((r) => dest.listen(0, "127.0.0.1", r));
+		const destPort = dest.address().port;
+		const srv = createServer((_req, res) => {
+			res.writeHead(302, { Location: `http://127.0.0.1:${destPort}/v2/scrape` });
 			res.end();
 		});
 		await new Promise((r) => srv.listen(0, "127.0.0.1", r));
 		const { port } = srv.address();
 		process.env.FIRECRAWL_API_URL = `http://127.0.0.1:${port}`;
-		await assert.rejects(() => pageMarkdown("https://example.com/"), /redirect|Failed|fetch/i);
-		delete process.env.FIRECRAWL_API_URL;
-		await new Promise((r) => srv.close(r));
+		try {
+			await assert.rejects(
+				() => pageMarkdown("https://example.com/"),
+				(err) => {
+					const msg = `${err}\n${err?.cause ?? ""}`;
+					assert.match(msg, /unexpected redirect/i);
+					return true;
+				},
+			);
+			assert.equal(destHits, 0, "must not follow the redirect to the destination");
+		} finally {
+			delete process.env.FIRECRAWL_API_URL;
+			await new Promise((r) => srv.close(r));
+			await new Promise((r) => dest.close(r));
+		}
 	});
 
 	it("map and crawl hit their paths", async () => {
