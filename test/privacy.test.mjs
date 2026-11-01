@@ -35,7 +35,7 @@ test("hosted providers are refused; local models pass; tailnet hosts only when t
 		["openai", "https://api.openai.com/v1"],
 		["custom", "https://my-vps.example.com/v1"],
 		["custom", "http://8.8.8.8:11434/v1"],
-		["custom", "https://someone.tail9999.ts.net/v1"],
+		["custom", "https://someone.example.ts.net/v1"],
 		["custom", "http://100.101.102.103:11434"],
 	]) {
 		assert.throws(() => privateModel({ provider, baseUrl }), PrivateModeError, `${provider} ${baseUrl}`);
@@ -46,15 +46,15 @@ test("hosted providers are refused; local models pass; tailnet hosts only when t
 		assert.equal(isLocalBaseUrl(baseUrl), false, baseUrl);
 	}
 	assert.ok(isLocalBaseUrl("http://192.168.1.20:8000", ["192.168.1.20"]));
-	assert.ok(isLocalBaseUrl("https://gpu.tail1234.ts.net/v1", ["gpu.tail1234.ts.net"]));
-	const m = { provider: "custom", baseUrl: "https://gpu.tail1234.ts.net/v1" };
-	assert.equal(privateModel(m, ["gpu.tail1234.ts.net"]), m);
+	assert.ok(isLocalBaseUrl("https://gpu.example.ts.net/v1", ["gpu.example.ts.net"]));
+	const m = { provider: "custom", baseUrl: "https://gpu.example.ts.net/v1" };
+	assert.equal(privateModel(m, ["gpu.example.ts.net"]), m);
 	for (const baseUrl of ["http://172.32.0.1", "http://192.169.0.1", "not a url"]) assert.equal(isLocalBaseUrl(baseUrl), false, baseUrl);
 });
 
 test("the trusted-hosts field accepts names, IPs, URLs and host:port", () => {
-	assert.equal(hostOf("https://mac.tail1234.ts.net"), "mac.tail1234.ts.net");
-	assert.equal(hostOf("mac.tail1234.ts.net:11434"), "mac.tail1234.ts.net");
+	assert.equal(hostOf("https://mac.example.ts.net"), "mac.example.ts.net");
+	assert.equal(hostOf("mac.example.ts.net:11434"), "mac.example.ts.net");
 	assert.equal(hostOf("fd7a:115c:a1e0::1"), "fd7a:115c:a1e0::1");
 	assert.equal(hostOf("192.168.1.20"), "192.168.1.20");
 	assert.equal(hostOf(""), undefined);
@@ -82,9 +82,9 @@ test("a CORS proxy off the user's machines is refused in private mode", () => {
 
 test("bug reports drop web addresses, emails, keys and home paths, and never travel in a URL", () => {
 	const text = redact(
-		`Failed https://mail.example.com/inbox/thread/patient-records-jdoe for ada@example.com with ${fakeKey} at /Users/donovan/project and C:\\Users\\ada\\x in chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/sidepanel.js:10`,
+		`Failed https://mail.example.com/inbox/thread/patient-records-jdoe for ada@example.com with ${fakeKey} at /Users/alex/project and C:\\Users\\ada\\x in chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/sidepanel.js:10`,
 	);
-	assert.doesNotMatch(text, /mail\.example|patient-records|ada@example|ABCDEFGHIJKLMNOP|donovan|\\ada\\|kenehmggpggpiolepbjojeenmeapgfoc/);
+	assert.doesNotMatch(text, /mail\.example|patient-records|ada@example|ABCDEFGHIJKLMNOP|alex|\\ada\\|kenehmggpggpiolepbjojeenmeapgfoc/);
 	assert.match(text, /\[url\]/);
 	assert.match(text, /ext:\/sidepanel\.js/);
 	assert.match(
