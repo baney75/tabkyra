@@ -8,7 +8,7 @@
  */
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
-import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
+import { openDialog, type PageDialog, stopScreencastsOwnedBy } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
@@ -17,6 +17,7 @@ import { handleThreads } from "../threads/bridge.js";
 import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
+import { type Delivered, dialogError, raceDialogs } from "./dialogs.js";
 import { BridgeError, classify } from "./errors.js";
 import {
 	addPendingRequest,
@@ -315,68 +316,6 @@ const DIALOG_SAFE = new Set([
 	"network.read",
 ]);
 
-function dialogKind(dialog: PageDialog): string {
-	const kind = dialog.type === "beforeunload" ? "leave-page" : dialog.type;
-	return `${/^[aeiou]/.test(kind) ? "An" : "A"} ${kind} dialog`;
-}
-
-function dialogError(tabId: number, dialog: PageDialog): BridgeError {
-	return new BridgeError(
-		ERR.DIALOG_OPEN,
-		`${dialogKind(dialog)} is open on tab ${tabId}: ${JSON.stringify(dialog.message)}. The page is frozen until it is answered. ` +
-			`Call handle_dialog with tabId ${tabId} and accept true (OK) or false (Cancel). Cancel is always safe. ` +
-			"OK is fine when the user already asked for exactly this action; otherwise ask them first if OK would act under their sign-in (delete, send, buy, post).",
-	);
-}
-
-/** What a call that worked, and so opened a dialog, returns: its result plus the dialog and what answers it. */
-function dialogOpenedResult(delivered: Record<string, unknown>, tabId: number, dialog: PageDialog) {
-	const notRun = typeof delivered.notRun === "number" ? delivered.notRun : 0;
-	return {
-		...delivered,
-		dialog: { tabId, type: dialog.type, message: dialog.message },
-		note:
-			`That worked. ${dialogKind(dialog)} is now open on tab ${tabId}: ${JSON.stringify(dialog.message)}. ` +
-			`${notRun > 0 ? `The ${notRun} later step${notRun === 1 ? "" : "s"} did not run: send them again once the dialog is answered. ` : ""}` +
-			`Do not repeat the step that opened it. The page is frozen until the dialog is answered: call handle_dialog with tabId ${tabId} and accept true (OK) or false (Cancel). Cancel is always safe. ` +
-			"OK is fine when the user already asked for exactly this action; otherwise ask them first if OK would act under their sign-in (delete, send, buy, post).",
-	};
-}
-
-/**
- * Run a handler, but fail at once if a dialog opens on one of the session's tabs. The
- * handler can't be cancelled mid-CDP-call, so `onAbort` flips the flag it checks before
- * sending more input. When the handler had already sent the input that completes its action
- * (`delivered`), the dialog is that action's effect and the call succeeds with a note.
- */
-function raceDialogs<T>(
-	session: BrowserSession,
-	work: Promise<T>,
-	onAbort: () => void,
-	delivered: () => Record<string, unknown> | undefined,
-): Promise<T | ReturnType<typeof dialogOpenedResult>> {
-	return new Promise((resolve, reject) => {
-		const stop = watchDialogs((tabId, dialog) => {
-			if (!session.tabIds.includes(tabId)) return;
-			stop();
-			onAbort();
-			const done = delivered();
-			if (done) resolve(dialogOpenedResult(done, tabId, dialog));
-			else reject(dialogError(tabId, dialog));
-		});
-		work.then(
-			(v) => {
-				stop();
-				resolve(v);
-			},
-			(e) => {
-				stop();
-				reject(e);
-			},
-		);
-	});
-}
-
 async function runRequest(state: ClientState, req: HostForwardedRequest): Promise<void> {
 	const reply = (result?: unknown, error?: BridgeError) =>
 		send({
@@ -393,7 +332,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		aborted = true;
 	};
 	/** Set by a handler just before the input that completes its action goes out (HandlerContext.delivered). */
-	let deliveredResult: Record<string, unknown> | undefined;
+	let deliveredResult: Delivered | undefined;
 	/** Gone: send nothing, start nothing (nobody can receive the answer, and the agent may retry). */
 	const gone = () => aborted || state.closed === true;
 	if (gone()) return;
@@ -434,8 +373,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			clientId: state.clientId,
 			emit: (event, data) => send({ type: "event", clientId: state.clientId, event, data }),
 			aborted: () => aborted,
-			delivered: (result) => {
-				deliveredResult = result;
+			delivered: (result, tabId) => {
+				deliveredResult = result && tabId !== undefined ? { result, tabId } : undefined;
 			},
 			checkUrl: async (url: string) => {
 				if (!(await askPermission(state, url))) {

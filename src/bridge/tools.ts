@@ -70,10 +70,12 @@ export interface HandlerContext {
 	 * Call just before the last input event of an action goes out, with the result to report. If a
 	 * dialog opens from here on, the action itself worked, and the call returns this result with a
 	 * note about the dialog instead of failing with dialog_open (which made agents repeat it).
+	 * `tabId` is the tab the input went to: only a dialog that opens on it counts as this action's
+	 * effect (a dialog on another tab of the session keeps failing with dialog_open).
 	 * `notRun`, if set, is how many later steps of the call did not run. Call with no result once
 	 * the action has finished, so a dialog from a later step is not blamed on this one.
 	 */
-	delivered(result?: Record<string, unknown>): void;
+	delivered(result?: Record<string, unknown>, tabId?: number): void;
 }
 
 function stopIfAborted(ctx: HandlerContext): void {
@@ -461,7 +463,7 @@ export const handlers: Record<string, Handler> = {
 		await click(tabId, p.x, p.y, {
 			button: button === "right" || button === "middle" ? button : "left",
 			clickCount: num(params, "clickCount") ?? 1,
-			beforeLastEvent: () => ctx.delivered({ clicked: p }),
+			beforeLastEvent: () => ctx.delivered({ clicked: p }, tabId),
 		});
 		ctx.delivered();
 		return { clicked: p };
@@ -651,8 +653,11 @@ export const handlers: Record<string, Handler> = {
 			// A step that opens a dialog worked, but the steps after it did not run: say so.
 			const stepCtx: HandlerContext = {
 				...ctx,
-				delivered: (result) =>
-					ctx.delivered(result ? { ...result, steps: done.length + 1, notRun: steps.length - i - 1 } : undefined),
+				delivered: (result, tabId) =>
+					ctx.delivered(
+						result ? { ...result, steps: done.length + 1, notRun: steps.length - i - 1 } : undefined,
+						tabId,
+					),
 			};
 			try {
 				done.push(await handlers[kind](stepCtx, withTab));
