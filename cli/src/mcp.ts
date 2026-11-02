@@ -201,7 +201,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
 				ASK_USER_INSTRUCTION,
 				THREADS_INSTRUCTION,
-				"A click that opens an alert/confirm/prompt box succeeds and says so in its result: do not repeat it, answer the box with handle_dialog. If a call fails with dialog_open, a box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
+				"A click that opens an alert/confirm/prompt box succeeds and says so: do not repeat it. If a call fails with dialog_open, a box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
 				"If a call fails with interrupted, the browser connection dropped while it ran: check the page with read_page before you repeat it.",
 			]
 				// A scoped session hears only about the tools it has, so a small model isn't sent
@@ -664,7 +664,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"read_console",
 		{
 			title: "Read console messages",
-			description: "Console messages from your tab. The first call starts capturing, so call it before reproducing a problem. Example: {\"onlyErrors\":true}",
+			description: "Console messages from your tab. Tabs you open capture from their first load; on others the first call starts capturing. Example: {\"onlyErrors\":true}",
 			inputSchema: {
 				tabId,
 				onlyErrors: z.boolean().optional().describe("Only errors and uncaught exceptions"),
@@ -679,7 +679,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"read_network",
 		{
 			title: "Read network requests",
-			description: "Your tab's requests (id, method, URL, status, type). Capture starts on the first call: call it before loading. requestId gives what it sent (keys only) and a JSON response, secrets masked. Example: {\"type\":\"Fetch\"}",
+			description: "Your tab's requests (id, method, URL, status, type). Tabs you open capture from their first load; on others the first call starts capture. requestId gives what it sent (keys only) and a JSON response, secrets masked. Example: {\"type\":\"Fetch\"}",
 			inputSchema: {
 				tabId,
 				urlPattern: z.string().optional().describe("Substring or regex the URL must match"),
