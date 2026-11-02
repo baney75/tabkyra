@@ -88,3 +88,15 @@ test("a clipboard chord is bad_params with the use-fill-or-type text", () => {
 	assert.equal(error.code, "bad_params");
 	assert.match(error.message, /clipboard chords are not supported; use fill or type/);
 });
+
+test("page text quoted inside a Tabkyra message does not choose its code", () => {
+	// A cover (or any element) named like another failure's message.
+	for (const name of ["Item no longer in the page", "Selector not found: x", "Invalid regular expression", "Screenshot timed out after 3 s"]) {
+		const { error } = classify(new Error(`Ref e7 is covered by div "${name}", which would take the click. Close or dismiss it, then call read_page.`), "click");
+		assert.equal(error.code, "not_actionable", name);
+		assert.match(error.message, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	}
+	assert.equal(classify(new Error('Error: Ref e7 is covered by div "Ref e1 not found"'), "click").error.code, "not_actionable");
+	assert.equal(classify(new Error("That element isn't shown now (hidden or closed). Call read_page for fresh refs."), "click").error.code, "stale_ref");
+	assert.equal(classify(new Error("Element is no longer in the page. Call read_page for fresh refs."), "click").error.code, "stale_ref");
+});

@@ -56,23 +56,33 @@ export function splitStack(text: string): { message: string; stack?: string } {
 	return { message: text.slice(0, at).trim(), stack: text.slice(at + 1) };
 }
 
-/** [pattern, code] for failures whose text Tabkyra itself wrote (src/browser/page.ts, session.ts, cdp.ts). */
+/**
+ * [pattern, code] for failures whose text Tabkyra itself wrote (src/browser/page.ts, session.ts,
+ * cdp.ts). Each pattern is anchored to the start of that text: several messages quote the page
+ * after their first words (`Ref e7 is covered by div "<its name>"`), and a page must not pick the
+ * code by how it names an element.
+ */
+const START = "^(?:Error: )?";
+const WHO = "(?:Ref \\S+|That element)";
 const KNOWN: Array<[RegExp, string]> = [
-	[/Ref \S+ (?:not found|now shows something else|isn't shown now)|no longer in the page/, ERR.STALE_REF],
-	[/Selector not found|No option matches|No captured request/, ERR.NOT_FOUND],
-	[/Tab \d+ is not owned by this session|No tab with id/, ERR.NOT_FOUND],
+	[new RegExp(`${START}${WHO} (?:not found|now shows something else|isn't shown now)`), ERR.STALE_REF],
+	[new RegExp(`${START}Element is no longer in the page`), ERR.STALE_REF],
 	[
-		/is covered by|outside the visible page|kept off screen|is not a form control|can't be filled|can't reach it/,
-		ERR.NOT_ACTIONABLE,
+		new RegExp(`${START}(?:Selector not found|No option matches|No captured request|No dialog is open)`),
+		ERR.NOT_FOUND,
 	],
+	[new RegExp(`${START}(?:Tab \\d+ is not owned by this session|No tab with id)`), ERR.NOT_FOUND],
+	[new RegExp(`${START}${WHO} is (?:covered by|outside the visible page)`), ERR.NOT_ACTIONABLE],
+	[new RegExp(`${START}Element is not a form control`), ERR.NOT_ACTIONABLE],
 	[
-		/browser-internal pages are protected|are protected\. Navigate|closed by the user on this tab/,
+		new RegExp(
+			`${START}(?:Cannot run scripts on .*browser-internal pages are protected|Cannot control .*protected|The debugger was closed by the user on this tab)`,
+		),
 		ERR.PERMISSION_DENIED,
 	],
-	[/Invalid regular expression/, ERR.BAD_PARAMS],
+	[new RegExp(`${START}Invalid regular expression`), ERR.BAD_PARAMS],
 	[/^Navigation to .* failed:/, ERR.NAV_FAILED],
-	[/timed out after|did not finish within/, ERR.TIMEOUT],
-	[/No dialog is open/, ERR.NOT_FOUND],
+	[new RegExp(`${START}(?:Screenshot timed out after|.* did not finish within)`), ERR.TIMEOUT],
 ];
 
 /**
