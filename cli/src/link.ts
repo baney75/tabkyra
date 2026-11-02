@@ -57,9 +57,11 @@ const pidFile = () => join(configDir(), "link.pid");
  * One `link run` per device. The pid file is taken exclusively; a leftover from a crashed run (its pid
  * no longer alive) is replaced. A second run refuses instead of revoking the first one's token.
  */
-function takePidLock(): void {
+async function takePidLock(): Promise<void> {
 	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
-	for (let attempt = 0; attempt < 3; attempt++) {
+	// A run that just died may take a moment to leave the process table (its supervisor restarts us at once): wait up to 3 s before calling it alive.
+	const giveUpAt = Date.now() + 3000;
+	for (let attempt = 0; attempt < 40; attempt++) {
 		try {
 			writeFileSync(pidFile(), String(process.pid), { flag: "wx", mode: 0o600 });
 			return;
@@ -80,7 +82,13 @@ function takePidLock(): void {
 					alive = (err as NodeJS.ErrnoException).code === "EPERM";
 				}
 			}
-			if (alive) throw new Error(`Another tabkyra link run is already running on this device (pid ${other}). Stop it first (tabkyra link off stops the service).`);
+			if (alive) {
+				if (Date.now() < giveUpAt) {
+					await sleep(100);
+					continue;
+				}
+				throw new Error(`Another tabkyra link run is already running on this device (pid ${other}). Stop it first (tabkyra link off stops the service).`);
+			}
 			rmSync(pidFile(), { force: true });
 		}
 	}
@@ -235,7 +243,7 @@ export async function linkRun(): Promise<void> {
 	if (!config) throw new Error(`${linkFile()} not found. Run tabkyra link <hub-url> --code <code> first.`);
 	const wsUrl = `${config.hubUrl.replace(/^http/, "ws")}/link`;
 	const cap = capOf(config);
-	takePidLock();
+	await takePidLock();
 	// With the pid lock held no other run is alive: clear the old link tokens, then mint a fresh one, held in memory only.
 	pruneLinkTokens();
 	const { token, record: linkToken } = createToken(LINK_TOKEN_NAME, cap, "link");

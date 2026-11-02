@@ -263,7 +263,9 @@ test("a second link run refuses, leaves the first one working, and a stale pid f
 	assert.match(out, /Another tabkyra link run is already running on this device \(pid \d+\)/);
 	assert.equal((await rawTools(`${hub.url}/mcp`, secret)).status, 200, "the first run still answers through the hub");
 	// A crash leaves link.pid behind; its pid is dead, so the next run takes over.
+	const exited = new Promise((resolve) => dev.proc.once("exit", resolve));
 	dev.kill("SIGKILL");
+	await exited;
 	await hub.waitDevices((d) => !d.alpha.online, "the killed run to drop");
 	const again = spawn(process.execPath, [cli, "link", "run"], { env: dev.env });
 	cleanup.push(() => again.kill());
