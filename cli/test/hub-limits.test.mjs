@@ -7,9 +7,9 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { after, test } from "node:test";
-import { spawn } from "node:child_process";
 import { WebSocket } from "ws";
-import { addDevice, cli, connect, createToken, INITIALIZE, rawTools, readJson, rmSync, rpc, sleep, startHub, tempRoot, writeJson } from "./helpers/hub-fixture.mjs";
+import { spawn } from "node:child_process";
+import { addDevice, cli, connect, createToken, DEFAULT_CAP, fakeDevice as makeFake, INITIALIZE, rawTools, readJson, rmSync, rpc, sleep, startHub, tempRoot, writeJson } from "./helpers/hub-fixture.mjs";
 
 const root = tempRoot("tabkyra-hublimits-");
 const cleanup = [];
@@ -35,42 +35,16 @@ async function deviceFor(hub, name, options) {
 	return device;
 }
 
-const DEFAULT_CAP = ["browser.read", "browser.navigate", "browser.act", "library.read", "library.write", "skills.read", "user.ask"];
+const fakeDevice = async (hub, name, options) => {
+	const fake = await makeFake(hub, name, options);
+	cleanup.push(() => fake.ws.terminate());
+	return fake;
+};
 const toolsOf = (hub, ...scopes) => {
 	const table = hub.json(["token", "scopes", "--json"]);
 	return [...new Set(scopes.flatMap((x) => table[x].tools))].sort();
 };
 const LIST = { jsonrpc: "2.0", id: 2, method: "tools/list" };
-
-/** A device that is only a WebSocket client with a real credential: it says what the test tells it to. */
-async function fakeDevice(hub, name, { scopes = DEFAULT_CAP, sessionCap = 24, busy = false, extensionConnected = true, answer = false } = {}) {
-	const code = hub.json(["hub", "code", "--name", name, "--json"]).code;
-	const enrolled = await (await fetch(`${hub.url}/link/enroll`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, version: "9.9.9" }) })).json();
-	const ws = new WebSocket(`${hub.url.replace("http", "ws")}/link`, { headers: { authorization: `Bearer ${enrolled.deviceId}.${enrolled.secret}` } });
-	const frames = [];
-	let closed;
-	ws.on("message", (data) => {
-		const frame = JSON.parse(data.toString("utf8"));
-		frames.push(frame);
-		// Answer like a device: an initialize gets a session id.
-		if (answer && frame.t === "req" && frame.method === "POST") {
-			ws.send(JSON.stringify({ t: "head", id: frame.id, status: 200, headers: { "content-type": "application/json", "mcp-session-id": randomUUID() } }));
-			ws.send(JSON.stringify({ t: "chunk", id: frame.id, data: JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) }));
-			ws.send(JSON.stringify({ t: "end", id: frame.id }));
-		}
-	});
-	ws.on("close", (code) => {
-		closed = code;
-	});
-	await new Promise((resolve, reject) => {
-		ws.on("open", resolve);
-		ws.on("error", reject);
-	});
-	ws.send(JSON.stringify({ t: "status", extensionConnected, sessions: 0, busy, version: "9.9.9", browser: null, sessionCap, scopes }));
-	await hub.waitDevices((d) => d[name]?.online, `${name} to be ready`);
-	cleanup.push(() => ws.terminate());
-	return { ws, frames, name, closedCode: () => closed, reqs: () => frames.filter((f) => f.t === "req") };
-}
 
 async function waitFor(check, what, timeoutMs = 10_000) {
 	const deadline = Date.now() + timeoutMs;

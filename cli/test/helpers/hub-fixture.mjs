@@ -8,6 +8,8 @@ import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+import { WebSocket } from "ws";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -197,3 +199,36 @@ export function hostRequest(target, host, { method = "GET", path } = {}) {
 export const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 export const writeJson = (path, value) => writeFileSync(path, `${JSON.stringify(value)}\n`);
 export { rmSync };
+
+export const DEFAULT_CAP = ["browser.read", "browser.navigate", "browser.act", "library.read", "library.write", "skills.read", "user.ask"];
+
+/** A device that is only a WebSocket client with a real credential: it says what the test tells it to. */
+export async function fakeDevice(hub, name, { scopes = DEFAULT_CAP, sessionCap = 24, busy = false, extensionConnected = true, answer = false, onReq } = {}) {
+	const code = hub.json(["hub", "code", "--name", name, "--json"]).code;
+	const enrolled = await (await fetch(`${hub.url}/link/enroll`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, version: "9.9.9" }) })).json();
+	const ws = new WebSocket(`${hub.url.replace("http", "ws")}/link`, { headers: { authorization: `Bearer ${enrolled.deviceId}.${enrolled.secret}` } });
+	const frames = [];
+	let closed;
+	ws.on("message", (data) => {
+		const frame = JSON.parse(data.toString("utf8"));
+		frames.push(frame);
+		if (onReq && frame.t === "req") onReq(frame, ws, frames);
+		// Answer like a device: an initialize gets a session id.
+		if (answer && frame.t === "req" && frame.method === "POST") {
+			ws.send(JSON.stringify({ t: "head", id: frame.id, status: 200, headers: { "content-type": "application/json", "mcp-session-id": randomUUID() } }));
+			ws.send(JSON.stringify({ t: "chunk", id: frame.id, data: JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) }));
+			ws.send(JSON.stringify({ t: "end", id: frame.id }));
+		}
+	});
+	ws.on("close", (code) => {
+		closed = code;
+	});
+	await new Promise((resolve, reject) => {
+		ws.on("open", resolve);
+		ws.on("error", reject);
+	});
+	ws.send(JSON.stringify({ t: "status", extensionConnected, sessions: 0, busy, version: "9.9.9", browser: null, sessionCap, scopes }));
+	await hub.waitDevices((d) => d[name]?.online, `${name} to be ready`);
+	return { ws, frames, name, closedCode: () => closed, reqs: () => frames.filter((f) => f.t === "req") };
+}
+
