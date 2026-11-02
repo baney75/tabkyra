@@ -8,9 +8,18 @@
  * Every frame is checked against these shapes on arrival; anything else is dropped.
  */
 
-export const MAX_FRAME_BYTES = 4_000_000;
+/**
+ * A request body of up to MAX_BODY_BYTES is sent as a JSON string, and escaping can double it (every
+ * backslash or quote) or, for stray control characters, multiply it by six. The frame limit leaves
+ * room for the doubling; the hub checks the serialized size before sending and answers a request
+ * that still doesn't fit with 413, without touching the link.
+ */
 export const MAX_BODY_BYTES = 4_000_000;
+export const MAX_FRAME_BYTES = 16_000_000;
+/** Requests (POST and DELETE) one device handles at once. Long-lived GET streams are counted apart. */
 export const MAX_INFLIGHT_PER_DEVICE = 32;
+/** Open MCP sessions a device's link token may hold, and so the most GET streams it can hold (one per session). */
+export const MAX_LINK_SESSIONS = 24;
 export const HEARTBEAT_MS = 15_000;
 export const PING_MS = 20_000;
 export const SILENT_MS = 60_000;
@@ -45,6 +54,10 @@ export interface StatusFrame {
 	busy: boolean;
 	version: string;
 	browser: string | null;
+	/** How many sessions this device accepts; the hub stops routing new ones to a full device. */
+	sessionCap: number;
+	/** The scopes this device allows at most (its link token's cap). */
+	scopes: string[];
 }
 
 export type DeviceFrame = StatusFrame | { t: "head"; id: string; status: number; headers: Headers } | { t: "chunk"; id: string; data: string } | { t: "end"; id: string } | { t: "error"; id: string; message: string };
@@ -75,12 +88,14 @@ export function parseDeviceFrame(text: string): DeviceFrame | undefined {
 	}
 	if (!isRecord(v)) return undefined;
 	if (v.t === "status") {
-		const { extensionConnected, sessions, busy, version, browser } = v;
+		const { extensionConnected, sessions, busy, version, browser, sessionCap, scopes } = v;
 		if (typeof extensionConnected !== "boolean" || typeof busy !== "boolean") return undefined;
 		if (typeof sessions !== "number" || !Number.isInteger(sessions) || sessions < 0 || sessions > 10_000) return undefined;
 		if (typeof version !== "string" || version.length > 40) return undefined;
 		if (browser !== null && (typeof browser !== "string" || browser.length > 40)) return undefined;
-		return { t: "status", extensionConnected, sessions, busy, version, browser: browser ?? null };
+		if (typeof sessionCap !== "number" || !Number.isInteger(sessionCap) || sessionCap < 1 || sessionCap > 10_000) return undefined;
+		if (!Array.isArray(scopes) || scopes.length > 64 || !scopes.every((x) => typeof x === "string" && x.length <= 40)) return undefined;
+		return { t: "status", extensionConnected, sessions, busy, version, browser: browser ?? null, sessionCap, scopes: scopes as string[] };
 	}
 	if (!isId(v.id)) return undefined;
 	if (v.t === "head") {

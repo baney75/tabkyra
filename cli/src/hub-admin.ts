@@ -91,7 +91,9 @@ export async function hubServe(overrides: { port?: number; publicUrl?: string })
 	if (!publicUrl) throw new Error("No public URL. Run tabkyra hub setup --public-url https://host, or pass --public-url.");
 	const port = overrides.port ?? saved?.port ?? DEFAULT_PORT;
 	if (!passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; only a connect code (tabkyra token approval-code) can approve a connection. Run: tabkyra token passcode`);
-	const { url } = await startHub({ port, publicUrl });
+	// TABKYRA_HUB_HEAD_TIMEOUT_MS shortens the wait for a device's response head; the tests use it.
+	const headTimeout = Number(process.env.TABKYRA_HUB_HEAD_TIMEOUT_MS);
+	const { url } = await startHub({ port, publicUrl, ...(Number.isFinite(headTimeout) && headTimeout > 0 ? { headTimeoutMs: headTimeout } : {}) });
 	console.log(`${sym.ok} Hub at ${url} (loopback only). Connector URL: ${publicUrl}/mcp. Ctrl-C stops it.`);
 	await new Promise(() => {});
 }

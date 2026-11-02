@@ -21,11 +21,11 @@ export function writeJsonPrivate(path: string, value: unknown): void {
 	renameSync(tmp, path);
 }
 
-/** Run `fn` holding an exclusive lock file next to `path`. A lock older than 30 seconds is stale. */
-export function withFileLock<T>(path: string, fn: () => T): T {
+/** Run `fn` holding an exclusive lock file next to `path`; gives up after `timeoutMs`. A lock older than 30 seconds is stale. */
+export function withFileLock<T>(path: string, fn: () => T, timeoutMs = 10_000): T {
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	const lock = `${path}.lock`;
-	const deadline = Date.now() + 10_000;
+	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		try {
 			writeFileSync(lock, String(process.pid), { flag: "wx" });

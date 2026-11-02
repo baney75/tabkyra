@@ -35,6 +35,7 @@ import {
 	MAX_BODY_BYTES,
 	MAX_FRAME_BYTES,
 	MAX_INFLIGHT_PER_DEVICE,
+	MAX_LINK_SESSIONS,
 	parseDeviceFrame,
 	PING_MS,
 	type ReqFrame,
@@ -49,7 +50,8 @@ import { pageCss } from "./theme.ts";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const SESSION_IDLE_MS = 30 * 60_000;
 const MAX_SESSIONS_PER_CALLER = 8;
-const HEAD_TIMEOUT_MS = 120_000;
+/** How long a device may take to start answering. Once the head arrives, a response may stream for as long as it likes. */
+const DEFAULT_HEAD_TIMEOUT_MS = 120_000;
 const SESSION_ID = /^[\x21-\x7e]{1,128}$/;
 
 export interface HubOptions {
@@ -58,11 +60,15 @@ export interface HubOptions {
 	publicUrl: string;
 	redirectHosts?: string[];
 	allowedHosts?: string[];
+	/** The wait for a device's response head (default 120 s). Tests shorten it. */
+	headTimeoutMs?: number;
 	onListen?: (url: string) => void;
 }
 
 interface Pending {
 	res?: ServerResponse;
+	/** A long-lived GET event stream: counted apart from requests. */
+	stream: boolean;
 	headSent: boolean;
 	done: boolean;
 	timer: NodeJS.Timeout;
@@ -77,7 +83,13 @@ interface Link {
 	lastSeen: number;
 	connectedAt: number;
 	status: Omit<StatusFrame, "t">;
+	/** False until the first status frame says what this device allows. Not routable before that. */
+	ready: boolean;
 	inflight: Map<string, Pending>;
+	/** POST and DELETE requests in flight, GET streams in flight, and request slots held while a body is still arriving. */
+	calls: number;
+	streams: number;
+	reserved: number;
 	/** initialize requests sent and not yet finished: load the device hasn't reported. */
 	initsPending: number;
 }
@@ -87,6 +99,8 @@ interface HubSession {
 	linkInstance: number;
 	callerId: string;
 	lastSeen: number;
+	/** The session's one standalone GET stream is open. */
+	streamOpen: boolean;
 }
 
 interface Caller {
@@ -95,12 +109,17 @@ interface Caller {
 	scopes: string[];
 }
 
-/** Counts failures per source over 15 minutes, with a global cap that bounds guessing even when sources are forged. */
+/**
+ * Counts failures per source over 15 minutes. The global cap bounds guessing of the 40-bit connect
+ * codes even when sources are forged (it is the one place it is used: an attacker can lock enrollment
+ * for everyone, which is accepted; devices and managers are never refused by it). A device
+ * credential has 256 bits, so its limiter has no global cap, only a per-source one on failures.
+ */
 class FailureLimiter {
 	private failures: { at: number; source: string }[] = [];
 	constructor(
 		private readonly perSource: number,
-		private readonly global: number,
+		private readonly global = Number.POSITIVE_INFINITY,
 	) {}
 	private prune(): void {
 		const cutoff = Date.now() - 15 * 60_000;
@@ -112,6 +131,8 @@ class FailureLimiter {
 	}
 	fail(source: string): void {
 		this.prune();
+		// Bounded memory under a flood from many sources.
+		if (this.failures.length >= 50_000) this.failures.shift();
 		this.failures.push({ at: Date.now(), source });
 	}
 }
@@ -144,7 +165,8 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	})();
 	const callerInits = new Map<string, number>();
 	const enrollLimit = new FailureLimiter(5, 20);
-	const authLimit = new FailureLimiter(30, 300);
+	const authLimit = new FailureLimiter(30);
+	const headTimeoutMs = options.headTimeoutMs ?? DEFAULT_HEAD_TIMEOUT_MS;
 	let counter = 0;
 	let instances = 0;
 	const challenge = `Bearer realm="tabkyra", resource_metadata="${resourceMetadataUrl(oauth)}"`;
@@ -193,45 +215,65 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		p.done = true;
 		clearTimeout(p.timer);
 		link.inflight.delete(id);
+		if (p.stream) link.streams--;
+		else link.calls--;
 		p.onDone?.();
 	}
 
+	/** The hub gives up on a request that hasn't ended: answer the public client if it can still be answered, and tell the device to stop. */
 	function failPending(link: Link, id: string, status: number, message: string): void {
 		const p = link.inflight.get(id);
 		if (!p || p.done) return;
 		if (p.res && !p.headSent) deny(p.res, status, message);
 		else p.res?.destroy();
+		sendTo(link, { t: "cancel", id });
 		finish(link, id);
 	}
 
-	function sendTo(link: Link, frame: unknown, onError?: () => void): void {
+	function sendText(link: Link, text: string, onError?: () => void): void {
 		if (link.ws.readyState !== WebSocket.OPEN) return onError?.();
-		link.ws.send(JSON.stringify(frame), (err) => {
+		link.ws.send(text, (err) => {
 			if (err) onError?.();
 		});
 	}
 
+	function sendTo(link: Link, frame: unknown, onError?: () => void): void {
+		sendText(link, JSON.stringify(frame), onError);
+	}
+
 	/** Send one request over a link and stream the answer back to `res`. */
-	function forward(link: Link, request: { method: ReqFrame["method"]; headers: Headers; body: string; res?: ServerResponse; onHead?: Pending["onHead"]; onDone?: () => void }): void {
+	function forward(link: Link, request: { method: ReqFrame["method"]; headers: Headers; body: string; res?: ServerResponse; stream?: boolean; onHead?: Pending["onHead"]; onDone?: () => void }): void {
 		const id = `r${++counter}`;
-		const timer = setTimeout(() => failPending(link, id, 504, "The device didn't answer in time."), HEAD_TIMEOUT_MS);
+		const frame: ReqFrame = { t: "req", id, method: request.method, path: "/mcp", headers: request.headers, body: request.body };
+		const text = JSON.stringify(frame);
+		// Escaping can grow a body past the frame limit. Refuse this request; the link and its other requests are untouched.
+		if (Buffer.byteLength(text) > MAX_FRAME_BYTES) {
+			if (request.res) deny(request.res, 413, "This request is too large to forward to a device.");
+			request.onDone?.();
+			return;
+		}
+		const timer = setTimeout(() => failPending(link, id, 504, "The device didn't answer in time."), headTimeoutMs);
 		timer.unref();
-		const p: Pending = { res: request.res, headSent: false, done: false, timer, onHead: request.onHead, onDone: request.onDone };
+		const stream = request.stream === true;
+		const p: Pending = { res: request.res, stream, headSent: false, done: false, timer, onHead: request.onHead, onDone: request.onDone };
 		link.inflight.set(id, p);
+		if (stream) link.streams++;
+		else link.calls++;
 		request.res?.on("close", () => {
 			// The public client went away before the answer ended: tell the device to stop.
 			if (p.done) return;
 			sendTo(link, { t: "cancel", id });
 			finish(link, id);
 		});
-		const frame: ReqFrame = { t: "req", id, method: request.method, path: "/mcp", headers: request.headers, body: request.body };
-		sendTo(link, frame, () => failPending(link, id, 502, "The device link dropped."));
+		sendText(link, text, () => failPending(link, id, 502, "The device link dropped."));
 	}
 
 	function onDeviceFrame(link: Link, frame: DeviceFrame): void {
 		if (frame.t === "status") {
 			const versionChanged = link.status.version !== frame.version;
-			link.status = { extensionConnected: frame.extensionConnected, sessions: frame.sessions, busy: frame.busy, version: frame.version, browser: frame.browser };
+			link.status = { extensionConnected: frame.extensionConnected, sessions: frame.sessions, busy: frame.busy, version: frame.version, browser: frame.browser, sessionCap: frame.sessionCap, scopes: frame.scopes };
+			link.ready = true;
+			// touchDevice never throws and waits only briefly for its lock.
 			if (versionChanged) touchDevice(link.device.id, { version: frame.version });
 			snapshotSoon();
 			return;
@@ -241,6 +283,8 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		if (frame.t === "head") {
 			if (p.headSent) return;
 			p.headSent = true;
+			// The timer only waits for the head; a response may stream for hours after it.
+			clearTimeout(p.timer);
 			// A device that rejects the hub's own credential is a setup fault, not the caller's 401.
 			const status = frame.status === 401 ? 502 : frame.status;
 			p.onHead?.(status, frame.headers);
@@ -280,11 +324,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		if (links.get(link.device.id) === link) links.delete(link.device.id);
 		for (const id of [...link.inflight.keys()]) failPending(link, id, 502, reason);
 		for (const [sid, s] of sessions) if (s.deviceId === link.device.id && s.linkInstance === link.instance) sessions.delete(sid);
-		try {
-			touchDevice(link.device.id, { lastSeen: new Date().toISOString() });
-		} catch {
-			/* informational */
-		}
+		touchDevice(link.device.id, { lastSeen: new Date().toISOString() });
 		snapshotSoon();
 	}
 
@@ -296,8 +336,12 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			ws,
 			lastSeen: Date.now(),
 			connectedAt: Date.now(),
-			status: { extensionConnected: false, sessions: 0, busy: false, version: "", browser: null },
+			status: { extensionConnected: false, sessions: 0, busy: false, version: "", browser: null, sessionCap: MAX_LINK_SESSIONS, scopes: [] },
+			ready: false,
 			inflight: new Map(),
+			calls: 0,
+			streams: 0,
+			reserved: 0,
 			initsPending: 0,
 		};
 		// One live link per device: a new one replaces the old.
@@ -307,6 +351,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			dropLink(previous, "The device reconnected.");
 		}
 		links.set(device.id, link);
+		// Informational: touchDevice never throws, and a held lock costs a moment, not the hub.
 		touchDevice(device.id, { lastSeen: new Date().toISOString() });
 		ws.on("message", (data: RawData, isBinary: boolean) => {
 			if (isBinary) return ws.close(1003, "text frames only");
@@ -324,18 +369,38 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 
 	// ---------- Routing ----------
 
-	function pickLink(): Link | undefined {
-		const prefer = loadDevices().prefer;
-		const all = [...links.values()].filter((l) => l.ws.readyState === WebSocket.OPEN && l.inflight.size < MAX_INFLIGHT_PER_DEVICE);
-		const withExtension = all.filter((l) => l.status.extensionConnected);
-		const pool = withExtension.length ? withExtension : all;
-		const known = (l: Link) => [...sessions.values()].filter((s) => s.deviceId === l.device.id).length;
+	type Pick = { link: Link } | { status: number; message: string };
+
+	/**
+	 * The device for a new session. Candidates are online devices that have reported (so their cap is
+	 * known), allow at least one of the caller's scopes, and have room (requests, and sessions under
+	 * their own cap). Of those, ones with the extension connected win, then full scope coverage, not
+	 * busy, fewest sessions, `prefer` order, most recently seen.
+	 */
+	function pickLink(who: Caller): Pick {
+		const online = [...links.values()].filter((l) => l.ws.readyState === WebSocket.OPEN && l.ready);
+		if (!online.length) return { status: 503, message: offlineMessage() };
+		const wanted = who.scopes.filter((x) => Object.hasOwn(SCOPES, x));
+		const covers = (l: Link) => wanted.filter((x) => l.status.scopes.includes(x)).length;
+		const fits = online.filter((l) => covers(l) > 0);
+		if (!fits.length) {
+			const caps = online.map((l) => `${l.device.name}: ${l.status.scopes.join(", ") || "nothing"}`).join("; ");
+			return { status: 403, message: `None of the permissions you granted are allowed on any online device (${caps}).` };
+		}
+		const known = (l: Link) => [...sessions.values()].filter((x) => x.deviceId === l.device.id).length;
 		const load = (l: Link) => Math.max(l.status.sessions, known(l)) + l.initsPending;
+		const roomy = fits.filter((l) => l.calls + l.reserved < MAX_INFLIGHT_PER_DEVICE && load(l) < l.status.sessionCap);
+		if (!roomy.length) return { status: 429, message: "Every device that can serve you is at its limit. Close a session or try again in a moment." };
+		const prefer = loadDevices().prefer;
+		const withExtension = roomy.filter((l) => l.status.extensionConnected);
+		const pool = withExtension.length ? withExtension : roomy;
 		const rank = (l: Link) => {
 			const i = prefer.indexOf(l.device.name);
 			return i < 0 ? Number.MAX_SAFE_INTEGER : i;
 		};
-		return [...pool].sort((a, b) => Number(a.status.busy) - Number(b.status.busy) || load(a) - load(b) || rank(a) - rank(b) || b.lastSeen - a.lastSeen)[0];
+		const partial = (l: Link) => Number(covers(l) < wanted.length);
+		const best = [...pool].sort((a, b) => partial(a) - partial(b) || Number(a.status.busy) - Number(b.status.busy) || load(a) - load(b) || rank(a) - rank(b) || b.lastSeen - a.lastSeen)[0];
+		return { link: best };
 	}
 
 	function offlineMessage(): string {
@@ -373,23 +438,53 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				sessions.delete(sessionId);
 				return deny(res, 404, "Unknown or expired session. Start a new one with an initialize request.");
 			}
-			if (link.inflight.size >= MAX_INFLIGHT_PER_DEVICE) return deny(res, 429, "This device is handling too many requests. Try again in a moment.");
+			// A GET is the session's one long-lived event stream and has its own budget. A POST or DELETE takes
+			// a request slot now, before its body arrives, so slow bodies can't pile past the device's limit.
+			const stream = method === "GET";
+			if (stream) {
+				if (session.streamOpen) return deny(res, 409, "This session already has an open event stream.");
+				if (link.streams >= MAX_LINK_SESSIONS) return deny(res, 429, "This device has too many open event streams.");
+				session.streamOpen = true;
+			} else {
+				if (link.calls + link.reserved >= MAX_INFLIGHT_PER_DEVICE) return deny(res, 429, "This device is handling too many requests. Try again in a moment.");
+				link.reserved++;
+			}
+			let reserved = !stream;
+			const release = () => {
+				if (reserved) {
+					reserved = false;
+					link.reserved--;
+				}
+				if (stream) session.streamOpen = false;
+			};
 			session.lastSeen = Date.now();
 			let body = "";
 			try {
 				body = method === "POST" ? await readBody(req, MAX_BODY_BYTES) : "";
 			} catch {
+				release();
 				return deny(res, 413, "Request body too large.");
+			}
+			// The link may have gone while the body arrived.
+			if (links.get(session.deviceId) !== link || link.ws.readyState !== WebSocket.OPEN) {
+				release();
+				return deny(res, 404, "Unknown or expired session. Start a new one with an initialize request.");
+			}
+			if (reserved) {
+				reserved = false;
+				link.reserved--;
 			}
 			return forward(link, {
 				method,
 				headers: requestHeaders(req, who),
 				body,
 				res,
+				stream,
 				onHead: (status) => {
 					if (method === "DELETE" && (status < 300 || status === 404)) sessions.delete(sessionId);
 					if (status === 404) sessions.delete(sessionId);
 				},
+				onDone: stream ? () => release() : undefined,
 			});
 		}
 		if (method !== "POST") return deny(res, 400, "Start a session with an initialize POST.");
@@ -405,8 +500,9 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		if (!isInitializeRequest(parsed)) return deny(res, 400, "Start a session with an initialize request.");
 		const open = [...sessions.values()].filter((s) => s.callerId === who.id).length + (callerInits.get(who.id) ?? 0);
 		if (open >= MAX_SESSIONS_PER_CALLER) return deny(res, 429, `This token already has ${MAX_SESSIONS_PER_CALLER} open sessions. Close one first.`);
-		const link = pickLink();
-		if (!link) return deny(res, 503, offlineMessage());
+		const picked = pickLink(who);
+		if (!("link" in picked)) return deny(res, picked.status, picked.message);
+		const link = picked.link;
 		link.initsPending++;
 		callerInits.set(who.id, (callerInits.get(who.id) ?? 0) + 1);
 		forward(link, {
@@ -418,7 +514,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				const id = headers["mcp-session-id"];
 				// A device can't take over a session id the hub already routes.
 				if (status >= 200 && status < 300 && id && SESSION_ID.test(id) && !sessions.has(id)) {
-					sessions.set(id, { deviceId: link.device.id, linkInstance: link.instance, callerId: who.id, lastSeen: Date.now() });
+					sessions.set(id, { deviceId: link.device.id, linkInstance: link.instance, callerId: who.id, lastSeen: Date.now(), streamOpen: false });
 				}
 			},
 			onDone: () => {
@@ -466,10 +562,11 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 
 	async function handleCode(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		if (req.method !== "POST") return sendJson(res, 405, { error: "method_not_allowed" });
+		// A valid credential is never refused by anyone else's failures: check it first, throttle only failures.
 		const source = requestSource(req);
-		if (authLimit.blocked(source)) return sendJson(res, 429, { error: "temporarily_unavailable", error_description: "Too many failed attempts. Wait 15 minutes." });
 		const device = authenticateDevice(bearer(req.headers.authorization));
 		if (!device) {
+			if (authLimit.blocked(source)) return sendJson(res, 429, { error: "temporarily_unavailable", error_description: "Too many failed attempts from this address. Wait 15 minutes." });
 			authLimit.fail(source);
 			return sendJson(res, 401, { error: "invalid_token", error_description: "This device's credential is not valid." });
 		}
@@ -525,10 +622,11 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		const path = new URL(req.url ?? "/", "http://x").pathname;
 		if (!hostAllowed(req)) return refuse("421 Misdirected Request");
 		if (path !== "/link") return refuse("404 Not Found");
+		// A valid credential is never refused by anyone else's failures: check it first, throttle only failures.
 		const source = requestSource(req);
-		if (authLimit.blocked(source)) return refuse("429 Too Many Requests");
 		const device = authenticateDevice(bearer(req.headers.authorization));
 		if (!device) {
+			if (authLimit.blocked(source)) return refuse("429 Too Many Requests");
 			authLimit.fail(source);
 			return refuse("401 Unauthorized");
 		}
@@ -543,7 +641,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			return {
 				id: d.id,
 				name: d.name,
-				online: Boolean(l),
+				online: Boolean(l?.ready),
 				extensionConnected: l?.status.extensionConnected ?? false,
 				sessions: l ? Math.max(l.status.sessions, [...sessions.values()].filter((s) => s.deviceId === d.id).length) : 0,
 				busy: l?.status.busy ?? false,

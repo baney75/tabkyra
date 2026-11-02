@@ -116,15 +116,27 @@ export function setPrefer(names: string[]): void {
 	withFileLock(devicesFile(), () => saveDevices({ ...loadDevices(), prefer: names }));
 }
 
-/** Record what the hub learned about a device (last seen, version). A device removed meanwhile stays removed. */
+/**
+ * Record what the hub learned about a device (last seen, version). A device removed meanwhile stays
+ * removed. This is informational and runs in the hub's event loop, so it waits only briefly for the
+ * lock and never throws: a held lock or a full disk must not take the hub down.
+ */
 export function touchDevice(id: string, patch: { lastSeen?: string; version?: string }): void {
-	withFileLock(devicesFile(), () => {
-		const data = loadDevices();
-		const device = data.devices.find((d) => d.id === id);
-		if (!device) return;
-		Object.assign(device, patch);
-		saveDevices(data);
-	});
+	try {
+		withFileLock(
+			devicesFile(),
+			() => {
+				const data = loadDevices();
+				const device = data.devices.find((d) => d.id === id);
+				if (!device) return;
+				Object.assign(device, patch);
+				saveDevices(data);
+			},
+			200,
+		);
+	} catch {
+		/* informational */
+	}
 }
 
 export class HubStateError extends Error {
