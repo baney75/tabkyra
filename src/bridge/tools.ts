@@ -665,7 +665,12 @@ export const handlers: Record<string, Handler> = {
 				// Keep the step's own code (stale_ref, interrupted, ...): the agent acts on it.
 				const { error } = classify(err, kind);
 				const code = error.code === ERR.INTERNAL ? ERR.BAD_PARAMS : error.code;
-				throw new BridgeError(code, `step ${i} (${kind}) failed after ${i} steps succeeded: ${error.message}`);
+				// `source` stays: the client passes the extension's own interrupted on, not as a dropped bridge.
+				throw new BridgeError(
+					code,
+					`step ${i} (${kind}) failed after ${i} steps succeeded: ${error.message}`,
+					error.source,
+				);
 			}
 			if (settleMs > 0 && i < steps.length - 1) await new Promise((r) => setTimeout(r, settleMs));
 		}

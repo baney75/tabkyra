@@ -1284,3 +1284,13 @@ test("press refuses clipboard chords before any key event: no paste/copy/cut or 
 	await tool("press", { key: "Control+a" });
 	assert.ok((await js("window.__seen", { world: "main" })).includes("keydown:a"));
 });
+
+test("an actions step that is interrupted keeps the extension's own message, not 'connection dropped'", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await failNext("Input.dispatchKeyEvent", "Detached while handling command.");
+	const message = await failure("actions", { steps: [{ type: { selector: "#t", text: "abc" } }] });
+	assert.match(message, /^interrupted: step 0 \(type\) failed after 0 steps succeeded: /);
+	assert.match(message, /Check the page with read_page before you repeat it/);
+	assert.doesNotMatch(message, /connection dropped/);
+});
