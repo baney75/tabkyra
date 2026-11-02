@@ -678,3 +678,44 @@ setup` (docs/remote.md) is the one command for it.
 - `remote.json` in the config dir (0600) holds the route; `tabkyra serve` reads it when
   `--public-url` is absent, and flags win. A user service (launchd or systemd, user level) keeps
   serve running.
+
+## D32. Many devices behind one hub, still single-owner (Claude, 2026-11-02)
+
+Owner, 2026-11-02: one public URL (for example `https://tabkyra.dbaney.com/mcp`) that claude.ai,
+ChatGPT and grok.com add once, with any number of his own computers behind it.
+
+- `tabkyra hub setup` turns an always-on box into the hub. It needs no browser. It serves the D30
+  OAuth server and consent page (shared code, `oauth-http.ts`) and `/mcp`, and proxies each MCP
+  session to one of the owner's devices. A device runs `tabkyra link`, which dials out to the hub
+  over a WebSocket, so devices need no inbound port or tunnel of their own.
+- Still D31: one owner, no relay run by the maintainer, no cost. The hub is the owner's own
+  server; the maintainer runs nothing. An install has one public route, so `hub setup` refuses
+  next to `remote.json` and `remote setup` refuses next to `hub.json`.
+- Routing: a new session goes to an online device with the extension connected; not busy first,
+  then fewest sessions, then the `prefer` order, then most recently seen. With no extension
+  anywhere, any online device (tools such as `skill_match` still work). A session stays on its
+  device and caller. If that device's link is gone, the hub answers 404 "Unknown or expired
+  session", and the client's re-initialize lands elsewhere.
+- Scopes never widen across the hop. The hub sets `x-tabkyra-hub-scopes` and
+  `x-tabkyra-hub-caller` itself from the caller it authenticated, and drops any
+  `x-tabkyra-hub-*` header a public client sends (the forwarded headers come from a short
+  list). A device's `serve` honors those headers only for a `link`-kind token, only on the
+  loopback serve `link run` starts (never one with a public URL, which refuses to start with
+  that option), and uses the intersection of the token's scopes (the device's cap, default
+  `DEFAULT_GRANT`, never `browser.script` or `threads.read` unless named) and the header's. Every
+  other token ignores the headers. `link run` mints its link token at start and holds it in
+  memory only; it is revoked when `link run` stops.
+- Secrets: a device credential is 32 random bytes, kept on the hub as SHA-256 and compared with
+  `timingSafeEqual`. Connect codes (`TK-XXXX-XXXX`, Crockford base32, 40 bits, 10 minutes,
+  single use) and approval codes are kept as SHA-256. A code has 40 bits, far less than the
+  passcode's 100, so the limits matter: five wrong connect codes per source and 20 in all in 15
+  minutes lock `/link/enroll` (429); approval codes share the passcode's counter (five per
+  client, 20 per source, 1,000 in all) and lockout. Both hold even against a forged source
+  header. A 40-bit code that lives 10 minutes behind those caps is the accepted risk.
+- `hub remove` deletes the credential; the running hub notices within a second and closes the
+  link. A manager device (`hub code --manage`) may mint connect and approval codes through
+  `/link/code`; a stolen manager credential is therefore as strong as the passcode, and
+  `hub remove` is the answer.
+- Considered and not done: a hub that also drives its own browser (run `link` on the hub box
+  instead), and a maintainer-run hub (D31).
+
