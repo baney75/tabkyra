@@ -708,10 +708,27 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
 - Secrets: a device credential is 32 random bytes, kept on the hub as SHA-256 and compared with
   `timingSafeEqual`. Connect codes (`TK-XXXX-XXXX`, Crockford base32, 40 bits, 10 minutes,
   single use) and approval codes are kept as SHA-256. A code has 40 bits, far less than the
-  passcode's 100, so the limits matter: five wrong connect codes per source and 20 in all in 15
-  minutes lock `/link/enroll` (429); approval codes share the passcode's counter (five per
-  client, 20 per source, 1,000 in all) and lockout. Both hold even against a forged source
-  header. A 40-bit code that lives 10 minutes behind those caps is the accepted risk.
+  passcode's 100, so the limits matter. Five wrong connect codes per source and 20 in all in 15
+  minutes lock `/link/enroll` (429); the global cap holds even against forged source headers, and
+  the cost is accepted: anyone can lock enrollment (only enrollment) for 15 minutes. Approval
+  codes share the passcode's counter (five per client, 20 per source, 1,000 in all) and lockout.
+  A device credential has 256 bits, so `/link` and `/link/code` check it first and never refuse a
+  valid one; only failures are throttled, per source (30 in 15 minutes), with no global cap, so
+  forged sources can't lock devices out.
+- Capacity: a device handles 32 POST and DELETE requests at once and 24 sessions (its link
+  token's cap). Each session has at most one GET event stream, counted apart from requests (up to
+  24 per device), so open streams never starve tool calls. The hub reserves a request slot before
+  it reads the body. A device reports its session cap and its scope cap in its status frame; the
+  hub routes only to devices that have reported, allow at least one of the caller's scopes and
+  have room, and prefers full scope coverage before busy and load. When no device grants any of a
+  caller's scopes the answer is 403, not a forward that fails. The head timeout (120 s) waits for
+  a response head only; a stream may run as long as it likes. Whenever the hub abandons a request
+  it sends `cancel`. A request whose frame would exceed 16 MB after JSON escaping gets 413 without
+  touching the link.
+- Reconnect: when a link ends, the device closes every MCP session that connection carried (the
+  hub has already forgotten them), and `link run` holds an exclusive pid file so a second run
+  refuses instead of revoking the first one's token. The link token is named `link:run`, a name
+  ordinary tokens can't have.
 - `hub remove` deletes the credential; the running hub notices within a second and closes the
   link. A manager device (`hub code --manage`) may mint connect and approval codes through
   `/link/code`; a stolen manager credential is therefore as strong as the passcode, and

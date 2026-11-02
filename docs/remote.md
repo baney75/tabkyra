@@ -181,8 +181,11 @@ Use it only for a computer you would trust with the passcode.
   widens. A device's link token works only on the loopback server `link run` starts.
 - A device credential is 32 random bytes, stored on the hub only as a SHA-256 hash; connect codes
   and approval codes are single-use, last 10 minutes and are stored only as hashes. Wrong connect
-  codes are limited (five per source, 20 in all, per 15 minutes); wrong approval codes count
-  toward the passcode's limit and 15-minute lockout.
+  codes are limited (five per source, 20 in all, per 15 minutes, so anyone can pause enrollment, and
+  only enrollment, for 15 minutes); wrong approval codes count toward the passcode's limit and
+  15-minute lockout. A valid device credential is never refused because of other people's failures.
+- Only one `tabkyra link run` can run on a device; a second refuses to start. When the link drops,
+  the device closes the sessions it carried, and assistants simply start new ones.
 - The hub listens on loopback and answers only its public host. A device removed with
   `tabkyra hub remove` loses its link within a second.
 - Cost: free. Nothing here runs on anyone else's server.
