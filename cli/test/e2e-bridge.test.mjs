@@ -130,6 +130,10 @@ extraPages["/todo"] = `<!doctype html><title>TodoMVC</title>
 <button class="clear-completed">Clear completed</button></footer></section>
 <footer class="info"><p>Part of <a href="http://todomvc.com/examples/checkbox-guide">TodoMVC</a></p><a href="/docs#first-task-howto">Docs</a></footer>`;
 
+// The first load logs and fetches: capture has to be on before it.
+extraPages["/boot"] = `<!doctype html><title>Tabkyra boot</title><p id="x">boot</p>
+<script>console.log("boot-log"); fetch("/boot-data").then((r) => r.text());</script>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -1135,4 +1139,30 @@ test("capture lost to a worker restart is reported, and resumes", async () => {
 	const later = await readConsole();
 	assert.equal(later.capture, undefined);
 	assert.ok(texts(later).includes("after-restart"));
+});
+
+test("a tab the tool opens captures its first load: tabs_create and the first navigate of a session", async () => {
+	await connected();
+	const created = await tool("tabs_create", { url: `${pageUrl}boot` });
+	const tabId = Number(created.match(/"tabId":(\d+)/)?.[1] ?? created.match(/\b(\d{6,})\b/)?.[1]);
+	assert.ok(tabId, created);
+	const net = await readNetwork({ tabId });
+	assert.ok(net.entries.some((e) => e.url.endsWith("/boot") && e.type === "Document"), JSON.stringify(net.entries));
+	assert.ok(net.entries.some((e) => e.url.endsWith("/boot-data")), "the first load's fetch was missed");
+	assert.ok(texts(await readConsole({ tabId })).includes("boot-log"));
+	await tool("tabs_close", { tabId });
+
+	// A fresh session's first navigate opens its tab on the URL.
+	const project = join(home, "projects", "first-load");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agent = await agentIn(project);
+	try {
+		await on(agent, "navigate", { url: `${pageUrl}boot` });
+		const net2 = JSON.parse(await on(agent, "read_network", {}));
+		assert.ok(net2.entries.some((e) => e.url.endsWith("/boot-data")), JSON.stringify(net2.entries));
+		assert.ok(JSON.parse(await on(agent, "read_console", {})).entries.some((e) => e.text === "boot-log"));
+	} finally {
+		await agent.close();
+	}
 });

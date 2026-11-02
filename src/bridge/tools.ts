@@ -23,6 +23,7 @@ import {
 	readNetworkDetail,
 	reattach,
 	screenshotToCss,
+	startCapture,
 	startScreencast,
 	stopScreencast,
 	typeText,
@@ -41,7 +42,6 @@ import {
 	scrollPage,
 	snapshot,
 	waitFor,
-	waitForLoad,
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
 import { BridgeError, classify, detachedError } from "./errors.js";
@@ -125,6 +125,30 @@ async function createCapped(session: BrowserSession, url?: string): Promise<chro
 		return await session.createTab(url, { capped: true });
 	} catch (err) {
 		if (err instanceof TabLimitError) throw new BridgeError(ERR.TAB_LIMIT, err.message);
+		throw err;
+	}
+}
+
+/**
+ * A new tab for the agent with console and network capture already on. The tab opens blank and
+ * the URL loads after capture starts, so the first page's requests and logs are kept (a tab
+ * opened straight on the URL had loaded before anything listened). `ready` is false when the wait
+ * for the page gave up; a page that fails to load still counts as opened, as it always did.
+ */
+async function openCapturedTab(
+	ctx: HandlerContext,
+	url: string | undefined,
+	timeoutMs: number,
+): Promise<{ tab: chrome.tabs.Tab; ready: boolean }> {
+	const tab = await createCapped(ctx.session);
+	const tabId = tab.id as number;
+	// Capture is best effort here: if it can't start now, the first read_console/read_network starts it.
+	await startCapture(tabId).catch(() => undefined);
+	if (!url) return { tab, ready: true };
+	try {
+		return { tab, ready: !(await navigateTabDetailed(tabId, url, { timeoutMs })).timedOut };
+	} catch (err) {
+		if (err instanceof Error && err.message.startsWith("Navigation to ")) return { tab, ready: true };
 		throw err;
 	}
 }
@@ -233,8 +257,7 @@ export const handlers: Record<string, Handler> = {
 	"tabs.create": async (ctx, params) => {
 		const url = str(params, "url");
 		if (url) await ctx.checkUrl(url);
-		const tab = await createCapped(ctx.session, url);
-		const ready = url ? await waitForLoad(tab.id!, 20000) : true;
+		const { tab, ready } = await openCapturedTab(ctx, url, 20000);
 		return tabSummary(tab.id!, !ready);
 	},
 
@@ -304,8 +327,7 @@ export const handlers: Record<string, Handler> = {
 		if (!history) await ctx.checkUrl(url);
 		// The first navigate of a session opens its tab straight on the URL (no blank tab).
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
-			const tab = await createCapped(ctx.session, url);
-			const ready = await waitForLoad(tab.id!, num(params, "timeoutMs") ?? 20000);
+			const { tab, ready } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000);
 			return tabSummary(tab.id!, !ready);
 		}
 		const tabId = await resolveTab(ctx, params, false);
