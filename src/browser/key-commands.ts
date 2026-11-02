@@ -4,9 +4,10 @@
  * synthetic Meta+a (macOS) reaches the page's keydown handlers and then does nothing. The
  * `commands` field of Input.dispatchKeyEvent names the editing commands to run with the key.
  *
- * Copy, cut and paste are left out on purpose: they read and write the user's real system
- * clipboard, and an agent tab in the background has no business doing either (a page could
- * stage text for the user to paste elsewhere, or an agent could read what the user copied).
+ * The clipboard chords are not mapped here, and `pressKey` refuses them (see isClipboardChord):
+ * on Windows and Linux Blink runs them from a plain key event, so leaving out `commands` is not
+ * enough. They read and write the user's real system clipboard, and an agent tab in the
+ * background has no business doing either.
  */
 
 const MODIFIERS = new Set(["Alt", "Control", "Meta", "Shift"]);
@@ -27,7 +28,7 @@ const MOVES: Record<string, string> = {
  * canonical modifier names (Alt, Control, Meta, Shift) held with `main`.
  *
  * The shortcut key is Meta on macOS and Control elsewhere. Agents write Control+a on a Mac as
- * often as Meta+a and mean select-all by it, so for the clipboard, undo and select-all chords the
+ * often as Meta+a and mean select-all by it, so for the select-all, undo and redo chords the
  * other key counts too (macOS has no Control+a "select all"; its Control+a is an Emacs move to
  * the start of the line, which no agent asks for). Moves and deletions follow each platform.
  */
@@ -80,6 +81,34 @@ export function editingCommands(mods: string[], main: string, mac: boolean): str
 	if (main === "Backspace" && !shift) return ["deleteWordBackward"];
 	if (main === "Delete" && !shift) return ["deleteWordForward"];
 	return [];
+}
+
+/** A key chord that would read or replace the user's system clipboard. */
+export class ClipboardChordError extends Error {
+	constructor(chord: string) {
+		super(`${chord} is a clipboard chord; clipboard chords are not supported; use fill or type`);
+	}
+}
+
+/**
+ * Whether a chord is a clipboard operation on any platform: Control or Meta with c, x or v
+ * (Shift too for v), Shift+Insert, Control+Insert, Shift+Delete. Blink runs these from a plain
+ * key event on Windows and Linux, so the only safe answer is to send no key event at all.
+ * `mods` are the canonical modifier names (Alt, Control, Meta, Shift).
+ */
+export function isClipboardChord(mods: string[], main: string): boolean {
+	const has = (m: string) => mods.includes(m);
+	const command = has("Control") || has("Meta");
+	if (main.length === 1) {
+		const key = main.toLowerCase();
+		if (!command || has("Alt")) return false;
+		if (key === "v") return true;
+		return (key === "c" || key === "x") && !has("Shift");
+	}
+	const only = (...wanted: string[]) => mods.length === wanted.length && wanted.every(has);
+	if (main === "Insert") return only("Shift") || only("Control");
+	if (main === "Delete") return only("Shift");
+	return false;
 }
 
 /** Whether the browser runs on macOS, from the service worker's or side panel's navigator. */

@@ -7,6 +7,7 @@ installFakeChrome();
 const { classify, splitStack, BridgeError } = await import("../src/bridge/errors.ts");
 const { NoTabError } = await import("../src/browser/session.ts");
 const { PageException } = await import("../src/browser/cdp.ts");
+const { ClipboardChordError } = await import("../src/browser/key-commands.ts");
 
 const STACK = "\n    at resolveRef (<anonymous>:12:32)\n    at <anonymous>:16:3";
 
@@ -80,4 +81,10 @@ test("an error from a navigation under the call is worded as the page navigating
 	assert.doesNotMatch(error.message, /debugger detached/);
 	// Marked as the extension's own answer, so the client does not rewrite it as a dropped connection.
 	assert.equal(error.toRpc().source, "extension");
+});
+
+test("a clipboard chord is bad_params with the use-fill-or-type text", () => {
+	const { error } = classify(new ClipboardChordError("Control+v"), "press");
+	assert.equal(error.code, "bad_params");
+	assert.match(error.message, /clipboard chords are not supported; use fill or type/);
 });

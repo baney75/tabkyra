@@ -1,9 +1,9 @@
-// Which editing commands a pressed chord carries. Chromium runs select-all, copy, undo and the
+// Which editing commands a pressed chord carries. Chromium runs select-all, undo and the
 // word and line moves from the platform's bindings, so a synthetic Meta+a selects nothing unless
 // the key event names the command (Input.dispatchKeyEvent's `commands`).
 import assert from "node:assert/strict";
 import test from "node:test";
-import { editingCommands } from "../src/browser/key-commands.ts";
+import { editingCommands, isClipboardChord } from "../src/browser/key-commands.ts";
 
 const mac = (mods, main) => editingCommands(mods, main, true);
 const other = (mods, main) => editingCommands(mods, main, false);
@@ -69,4 +69,23 @@ test("word and line moves follow the platform", () => {
 	assert.deepEqual(other(["Control"], "Delete"), ["deleteWordForward"]);
 	// Alt+Left on Windows/Linux is history navigation, not a text move.
 	assert.deepEqual(other(["Alt"], "ArrowLeft"), []);
+});
+
+test("clipboard chords are refused on every platform, in every spelling", () => {
+	const refused = [
+		[["Control"], "c"], [["Control"], "x"], [["Control"], "v"], [["Control"], "V"],
+		[["Meta"], "c"], [["Meta"], "x"], [["Meta"], "v"],
+		[["Control", "Shift"], "v"], [["Meta", "Shift"], "v"], [["Control", "Shift"], "V"],
+		[["Shift"], "Insert"], [["Control"], "Insert"], [["Shift"], "Delete"],
+	];
+	for (const [mods, key] of refused) assert.equal(isClipboardChord(mods, key), true, `${mods.join("+")}+${key}`);
+});
+
+test("other chords are not clipboard chords", () => {
+	const fine = [
+		[[], "v"], [[], "c"], [["Shift"], "v"], [["Control"], "a"], [["Control"], "z"], [["Meta"], "p"],
+		[["Control", "Shift"], "c"], [["Control", "Alt"], "v"], [[], "Insert"], [[], "Delete"],
+		[["Control"], "Delete"], [["Shift"], "ArrowLeft"], [["Alt"], "Insert"], [["Control", "Shift"], "Insert"],
+	];
+	for (const [mods, key] of fine) assert.equal(isClipboardChord(mods, key), false, `${mods.join("+")}+${key}`);
 });

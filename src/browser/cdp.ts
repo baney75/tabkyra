@@ -6,7 +6,7 @@
  */
 
 import { ConsoleBuffer, type ConsoleEntry, MAX_ENTRIES } from "./console-buffer.js";
-import { editingCommands, isMacBrowser } from "./key-commands.js";
+import { ClipboardChordError, editingCommands, isClipboardChord, isMacBrowser } from "./key-commands.js";
 import { bodyShape, maskJsonResponse, maskUrl } from "./mask-body.js";
 
 const PROTOCOL_VERSION = "1.3";
@@ -581,10 +581,23 @@ export function keyInfo(name: string): KeyInfo {
 export async function pressKey(tabId: number, chord: string): Promise<void> {
 	await ensureAttached(tabId);
 	const parts = chord.split("+").map((p) => p.trim());
-	const alias: Record<string, string> = { Cmd: "Meta", Command: "Meta", Ctrl: "Control", Option: "Alt", Win: "Meta" };
-	const mods = parts.slice(0, -1).map((m) => alias[m] ?? m);
+	// Modifier names in any case: "ctrl+V" must be the clipboard chord it is (refused below).
+	const alias: Record<string, string> = {
+		cmd: "Meta",
+		command: "Meta",
+		meta: "Meta",
+		win: "Meta",
+		ctrl: "Control",
+		control: "Control",
+		option: "Alt",
+		alt: "Alt",
+		shift: "Shift",
+	};
+	const mods = parts.slice(0, -1).map((m) => alias[m.toLowerCase()] ?? m);
 	const main = parts[parts.length - 1];
 	let modifiers = 0;
+	// Before any key event, any platform: Blink runs Control+v and the like from a plain key event.
+	if (isClipboardChord(mods, parts[parts.length - 1])) throw new ClipboardChordError(chord);
 	for (const m of mods) modifiers |= MODIFIER_BITS[m] ?? 0;
 	for (const m of mods) {
 		const info = keyInfo(m);
@@ -597,7 +610,7 @@ export async function pressKey(tabId: number, chord: string): Promise<void> {
 		});
 	}
 	const info = keyInfo(main);
-	// Select-all, copy, undo and the word and line moves run only when the event names them.
+	// Select-all, undo, redo and the word and line moves run only when the event names them.
 	const commands = editingCommands(mods, main, isMacBrowser());
 	const base = {
 		key: info.key,

@@ -140,6 +140,12 @@ extraPages["/radios"] = `<!doctype html><title>Radios</title>
 <div id="sizes"><input type="radio" name="s"><label>Small</label><input type="radio" name="s"><label>Large</label></div>
 <form><input type="checkbox" name="agree">${"Lots of unrelated text in the same container. ".repeat(12)}<p>More text.</p><input type="text" aria-label="Email"></form>`;
 
+// Clipboard events and key events a clipboard chord would raise are logged; none may fire.
+extraPages["/clip"] = `<!doctype html><title>Clip</title>
+<input id="t" aria-label="Task" value="">
+<script>window.__seen = [];
+for (const type of ["paste", "copy", "cut", "keydown", "keyup", "beforeinput"]) document.addEventListener(type, (e) => window.__seen.push(type + ":" + (e.key || "")), true);</script>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -1261,4 +1267,20 @@ test("a new tab says so when capture could not start on it, instead of silently 
 	const fine = JSON.parse(await tool("tabs_create", { url: `${pageUrl}boot` }));
 	assert.equal(fine.note, undefined);
 	await tool("tabs_close", { tabId: fine.tabId });
+});
+
+test("press refuses clipboard chords before any key event: no paste/copy/cut or keydown reaches the page", async () => {
+	await go("clip");
+	await tool("click", { selector: "#t" });
+	const chords = ["Control+v", "Meta+v", "Control+c", "Meta+c", "Control+x", "Meta+x", "Control+Shift+v", "Shift+Insert", "Control+Insert", "Shift+Delete", "ctrl+V"];
+	for (const key of chords) {
+		const text = await failure("press", { key });
+		assert.match(text, /^bad_params: .*clipboard chords are not supported; use fill or type/, key);
+	}
+	assert.match(await failure("actions", { steps: [{ press: "Control+v" }] }), /^bad_params: .*step 0 \(press\).*clipboard chords are not supported/);
+	assert.deepEqual(await js("window.__seen", { world: "main" }), [], "a key event or clipboard event reached the page");
+	assert.equal(await js("document.getElementById('t').value"), "");
+	// Other chords still go through.
+	await tool("press", { key: "Control+a" });
+	assert.ok((await js("window.__seen", { world: "main" })).includes("keydown:a"));
 });

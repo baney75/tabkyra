@@ -5,6 +5,7 @@
  */
 
 import { isDetachError, isNavigatedError, PageException } from "../browser/cdp.js";
+import { ClipboardChordError } from "../browser/key-commands.js";
 import { NoTabError } from "../browser/session.js";
 import { ERR, type RpcError } from "./protocol.js";
 
@@ -81,6 +82,7 @@ const KNOWN: Array<[RegExp, string]> = [
  */
 export function classify(err: unknown, method: string): { error: BridgeError; stack?: string } {
 	if (err instanceof BridgeError) return { error: err };
+	if (err instanceof ClipboardChordError) return { error: new BridgeError(ERR.BAD_PARAMS, err.message) };
 	if (err instanceof NoTabError) return { error: new BridgeError(ERR.NO_TAB, err.message) };
 	// The page's own exception: its text is the page's, so it never picks the code (not even "Target closed").
 	if (err instanceof PageException) {
