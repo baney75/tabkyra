@@ -101,7 +101,7 @@ export async function startHub(root, name = "hub") {
 
 /** Enroll a device with a connect code and start its `link run`. Resolves once the hub sees it online. */
 export async function addDevice(root, hub, name, { manage = false, scope, wait = true } = {}) {
-	const m = machine(root, `device-${name}`);
+	const m = machine(root, `device-${hub.name}-${name}`);
 	const code = hub.json(["hub", "code", "--name", name, ...(manage ? ["--manage"] : []), "--json"]).code;
 	const linked = m.run(["link", hub.url, "--code", code, "--no-service", "--json", ...(scope ? ["--scope", scope] : [])]);
 	if (linked.code !== 0) throw new Error(`link failed: ${linked.out}`);
