@@ -138,6 +138,9 @@ extraPages["/boot"] = `<!doctype html><title>Tabkyra boot</title><p id="x">boot<
 // container with a lot of text around it.
 extraPages["/radios"] = `<!doctype html><title>Radios</title>
 <div id="sizes"><input type="radio" name="s"><label>Small</label><input type="radio" name="s"><label>Large</label></div>
+<div id="firsts"><label>Medium</label><input type="radio" name="m"><label>Extra</label><input type="radio" name="m"></div>
+<div id="values"><input type="radio" name="size" value="tiny"><input type="radio" name="size" value="huge"></div>
+<ul><li><input type="checkbox"><a href="#e">Edit</a> Buy milk <span>2 days ago</span></li></ul>
 <form><input type="checkbox" name="agree">${"Lots of unrelated text in the same container. ".repeat(12)}<p>More text.</p><input type="text" aria-label="Email"></form>`;
 
 // Clipboard events and key events a clipboard chord would raise are logged; none may fire.
@@ -1076,9 +1079,23 @@ test("find ranks exact and whole-word name matches first, names unlabeled checkb
 	assert.match(radios.join("\n"), /radio "Large"/);
 	const small = lines(await tool("find", { query: "Small" }));
 	assert.equal(small.filter((l) => / radio "/.test(l)).length, 1, small.join("\n"));
-	// A control alone in a big container is not named with all of the container's text.
-	for (const l of lines(await tool("read_page", { filter: "interactive" })).filter((l) => / checkbox "/.test(l)))
-		assert.ok(l.length < 200, `name not capped: ${l}`);
+	// A group laid out label-first is named the same way: each label belongs to the control after it.
+	const medium = lines(await tool("find", { query: "Medium" })).filter((l) => / radio "/.test(l));
+	assert.equal(medium.length, 1, medium.join("\n"));
+	assert.match(medium[0], /radio "Medium"/);
+	assert.match(await tool("read_page", { filter: "interactive" }), /radio "Extra"/);
+	assert.doesNotMatch(await tool("read_page", { filter: "interactive" }), /radio "Medium"[\s\S]*radio "Medium"/);
+	// Radios that differ only by value are told apart by it.
+	const page = await tool("read_page", { filter: "interactive" });
+	assert.match(page, /radio "tiny"/);
+	assert.match(page, /radio "huge"/);
+	// A row's link and its other small text are not its name: the link is found as the link.
+	assert.match(page, /checkbox "Buy milk 2 days ago"/);
+	const edit = lines(await tool("find", { query: "edit" }));
+	assert.match(edit[0], /link "Edit"/, edit.join("\n"));
+	assert.ok(!edit.some((l) => / checkbox "/.test(l)), edit.join("\n"));
+	// A control alone in a form full of other text is not named with that text: its own name is.
+	assert.match(page, /checkbox "agree"/);
 	await go("todo");
 	// And it is the checkbox, not the row's label, that click and fill need: both are listed.
 	const task = lines(await tool("find", { query: "second task" }));
