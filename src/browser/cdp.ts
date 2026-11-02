@@ -784,23 +784,23 @@ function noteCaptureStopped(tabId: number, reason: string): void {
 	pendingGaps.set(tabId, pending);
 }
 
-const MARKER_KEY = "capture_tabs";
-type Markers = Record<string, Partial<Record<CaptureKind, number>>>;
+/** One session-storage key per tab and kind: concurrent starts on different tabs cannot overwrite each other. */
+const markerKey = (tabId: number, kind: CaptureKind) => `capture_tab:${tabId}:${kind}`;
 
-async function readMarkers(): Promise<Markers> {
+async function readCaptureMarker(tabId: number, kind: CaptureKind): Promise<number | undefined> {
 	try {
-		return ((await chrome.storage.session.get(MARKER_KEY))[MARKER_KEY] as Markers | undefined) ?? {};
+		const key = markerKey(tabId, kind);
+		const since = (await chrome.storage.session.get(key))[key];
+		return typeof since === "number" ? since : undefined;
 	} catch {
-		return {};
+		return undefined;
 	}
 }
 
 /** Survives a worker restart (the in-memory buffers do not), so a restart is not mistaken for a first call. */
 async function writeCaptureMarker(tabId: number, kind: CaptureKind, since: number): Promise<void> {
 	try {
-		const markers = await readMarkers();
-		markers[tabId] = { ...markers[tabId], [kind]: since };
-		await chrome.storage.session.set({ [MARKER_KEY]: markers });
+		await chrome.storage.session.set({ [markerKey(tabId, kind)]: since });
 	} catch {
 		/* session storage unavailable: a restart goes unnoticed */
 	}
@@ -808,10 +808,7 @@ async function writeCaptureMarker(tabId: number, kind: CaptureKind, since: numbe
 
 async function forgetCaptureMarker(tabId: number): Promise<void> {
 	try {
-		const markers = await readMarkers();
-		if (!(tabId in markers)) return;
-		delete markers[tabId];
-		await chrome.storage.session.set({ [MARKER_KEY]: markers });
+		await chrome.storage.session.remove([markerKey(tabId, "console"), markerKey(tabId, "network")]);
 	} catch {
 		/* nothing to forget */
 	}
@@ -829,7 +826,7 @@ export async function ensureCapture(tabId: number, kind: CaptureKind): Promise<C
 	const gaps: CaptureGap[] = [];
 	const known = buffers.has(tabId);
 	if (!known) {
-		const since = (await readMarkers())[tabId]?.[kind];
+		const since = await readCaptureMarker(tabId, kind);
 		if (since !== undefined)
 			gaps.push({
 				at: 0,
