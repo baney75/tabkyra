@@ -54,6 +54,12 @@ export type ClientToHost = ClientHello | ClientRequest;
 export interface RpcError {
 	code: string;
 	message: string;
+	/**
+	 * Set by the extension on an `interrupted` it worded itself (the debugger detached, the page
+	 * navigated under the call): the connection is fine, so the client passes it on as it is
+	 * instead of treating it as a dropped bridge.
+	 */
+	source?: "extension";
 }
 
 export interface HostWelcome {

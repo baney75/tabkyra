@@ -127,6 +127,11 @@ export function isDetachedInFlightError(err: unknown): boolean {
 	);
 }
 
+/** The page navigated (or its target was replaced) under a command: the debugger itself may still be attached. */
+export function isNavigatedError(err: unknown): boolean {
+	return /Inspected target navigated or closed/i.test(err instanceof Error ? err.message : String(err));
+}
+
 /** Either kind of detach. */
 export function isDetachError(err: unknown): boolean {
 	return isNotAttachedError(err) || isDetachedInFlightError(err);
@@ -138,6 +143,14 @@ function forgetAttachment(tabId: number): void {
 	viewportTabs.delete(tabId);
 	// Attaching again starts a new debugging session: its console and network domains are off.
 	noteCaptureStopped(tabId, "the debugger had detached without notice and was attached again");
+}
+
+async function debuggerAttachedNow(tabId: number): Promise<boolean> {
+	try {
+		return (await chrome.debugger.getTargets()).some((t) => t.tabId === tabId && t.attached);
+	} catch {
+		return true;
+	}
 }
 
 async function sendRaw<T = unknown>(tabId: number, method: string, params?: Record<string, unknown>): Promise<T> {
@@ -162,7 +175,12 @@ async function send<T = unknown>(tabId: number, method: string, params?: Record<
 
 /** Drop the attachment state and attach again (for a caller that saw a detach error). */
 export async function reattach(tabId: number): Promise<void> {
-	forgetAttachment(tabId);
+	// The error may be a navigation under a command, with the debugger still attached and capture
+	// running: only a debugger that is really gone ends capture.
+	if (await debuggerAttachedNow(tabId)) {
+		attachedTabs.delete(tabId);
+		viewportTabs.delete(tabId);
+	} else forgetAttachment(tabId);
 	await ensureAttached(tabId);
 }
 
@@ -796,14 +814,6 @@ async function forgetCaptureMarker(tabId: number): Promise<void> {
 		await chrome.storage.session.set({ [MARKER_KEY]: markers });
 	} catch {
 		/* nothing to forget */
-	}
-}
-
-async function debuggerAttachedNow(tabId: number): Promise<boolean> {
-	try {
-		return (await chrome.debugger.getTargets()).some((t) => t.tabId === tabId && t.attached);
-	} catch {
-		return true;
 	}
 }
 

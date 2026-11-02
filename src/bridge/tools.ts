@@ -44,7 +44,7 @@ import {
 	waitFor,
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
-import { BridgeError, classify, detachedError } from "./errors.js";
+import { BridgeError, classify, detachedError, interruptedError } from "./errors.js";
 import { rankMatches } from "./find.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR } from "./protocol.js";
@@ -501,13 +501,17 @@ export const handlers: Record<string, Handler> = {
 			if (!isDetachError(err)) throw err;
 			// Detached before any key went out: nothing was typed, so attach again and go once more.
 			// Once a key was sent the text may be partly there, and typing again would double it.
-			if (keysStarted) throw detachedError("type", "some of the text may be in the field");
+			if (keysStarted) throw interruptedError(err, "type", "some of the text may be in the field");
 			try {
 				await reattach(tabId);
 				await attempt();
 			} catch (again) {
 				if (isDetachError(again))
-					throw detachedError("type", keysStarted ? "some of the text may be in the field" : "no key was typed");
+					throw interruptedError(
+						again,
+						"type",
+						keysStarted ? "some of the text may be in the field" : "no key was typed",
+					);
 				throw again;
 			}
 		}

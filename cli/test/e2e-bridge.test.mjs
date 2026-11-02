@@ -1149,6 +1149,25 @@ test("after a gap, messages already read and cleared do not come back, and the s
 	assert.ok(!texts(second).includes("cleared-msg"));
 });
 
+test("a retry after a navigation error leaves capture running: no false 'capture stopped'", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await readConsole({ clear: true });
+	await readNetwork({ clear: true });
+	await failNext("Input.dispatchMouseEvent", "Inspected target navigated or closed");
+	await tool("type", { selector: "#t", text: "abc" });
+	assert.equal(await js("document.getElementById('t').value"), "abc");
+	await logInPage("still-captured");
+	const result = await readConsole();
+	assert.equal(result.capture, undefined, "the debugger never detached: nothing stopped");
+	assert.ok(texts(result).includes("still-captured"));
+	assert.equal((await readNetwork()).capture, undefined);
+	// And when keys may already have gone out, the agent hears about the navigation, not a detach.
+	await failNext("Input.dispatchKeyEvent", "Inspected target navigated or closed");
+	const message = await failure("type", { selector: "#t", text: "x" });
+	assert.match(message, /^interrupted: The page navigated while type was running/);
+});
+
 test("capture that stopped because the page crashed is reported, and resumes after the reload", async () => {
 	await go("edit");
 	await readConsole();

@@ -4,7 +4,7 @@
  * stack goes to the debug log (`tabkyra debug`), not to the agent.
  */
 
-import { isDetachError, PageException } from "../browser/cdp.js";
+import { isDetachError, isNavigatedError, PageException } from "../browser/cdp.js";
 import { NoTabError } from "../browser/session.js";
 import { ERR, type RpcError } from "./protocol.js";
 
@@ -12,11 +12,13 @@ export class BridgeError extends Error {
 	constructor(
 		readonly code: string,
 		message: string,
+		/** See RpcError.source. */
+		readonly source?: "extension",
 	) {
 		super(message);
 	}
 	toRpc(): RpcError {
-		return { code: this.code, message: this.message };
+		return { code: this.code, message: this.message, ...(this.source ? { source: this.source } : {}) };
 	}
 }
 
@@ -28,7 +30,22 @@ export function detachedError(method: string, what: string): BridgeError {
 	return new BridgeError(
 		ERR.INTERRUPTED,
 		`The browser's debugger detached from the tab while ${method} was running, so it may have run (${what}). Check the page with read_page before you repeat it; Tabkyra attaches again on your next call.`,
+		"extension",
 	);
+}
+
+/** Interrupted by a navigation under the call (the debugger may be fine): the call may have run. */
+export function navigatedError(method: string, what: string): BridgeError {
+	return new BridgeError(
+		ERR.INTERRUPTED,
+		`The page navigated while ${method} was running, so it may have run (${what}). Check the page with read_page before you repeat it.`,
+		"extension",
+	);
+}
+
+/** The interrupted error for a detach or navigation error, worded for what happened. */
+export function interruptedError(err: unknown, method: string, what: string): BridgeError {
+	return isNavigatedError(err) ? navigatedError(method, what) : detachedError(method, what);
 }
 
 /** A message with the stack trace a page-side Error carries cut off; the trace is returned apart. */
@@ -70,7 +87,8 @@ export function classify(err: unknown, method: string): { error: BridgeError; st
 		const { message, stack } = splitStack(errText(err));
 		return { error: new BridgeError(ERR.SCRIPT_ERROR, message), stack };
 	}
-	if (isDetachError(err)) return { error: detachedError(method, "the debugger lost the tab"), stack: errText(err) };
+	if (isDetachError(err))
+		return { error: interruptedError(err, method, "the call lost the tab"), stack: errText(err) };
 	const { message, stack } = splitStack(errText(err));
 	const known = KNOWN.find(([re]) => re.test(message));
 	const code = known ? known[1] : ERR.INTERNAL;

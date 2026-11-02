@@ -71,3 +71,13 @@ test("typed errors keep their code; a lost debugger is interrupted, never the ra
 		assert.doesNotMatch(error.message, /Detached while handling|not attached to the tab/);
 	}
 });
+
+test("an error from a navigation under the call is worded as the page navigating, not the debugger detaching", () => {
+	const { error } = classify(new Error("Inspected target navigated or closed"), "type");
+	assert.equal(error.code, "interrupted");
+	assert.match(error.message, /^The page navigated while type was running/);
+	assert.match(error.message, /Check the page with read_page before you repeat it/);
+	assert.doesNotMatch(error.message, /debugger detached/);
+	// Marked as the extension's own answer, so the client does not rewrite it as a dropped connection.
+	assert.equal(error.toRpc().source, "extension");
+});
