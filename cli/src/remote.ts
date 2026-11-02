@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer } from "./mcp.ts";
+import { MAX_LINK_SESSIONS } from "./link-protocol.ts";
 import { handleOAuth, readBody } from "./oauth-http.ts";
 import { liveGrantIds, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
 
@@ -67,8 +68,11 @@ export interface TokenRecord {
 	kind?: "link";
 }
 
-/** The name of the token a running `link run` holds. */
-export const LINK_TOKEN_NAME = "link";
+/**
+ * The name of the token a running `link run` holds. Ordinary tokens can't take it: their names are
+ * letters, digits, dot, dash and underscore, and this one has a colon.
+ */
+export const LINK_TOKEN_NAME = "link:run";
 
 function configDir(): string {
 	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
@@ -125,7 +129,7 @@ function withTokensLock<T>(fn: () => T): T {
 
 /** A new token for `name` with exactly `scopes`. The secret is returned once and never stored. */
 export function createToken(name: string, scopes: string[], kind?: "link"): { record: TokenRecord; token: string } {
-	if (!/^[\w.-]{1,40}$/.test(name)) throw new Error("Token name: letters, digits, dot, dash or underscore, up to 40.");
+	if (kind === "link" ? name !== LINK_TOKEN_NAME : !/^[\w.-]{1,40}$/.test(name)) throw new Error("Token name: letters, digits, dot, dash or underscore, up to 40.");
 	if (/^[0-9a-f]{8}$/.test(name)) throw new Error("A token name can't look like a token id (8 hex characters).");
 	if (/^(tkc_|o-)/.test(name)) throw new Error("A token name can't start with tkc_ or o-: those name OAuth clients and grants.");
 
@@ -140,7 +144,15 @@ export function createToken(name: string, scopes: string[], kind?: "link"): { re
 	});
 }
 
-/** End every link-kind token (a new `link run` replaces the last one; `link off` ends it). */
+/** Delete every link-kind record. Only `link run`, holding its pid lock, calls this at start: no other run is alive to need its token. */
+export function pruneLinkTokens(): void {
+	withTokensLock(() => {
+		const tokens = loadTokens();
+		if (tokens.some((t) => t.kind === "link")) saveTokens(tokens.filter((t) => t.kind !== "link"));
+	});
+}
+
+/** End every link-kind token (`link off`). A running `link run` revokes only its own, by id. */
 export function revokeLinkTokens(): number {
 	return withTokensLock(() => {
 		const tokens = loadTokens();
@@ -278,7 +290,7 @@ export interface ServeOptions {
 }
 
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
-export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string; sessionCount: () => number }> {
+export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string; sessionCount: () => number; closeSessions: () => void }> {
 	if (!LOOPBACK.has(options.host)) throw new Error(`tabkyra serve binds to loopback only (got ${options.host}). Use tabkyra tunnel to reach it from another device over TLS.`);
 	if (options.acceptLinkTokens && options.oauth) throw new Error("A link token is never accepted on a public route: acceptLinkTokens can't be combined with a public URL.");
 	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string; lastSeen: number }>();
@@ -286,7 +298,9 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 	const pending = new Map<string, number>();
 	const MAX_SESSIONS_PER_TOKEN = 8;
 	// The link token carries every caller the hub sends this device; the hub holds each caller to their own sessions.
-	const MAX_SESSIONS_LINK = 24;
+	const MAX_SESSIONS_LINK = MAX_LINK_SESSIONS;
+	// closeSessions() bumps this; a session still being set up when it did is closed as soon as it exists.
+	let generation = 0;
 	const notifySessions = () => options.onSessionsChange?.(sessions.size + [...pending.values()].reduce((a, b) => a + b, 0));
 	// Close sessions that went quiet or whose token was revoked; a client that vanished without
 	// a DELETE would otherwise hold a server and a tab group forever.
@@ -405,9 +419,15 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			allowedTools: allowed,
 			remote: true,
 		});
+		const born = generation;
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),
 			onsessioninitialized: (id) => {
+				if (born !== generation) {
+					void transport.close();
+					release();
+					return;
+				}
 				sessions.set(id, { transport, tokenId: token.id, lastSeen: Date.now() });
 				release();
 				notifySessions();
@@ -434,6 +454,15 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 	return {
 		url,
 		sessionCount: () => sessions.size + [...pending.values()].reduce((a, b) => a + b, 0),
+		/** Close every open session (and any being set up): the link connection that carried them is gone. */
+		closeSessions: () => {
+			generation++;
+			for (const [id, s] of [...sessions]) {
+				sessions.delete(id);
+				void s.transport.close();
+			}
+			notifySessions();
+		},
 		close: () =>
 			new Promise<void>((resolve) => {
 				clearInterval(sweep);

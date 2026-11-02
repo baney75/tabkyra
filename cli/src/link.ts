@@ -8,7 +8,7 @@
 
 import "./cjs-shim.ts";
 import { randomInt } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -25,13 +25,14 @@ import {
 	type Headers,
 	MAX_FRAME_BYTES,
 	MAX_INFLIGHT_PER_DEVICE,
+	MAX_LINK_SESSIONS,
 	parseHubFrame,
 	type ReqFrame,
 	SILENT_MS,
 	type StatusFrame,
 } from "./link-protocol.ts";
 import { configDir, DEFAULT_GRANT, normalizePublicUrl } from "./oauth.ts";
-import { createToken, HUB_CALLER_HEADER, HUB_SCOPES_HEADER, LINK_TOKEN_NAME, revokeLinkTokens, SCOPES, serve } from "./remote.ts";
+import { createToken, HUB_CALLER_HEADER, HUB_SCOPES_HEADER, LINK_TOKEN_NAME, pruneLinkTokens, revokeLinkTokens, revokeToken, SCOPES, serve } from "./remote.ts";
 import { installService, LINK_SERVICE, removeService, serviceFile, serviceLogHint } from "./service.ts";
 import { c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
@@ -50,6 +51,41 @@ export interface LinkConfig {
 
 export const linkFile = () => join(configDir(), "link.json");
 const liveFile = () => join(configDir(), "link-live.json");
+const pidFile = () => join(configDir(), "link.pid");
+
+/**
+ * One `link run` per device. The pid file is taken exclusively; a leftover from a crashed run (its pid
+ * no longer alive) is replaced. A second run refuses instead of revoking the first one's token.
+ */
+function takePidLock(): void {
+	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			writeFileSync(pidFile(), String(process.pid), { flag: "wx", mode: 0o600 });
+			return;
+		} catch {
+			let other = 0;
+			try {
+				other = Number(readFileSync(pidFile(), "utf8").trim());
+			} catch {
+				/* vanished: try again */
+			}
+			let alive = false;
+			if (Number.isInteger(other) && other > 0 && other !== process.pid) {
+				try {
+					process.kill(other, 0);
+					alive = true;
+				} catch (err) {
+					// EPERM means the process exists but isn't ours to signal.
+					alive = (err as NodeJS.ErrnoException).code === "EPERM";
+				}
+			}
+			if (alive) throw new Error(`Another tabkyra link run is already running on this device (pid ${other}). Stop it first (tabkyra link off stops the service).`);
+			rmSync(pidFile(), { force: true });
+		}
+	}
+	throw new Error(`Couldn't take ${pidFile()}.`);
+}
 
 export function loadLinkConfig(): LinkConfig | undefined {
 	if (!existsSync(linkFile())) return undefined;
@@ -186,6 +222,9 @@ interface LiveState {
 	lastConnectedAt: string | null;
 	lastError: string | null;
 	sessions: number;
+	/** Requests (POST, DELETE) and GET streams being answered right now. */
+	requests: number;
+	streams: number;
 	extensionConnected: boolean;
 	busy: boolean;
 }
@@ -195,13 +234,15 @@ export async function linkRun(): Promise<void> {
 	const config = loadLinkConfig();
 	if (!config) throw new Error(`${linkFile()} not found. Run tabkyra link <hub-url> --code <code> first.`);
 	const wsUrl = `${config.hubUrl.replace(/^http/, "ws")}/link`;
-	// A fresh token each start, held in memory only: the cap this device allows, for the hub's requests alone.
-	revokeLinkTokens();
-	const { token } = createToken(LINK_TOKEN_NAME, capOf(config), "link");
+	const cap = capOf(config);
+	takePidLock();
+	// With the pid lock held no other run is alive: clear the old link tokens, then mint a fresh one, held in memory only.
+	pruneLinkTokens();
+	const { token, record: linkToken } = createToken(LINK_TOKEN_NAME, cap, "link");
 	let sendStatus = () => {};
 	const local = await serve({ port: 0, host: "127.0.0.1", acceptLinkTokens: true, onSessionsChange: () => sendStatus() });
 	const localPort = Number(new URL(local.url).port);
-	const live: LiveState = { pid: process.pid, updatedAt: Date.now(), connected: false, lastConnectedAt: null, lastError: null, sessions: 0, extensionConnected: false, busy: false };
+	const live: LiveState = { pid: process.pid, updatedAt: Date.now(), connected: false, lastConnectedAt: null, lastError: null, sessions: 0, requests: 0, streams: 0, extensionConnected: false, busy: false };
 	const writeLive = () => {
 		live.updatedAt = Date.now();
 		try {
@@ -212,7 +253,7 @@ export async function linkRun(): Promise<void> {
 	};
 	let stopping = false;
 	let ws: WebSocket | undefined;
-	let active = new Map<string, ReturnType<typeof httpRequest>>();
+	let active = new Map<string, { req: ReturnType<typeof httpRequest>; stream: boolean }>();
 	const log = (line: string) => process.stderr.write(`[tabkyra link] ${line}\n`);
 
 	const readBusy = (): boolean => {
@@ -227,9 +268,23 @@ export async function linkRun(): Promise<void> {
 		if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
 	};
 
+	/** Count what is being answered, apart for GET streams (one per session, held for the session's life) and requests. */
+	const counts = () => {
+		const streams = [...active.values()].filter((x) => x.stream).length;
+		live.streams = streams;
+		live.requests = active.size - streams;
+		writeLive();
+	};
+	const forget = (id: string) => {
+		if (active.delete(id)) counts();
+	};
+
 	function answer(socket: WebSocket, frame: ReqFrame): void {
 		const id = frame.id;
-		if (active.size >= MAX_INFLIGHT_PER_DEVICE || active.has(id)) return sendFrame(socket, { t: "error", id, message: "This device is handling too many requests." });
+		const stream = frame.method === "GET";
+		const streams = [...active.values()].filter((x) => x.stream).length;
+		const full = stream ? streams >= MAX_LINK_SESSIONS : active.size - streams >= MAX_INFLIGHT_PER_DEVICE;
+		if (full || active.has(id)) return sendFrame(socket, { t: "error", id, message: "This device is handling too many requests." });
 		// Only these headers reach the local server, whatever the hub sent; the bearer is this process's own link token.
 		const headers: Record<string, string> = {};
 		for (const name of [...FORWARD_REQUEST_HEADERS, HUB_SCOPES_HEADER, HUB_CALLER_HEADER]) if (frame.headers[name] !== undefined) headers[name] = frame.headers[name];
@@ -265,19 +320,20 @@ export async function linkRun(): Promise<void> {
 				const rest = decoder.end();
 				if (rest) push(rest);
 				sendFrame(socket, { t: "end", id });
-				active.delete(id);
+				forget(id);
 			});
 			res.on("error", () => {
 				sendFrame(socket, { t: "error", id, message: "The local server's answer was cut off." });
-				active.delete(id);
+				forget(id);
 			});
 		});
 		req.on("error", (err) => {
 			if (!active.has(id)) return;
 			sendFrame(socket, { t: "error", id, message: err.message.slice(0, 200) });
-			active.delete(id);
+			forget(id);
 		});
-		active.set(id, req);
+		active.set(id, { req, stream });
+		counts();
 		req.end(body);
 	}
 
@@ -295,7 +351,7 @@ export async function linkRun(): Promise<void> {
 			let last = "";
 			const status = async (force = false) => {
 				if (socket.readyState !== WebSocket.OPEN) return;
-				const frame: StatusFrame = { t: "status", extensionConnected: live.extensionConnected, sessions: local.sessionCount(), busy: live.busy, version: VERSION, browser: null };
+				const frame: StatusFrame = { t: "status", extensionConnected: live.extensionConnected, sessions: local.sessionCount(), busy: live.busy, version: VERSION, browser: null, sessionCap: MAX_LINK_SESSIONS, scopes: cap };
 				const key = JSON.stringify(frame);
 				if (!force && key === last) return;
 				last = key;
@@ -312,9 +368,14 @@ export async function linkRun(): Promise<void> {
 				clearInterval(heartbeat);
 				clearInterval(probe);
 				clearInterval(watch);
-				for (const req of active.values()) req.destroy();
+				for (const { req } of active.values()) req.destroy();
 				active = new Map();
+				// The hub forgot every session this connection carried, so nothing can reach them: close them,
+				// or they sit on the device's session cap and keep their tab groups until the idle sweep.
+				local.closeSessions();
 				live.connected = false;
+				live.requests = 0;
+				live.streams = 0;
 				writeLive();
 			};
 			socket.on("open", () => {
@@ -323,6 +384,11 @@ export async function linkRun(): Promise<void> {
 				live.lastError = null;
 				log(`linked to ${config?.hubUrl} as ${config?.name}`);
 				sendStatus = () => void status();
+				// Sessions from an earlier connection are gone from the hub's side; start clean.
+				local.closeSessions();
+				// Say what this device allows at once; the hub routes to it only after this frame.
+				live.busy = readBusy();
+				void status(true);
 				void refresh().then(() => status(true));
 				// A full heartbeat every 15 s, and a check for changes (the extension, the busy switch) every 5 s.
 				heartbeat = setInterval(() => void status(true), HEARTBEAT_MS);
@@ -341,8 +407,8 @@ export async function linkRun(): Promise<void> {
 				const frame = parseHubFrame(data.toString("utf8"));
 				if (!frame) return;
 				if (frame.t === "cancel") {
-					active.get(frame.id)?.destroy();
-					active.delete(frame.id);
+					active.get(frame.id)?.req.destroy();
+					forget(frame.id);
 					return;
 				}
 				answer(socket, frame);
@@ -368,15 +434,17 @@ export async function linkRun(): Promise<void> {
 		if (stopping) return;
 		stopping = true;
 		ws?.close(1000, "stopping");
-		revokeLinkTokens();
+		// Only this run's own token: a later run, or a lingering one, keeps its own.
+		revokeToken(linkToken.id);
 		rmSync(liveFile(), { force: true });
+		rmSync(pidFile(), { force: true });
 		await local.close();
 		process.exit(0);
 	};
 	process.on("SIGINT", () => void stop());
 	process.on("SIGTERM", () => void stop());
 	writeLive();
-	log(`serving locally on 127.0.0.1:${localPort}; cap ${capOf(config).join(", ")}`);
+	log(`serving locally on 127.0.0.1:${localPort}; cap ${cap.join(", ")}`);
 	let attempt = 0;
 	while (!stopping) {
 		const { replaced, stayedMs } = await connectOnce();
@@ -455,6 +523,7 @@ export async function linkOff(): Promise<number> {
 	for (const note of service.notes) console.log(`${sym.ok} ${note}`);
 	const n = revokeLinkTokens();
 	if (n) console.log(`${sym.ok} Revoked the local link token.`);
+	rmSync(pidFile(), { force: true });
 	rmSync(linkFile(), { force: true });
 	rmSync(liveFile(), { force: true });
 	console.log(config ? `${sym.ok} Removed ${c.dim(linkFile())}. The hub still lists ${config.name} until you run: tabkyra hub remove ${config.name}` : `${sym.dot} No link.json; nothing else to remove.`);
