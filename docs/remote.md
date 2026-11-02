@@ -155,10 +155,16 @@ tabkyra hub status                   # hub.json, passcode, local answer, public 
 
 ### How a session is routed
 
-A new session goes to an online device whose extension is connected: not busy first, then the
-fewest sessions, then your `prefer` order, then the one seen most recently. If no device has its
-extension connected, any online device takes it (tools such as `skill_match` still work). If none
-is online, the assistant gets a 503 that names each device and when it was last seen. A session
+A new session goes to an online device that has reported in, grants at least one of the caller's
+scopes, and has room (fewer than 32 requests in flight, and fewer sessions than its own cap of 24).
+Of those, devices whose extension is connected come first. Then, in order: full coverage of the
+caller's scopes, not busy, the fewest sessions, your `prefer` order, the one seen most recently. If no
+device has its extension connected, any of them takes it (tools such as `skill_match` still work).
+If none is online, the assistant gets a 503 that names each device and when it was last seen; if
+none grants any of the caller's scopes, a 403 that names what each allows; if all are full, a 429.
+Requests carry up to 4 MB of body in frames of up to 16 MB, and a request that would not fit a
+frame after escaping gets a 413 without disturbing the link. A response is streamed with backpressure:
+a client that stops reading is cancelled after 30 seconds. A session
 stays on its device and only for the caller that opened it. When that device goes away, the next
 request on its session gets 404, the assistant starts a new session, and another device takes it.
 

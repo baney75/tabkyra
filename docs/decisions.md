@@ -725,6 +725,17 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
   a response head only; a stream may run as long as it likes. Whenever the hub abandons a request
   it sends `cancel`. A request whose frame would exceed 16 MB after JSON escaping gets 413 without
   touching the link.
+- Hostile and slow peers: the upgrade handler attaches its own error listener and answers a
+  malformed request with 400, and `hub serve` survives a connection error that escapes (any other
+  uncaught error is logged with its stack and ends the process, so the service restarts clean).
+  An initialize reserves a per-caller and hub-wide (64) slot before its body is read. A client
+  that stops reading pauses the device's link for at most 30 seconds, then the request is
+  cancelled; a request past 16 MB of unread output is cancelled at once. An initialize the hub
+  abandons leaves no session behind: the device lets it finish and closes what it made, and the
+  hub deletes the session of a head that arrives late. Chunks never split a surrogate pair. An
+  unreadable `hub-devices.json` is never overwritten, never revokes a live link, and authorizes
+  nobody. Request handlers wait at most 200 ms for a lock file (503 after); a wrong code is
+  rejected from a read-only look, before any lock.
 - Reconnect: when a link ends, the device closes every MCP session that connection carried (the
   hub has already forgotten them), and `link run` holds an exclusive pid file so a second run
   refuses instead of revoking the first one's token. The link token is named `link:run`, a name
