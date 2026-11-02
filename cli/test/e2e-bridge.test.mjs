@@ -117,6 +117,19 @@ const extraPages = {};
 extraPages["/edit"] = `<!doctype html><title>Tabkyra edit</title>
 <input id="t" aria-label="Task" value="first task"><p id="r">untouched</p>`;
 
+// TodoMVC's markup: item checkboxes carry no label, their text sits in a sibling <label>.
+extraPages["/todo"] = `<!doctype html><title>TodoMVC</title>
+<section class="todoapp"><header><h1>todos</h1><input class="new-todo" placeholder="What needs to be done?"></header>
+<ul class="todo-list">
+<li><div class="view"><input class="toggle" type="checkbox"><label>first task</label><button class="destroy"></button></div></li>
+<li><div class="view"><input class="toggle" type="checkbox"><label>second task</label><button class="destroy"></button></div></li>
+<li class="completed"><div class="view"><input class="toggle" type="checkbox" checked><label>third task</label><button class="destroy"></button></div></li>
+</ul>
+<footer><span class="todo-count"><strong>2</strong> items left</span>
+<ul class="filters"><li><a class="selected" href="#/">All</a></li><li><a href="#/active">Active</a></li><li><a href="#/completed">Completed</a></li></ul>
+<button class="clear-completed">Clear completed</button></footer></section>
+<footer class="info"><p>Part of <a href="http://todomvc.com/examples/checkbox-guide">TodoMVC</a></p><a href="/docs#first-task-howto">Docs</a></footer>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -1013,4 +1026,31 @@ test("expected failures carry their own code and no stack trace; internal is for
 	await go("hits");
 	const hits = await tool("read_page", { filter: "interactive" });
 	assert.match(await failure("click", { ref: refFor(hits, "Pay now") }), /^not_actionable: .*covered by/);
+});
+
+test("find ranks exact and whole-word name matches first, names unlabeled checkboxes from their row, and skips URL-only links", async () => {
+	await go("todo");
+	const lines = (text) => text.split("\n").filter(Boolean);
+	// The item checkboxes have no label of their own: they are named after their row.
+	const boxes = lines(await tool("find", { query: "checkbox" }));
+	assert.equal(boxes.length, 3, boxes.join("\n"));
+	assert.ok(boxes.every((l) => / checkbox "/.test(l)), boxes.join("\n"));
+	assert.ok(boxes.some((l) => /checkbox "first task"/.test(l)), boxes.join("\n"));
+	assert.ok(boxes.some((l) => /checkbox "third task".*checked/.test(l)), boxes.join("\n"));
+	// read_page names them the same way (it printed "on", the checkbox's default value).
+	assert.match(await tool("read_page", { filter: "interactive" }), /checkbox "second task"/);
+	// A link whose only match is a piece of its URL ("checkbox-guide", "first-task-howto") is not an answer.
+	assert.ok(!boxes.some((l) => /TodoMVC|Docs/.test(l)), boxes.join("\n"));
+	// Name the row and get its checkbox first.
+	const first = lines(await tool("find", { query: "first task checkbox" }));
+	assert.match(first[0], /checkbox "first task"/, first.join("\n"));
+	// An exact name beats a longer name that merely contains the word.
+	const completed = lines(await tool("find", { query: "completed" }));
+	assert.match(completed[0], /link "Completed"/, completed.join("\n"));
+	// Without a better match, a link found only by its URL is still returned.
+	const urlOnly = lines(await tool("find", { query: "howto" }));
+	assert.match(urlOnly.join("\n"), /link "Docs"/);
+	// And it is the checkbox, not the row's label, that click and fill need: both are listed.
+	const task = lines(await tool("find", { query: "second task" }));
+	assert.ok(task.some((l) => /checkbox "second task"/.test(l)), task.join("\n"));
 });

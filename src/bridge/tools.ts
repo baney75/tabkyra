@@ -45,6 +45,7 @@ import {
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
 import { BridgeError, classify, detachedError } from "./errors.js";
+import { rankMatches } from "./find.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR } from "./protocol.js";
 
@@ -418,19 +419,7 @@ export const handlers: Record<string, Handler> = {
 		const query = requireStr(params, "query").toLowerCase();
 		const tabId = await resolveTab(ctx, params, false);
 		const snap = await snapshot(tabId, { filter: "all", maxNodes: 600, maxTextChars: 0 });
-		const words = query.split(/\s+/).filter(Boolean);
-		const scored = snap.nodes
-			.map((n) => {
-				const hay = `${n.role} ${n.name} ${n.value ?? ""} ${n.href ?? ""}`.toLowerCase();
-				let score = 0;
-				for (const w of words) if (hay.includes(w)) score += w.length;
-				if (n.name.toLowerCase() === query) score += 100;
-				return { node: n, score };
-			})
-			.filter((s) => s.score > 0)
-			.sort((a, b) => b.score - a.score)
-			.slice(0, num(params, "limit") ?? 20);
-		return { matches: scored.map((s) => s.node) };
+		return { matches: rankMatches(snap.nodes, query, num(params, "limit") ?? 20) };
 	},
 
 	click: async (ctx, params) => {

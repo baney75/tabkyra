@@ -554,6 +554,26 @@ function pageSnapshot(
 			}
 			const parentLabel = el.closest("label");
 			if (parentLabel?.textContent?.trim()) return parentLabel.textContent.trim();
+			if (tag === "input" && (f.type === "checkbox" || f.type === "radio")) {
+				// No label of its own (TodoMVC's item toggle): the text beside it in its row names it.
+				// Not its value: that is "on" for every checkbox without a value attribute.
+				const row =
+					el.closest("li,tr,[role=row],[role=listitem],[role=option],[role=menuitemcheckbox]") ?? el.parentElement;
+				const sibling = Array.from(el.parentElement?.children ?? []).find((c) => c.tagName === "LABEL");
+				const near = (sibling?.textContent ?? "").replace(/\s+/g, " ").trim();
+				if (near) return near;
+				if (row) {
+					const walker = row.ownerDocument.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+					const parts: string[] = [];
+					for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+						if (n.parentElement?.closest("button,select,textarea,[role=button],script,style")) continue;
+						const t = (n.textContent ?? "").replace(/\s+/g, " ").trim();
+						if (t) parts.push(t);
+					}
+					if (parts.length) return parts.join(" ");
+				}
+				return el.getAttribute("name") ?? el.getAttribute("title") ?? "";
+			}
 			if (tag === "input" && (f.placeholder || f.value) && f.type !== "password")
 				return (f.placeholder || f.value) ?? "";
 			if (tag === "textarea" && f.placeholder) return f.placeholder;
