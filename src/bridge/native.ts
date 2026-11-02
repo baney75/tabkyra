@@ -8,22 +8,16 @@
  */
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
-import { isDetachError, openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
+import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
-import {
-	BrowserSession,
-	listSessions,
-	NoTabError,
-	pruneSessions,
-	type SessionMeta,
-	sanitizeLabel,
-} from "../browser/session.js";
+import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
 import { COMMUNITY_STATUS_KEY } from "../community/status.js";
 import { handleThreads } from "../threads/bridge.js";
 import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
+import { BridgeError, classify } from "./errors.js";
 import {
 	addPendingRequest,
 	allowHost,
@@ -55,7 +49,7 @@ import {
 	UPDATE_STATUS_KEY,
 } from "./protocol.js";
 import { handleSessionsAdmin } from "./sessions-admin.js";
-import { BridgeError, detachedError, type HandlerContext, handlers } from "./tools.js";
+import { type HandlerContext, handlers } from "./tools.js";
 
 const ALARM_NAME = "tabkyra-bridge-keepalive";
 const WORKER_STARTED_AT = Date.now();
@@ -483,10 +477,10 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	} catch (err) {
 		state.lastError = `${req.method}: ${err instanceof Error ? err.message : String(err)}`;
 		console.warn("[Bridge]", state.lastError);
-		if (err instanceof BridgeError) reply(undefined, err);
-		else if (err instanceof NoTabError) reply(undefined, new BridgeError(ERR.NO_TAB, err.message));
-		else if (isDetachError(err)) reply(undefined, detachedError(req.method, "the debugger lost the tab"));
-		else reply(undefined, new BridgeError(ERR.INTERNAL, err instanceof Error ? err.message : String(err)));
+		const { error, stack } = classify(err, req.method);
+		// The trace is for whoever debugs Tabkyra (tabkyra debug), not for the agent.
+		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
+		reply(undefined, error);
 	} finally {
 		state.abort = undefined;
 		state.inFlight = undefined;

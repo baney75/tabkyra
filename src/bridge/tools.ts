@@ -44,31 +44,11 @@ import {
 	waitForLoad,
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
+import { BridgeError, classify, detachedError } from "./errors.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
-import { ERR, type RpcError } from "./protocol.js";
+import { ERR } from "./protocol.js";
 
-export class BridgeError extends Error {
-	constructor(
-		readonly code: string,
-		message: string,
-	) {
-		super(message);
-	}
-	toRpc(): RpcError {
-		return { code: this.code, message: this.message };
-	}
-}
-
-/**
- * The debugger detached from the tab while a call was running. Like a dropped connection, the
- * call may have run: the agent checks the page before repeating it. Never the raw CDP message.
- */
-export function detachedError(method: string, what: string): BridgeError {
-	return new BridgeError(
-		ERR.INTERRUPTED,
-		`The browser's debugger detached from the tab while ${method} was running, so it may have run (${what}). Check the page with read_page before you repeat it; Tabkyra attaches again on your next call.`,
-	);
-}
+export { BridgeError, detachedError };
 
 type Params = Record<string, unknown>;
 
@@ -652,8 +632,10 @@ export const handlers: Record<string, Handler> = {
 			try {
 				done.push(await handlers[kind](stepCtx, withTab));
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				throw new BridgeError(ERR.BAD_PARAMS, `step ${i} (${kind}) failed after ${i} steps succeeded: ${message}`);
+				// Keep the step's own code (stale_ref, interrupted, ...): the agent acts on it.
+				const { error } = classify(err, kind);
+				const code = error.code === ERR.INTERNAL ? ERR.BAD_PARAMS : error.code;
+				throw new BridgeError(code, `step ${i} (${kind}) failed after ${i} steps succeeded: ${error.message}`);
 			}
 			if (settleMs > 0 && i < steps.length - 1) await new Promise((r) => setTimeout(r, settleMs));
 		}

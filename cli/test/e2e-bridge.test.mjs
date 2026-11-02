@@ -980,3 +980,37 @@ test("type that detaches once keys may have been sent is interrupted, never the 
 	assert.match(message, /Check the page with read_page before you repeat it/);
 	assert.doesNotMatch(message, /Detached while handling command/);
 });
+
+test("expected failures carry their own code and no stack trace; internal is for real bugs", async () => {
+	await go("stale");
+	const first = await tool("read_page", { filter: "interactive" });
+	const row = refFor(first, "Delete invoice 5");
+	await tool("click", { ref: refFor(first, "Scroll list") });
+	await tool("read_page", { filter: "interactive" });
+	const cases = [
+		["a ref the page reused", "stale_ref", () => failure("click", { ref: row })],
+		["a selector with no element (click)", "not_found", () => failure("click", { selector: "#nope" })],
+		["a selector with no element (fill)", "not_found", () => failure("fill", { selector: "#nope", value: "x" })],
+		["tabs_select of no such tab", "not_found", () => failure("tabs_select", { tabId: 987654 })],
+		["tabs_close of no such tab", "not_found", () => failure("tabs_close", { tabId: 987654 })],
+		["a read on no such tab", "not_found", () => failure("get_page_text", { tabId: 987654 })],
+		["a run_js that throws (isolated world)", "script_error", () => failure("run_js", { code: "(() => { throw new Error('boom') })()" })],
+		["a run_js that throws (main world)", "script_error", () => failure("run_js", { code: "(() => { throw new Error('boom') })()", world: "main" })],
+		["a bad regex", "bad_params", () => failure("read_console", { pattern: "(" })],
+		["a wait that timed out", "timeout", () => failure("wait", { text: "never appears", timeoutMs: 300 })],
+		["a host that does not resolve", "navigation_failed", () => failure("navigate", { url: "https://example.invalid/" })],
+		["a stale ref inside actions", "stale_ref", () => failure("actions", { steps: [{ click: { ref: row } }] })],
+	];
+	for (const [what, code, run] of cases) {
+		const text = await run();
+		assert.ok(text.startsWith(`${code}: `), `${what}: expected ${code}, got ${text}`);
+		assert.doesNotMatch(text, /\n\s+at /, `${what} carries a stack trace: ${text}`);
+		assert.doesNotMatch(text, /^internal/, what);
+	}
+	const thrown = await failure("run_js", { code: "(() => { throw new Error('boom') })()" });
+	assert.match(thrown, /^script_error: Error: boom$/);
+	// The element is there but a click can't reach it: its own code.
+	await go("hits");
+	const hits = await tool("read_page", { filter: "interactive" });
+	assert.match(await failure("click", { ref: refFor(hits, "Pay now") }), /^not_actionable: .*covered by/);
+});
