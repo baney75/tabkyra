@@ -6,6 +6,7 @@ import { installFakeChrome } from "./fake-chrome.mjs";
 installFakeChrome();
 const { classify, splitStack, BridgeError } = await import("../src/bridge/errors.ts");
 const { NoTabError } = await import("../src/browser/session.ts");
+const { PageException } = await import("../src/browser/cdp.ts");
 
 const STACK = "\n    at resolveRef (<anonymous>:12:32)\n    at <anonymous>:16:3";
 
@@ -37,12 +38,26 @@ test("classify gives each expected failure its code, with no stack in the messag
 	}
 });
 
-test("a page script's own exception is script_error for run_js and internal anywhere else", () => {
-	const { error, stack } = classify(new Error(`Error: boom${STACK}`), "evaluate");
+test("a page script's exception is script_error whatever its text says; only Tabkyra's own text maps to other codes", () => {
+	const { error, stack } = classify(new PageException(`Error: boom${STACK}`), "evaluate");
 	assert.equal(error.code, "script_error");
 	assert.equal(error.message, "Error: boom");
 	assert.match(stack, /resolveRef/);
-	assert.equal(classify(new Error("something broke"), "click").error.code, "internal");
+	// Page text that looks like one of Tabkyra's messages does not choose the code.
+	for (const text of [
+		"SyntaxError: Invalid regular expression: /(/: Unterminated group",
+		"Error: Selector not found: x",
+		"Error: Waited 5 s, timed out after 5 s",
+		"Error: Ref e1 is covered by div",
+		"Error: Target closed",
+		"Error: Detached while handling command.",
+	]) {
+		const got = classify(new PageException(text), "evaluate").error;
+		assert.equal(got.code, "script_error", text);
+		assert.equal(got.message, text, "the page's text is kept as it is");
+	}
+	// An error that is not the page's and that Tabkyra did not word is a bug.
+	assert.equal(classify(new Error("something broke"), "evaluate").error.code, "internal");
 });
 
 test("typed errors keep their code; a lost debugger is interrupted, never the raw message", () => {

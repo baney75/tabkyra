@@ -387,6 +387,12 @@ async function resizeImage(
 	return { data: btoa(binary), mimeType, width, height };
 }
 
+/**
+ * An exception the page's own script threw (run_js code, not Tabkyra's). The bridge reports it as
+ * script_error whatever its text says: a page cannot pick the error code by what it throws.
+ */
+export class PageException extends Error {}
+
 /** Evaluate in the page's MAIN world and return the value (JSON-serialisable). */
 export async function evaluateMain<T = unknown>(tabId: number, expression: string): Promise<T> {
 	const result = await cdpSend<{
@@ -394,7 +400,7 @@ export async function evaluateMain<T = unknown>(tabId: number, expression: strin
 		exceptionDetails?: { exception?: { description?: string }; text?: string };
 	}>(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
 	if (result.exceptionDetails) {
-		throw new Error(
+		throw new PageException(
 			result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "Evaluation failed",
 		);
 	}

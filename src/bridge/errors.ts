@@ -4,7 +4,7 @@
  * stack goes to the debug log (`tabkyra debug`), not to the agent.
  */
 
-import { isDetachError } from "../browser/cdp.js";
+import { isDetachError, PageException } from "../browser/cdp.js";
 import { NoTabError } from "../browser/session.js";
 import { ERR, type RpcError } from "./protocol.js";
 
@@ -58,17 +58,22 @@ const KNOWN: Array<[RegExp, string]> = [
 ];
 
 /**
- * The BridgeError for whatever a handler threw. `fallback` is the code for an error Tabkyra did
- * not write: `script_error` for run_js (the page's own exception), `internal` for the rest.
+ * The BridgeError for whatever a handler threw. A PageException (run_js code that threw) is
+ * script_error; text Tabkyra wrote maps through KNOWN; anything else is `internal`.
  * The returned message never has a stack; `stack` is for the debug log.
  */
 export function classify(err: unknown, method: string): { error: BridgeError; stack?: string } {
 	if (err instanceof BridgeError) return { error: err };
 	if (err instanceof NoTabError) return { error: new BridgeError(ERR.NO_TAB, err.message) };
+	// The page's own exception: its text is the page's, so it never picks the code (not even "Target closed").
+	if (err instanceof PageException) {
+		const { message, stack } = splitStack(errText(err));
+		return { error: new BridgeError(ERR.SCRIPT_ERROR, message), stack };
+	}
 	if (isDetachError(err)) return { error: detachedError(method, "the debugger lost the tab"), stack: errText(err) };
 	const { message, stack } = splitStack(errText(err));
 	const known = KNOWN.find(([re]) => re.test(message));
-	const code = known ? known[1] : method === "evaluate" ? ERR.SCRIPT_ERROR : ERR.INTERNAL;
+	const code = known ? known[1] : ERR.INTERNAL;
 	// A page-side Error stringifies as "Error: text"; for a failure Tabkyra worded itself, the text is the message.
 	return {
 		error: new BridgeError(code, known ? message.replace(/^Error: /, "") : message),

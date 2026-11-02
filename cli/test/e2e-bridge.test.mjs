@@ -1014,6 +1014,9 @@ test("expected failures carry their own code and no stack trace; internal is for
 		["a run_js that throws (isolated world)", "script_error", () => failure("run_js", { code: "(() => { throw new Error('boom') })()" })],
 		["a run_js that throws (main world)", "script_error", () => failure("run_js", { code: "(() => { throw new Error('boom') })()", world: "main" })],
 		["a bad regex", "bad_params", () => failure("read_console", { pattern: "(" })],
+		// The page's own SyntaxError reads like Tabkyra's bad-regex message but is the page's.
+		["a run_js whose own regex is invalid", "script_error", () => failure("run_js", { code: "new RegExp('(')" })],
+		["a run_js error that reads like a missing selector", "script_error", () => failure("run_js", { code: "(() => { throw new Error('Selector not found: x') })()", world: "main" })],
 		["a wait that timed out", "timeout", () => failure("wait", { text: "never appears", timeoutMs: 300 })],
 		["a host that does not resolve", "navigation_failed", () => failure("navigate", { url: "https://example.invalid/" })],
 		["a stale ref inside actions", "stale_ref", () => failure("actions", { steps: [{ click: { ref: row } }] })],
