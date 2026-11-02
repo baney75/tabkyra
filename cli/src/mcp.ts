@@ -541,7 +541,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"press",
 		{
 			title: "Press a key",
-			description: "Press a key or chord: Enter, Escape, Tab, ArrowDown, Control+a, Meta+Shift+p. Example: {\"key\":\"Escape\"}",
+			description: "Press a key or chord: Enter, Escape, Tab, ArrowDown, Control+a, Meta+Shift+p; copy, cut and paste chords do nothing. Example: {\"key\":\"Escape\"}",
 			inputSchema: { key: z.string().describe("Key name or chord joined with +"), tabId, repeat: z.number().int().optional().describe("Times to press") },
 		},
 		(args) => call("press", args),

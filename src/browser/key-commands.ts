@@ -1,8 +1,12 @@
 /**
- * Editing chords for CDP key events. Chromium runs "select all", "copy", "undo" and the word
+ * Editing chords for CDP key events. Chromium runs "select all", "undo" and the word
  * and line moves from the operating system's menu or key bindings, not from the key event, so a
  * synthetic Meta+a (macOS) reaches the page's keydown handlers and then does nothing. The
  * `commands` field of Input.dispatchKeyEvent names the editing commands to run with the key.
+ *
+ * Copy, cut and paste are left out on purpose: they read and write the user's real system
+ * clipboard, and an agent tab in the background has no business doing either (a page could
+ * stage text for the user to paste elsewhere, or an agent could read what the user copied).
  */
 
 const MODIFIERS = new Set(["Alt", "Control", "Meta", "Shift"]);
@@ -10,9 +14,6 @@ const MODIFIERS = new Set(["Alt", "Control", "Meta", "Shift"]);
 /** Editing commands that Blink runs for a plain letter chord, keyed by the lower-case letter. */
 const LETTER_COMMANDS: Record<string, string> = {
 	a: "selectAll",
-	c: "copy",
-	x: "cut",
-	v: "paste",
 	z: "undo",
 };
 
@@ -45,7 +46,6 @@ export function editingCommands(mods: string[], main: string, mac: boolean): str
 		const key = main.toLowerCase();
 		if (key === "y" && !shift) return ctrl ? ["redo"] : [];
 		if (key === "z" && shift) return ["redo"];
-		if (key === "v" && shift) return ["pasteAndMatchStyle"];
 		if (shift) return [];
 		const command = LETTER_COMMANDS[key];
 		return command ? [command] : [];

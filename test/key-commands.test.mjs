@@ -8,17 +8,30 @@ import { editingCommands } from "../src/browser/key-commands.ts";
 const mac = (mods, main) => editingCommands(mods, main, true);
 const other = (mods, main) => editingCommands(mods, main, false);
 
-test("select-all, clipboard and undo chords carry their command on macOS and elsewhere", () => {
+test("select-all, undo and redo chords carry their command on macOS and elsewhere", () => {
 	assert.deepEqual(mac(["Meta"], "a"), ["selectAll"]);
 	assert.deepEqual(other(["Control"], "a"), ["selectAll"]);
-	for (const [key, command] of [["c", "copy"], ["x", "cut"], ["v", "paste"], ["z", "undo"]]) {
-		assert.deepEqual(mac(["Meta"], key), [command], `Meta+${key} on a Mac`);
-		assert.deepEqual(other(["Control"], key), [command], `Control+${key} elsewhere`);
-	}
+	assert.deepEqual(mac(["Meta"], "z"), ["undo"]);
+	assert.deepEqual(other(["Control"], "z"), ["undo"]);
 	assert.deepEqual(mac(["Meta", "Shift"], "z"), ["redo"]);
 	assert.deepEqual(other(["Control", "Shift"], "Z"), ["redo"]);
 	assert.deepEqual(other(["Control"], "y"), ["redo"]);
-	assert.deepEqual(mac(["Meta", "Shift"], "v"), ["pasteAndMatchStyle"]);
+});
+
+test("copy, cut and paste never get a command: they would touch the user's system clipboard", () => {
+	for (const [mods, key] of [
+		[["Meta"], "v"],
+		[["Control"], "v"],
+		[["Meta"], "c"],
+		[["Control"], "c"],
+		[["Meta"], "x"],
+		[["Control"], "x"],
+		[["Meta", "Shift"], "v"],
+		[["Control", "Shift"], "v"],
+	]) {
+		assert.deepEqual(mac(mods, key), [], `${mods.join("+")}+${key} on a Mac`);
+		assert.deepEqual(other(mods, key), [], `${mods.join("+")}+${key} elsewhere`);
+	}
 });
 
 test("Control+a on a Mac and Meta+a elsewhere still select all: agents write either", () => {
