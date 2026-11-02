@@ -130,25 +130,35 @@ async function createCapped(session: BrowserSession, url?: string): Promise<chro
 }
 
 /**
- * A new tab for the agent with console and network capture already on. The tab opens blank and
- * the URL loads after capture starts, so the first page's requests and logs are kept (a tab
- * opened straight on the URL had loaded before anything listened). `ready` is false when the wait
- * for the page gave up; a page that fails to load still counts as opened, as it always did.
+ * A new tab for the agent with console and network capture already on. The tab opens on
+ * about:blank and the URL loads after capture starts, so the first page's requests and logs are
+ * kept (a tab opened straight on the URL had loaded before anything listened). `ready` is false
+ * when the wait for the page gave up. `note` says so when capture could not start: the first load
+ * is then missed, and the first read_console/read_network starts capture as before.
+ *
+ * A page that fails to load (DNS, refused) is `tolerant` for tabs_create, which has always opened
+ * the tab and reported it; navigate rethrows, so the agent gets navigation_failed (the tab stays
+ * in the session either way).
  */
 async function openCapturedTab(
 	ctx: HandlerContext,
 	url: string | undefined,
 	timeoutMs: number,
-): Promise<{ tab: chrome.tabs.Tab; ready: boolean }> {
-	const tab = await createCapped(ctx.session);
+	tolerant: boolean,
+): Promise<{ tab: chrome.tabs.Tab; ready: boolean; note?: string }> {
+	const tab = await createCapped(ctx.session, "about:blank");
 	const tabId = tab.id as number;
-	// Capture is best effort here: if it can't start now, the first read_console/read_network starts it.
-	await startCapture(tabId).catch(() => undefined);
-	if (!url) return { tab, ready: true };
+	const failed = await startCapture(tabId);
+	const note = failed
+		? `Console and network capture could not start on this tab (${failed}), so its first load was not captured; read_console or read_network starts capture from the next call.`
+		: undefined;
+	if (failed) console.warn("[Bridge] capture did not start on a new tab:", failed);
+	if (!url) return { tab, ready: true, note };
 	try {
-		return { tab, ready: !(await navigateTabDetailed(tabId, url, { timeoutMs })).timedOut };
+		return { tab, ready: !(await navigateTabDetailed(tabId, url, { timeoutMs })).timedOut, note };
 	} catch (err) {
-		if (err instanceof Error && err.message.startsWith("Navigation to ")) return { tab, ready: true };
+		if (tolerant && err instanceof Error && err.message.startsWith("Navigation to "))
+			return { tab, ready: true, note };
 		throw err;
 	}
 }
@@ -257,8 +267,8 @@ export const handlers: Record<string, Handler> = {
 	"tabs.create": async (ctx, params) => {
 		const url = str(params, "url");
 		if (url) await ctx.checkUrl(url);
-		const { tab, ready } = await openCapturedTab(ctx, url, 20000);
-		return tabSummary(tab.id!, !ready);
+		const { tab, ready, note } = await openCapturedTab(ctx, url, 20000, true);
+		return { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) };
 	},
 
 	"tabs.close": async (ctx, params) => {
@@ -325,10 +335,10 @@ export const handlers: Record<string, Handler> = {
 		const url = requireStr(params, "url");
 		const history = url === "back" || url === "forward";
 		if (!history) await ctx.checkUrl(url);
-		// The first navigate of a session opens its tab straight on the URL (no blank tab).
+		// The first navigate of a session opens its tab (blank, with capture on) and loads the URL into it.
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
-			const { tab, ready } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000);
-			return tabSummary(tab.id!, !ready);
+			const { tab, ready, note } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000, false);
+			return { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) };
 		}
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;

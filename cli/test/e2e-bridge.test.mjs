@@ -1231,3 +1231,34 @@ test("a tab the tool opens captures its first load: tabs_create and the first na
 		await agent.close();
 	}
 });
+
+test("the first navigate of a session that cannot load the page fails with navigation_failed, and the tab stays", async () => {
+	await connected();
+	const project = join(home, "projects", "first-nav-fails");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agent = await agentIn(project);
+	try {
+		const res = await agent.callTool({ name: "navigate", arguments: { url: "https://example.invalid/" } });
+		const text = res.content.map((c) => c.text).join("\n");
+		assert.ok(res.isError, `a page that did not load must not be reported as loaded: ${text}`);
+		assert.match(text, /^navigation_failed: /);
+		// Same answer as for a session that already had a tab; the tab it opened is still the agent's.
+		assert.match(await on(agent, "tabs_context"), /about:blank|example\.invalid/);
+	} finally {
+		await agent.close();
+	}
+});
+
+test("a new tab says so when capture could not start on it, instead of silently missing the first load", async () => {
+	await connected();
+	await failNext("Runtime.enable", "Cannot attach to this target");
+	const created = JSON.parse(await tool("tabs_create", { url: `${pageUrl}boot` }));
+	assert.match(created.note, /capture could not start on this tab \(console: Cannot attach to this target\)/);
+	assert.match(created.note, /first load was not captured/);
+	await tool("tabs_close", { tabId: created.tabId });
+	// And a tab where it started carries no note.
+	const fine = JSON.parse(await tool("tabs_create", { url: `${pageUrl}boot` }));
+	assert.equal(fine.note, undefined);
+	await tool("tabs_close", { tabId: fine.tabId });
+});

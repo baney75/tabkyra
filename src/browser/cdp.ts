@@ -892,10 +892,20 @@ export async function enableNetworkCapture(tabId: number): Promise<CaptureReport
 	return ensureCapture(tabId, "network");
 }
 
-/** Capture for a tab Tabkyra just opened, started before its first page loads. */
-export async function startCapture(tabId: number): Promise<void> {
-	await ensureCapture(tabId, "console");
-	await ensureCapture(tabId, "network");
+/**
+ * Capture for a tab Tabkyra just opened, started before its first page loads. Returns why it
+ * could not start (both kinds are tried), or undefined.
+ */
+export async function startCapture(tabId: number): Promise<string | undefined> {
+	const failures: string[] = [];
+	for (const kind of ["console", "network"] as const) {
+		try {
+			await ensureCapture(tabId, kind);
+		} catch (err) {
+			failures.push(`${kind}: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+	return failures.length ? failures.join("; ") : undefined;
 }
 
 /** One captured request in full: its entry, the request body's shape and a JSON response, capped. */
