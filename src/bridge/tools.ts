@@ -14,12 +14,14 @@ import {
 	enableNetworkCapture,
 	evaluateMain,
 	hover,
+	isDetachError,
 	networkCapturing,
 	openDialog,
 	pressKey,
 	readConsole,
 	readNetwork,
 	readNetworkDetail,
+	reattach,
 	screenshotToCss,
 	startScreencast,
 	stopScreencast,
@@ -55,6 +57,17 @@ export class BridgeError extends Error {
 	toRpc(): RpcError {
 		return { code: this.code, message: this.message };
 	}
+}
+
+/**
+ * The debugger detached from the tab while a call was running. Like a dropped connection, the
+ * call may have run: the agent checks the page before repeating it. Never the raw CDP message.
+ */
+export function detachedError(method: string, what: string): BridgeError {
+	return new BridgeError(
+		ERR.INTERRUPTED,
+		`The browser's debugger detached from the tab while ${method} was running, so it may have run (${what}). Check the page with read_page before you repeat it; Tabkyra attaches again on your next call.`,
+	);
 }
 
 type Params = Record<string, unknown>;
@@ -477,14 +490,36 @@ export const handlers: Record<string, Handler> = {
 		const text = requireStr(params, "text");
 		const tabId = await resolveTab(ctx, params, true);
 		const t = target(params);
-		if (t.ref || t.selector) {
-			const rect = await locate(tabId, t);
-			await click(tabId, rect.x, rect.y);
+		/** Set just before the first key event goes out: after that the page may hold some of the text. */
+		let keysStarted = false;
+		const attempt = async () => {
+			if (t.ref || t.selector) {
+				const rect = await locate(tabId, t);
+				await click(tabId, rect.x, rect.y);
+			}
+			stopIfAborted(ctx);
+			await typeText(tabId, text, ctx.aborted, () => {
+				keysStarted = true;
+			});
+			stopIfAborted(ctx);
+			if (params.submit === true) await pressKey(tabId, "Enter");
+		};
+		try {
+			await attempt();
+		} catch (err) {
+			if (!isDetachError(err)) throw err;
+			// Detached before any key went out: nothing was typed, so attach again and go once more.
+			// Once a key was sent the text may be partly there, and typing again would double it.
+			if (keysStarted) throw detachedError("type", "some of the text may be in the field");
+			try {
+				await reattach(tabId);
+				await attempt();
+			} catch (again) {
+				if (isDetachError(again))
+					throw detachedError("type", keysStarted ? "some of the text may be in the field" : "no key was typed");
+				throw again;
+			}
 		}
-		stopIfAborted(ctx);
-		await typeText(tabId, text, ctx.aborted);
-		stopIfAborted(ctx);
-		if (params.submit === true) await pressKey(tabId, "Enter");
 		return { typed: text.length };
 	},
 

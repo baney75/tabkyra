@@ -917,3 +917,66 @@ test("press select-all (Meta+a and Control+a) selects the field's text, so typin
 		assert.equal(await js("document.getElementById('t').value"), "edited task", `${chord} did not select all`);
 	}
 });
+
+/**
+ * Make the extension's next `count` chrome.debugger.sendCommand calls of `method` fail with
+ * `message`, before they reach the page: the errors Chromium gives when the debugger detaches.
+ */
+async function failNext(method, message, count = 1) {
+	await sw(`(() => {
+		const g = globalThis;
+		g.__faults = g.__faults || [];
+		if (!g.__faultWrapped) {
+			g.__faultWrapped = true;
+			const original = chrome.debugger.sendCommand.bind(chrome.debugger);
+			chrome.debugger.sendCommand = (target, m, p) => {
+				const i = g.__faults.findIndex((f) => f.method === m && f.left > 0);
+				if (i >= 0) { g.__faults[i].left--; return Promise.reject(new Error(g.__faults[i].message)); }
+				return original(target, m, p);
+			};
+		}
+		g.__faults.push({ method: ${JSON.stringify(method)}, message: ${JSON.stringify(message)}, left: ${count} });
+		return true;
+	})()`);
+}
+
+/** The id of the tab showing `path` of the test server. */
+async function tabOn(path) {
+	return sw(`(async () => (await chrome.tabs.query({})).find((t) => t.url === ${JSON.stringify(pageUrl + path)})?.id)()`);
+}
+
+/** The text of a failed tool call. */
+async function failure(name, args) {
+	const res = await mcp.callTool({ name, arguments: args });
+	const text = res.content.map((c) => c.text).join("\n");
+	assert.ok(res.isError, `${name} should have failed: ${text}`);
+	return text;
+}
+
+test("type after the debugger detached before any key was sent re-attaches and types", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await tool("click", { selector: "#t" });
+	// A detach nobody was told about: Tabkyra still believes it is attached.
+	await sw(`chrome.debugger.detach({ tabId: ${await tabOn("edit")} }).then(() => true)`);
+	await tool("type", { selector: "#t", text: "abc" });
+	assert.equal(await js("document.getElementById('t').value"), "abc");
+});
+
+test("type that hits 'Detached while handling command' before its first key retries once and types", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await failNext("Input.dispatchMouseEvent", "Detached while handling command.");
+	await tool("type", { selector: "#t", text: "abc" });
+	assert.equal(await js("document.getElementById('t').value"), "abc");
+});
+
+test("type that detaches once keys may have been sent is interrupted, never the raw CDP message", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await failNext("Input.dispatchKeyEvent", "Detached while handling command.");
+	const message = await failure("type", { selector: "#t", text: "abc" });
+	assert.match(message, /^interrupted: /);
+	assert.match(message, /Check the page with read_page before you repeat it/);
+	assert.doesNotMatch(message, /Detached while handling command/);
+});

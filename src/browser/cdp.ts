@@ -106,8 +106,60 @@ function installListeners(): void {
 	});
 }
 
-async function send<T = unknown>(tabId: number, method: string, params?: Record<string, unknown>): Promise<T> {
+/**
+ * The debugger was not attached when the command went out, so the command did not run. Chromium
+ * says this after a detach nobody was told about (no onDetach), and every later call on the tab
+ * keeps failing the same way until the worker restarts.
+ */
+export function isNotAttachedError(err: unknown): boolean {
+	return /not attached to the tab|Debugger is not attached/i.test(err instanceof Error ? err.message : String(err));
+}
+
+/**
+ * The debugger detached, or the page's target was replaced, while a command was in flight: the
+ * command may or may not have run.
+ */
+export function isDetachedInFlightError(err: unknown): boolean {
+	return /Detached while handling command|Inspected target navigated or closed|Target closed|Session with given id not found/i.test(
+		err instanceof Error ? err.message : String(err),
+	);
+}
+
+/** Either kind of detach. */
+export function isDetachError(err: unknown): boolean {
+	return isNotAttachedError(err) || isDetachedInFlightError(err);
+}
+
+/** Forget what we believed about the tab's attachment, so the next ensureAttached sets it up again. */
+function forgetAttachment(tabId: number): void {
+	attachedTabs.delete(tabId);
+	viewportTabs.delete(tabId);
+}
+
+async function sendRaw<T = unknown>(tabId: number, method: string, params?: Record<string, unknown>): Promise<T> {
 	return (await chrome.debugger.sendCommand({ tabId }, method, params)) as T;
+}
+
+/**
+ * Send a command. A command refused because the debugger is no longer attached never ran, so it
+ * is safe to attach again and send it once more; a detach while the command was in flight is
+ * thrown for the caller to judge (it may have run).
+ */
+async function send<T = unknown>(tabId: number, method: string, params?: Record<string, unknown>): Promise<T> {
+	try {
+		return await sendRaw<T>(tabId, method, params);
+	} catch (err) {
+		if (!isNotAttachedError(err)) throw err;
+		forgetAttachment(tabId);
+		await ensureAttached(tabId);
+		return sendRaw<T>(tabId, method, params);
+	}
+}
+
+/** Drop the attachment state and attach again (for a caller that saw a detach error). */
+export async function reattach(tabId: number): Promise<void> {
+	forgetAttachment(tabId);
+	await ensureAttached(tabId);
 }
 
 /** Attach if needed. Idempotent; tolerates attachments made before a service worker restart. */
@@ -129,10 +181,10 @@ export async function ensureAttached(tabId: number): Promise<void> {
 		}
 		attachedTabs.add(tabId);
 		// Page events report alert/confirm/prompt dialogs (see openDialog above).
-		await send(tabId, "Page.enable").catch(() => undefined);
+		await sendRaw(tabId, "Page.enable").catch(() => undefined);
 		// Hidden tabs freeze rAF; focus emulation unfreezes it and makes the page report
 		// itself visible, so lazy loading and infinite scroll keep working off-screen.
-		await send(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => undefined);
+		await sendRaw(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => undefined);
 	}
 	await ensureAgentViewport(tabId);
 }
@@ -154,7 +206,7 @@ async function ensureAgentViewport(tabId: number): Promise<void> {
 	const tab = await chrome.tabs.get(tabId).catch(() => undefined);
 	if (!tab || tab.active) return;
 	try {
-		await send(tabId, "Emulation.setDeviceMetricsOverride", {
+		await sendRaw(tabId, "Emulation.setDeviceMetricsOverride", {
 			width: AGENT_VIEWPORT.width,
 			height: AGENT_VIEWPORT.height,
 			deviceScaleFactor: 0,
@@ -169,7 +221,7 @@ async function ensureAgentViewport(tabId: number): Promise<void> {
 /** Give the tab its real size back (the user is about to see it, or the agent let go). */
 export async function releaseAgentViewport(tabId: number): Promise<void> {
 	if (!viewportTabs.delete(tabId)) return;
-	await send(tabId, "Emulation.clearDeviceMetricsOverride").catch(() => undefined);
+	await sendRaw(tabId, "Emulation.clearDeviceMetricsOverride").catch(() => undefined);
 }
 
 /** Detach the debugger. A tab that is being screencast keeps it unless `force`:
@@ -411,10 +463,21 @@ export class InputAbortedError extends Error {}
  * Type text as key events (works in inputs, contenteditable, and for shortcuts).
  * `aborted` is checked before every key, so a call that failed on a dialog stops typing.
  */
-export async function typeText(tabId: number, text: string, aborted: () => boolean = () => false): Promise<void> {
+export async function typeText(
+	tabId: number,
+	text: string,
+	aborted: () => boolean = () => false,
+	/** Called once, just before the first key event is sent: from then on the page may have the text. */
+	beforeFirstKey: () => void = () => undefined,
+): Promise<void> {
 	await ensureAttached(tabId);
+	let started = false;
 	for (const char of text) {
 		if (aborted()) throw new InputAbortedError("Stopped typing: a dialog interrupted this call");
+		if (!started) {
+			started = true;
+			beforeFirstKey();
+		}
 		if (char === "\n") {
 			await pressKey(tabId, "Enter");
 			continue;
@@ -817,7 +880,7 @@ function installScreencastListener(): void {
 		const wait = cast ? Math.max(0, cast.lastAckAt + cast.minGapMs - Date.now()) : 0;
 		setTimeout(() => {
 			if (cast) cast.lastAckAt = Date.now();
-			send(tabId, "Page.screencastFrameAck", { sessionId: p.sessionId }).catch(() => undefined);
+			sendRaw(tabId, "Page.screencastFrameAck", { sessionId: p.sessionId }).catch(() => undefined);
 		}, wait);
 	});
 	chrome.debugger.onDetach.addListener((source, reason) => {
@@ -874,9 +937,9 @@ export async function stopScreencast(tabId: number): Promise<boolean> {
 	const cast = screencasts.get(tabId);
 	if (!cast) return false;
 	screencasts.delete(tabId);
-	await send(tabId, "Page.stopScreencast").catch(() => undefined);
+	await sendRaw(tabId, "Page.stopScreencast").catch(() => undefined);
 	if (cast.scriptId)
-		await send(tabId, "Page.removeScriptToEvaluateOnNewDocument", { identifier: cast.scriptId }).catch(
+		await sendRaw(tabId, "Page.removeScriptToEvaluateOnNewDocument", { identifier: cast.scriptId }).catch(
 			() => undefined,
 		);
 	return true;

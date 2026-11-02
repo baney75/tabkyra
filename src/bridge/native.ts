@@ -8,7 +8,7 @@
  */
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
-import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
+import { isDetachError, openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import {
 	BrowserSession,
@@ -55,7 +55,7 @@ import {
 	UPDATE_STATUS_KEY,
 } from "./protocol.js";
 import { handleSessionsAdmin } from "./sessions-admin.js";
-import { BridgeError, type HandlerContext, handlers } from "./tools.js";
+import { BridgeError, detachedError, type HandlerContext, handlers } from "./tools.js";
 
 const ALARM_NAME = "tabkyra-bridge-keepalive";
 const WORKER_STARTED_AT = Date.now();
@@ -485,6 +485,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		console.warn("[Bridge]", state.lastError);
 		if (err instanceof BridgeError) reply(undefined, err);
 		else if (err instanceof NoTabError) reply(undefined, new BridgeError(ERR.NO_TAB, err.message));
+		else if (isDetachError(err)) reply(undefined, detachedError(req.method, "the debugger lost the tab"));
 		else reply(undefined, new BridgeError(ERR.INTERNAL, err instanceof Error ? err.message : String(err)));
 	} finally {
 		state.abort = undefined;
