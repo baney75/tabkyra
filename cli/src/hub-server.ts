@@ -16,9 +16,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Duplex } from "node:stream";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
+import { CodeLimitError, REQUEST_LOCK_MS } from "./codes.ts";
+import { LockTimeoutError } from "./files.ts";
 import {
 	authenticateDevice,
 	type DeviceRecord,
+	devicesReadable,
 	HubStateError,
 	type LiveDevice,
 	loadDevices,
@@ -52,6 +55,12 @@ const SESSION_IDLE_MS = 30 * 60_000;
 const MAX_SESSIONS_PER_CALLER = 8;
 /** How long a device may take to start answering. Once the head arrives, a response may stream for as long as it likes. */
 const DEFAULT_HEAD_TIMEOUT_MS = 120_000;
+/** How long a public client may leave the hub's write to it unfinished before the request is cancelled. */
+const DEFAULT_SLOW_CLIENT_MS = 30_000;
+/** Most response bytes the hub holds for one request that its client is not reading. */
+const MAX_QUEUED_BYTES = 16_000_000;
+/** Initialize requests whose bodies are still arriving, hub-wide. Per caller, the session cap bounds them. */
+const MAX_INIT_READERS = 64;
 const SESSION_ID = /^[\x21-\x7e]{1,128}$/;
 
 export interface HubOptions {
@@ -62,6 +71,8 @@ export interface HubOptions {
 	allowedHosts?: string[];
 	/** The wait for a device's response head (default 120 s). Tests shorten it. */
 	headTimeoutMs?: number;
+	/** How long a client may stall reading a response before the request is cancelled (default 30 s). Tests shorten it. */
+	slowClientMs?: number;
 	onListen?: (url: string) => void;
 }
 
@@ -72,6 +83,8 @@ interface Pending {
 	headSent: boolean;
 	done: boolean;
 	timer: NodeJS.Timeout;
+	/** The client isn't keeping up: the link is paused until it drains, or this timer cancels the request. */
+	slowTimer?: NodeJS.Timeout;
 	onHead?: (status: number, headers: Headers) => void;
 	onDone?: () => void;
 }
@@ -90,6 +103,8 @@ interface Link {
 	calls: number;
 	streams: number;
 	reserved: number;
+	/** Requests whose clients are not reading. While any, the link is not read, so the hub holds no more than a frame of their data. */
+	blocked: Set<string>;
 	/** initialize requests sent and not yet finished: load the device hasn't reported. */
 	initsPending: number;
 }
@@ -114,26 +129,38 @@ interface Caller {
  * codes even when sources are forged (it is the one place it is used: an attacker can lock enrollment
  * for everyone, which is accepted; devices and managers are never refused by it). A device
  * credential has 256 bits, so its limiter has no global cap, only a per-source one on failures.
+ * Kept per source, so a check costs the source's own few entries, never the whole history.
  */
 class FailureLimiter {
-	private failures: { at: number; source: string }[] = [];
+	private readonly bySource = new Map<string, number[]>();
+	private readonly all: number[] = [];
 	constructor(
 		private readonly perSource: number,
 		private readonly global = Number.POSITIVE_INFINITY,
 	) {}
-	private prune(): void {
+	private recent(source: string): number[] | undefined {
 		const cutoff = Date.now() - 15 * 60_000;
-		while (this.failures.length && this.failures[0].at < cutoff) this.failures.shift();
+		const mine = this.bySource.get(source);
+		if (mine) {
+			while (mine.length && mine[0] < cutoff) mine.shift();
+			if (!mine.length) this.bySource.delete(source);
+		}
+		while (this.all.length && this.all[0] < cutoff) this.all.shift();
+		return mine?.length ? mine : undefined;
 	}
 	blocked(source: string): boolean {
-		this.prune();
-		return this.failures.filter((f) => f.source === source).length >= this.perSource || this.failures.length >= this.global;
+		return (this.recent(source)?.length ?? 0) >= this.perSource || this.all.length >= this.global;
 	}
 	fail(source: string): void {
-		this.prune();
-		// Bounded memory under a flood from many sources.
-		if (this.failures.length >= 50_000) this.failures.shift();
-		this.failures.push({ at: Date.now(), source });
+		const mine = this.recent(source);
+		const now = Date.now();
+		if (mine) mine.push(now);
+		else {
+			// Bounded memory under a flood from many sources: forget the oldest source.
+			if (this.bySource.size >= 50_000) this.bySource.delete(this.bySource.keys().next().value as string);
+			this.bySource.set(source, [now]);
+		}
+		if (Number.isFinite(this.global)) this.all.push(now);
 	}
 }
 
@@ -167,6 +194,8 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	const enrollLimit = new FailureLimiter(5, 20);
 	const authLimit = new FailureLimiter(30);
 	const headTimeoutMs = options.headTimeoutMs ?? DEFAULT_HEAD_TIMEOUT_MS;
+	const slowClientMs = options.slowClientMs ?? DEFAULT_SLOW_CLIENT_MS;
+	let initReaders = 0;
 	let counter = 0;
 	let instances = 0;
 	const challenge = `Bearer realm="tabkyra", resource_metadata="${resourceMetadataUrl(oauth)}"`;
@@ -214,6 +243,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		if (!p || p.done) return;
 		p.done = true;
 		clearTimeout(p.timer);
+		unblock(link, id, p);
 		link.inflight.delete(id);
 		if (p.stream) link.streams--;
 		else link.calls--;
@@ -228,6 +258,24 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		else p.res?.destroy();
 		sendTo(link, { t: "cancel", id });
 		finish(link, id);
+	}
+
+	/** The client of request `id` isn't reading: stop reading the link until it drains, and cancel the request if it stays that way. */
+	function block(link: Link, id: string, p: Pending): void {
+		if (p.slowTimer || p.done) return;
+		link.blocked.add(id);
+		link.ws.pause();
+		p.slowTimer = setTimeout(() => failPending(link, id, 504, "The client isn't reading the response."), slowClientMs);
+		p.slowTimer.unref();
+		p.res?.once("drain", () => unblock(link, id, p));
+	}
+
+	function unblock(link: Link, id: string, p: Pending): void {
+		if (!p.slowTimer) return;
+		clearTimeout(p.slowTimer);
+		p.slowTimer = undefined;
+		link.blocked.delete(id);
+		if (!link.blocked.size && link.ws.readyState === WebSocket.OPEN) link.ws.resume();
 	}
 
 	function sendText(link: Link, text: string, onError?: () => void): void {
@@ -279,7 +327,11 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			return;
 		}
 		const p = link.inflight.get(frame.id);
-		if (!p || p.done) return;
+		if (!p || p.done) {
+			// The hub gave up on this request (client gone, timeout) but the device answered: if that created a session, nothing maps it, so close it.
+			if (frame.t === "head") discardLateHead(link, frame.status, frame.headers);
+			return;
+		}
 		if (frame.t === "head") {
 			if (p.headSent) return;
 			p.headSent = true;
@@ -306,7 +358,11 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			return;
 		}
 		if (frame.t === "chunk") {
-			if (p.headSent) p.res?.write(frame.data);
+			if (!p.headSent || !p.res) return;
+			const ok = p.res.write(frame.data);
+			// Past the bound, or stalled: stop holding the client's data for it.
+			if (p.res.writableLength > MAX_QUEUED_BYTES) failPending(link, frame.id, 502, "The client isn't reading the response.");
+			else if (!ok) block(link, frame.id, p);
 			return;
 		}
 		if (frame.t === "end") {
@@ -318,6 +374,13 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			return;
 		}
 		if (frame.t === "error") failPending(link, frame.id, 502, `The device reported an error: ${frame.message}`);
+	}
+
+	/** A head for a request the hub no longer tracks. If it carries a session id the hub doesn't route, tell the device to close that session. */
+	function discardLateHead(link: Link, status: number, headers: Headers): void {
+		const id = headers["mcp-session-id"];
+		if (status < 200 || status >= 300 || !id || !SESSION_ID.test(id) || sessions.has(id)) return;
+		forward(link, { method: "DELETE", headers: { "mcp-session-id": id, [HUB_SCOPES_HEADER]: "", [HUB_CALLER_HEADER]: "hub" }, body: "" });
 	}
 
 	function dropLink(link: Link, reason: string): void {
@@ -342,6 +405,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			calls: 0,
 			streams: 0,
 			reserved: 0,
+			blocked: new Set(),
 			initsPending: 0,
 		};
 		// One live link per device: a new one replaces the old.
@@ -488,23 +552,41 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			});
 		}
 		if (method !== "POST") return deny(res, 400, "Start a session with an initialize POST.");
+		// Reserve before reading the body: a caller's open sessions plus initializes still arriving are capped, and so are
+		// all of them together, so slow unfinished bodies can't pile up in memory.
+		const open = [...sessions.values()].filter((s) => s.callerId === who.id).length + (callerInits.get(who.id) ?? 0);
+		if (open >= MAX_SESSIONS_PER_CALLER) return deny(res, 429, `This token already has ${MAX_SESSIONS_PER_CALLER} open sessions. Close one first.`);
+		if (initReaders >= MAX_INIT_READERS) return deny(res, 429, "The hub is busy starting sessions. Try again in a moment.");
+		callerInits.set(who.id, (callerInits.get(who.id) ?? 0) + 1);
+		initReaders++;
+		let held = true;
+		const releaseInit = () => {
+			if (!held) return;
+			held = false;
+			initReaders--;
+			callerInits.set(who.id, Math.max(0, (callerInits.get(who.id) ?? 1) - 1));
+		};
 		let body: string;
 		let parsed: unknown;
 		try {
 			body = await readBody(req, MAX_BODY_BYTES);
 			parsed = JSON.parse(body);
 		} catch {
+			releaseInit();
 			return deny(res, 400, "The request body isn't valid JSON.");
 		}
 		// Only an initialize request creates a session.
-		if (!isInitializeRequest(parsed)) return deny(res, 400, "Start a session with an initialize request.");
-		const open = [...sessions.values()].filter((s) => s.callerId === who.id).length + (callerInits.get(who.id) ?? 0);
-		if (open >= MAX_SESSIONS_PER_CALLER) return deny(res, 429, `This token already has ${MAX_SESSIONS_PER_CALLER} open sessions. Close one first.`);
+		if (!isInitializeRequest(parsed)) {
+			releaseInit();
+			return deny(res, 400, "Start a session with an initialize request.");
+		}
 		const picked = pickLink(who);
-		if (!("link" in picked)) return deny(res, picked.status, picked.message);
+		if (!("link" in picked)) {
+			releaseInit();
+			return deny(res, picked.status, picked.message);
+		}
 		const link = picked.link;
 		link.initsPending++;
-		callerInits.set(who.id, (callerInits.get(who.id) ?? 0) + 1);
 		forward(link, {
 			method: "POST",
 			headers: requestHeaders(req, who),
@@ -519,7 +601,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			},
 			onDone: () => {
 				link.initsPending = Math.max(0, link.initsPending - 1);
-				callerInits.set(who.id, Math.max(0, (callerInits.get(who.id) ?? 1) - 1));
+				releaseInit();
 			},
 		});
 	}
@@ -576,16 +658,18 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		if (!body) return;
 		try {
 			if (body.kind === "approval") {
-				const { code, expiresAt } = mintApprovalCode();
+				const { code, expiresAt } = mintApprovalCode(REQUEST_LOCK_MS);
 				return sendJson(res, 200, { kind: "approval", code, expiresAt, url: `${options.publicUrl}/mcp` });
 			}
 			if (body.kind === "connect") {
-				const { code, expiresAt } = mintConnectCode({ name: typeof body.name === "string" && body.name ? body.name : undefined, manage: body.manage === true });
+				const { code, expiresAt } = mintConnectCode({ name: typeof body.name === "string" && body.name ? body.name : undefined, manage: body.manage === true }, Date.now(), REQUEST_LOCK_MS);
 				return sendJson(res, 200, { kind: "connect", code, expiresAt });
 			}
 		} catch (err) {
 			if (err instanceof HubStateError) return sendJson(res, err.status, { error: "invalid_request", error_description: err.message });
-			if (err instanceof Error) return sendJson(res, 429, { error: "temporarily_unavailable", error_description: err.message });
+			// Only the "codes already waiting" limit is a limit. A held lock is busy; anything else is a fault, logged and answered 500 by the caller.
+			if (err instanceof CodeLimitError) return sendJson(res, 429, { error: "temporarily_unavailable", error_description: err.message });
+			if (err instanceof LockTimeoutError) return sendJson(res, 503, { error: "temporarily_unavailable", error_description: "The hub is busy. Try again in a moment." });
 			throw err;
 		}
 		sendJson(res, 400, { error: "invalid_request", error_description: "kind is connect or approval." });
@@ -616,21 +700,28 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	}
 
 	http.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+		// Node hands over the raw socket with no error listener. A peer that resets while we answer would otherwise be an uncaught exception.
+		socket.on("error", () => socket.destroy());
 		const refuse = (line: string) => {
 			socket.end(`HTTP/1.1 ${line}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`);
 		};
-		const path = new URL(req.url ?? "/", "http://x").pathname;
-		if (!hostAllowed(req)) return refuse("421 Misdirected Request");
-		if (path !== "/link") return refuse("404 Not Found");
-		// A valid credential is never refused by anyone else's failures: check it first, throttle only failures.
-		const source = requestSource(req);
-		const device = authenticateDevice(bearer(req.headers.authorization));
-		if (!device) {
-			if (authLimit.blocked(source)) return refuse("429 Too Many Requests");
-			authLimit.fail(source);
-			return refuse("401 Unauthorized");
+		try {
+			const path = new URL(req.url ?? "/", "http://x").pathname;
+			if (!hostAllowed(req)) return refuse("421 Misdirected Request");
+			if (path !== "/link") return refuse("404 Not Found");
+			// A valid credential is never refused by anyone else's failures: check it first, throttle only failures.
+			const source = requestSource(req);
+			const device = authenticateDevice(bearer(req.headers.authorization));
+			if (!device) {
+				if (authLimit.blocked(source)) return refuse("429 Too Many Requests");
+				authLimit.fail(source);
+				return refuse("401 Unauthorized");
+			}
+			wss.handleUpgrade(req, socket, head, (ws) => onLink(ws, device));
+		} catch {
+			// A request target that doesn't parse, or any other fault before the link exists, is that one connection's problem.
+			refuse("400 Bad Request");
 		}
-		wss.handleUpgrade(req, socket, head, (ws) => onLink(ws, device));
 	});
 
 	// ---------- Timers ----------
@@ -668,7 +759,8 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	timers.push(
 		setInterval(() => {
 			for (const link of links.values()) {
-				if (Date.now() - link.lastSeen > SILENT_MS) link.ws.terminate();
+				// A link held back for a slow client isn't silent; the slow-client timer bounds that.
+				if (Date.now() - link.lastSeen > SILENT_MS && !link.blocked.size) link.ws.terminate();
 				else if (link.ws.readyState === WebSocket.OPEN) link.ws.ping();
 			}
 		}, PING_MS),
@@ -676,6 +768,8 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	// A device removed with `tabkyra hub remove` (another process) loses its link within a second.
 	timers.push(
 		setInterval(() => {
+			// A file that can't be read is not a revocation: keep the links until it can.
+			if (!devicesReadable()) return;
 			const known = new Map(loadDevices().devices.map((d) => [d.id, d.sha256]));
 			for (const link of [...links.values()]) {
 				if (known.get(link.device.id) === link.device.sha256) continue;

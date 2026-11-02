@@ -85,15 +85,42 @@ Add the connector URL once in claude.ai, ChatGPT or grok.com. Check it with: tab
 
 // ---------- hub serve ----------
 
+/** Errors that belong to one peer's connection, not to the hub's own code. */
+const CONNECTION_ERRORS = new Set(["ECONNRESET", "EPIPE", "ECONNABORTED", "ETIMEDOUT", "ERR_STREAM_PREMATURE_CLOSE", "ERR_STREAM_DESTROYED", "ERR_STREAM_WRITE_AFTER_END"]);
+
+/**
+ * Last resort. The handlers attach their own error listeners; if a connection error still escapes
+ * one, log it loudly and keep serving, because a stranger's reset must not drop every device. Any
+ * other uncaught error is a bug in the hub: log it with its stack and exit, so the service manager
+ * restarts a clean process instead of one in an unknown state.
+ */
+function guardConnections(): void {
+	process.on("uncaughtException", (err) => {
+		const code = (err as NodeJS.ErrnoException).code ?? "";
+		if (CONNECTION_ERRORS.has(code)) {
+			process.stderr.write(`[tabkyra hub] a connection error escaped its handler and was survived (${code}): ${err.stack ?? err.message}\n`);
+			return;
+		}
+		process.stderr.write(`[tabkyra hub] UNCAUGHT ERROR, exiting so the service restarts: ${err.stack ?? err.message}\n`);
+		process.exit(1);
+	});
+}
+
 export async function hubServe(overrides: { port?: number; publicUrl?: string }): Promise<void> {
 	const saved = overrides.publicUrl === undefined ? loadHubConfig() : undefined;
 	const publicUrl = overrides.publicUrl ?? saved?.publicUrl;
 	if (!publicUrl) throw new Error("No public URL. Run tabkyra hub setup --public-url https://host, or pass --public-url.");
 	const port = overrides.port ?? saved?.port ?? DEFAULT_PORT;
 	if (!passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; only a connect code (tabkyra token approval-code) can approve a connection. Run: tabkyra token passcode`);
-	// TABKYRA_HUB_HEAD_TIMEOUT_MS shortens the wait for a device's response head; the tests use it.
-	const headTimeout = Number(process.env.TABKYRA_HUB_HEAD_TIMEOUT_MS);
-	const { url } = await startHub({ port, publicUrl, ...(Number.isFinite(headTimeout) && headTimeout > 0 ? { headTimeoutMs: headTimeout } : {}) });
+	guardConnections();
+	// TABKYRA_HUB_HEAD_TIMEOUT_MS and TABKYRA_HUB_SLOW_CLIENT_MS shorten the head wait and the slow-client wait; the tests use them.
+	const positive = (name: string) => {
+		const n = Number(process.env[name]);
+		return Number.isFinite(n) && n > 0 ? n : undefined;
+	};
+	const headTimeoutMs = positive("TABKYRA_HUB_HEAD_TIMEOUT_MS");
+	const slowClientMs = positive("TABKYRA_HUB_SLOW_CLIENT_MS");
+	const { url } = await startHub({ port, publicUrl, ...(headTimeoutMs ? { headTimeoutMs } : {}), ...(slowClientMs ? { slowClientMs } : {}) });
 	console.log(`${sym.ok} Hub at ${url} (loopback only). Connector URL: ${publicUrl}/mcp. Ctrl-C stops it.`);
 	await new Promise(() => {});
 }
