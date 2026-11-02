@@ -5,6 +5,7 @@
  * on tabs that are not visible; nothing here activates a tab.
  */
 
+import { editingCommands, isMacBrowser } from "./key-commands.js";
 import { bodyShape, maskJsonResponse, maskUrl } from "./mask-body.js";
 
 const PROTOCOL_VERSION = "1.3";
@@ -497,6 +498,8 @@ export async function pressKey(tabId: number, chord: string): Promise<void> {
 		});
 	}
 	const info = keyInfo(main);
+	// Select-all, copy, undo and the word and line moves run only when the event names them.
+	const commands = editingCommands(mods, main, isMacBrowser());
 	const base = {
 		key: info.key,
 		code: info.code,
@@ -508,6 +511,7 @@ export async function pressKey(tabId: number, chord: string): Promise<void> {
 		type: info.text && modifiers === 0 ? "keyDown" : "rawKeyDown",
 		...base,
 		...(info.text && modifiers === 0 ? { text: info.text } : {}),
+		...(commands.length ? { commands } : {}),
 	});
 	await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
 	for (const m of mods.reverse()) {

@@ -112,6 +112,11 @@ customElements.define("x-frame", class extends HTMLElement { constructor() { sup
 <p id="r">untouched</p>`;
 const FRAME_C = `<!doctype html><input aria-label="Frame field">`;
 
+// Pages added by the tool-fix tests, served by path (see the server in before()).
+const extraPages = {};
+extraPages["/edit"] = `<!doctype html><title>Tabkyra edit</title>
+<input id="t" aria-label="Task" value="first task"><p id="r">untouched</p>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -256,6 +261,7 @@ before(async () => {
 		if (req.url === "/frame-c") return res.end(FRAME_C);
 		if (req.url === "/frame-a") return res.end(FRAME_A);
 		if (req.url === "/frame-b") return res.end(FRAME_B);
+		if (extraPages[req.url.split("?")[0]]) return res.end(extraPages[req.url.split("?")[0]]);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
 	});
 	await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -864,4 +870,28 @@ test("subscription sign-ins: the side panel reaches the native host through the 
 	assert.equal(signedOut.status, 401);
 	assert.equal(signedOut.body.error.code, "not_signed_in");
 	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
+});
+
+// ---- tool fixes (2026-11-02 live test) ------------------------------------------------------
+
+/** Navigate, waiting for the extension to connect first (these tests may run alone). */
+async function go(path) {
+	await connected();
+	await tool("navigate", { url: `${pageUrl}${path}` });
+}
+
+/** run_js in the page, parsed. */
+async function js(code, args = {}) {
+	return JSON.parse(await tool("run_js", { code, ...args })).value;
+}
+
+test("press select-all (Meta+a and Control+a) selects the field's text, so typing replaces it", async () => {
+	await go("edit");
+	for (const chord of ["Meta+a", "Control+a"]) {
+		await tool("fill", { selector: "#t", value: "first task" });
+		await tool("click", { selector: "#t" });
+		await tool("press", { key: chord });
+		await tool("type", { text: "edited task" });
+		assert.equal(await js("document.getElementById('t').value"), "edited task", `${chord} did not select all`);
+	}
 });
