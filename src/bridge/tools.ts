@@ -15,6 +15,7 @@ import {
 	evaluateMain,
 	hover,
 	isDetachError,
+	isNavigatedError,
 	networkCapturing,
 	openDialog,
 	pressKey,
@@ -44,7 +45,7 @@ import {
 	waitFor,
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
-import { BridgeError, classify, detachedError, interruptedError } from "./errors.js";
+import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { rankMatches } from "./find.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR } from "./protocol.js";
@@ -514,6 +515,10 @@ export const handlers: Record<string, Handler> = {
 			await attempt();
 		} catch (err) {
 			if (!isDetachError(err)) throw err;
+			// A navigation under the focusing click is often the click's own doing (a field in a link):
+			// typing again would act on the new page. Only a debugger that really detached is retried.
+			if (isNavigatedError(err))
+				throw navigatedError("type", keysStarted ? "some of the text may be in the field" : "no key was typed");
 			// Detached before any key went out: nothing was typed, so attach again and go once more.
 			// Once a key was sent the text may be partly there, and typing again would double it.
 			if (keysStarted) throw interruptedError(err, "type", "some of the text may be in the field");

@@ -1172,14 +1172,15 @@ test("after a gap, messages already read and cleared do not come back, and the s
 	assert.ok(!texts(second).includes("cleared-msg"));
 });
 
-test("a retry after a navigation error leaves capture running: no false 'capture stopped'", async () => {
+test("a navigation under type's focusing click is reported, not retried on the new page; capture keeps running", async () => {
 	await go("edit");
 	await tool("fill", { selector: "#t", value: "" });
 	await readConsole({ clear: true });
 	await readNetwork({ clear: true });
 	await failNext("Input.dispatchMouseEvent", "Inspected target navigated or closed");
-	await tool("type", { selector: "#t", text: "abc" });
-	assert.equal(await js("document.getElementById('t').value"), "abc");
+	const message = await failure("type", { selector: "#t", text: "abc" });
+	assert.match(message, /^interrupted: The page navigated while type was running, so it may have run \(no key was typed\)/);
+	assert.equal(await js("document.getElementById('t').value"), "", "type must not have typed after the navigation");
 	await logInPage("still-captured");
 	const result = await readConsole();
 	assert.equal(result.capture, undefined, "the debugger never detached: nothing stopped");
@@ -1187,8 +1188,8 @@ test("a retry after a navigation error leaves capture running: no false 'capture
 	assert.equal((await readNetwork()).capture, undefined);
 	// And when keys may already have gone out, the agent hears about the navigation, not a detach.
 	await failNext("Input.dispatchKeyEvent", "Inspected target navigated or closed");
-	const message = await failure("type", { selector: "#t", text: "x" });
-	assert.match(message, /^interrupted: The page navigated while type was running/);
+	const later = await failure("type", { selector: "#t", text: "x" });
+	assert.match(later, /^interrupted: The page navigated while type was running/);
 });
 
 test("a silent detach is reported once when read_console is the first call after it", async () => {
