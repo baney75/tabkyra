@@ -7,8 +7,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { CODE_TTL_MS, type CodeRecord, findCode, hashCode, liveCodes, newCode, sameHash } from "./codes.ts";
-import { configDir, readJsonFile, withFileLock, writeJsonPrivate } from "./files.ts";
+import { CODE_TTL_MS, CodeLimitError, type CodeRecord, findCode, hashCode, liveCodes, newCode, REQUEST_LOCK_MS, sameHash } from "./codes.ts";
+import { configDir, LockTimeoutError, readJsonFile, withFileLock, writeJsonPrivate } from "./files.ts";
 
 export interface HubConfig {
 	publicUrl: string;
@@ -61,14 +61,30 @@ interface DevicesFile {
 	prefer: string[];
 }
 
-export function loadDevices(): DevicesFile {
+/** The devices file, or undefined when it exists but can't be read as JSON. A missing file is an empty list. */
+function readDevices(): DevicesFile | undefined {
 	try {
 		const data = readJsonFile<Partial<DevicesFile>>(devicesFile(), {});
+		if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
 		return { devices: Array.isArray(data.devices) ? data.devices : [], prefer: Array.isArray(data.prefer) ? data.prefer.filter((x) => typeof x === "string") : [] };
 	} catch {
-		// An unreadable file authorizes no device.
-		return { devices: [], prefer: [] };
+		return undefined;
 	}
+}
+
+/** For reading and authenticating: an unreadable file authorizes no device (it fails closed). */
+export function loadDevices(): DevicesFile {
+	return readDevices() ?? { devices: [], prefer: [] };
+}
+
+/** Whether hub-devices.json can be read. The hub keeps its links while it can't (a bad file is not a revocation). */
+export const devicesReadable = (): boolean => readDevices() !== undefined;
+
+/** For changing: an unreadable file is an error, never an empty list to overwrite. */
+function loadDevicesForUpdate(): DevicesFile {
+	const data = readDevices();
+	if (!data) throw new HubStateError(500, `${devicesFile()} is unreadable. Fix it or move it aside; nothing was changed.`);
+	return data;
 }
 
 const saveDevices = (data: DevicesFile) => writeJsonPrivate(devicesFile(), data);
@@ -92,7 +108,7 @@ export function authenticateDevice(credential: string | undefined): DeviceRecord
 
 /** Add a device. Fails when the name is taken. The credential is returned once. */
 function addDevice(name: string, manage: boolean): { record: DeviceRecord; credential: string } {
-	const data = loadDevices();
+	const data = loadDevicesForUpdate();
 	if (data.devices.some((d) => d.name === name)) throw new HubStateError(409, `A device named ${name} is already enrolled. Remove it first (tabkyra hub remove ${name}) or pick another name.`);
 	const id = `dv-${randomBytes(6).toString("hex")}`;
 	const secret = randomBytes(32).toString("base64url");
@@ -104,7 +120,7 @@ function addDevice(name: string, manage: boolean): { record: DeviceRecord; crede
 /** Remove a device by name or id; its credential stops working at once. Returns the removed record. */
 export function removeDevice(nameOrId: string): DeviceRecord | undefined {
 	return withFileLock(devicesFile(), () => {
-		const data = loadDevices();
+		const data = loadDevicesForUpdate();
 		const gone = data.devices.find((d) => d.id === nameOrId || d.name === nameOrId);
 		if (!gone) return undefined;
 		saveDevices({ devices: data.devices.filter((d) => d !== gone), prefer: data.prefer.filter((n) => n !== gone.name) });
@@ -113,7 +129,7 @@ export function removeDevice(nameOrId: string): DeviceRecord | undefined {
 }
 
 export function setPrefer(names: string[]): void {
-	withFileLock(devicesFile(), () => saveDevices({ ...loadDevices(), prefer: names }));
+	withFileLock(devicesFile(), () => saveDevices({ ...loadDevicesForUpdate(), prefer: names }));
 }
 
 /**
@@ -126,9 +142,9 @@ export function touchDevice(id: string, patch: { lastSeen?: string; version?: st
 		withFileLock(
 			devicesFile(),
 			() => {
-				const data = loadDevices();
-				const device = data.devices.find((d) => d.id === id);
-				if (!device) return;
+				const data = readDevices();
+				const device = data?.devices.find((d) => d.id === id);
+				if (!data || !device) return;
 				Object.assign(device, patch);
 				saveDevices(data);
 			},
@@ -167,39 +183,53 @@ function loadConnectCodes(): ConnectCode[] {
 	}
 }
 
-/** A new connect code, shown once. */
-export function mintConnectCode(options: { name?: string; manage?: boolean }, time = Date.now()): { code: string; expiresAt: number } {
+/** A new connect code, shown once. `lockMs` is how long to wait for the lock (a request handler passes a short one). */
+export function mintConnectCode(options: { name?: string; manage?: boolean }, time = Date.now(), lockMs?: number): { code: string; expiresAt: number } {
 	if (options.name !== undefined && !validDeviceName(options.name)) throw new HubStateError(400, "Device name: letters, digits, dot, dash, underscore or space, up to 40.");
-	return withFileLock(codesFile(), () => {
-		const live = liveCodes(loadConnectCodes(), time);
-		if (live.length >= MAX_LIVE_CONNECT_CODES) throw new HubStateError(429, `${MAX_LIVE_CONNECT_CODES} connect codes are already waiting. Use or wait out one first.`);
-		const code = newCode();
-		const expiresAt = time + CODE_TTL_MS;
-		writeJsonPrivate(codesFile(), { codes: [...live, { sha256: hashCode(code), expiresAt, createdAt: time, ...(options.name ? { name: options.name } : {}), manage: Boolean(options.manage) }] });
-		return { code, expiresAt };
-	});
+	return withFileLock(
+		codesFile(),
+		() => {
+			const live = liveCodes(loadConnectCodes(), time);
+			if (live.length >= MAX_LIVE_CONNECT_CODES) throw new CodeLimitError(`${MAX_LIVE_CONNECT_CODES} connect codes are already waiting. Use or wait out one first.`);
+			const code = newCode();
+			const expiresAt = time + CODE_TTL_MS;
+			writeJsonPrivate(codesFile(), { codes: [...live, { sha256: hashCode(code), expiresAt, createdAt: time, ...(options.name ? { name: options.name } : {}), manage: Boolean(options.manage) }] });
+			return { code, expiresAt };
+		},
+		lockMs,
+	);
 }
 
 /**
  * Redeem a connect code: a live match is removed, whatever happens next, and the device is enrolled
  * under the code's name or the name the device asked for. Returns undefined for a wrong, expired or
- * used code. A taken name fails before the code is spent.
+ * used code. A taken name fails before the code is spent. A wrong code is rejected from a read-only
+ * look at the file, before any lock; a match takes the locks for at most REQUEST_LOCK_MS each (a
+ * held lock is a 503, not a frozen hub).
  */
 export function redeemConnectCode(typed: string, wantedName: string, time = Date.now()): { record: DeviceRecord; credential: string } | undefined {
-	return withFileLock(codesFile(), () => {
-		const live = liveCodes(loadConnectCodes(), time);
-		const at = findCode(live, typed, time);
-		if (at < 0) {
-			writeJsonPrivate(codesFile(), { codes: live });
-			return undefined;
-		}
-		const entry = live[at];
-		const name = entry.name ?? wantedName;
-		if (!validDeviceName(name)) throw new HubStateError(400, "Device name: letters, digits, dot, dash, underscore or space, up to 40.");
-		const made = withFileLock(devicesFile(), () => addDevice(name, entry.manage));
-		writeJsonPrivate(codesFile(), { codes: live.filter((_, i) => i !== at) });
-		return made;
-	});
+	if (findCode(liveCodes(loadConnectCodes(), time), typed, time) < 0) return undefined;
+	try {
+		return withFileLock(
+			codesFile(),
+			() => {
+				const live = liveCodes(loadConnectCodes(), time);
+				const at = findCode(live, typed, time);
+				// Used or expired between the look and the lock.
+				if (at < 0) return undefined;
+				const entry = live[at];
+				const name = entry.name ?? wantedName;
+				if (!validDeviceName(name)) throw new HubStateError(400, "Device name: letters, digits, dot, dash, underscore or space, up to 40.");
+				const made = withFileLock(devicesFile(), () => addDevice(name, entry.manage), REQUEST_LOCK_MS);
+				writeJsonPrivate(codesFile(), { codes: live.filter((_, i) => i !== at) });
+				return made;
+			},
+			REQUEST_LOCK_MS,
+		);
+	} catch (err) {
+		if (err instanceof LockTimeoutError) throw new HubStateError(503, "The hub is busy. Try again in a moment.");
+		throw err;
+	}
 }
 
 // ---------- Live snapshot ----------

@@ -15,8 +15,8 @@
 import { createHash, createHmac, randomBytes, scrypt, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CODE_TTL_MS, type CodeRecord, findCode, hashCode, liveCodes, newCode, normalizeCode } from "./codes.ts";
-import { configDir, readJsonFile, withFileLock, writeJsonPrivate } from "./files.ts";
+import { CODE_TTL_MS, CodeLimitError, type CodeRecord, findCode, hashCode, liveCodes, newCode, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
+import { configDir, LockTimeoutError, readJsonFile, withFileLock, writeJsonPrivate } from "./files.ts";
 import { pageCss } from "./theme.ts";
 
 export { configDir };
@@ -238,17 +238,21 @@ function loadApprovalCodes(): CodeRecord[] {
 	}
 }
 
-/** A new approval code, returned once. */
-export function mintApprovalCode(): { code: string; expiresAt: number } {
-	return withFileLock(approvalFile(), () => {
-		const time = Date.now();
-		const live = liveCodes(loadApprovalCodes(), time);
-		if (live.length >= MAX_LIVE_APPROVAL_CODES) throw new Error(`${MAX_LIVE_APPROVAL_CODES} approval codes are already waiting. Use or wait out one first.`);
-		const code = newCode();
-		const expiresAt = time + CODE_TTL_MS;
-		writeJsonPrivate(approvalFile(), { codes: [...live, { sha256: hashCode(code), expiresAt, createdAt: time }] });
-		return { code, expiresAt };
-	});
+/** A new approval code, returned once. `lockMs` is how long to wait for the lock (a request handler passes a short one). */
+export function mintApprovalCode(lockMs?: number): { code: string; expiresAt: number } {
+	return withFileLock(
+		approvalFile(),
+		() => {
+			const time = Date.now();
+			const live = liveCodes(loadApprovalCodes(), time);
+			if (live.length >= MAX_LIVE_APPROVAL_CODES) throw new CodeLimitError(`${MAX_LIVE_APPROVAL_CODES} approval codes are already waiting. Use or wait out one first.`);
+			const code = newCode();
+			const expiresAt = time + CODE_TTL_MS;
+			writeJsonPrivate(approvalFile(), { codes: [...live, { sha256: hashCode(code), expiresAt, createdAt: time }] });
+			return { code, expiresAt };
+		},
+		lockMs,
+	);
 }
 
 /** Whether a typed value is a live approval code. Does not use it up. */
@@ -258,13 +262,23 @@ function approvalCodeLive(typed: string): boolean {
 
 /** Use up a live approval code. False when it is wrong, expired or already used (two requests racing for one code: one wins). */
 function consumeApprovalCode(typed: string): boolean {
-	return withFileLock(approvalFile(), () => {
-		const time = Date.now();
-		const live = liveCodes(loadApprovalCodes(), time);
-		const at = findCode(live, typed, time);
-		writeJsonPrivate(approvalFile(), { codes: live.filter((_, i) => i !== at) });
-		return at >= 0;
-	});
+	try {
+		// Runs in the server's event loop: wait briefly for the lock, and answer 503 if it stays held.
+		return withFileLock(
+			approvalFile(),
+			() => {
+				const time = Date.now();
+				const live = liveCodes(loadApprovalCodes(), time);
+				const at = findCode(live, typed, time);
+				writeJsonPrivate(approvalFile(), { codes: live.filter((_, i) => i !== at) });
+				return at >= 0;
+			},
+			REQUEST_LOCK_MS,
+		);
+	} catch (err) {
+		if (err instanceof LockTimeoutError) throw new OAuthError(503, "temporarily_unavailable", "Busy. Try again in a moment.");
+		throw err;
+	}
 }
 
 // ---------- Owner management ----------

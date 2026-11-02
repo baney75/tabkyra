@@ -21,6 +21,9 @@ export function writeJsonPrivate(path: string, value: unknown): void {
 	renameSync(tmp, path);
 }
 
+/** A lock file stayed held past the caller's patience. Request handlers map it to 503. */
+export class LockTimeoutError extends Error {}
+
 /** Run `fn` holding an exclusive lock file next to `path`; gives up after `timeoutMs`. A lock older than 30 seconds is stale. */
 export function withFileLock<T>(path: string, fn: () => T, timeoutMs = 10_000): T {
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -38,7 +41,7 @@ export function withFileLock<T>(path: string, fn: () => T, timeoutMs = 10_000): 
 				/* gone */
 			}
 			if (stale) rmSync(lock, { force: true });
-			else if (Date.now() > deadline) throw new Error(`${path} is locked (${lock}).`);
+			else if (Date.now() > deadline) throw new LockTimeoutError(`${path} is locked (${lock}).`);
 			else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
 		}
 	}

@@ -8,6 +8,12 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const CODE_TTL_MS = 10 * 60_000;
 
+/** Too many codes are already waiting. The only mint failure an answer should call a limit (429). */
+export class CodeLimitError extends Error {}
+
+/** How long a request handler waits for a lock file; the event loop is blocked meanwhile. A longer wait answers 503. */
+export const REQUEST_LOCK_MS = 200;
+
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const SHAPE = /^TK-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 
