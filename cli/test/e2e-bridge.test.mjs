@@ -134,6 +134,12 @@ extraPages["/todo"] = `<!doctype html><title>TodoMVC</title>
 extraPages["/boot"] = `<!doctype html><title>Tabkyra boot</title><p id="x">boot</p>
 <script>console.log("boot-log"); fetch("/boot-data").then((r) => r.text());</script>`;
 
+// Radios sharing one parent, each with the label beside it (no `for`), and a checkbox in a big
+// container with a lot of text around it.
+extraPages["/radios"] = `<!doctype html><title>Radios</title>
+<div id="sizes"><input type="radio" name="s"><label>Small</label><input type="radio" name="s"><label>Large</label></div>
+<form><input type="checkbox" name="agree">${"Lots of unrelated text in the same container. ".repeat(12)}<p>More text.</p><input type="text" aria-label="Email"></form>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -1057,6 +1063,17 @@ test("find ranks exact and whole-word name matches first, names unlabeled checkb
 	// Without a better match, a link found only by its URL is still returned.
 	const urlOnly = lines(await tool("find", { query: "howto" }));
 	assert.match(urlOnly.join("\n"), /link "Docs"/);
+	// Radios that share a parent are named by the label beside each, not the first label among siblings.
+	await go("radios");
+	const radios = lines(await tool("find", { query: "Large" }));
+	assert.equal(radios.filter((l) => / radio "/.test(l)).length, 1, radios.join("\n"));
+	assert.match(radios.join("\n"), /radio "Large"/);
+	const small = lines(await tool("find", { query: "Small" }));
+	assert.equal(small.filter((l) => / radio "/.test(l)).length, 1, small.join("\n"));
+	// A control alone in a big container is not named with all of the container's text.
+	for (const l of lines(await tool("read_page", { filter: "interactive" })).filter((l) => / checkbox "/.test(l)))
+		assert.ok(l.length < 200, `name not capped: ${l}`);
+	await go("todo");
 	// And it is the checkbox, not the row's label, that click and fill need: both are listed.
 	const task = lines(await tool("find", { query: "second task" }));
 	assert.ok(task.some((l) => /checkbox "second task"/.test(l)), task.join("\n"));

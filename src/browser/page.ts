@@ -555,14 +555,19 @@ function pageSnapshot(
 			const parentLabel = el.closest("label");
 			if (parentLabel?.textContent?.trim()) return parentLabel.textContent.trim();
 			if (tag === "input" && (f.type === "checkbox" || f.type === "radio")) {
-				// No label of its own (TodoMVC's item toggle): the text beside it in its row names it.
-				// Not its value: that is "on" for every checkbox without a value attribute.
+				// No label of its own (TodoMVC's item toggle). Never its value: that is "on" for every
+				// checkbox without a value attribute.
+				const clean = (t: string | null | undefined) => (t ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+				// The label right beside it (after, else before), when it isn't another control's (no `for`).
+				for (const near of [el.nextElementSibling, el.previousElementSibling]) {
+					if (near?.tagName === "LABEL" && !near.hasAttribute("for") && clean(near.textContent))
+						return clean(near.textContent);
+				}
+				// Otherwise the text of its row, but only when the row holds this one control: with
+				// several (a group of radios), the row's text names none of them.
 				const row =
 					el.closest("li,tr,[role=row],[role=listitem],[role=option],[role=menuitemcheckbox]") ?? el.parentElement;
-				const sibling = Array.from(el.parentElement?.children ?? []).find((c) => c.tagName === "LABEL");
-				const near = (sibling?.textContent ?? "").replace(/\s+/g, " ").trim();
-				if (near) return near;
-				if (row) {
+				if (row && row.querySelectorAll("input[type=checkbox],input[type=radio]").length === 1) {
 					const walker = row.ownerDocument.createTreeWalker(row, NodeFilter.SHOW_TEXT);
 					const parts: string[] = [];
 					for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -570,7 +575,7 @@ function pageSnapshot(
 						const t = (n.textContent ?? "").replace(/\s+/g, " ").trim();
 						if (t) parts.push(t);
 					}
-					if (parts.length) return parts.join(" ");
+					if (parts.length) return clean(parts.join(" "));
 				}
 				return el.getAttribute("name") ?? el.getAttribute("title") ?? "";
 			}
