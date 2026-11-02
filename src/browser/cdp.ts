@@ -848,11 +848,19 @@ export async function ensureCapture(tabId: number, kind: CaptureKind): Promise<C
 		if (kind === "console") consoleBuffers.set(tabId, new ConsoleBuffer());
 		else networkBuffers.set(tabId, new Map());
 	} else {
-		const pending = pendingGaps.get(tabId)?.[kind] ?? [];
-		gaps.push(...pending);
-		// A detach nobody announced: the debugger is gone but no event said so.
-		if (pending.length === 0 && !(attachedTabs.has(tabId) && (await debuggerAttachedNow(tabId))))
-			gaps.push({ at: Date.now(), reason: "the debugger was no longer attached and nothing said when it detached" });
+		// A detach nobody announced: the debugger is gone but no event said so. It ended both kinds of
+		// capture on the tab, so record it for both (the other kind's next read reports it too, even
+		// though this read attaches again), and drop what we believed about the attachment so
+		// ensureAttached below really attaches.
+		if (
+			(pendingGaps.get(tabId)?.[kind].length ?? 0) === 0 &&
+			!(attachedTabs.has(tabId) && (await debuggerAttachedNow(tabId)))
+		) {
+			noteCaptureStopped(tabId, "the debugger was no longer attached and nothing said when it detached");
+			attachedTabs.delete(tabId);
+			viewportTabs.delete(tabId);
+		}
+		gaps.push(...(pendingGaps.get(tabId)?.[kind] ?? []));
 	}
 	const pendingForTab = pendingGaps.get(tabId);
 	if (pendingForTab) pendingForTab[kind] = [];
@@ -867,6 +875,9 @@ export async function ensureCapture(tabId: number, kind: CaptureKind): Promise<C
 			// Runtime.enable replays the page's console history. What is stamped before now is history;
 			// after a gap (a detach, a worker restart) the entries it adds are marked replayed.
 			consoleBuffers.get(tabId)?.startReplay(Date.now(), known || gaps.length > 0);
+			// A debugging session can outlive what we knew (a worker restart, a navigation under a call):
+			// Runtime still on there would not replay. Off and on makes the browser send its history.
+			if (gaps.length > 0) await sendRaw(tabId, "Runtime.disable").catch(() => undefined);
 			await send(tabId, "Runtime.enable");
 		}
 	} catch (err) {
@@ -885,7 +896,7 @@ export async function ensureCapture(tabId: number, kind: CaptureKind): Promise<C
 	return {
 		stopped: gaps.map((g) => ({ at: g.at ? new Date(g.at).toISOString() : null, reason: g.reason })),
 		resumedAt: new Date(resumed).toISOString(),
-		note: `${kind === "console" ? "Console" : "Network"} capture had stopped; it is on again from resumedAt. ${kind === "console" ? "The browser replays the page's console history when capture resumes, so messages logged meanwhile are usually there (marked replayed; the timestamp is when the page logged it); those from a page you have since left, or after a crash, are missing." : "Requests made while it was off are missing."} Entries older than the gap are from before it stopped.`,
+		note: `${kind === "console" ? "Console" : "Network"} capture had stopped; it is on again from resumedAt. ${kind === "console" ? "The browser replays the page's console history when capture resumes, so messages logged meanwhile on the same page are there (marked replayed; the timestamp is when the page logged it); those from a page you have since left, or from before a crash, are missing." : "Requests made while it was off are missing."} Entries older than the gap are from before it stopped.`,
 	};
 }
 

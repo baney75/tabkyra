@@ -1191,6 +1191,20 @@ test("a retry after a navigation error leaves capture running: no false 'capture
 	assert.match(message, /^interrupted: The page navigated while type was running/);
 });
 
+test("a silent detach is reported once when read_console is the first call after it", async () => {
+	await go("edit");
+	await readConsole();
+	await readNetwork();
+	await sw(`chrome.debugger.detach({ tabId: ${await tabOn("edit")} }).then(() => true)`);
+	// No input between the detach and the read: nothing has noticed it yet.
+	const first = await readConsole();
+	assert.ok(first.capture, "the first read after a silent detach reports it");
+	assert.equal((await readConsole()).capture, undefined, "and only once: nothing stopped in between");
+	const net = await readNetwork();
+	assert.ok(net.capture);
+	assert.equal((await readNetwork()).capture, undefined);
+});
+
 test("capture that stopped because the page crashed is reported, and resumes after the reload", async () => {
 	await go("edit");
 	await readConsole();
@@ -1221,7 +1235,9 @@ test("capture lost to a worker restart is reported, and resumes", async () => {
 	assert.ok(result.capture, "a restart must be reported, not look like a first call");
 	assert.match(result.capture.stopped[0].reason, /background worker restarted/);
 	// Anything from before the restart that the browser replays is flagged, never passed off as live.
-	for (const entry of result.entries.filter((x) => x.text === "before-restart")) assert.equal(entry.replayed, true, JSON.stringify(entry));
+	const old = result.entries.filter((x) => x.text === "before-restart");
+	assert.equal(old.length, 1, `the browser's history should bring the pre-restart message back: ${JSON.stringify(result.entries)}`);
+	assert.equal(old[0].replayed, true, JSON.stringify(old[0]));
 	// What is logged from here on is captured again.
 	await logInPage("after-restart");
 	const later = await readConsole();
