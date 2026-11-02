@@ -90,6 +90,7 @@ function installListeners(): void {
 	});
 	chrome.debugger.onDetach.addListener((source, reason) => {
 		if (source.tabId === undefined) return;
+		noteCaptureStopped(source.tabId, describeDetach(reason));
 		openDialogs.delete(source.tabId);
 		attachedTabs.delete(source.tabId);
 		viewportTabs.delete(source.tabId);
@@ -134,6 +135,8 @@ export function isDetachError(err: unknown): boolean {
 function forgetAttachment(tabId: number): void {
 	attachedTabs.delete(tabId);
 	viewportTabs.delete(tabId);
+	// Attaching again starts a new debugging session: its console and network domains are off.
+	noteCaptureStopped(tabId, "the debugger had detached without notice and was attached again");
 }
 
 async function sendRaw<T = unknown>(tabId: number, method: string, params?: Record<string, unknown>): Promise<T> {
@@ -231,6 +234,7 @@ export async function detachTab(tabId: number, force = false): Promise<void> {
 	if (force) await stopScreencast(tabId).catch(() => undefined);
 	attachedTabs.delete(tabId);
 	viewportTabs.delete(tabId);
+	noteCaptureStopped(tabId, "Tabkyra released the debugger (the client disconnected or the session ended)");
 	try {
 		await chrome.debugger.detach({ tabId });
 	} catch {
@@ -603,6 +607,8 @@ export interface ConsoleEntry {
 	level: string;
 	text: string;
 	timestamp: number;
+	/** The browser replayed it from the page's console history when capture was turned back on: the timestamp is the replay's. */
+	replayed?: boolean;
 }
 
 export interface NetworkEntry {
@@ -626,6 +632,8 @@ export interface NetworkEntry {
 const MAX_ENTRIES = 300;
 const consoleBuffers = new Map<number, ConsoleEntry[]>();
 const networkBuffers = new Map<number, Map<string, NetworkEntry>>();
+/** Console entries arriving while Runtime.enable replays the page's history, kept apart to merge (see ensureCapture). */
+const replaying = new Map<number, ConsoleEntry[]>();
 let captureListenerInstalled = false;
 
 function installCaptureListener(): void {
@@ -635,15 +643,19 @@ function installCaptureListener(): void {
 		const tabId = source.tabId;
 		if (tabId === undefined) return;
 		const p = (params ?? {}) as Record<string, unknown>;
-		if (method === "Runtime.consoleAPICalled") {
-			const buf = consoleBuffers.get(tabId);
+		if (method === "Inspector.detached") {
+			noteCaptureStopped(tabId, `the page's inspector detached (${String(p.reason ?? "unknown reason")})`);
+		} else if (method === "Inspector.targetCrashed") {
+			noteCaptureStopped(tabId, "the page crashed");
+		} else if (method === "Runtime.consoleAPICalled") {
+			const buf = replaying.get(tabId) ?? consoleBuffers.get(tabId);
 			if (!buf) return;
 			const args = (p.args as Array<{ value?: unknown; description?: string }>) ?? [];
 			const text = args.map((a) => (a.value !== undefined ? String(a.value) : (a.description ?? ""))).join(" ");
 			buf.push({ level: String(p.type ?? "log"), text, timestamp: Date.now() });
 			if (buf.length > MAX_ENTRIES) buf.splice(0, buf.length - MAX_ENTRIES);
 		} else if (method === "Runtime.exceptionThrown") {
-			const buf = consoleBuffers.get(tabId);
+			const buf = replaying.get(tabId) ?? consoleBuffers.get(tabId);
 			if (!buf) return;
 			const details = p.exceptionDetails as { text?: string; exception?: { description?: string } } | undefined;
 			buf.push({
@@ -682,15 +694,198 @@ function installCaptureListener(): void {
 	chrome.tabs.onRemoved.addListener((tabId) => {
 		consoleBuffers.delete(tabId);
 		networkBuffers.delete(tabId);
+		pendingGaps.delete(tabId);
+		void forgetCaptureMarker(tabId);
 	});
 }
 
-/** Start buffering console output for a tab (no-op if already on). */
-export async function enableConsoleCapture(tabId: number): Promise<void> {
+/** Install the debugger listeners at worker start: an event that wakes a stopped worker is dropped without them. */
+export function installCdpListeners(): void {
+	installListeners();
 	installCaptureListener();
-	if (consoleBuffers.has(tabId)) return;
-	consoleBuffers.set(tabId, []);
-	await cdpSend(tabId, "Runtime.enable");
+}
+
+// ---- When capture stops --------------------------------------------------------------
+//
+// Console and network capture lives in the debugging session of the tab: it ends when the
+// debugger detaches (the user closed the infobar, DevTools took over, the page's target was
+// replaced or crashed, Tabkyra released it), and it is lost when the worker restarts. None of
+// that is an error for the next call, and the buffers still hold what came before, so a read
+// would look live. Each ending is recorded here; the next read says so, attaches again and
+// starts capturing again.
+
+type CaptureKind = "console" | "network";
+
+interface CaptureGap {
+	/** When it stopped, in ms; 0 when only "after capture began" is known (a worker restart). */
+	at: number;
+	reason: string;
+}
+
+/** Endings not yet reported, by tab. They apply to both kinds; each kind reports them once. */
+const pendingGaps = new Map<number, { console: CaptureGap[]; network: CaptureGap[] }>();
+
+/** What a read says when capture had stopped: the gaps, when capture resumed and what that means. */
+export interface CaptureReport {
+	stopped: Array<{ at: string | null; reason: string }>;
+	resumedAt: string;
+	note: string;
+}
+
+function describeDetach(reason: string): string {
+	switch (reason) {
+		case "canceled_by_user":
+			return "the debugger was cancelled (its infobar was closed or Cancel was pressed)";
+		case "target_closed":
+			return "the page's target was closed or replaced (the tab crashed, was discarded or moved to a new process)";
+		case "replaced_with_devtools":
+			return "DevTools was opened on the tab and took the debugger over";
+		default:
+			return `the browser detached the debugger (${reason})`;
+	}
+}
+
+/** Record that capture on this tab ended just now, for each kind that was on. */
+function noteCaptureStopped(tabId: number, reason: string): void {
+	const gap: CaptureGap = { at: Date.now(), reason };
+	const kinds: CaptureKind[] = [];
+	if (consoleBuffers.has(tabId)) kinds.push("console");
+	if (networkBuffers.has(tabId)) kinds.push("network");
+	if (kinds.length === 0) return;
+	const pending = pendingGaps.get(tabId) ?? { console: [], network: [] };
+	for (const kind of kinds) {
+		// One ending can announce itself twice (our own detach, then the browser's event): one gap.
+		const list = pending[kind];
+		if (list.length === 0 || gap.at - list[list.length - 1].at > 2000) list.push(gap);
+	}
+	pendingGaps.set(tabId, pending);
+}
+
+const MARKER_KEY = "capture_tabs";
+type Markers = Record<string, Partial<Record<CaptureKind, number>>>;
+
+async function readMarkers(): Promise<Markers> {
+	try {
+		return ((await chrome.storage.session.get(MARKER_KEY))[MARKER_KEY] as Markers | undefined) ?? {};
+	} catch {
+		return {};
+	}
+}
+
+/** Survives a worker restart (the in-memory buffers do not), so a restart is not mistaken for a first call. */
+async function writeCaptureMarker(tabId: number, kind: CaptureKind, since: number): Promise<void> {
+	try {
+		const markers = await readMarkers();
+		markers[tabId] = { ...markers[tabId], [kind]: since };
+		await chrome.storage.session.set({ [MARKER_KEY]: markers });
+	} catch {
+		/* session storage unavailable: a restart goes unnoticed */
+	}
+}
+
+async function forgetCaptureMarker(tabId: number): Promise<void> {
+	try {
+		const markers = await readMarkers();
+		if (!(tabId in markers)) return;
+		delete markers[tabId];
+		await chrome.storage.session.set({ [MARKER_KEY]: markers });
+	} catch {
+		/* nothing to forget */
+	}
+}
+
+async function debuggerAttachedNow(tabId: number): Promise<boolean> {
+	try {
+		return (await chrome.debugger.getTargets()).some((t) => t.tabId === tabId && t.attached);
+	} catch {
+		return true;
+	}
+}
+
+/**
+ * Make sure console or network capture is running on the tab, and say what was lost if it had
+ * stopped. The first call starts capture and returns nothing. Later, it returns a report when
+ * capture ended since the last read of this kind (a detach, a crash, a worker restart); it has
+ * attached again and turned capture back on by then, so what follows is live.
+ */
+export async function ensureCapture(tabId: number, kind: CaptureKind): Promise<CaptureReport | undefined> {
+	installCdpListeners();
+	const buffers = kind === "console" ? consoleBuffers : networkBuffers;
+	const gaps: CaptureGap[] = [];
+	const known = buffers.has(tabId);
+	if (!known) {
+		const since = (await readMarkers())[tabId]?.[kind];
+		if (since !== undefined)
+			gaps.push({
+				at: 0,
+				reason: `the extension's background worker restarted after capture began at ${new Date(since).toISOString()}; what the page logged since is missing`,
+			});
+		buffers.set(tabId, (kind === "console" ? [] : new Map()) as never);
+	} else {
+		const pending = pendingGaps.get(tabId)?.[kind] ?? [];
+		gaps.push(...pending);
+		// A detach nobody announced: the debugger is gone but no event said so.
+		if (pending.length === 0 && !(attachedTabs.has(tabId) && (await debuggerAttachedNow(tabId))))
+			gaps.push({ at: Date.now(), reason: "the debugger was no longer attached and nothing said when it detached" });
+	}
+	const pendingForTab = pendingGaps.get(tabId);
+	if (pendingForTab) pendingForTab[kind] = [];
+	if (known && gaps.length === 0) return undefined;
+	// Attach again if needed (this throws, saying why, when the user cancelled the debugger),
+	// then turn the domain on in the fresh debugging session.
+	try {
+		await ensureAttached(tabId);
+		await sendRaw(tabId, "Inspector.enable").catch(() => undefined);
+		if (kind === "network") await send(tabId, "Network.enable");
+		else await enableRuntimeMerging(tabId, known);
+	} catch (err) {
+		// Not capturing: keep what was reported, so the next read tries again and says it.
+		if (!known) buffers.delete(tabId);
+		else if (gaps.length) {
+			const pending = pendingGaps.get(tabId) ?? { console: [], network: [] };
+			pending[kind].unshift(...gaps);
+			pendingGaps.set(tabId, pending);
+		}
+		throw err;
+	}
+	const resumed = Date.now();
+	await writeCaptureMarker(tabId, kind, resumed);
+	if (gaps.length === 0) return undefined;
+	return {
+		stopped: gaps.map((g) => ({ at: g.at ? new Date(g.at).toISOString() : null, reason: g.reason })),
+		resumedAt: new Date(resumed).toISOString(),
+		note: `${kind === "console" ? "Console" : "Network"} capture had stopped; it is on again from resumedAt. ${kind === "console" ? "The browser replays the page's console history when capture resumes, so messages logged meanwhile are usually there (marked replayed, timestamped at the replay); those from a page you have since left, or after a crash, are missing." : "Requests made while it was off are missing."} Entries older than the gap are from before it stopped.`,
+	};
+}
+
+/**
+ * Runtime.enable makes the browser replay the page's console history. After a gap that history
+ * holds what the page logged meanwhile, but also what the buffer already has: keep the buffer,
+ * add only the entries it lacks, and mark them as replayed.
+ */
+async function enableRuntimeMerging(tabId: number, afterGap: boolean): Promise<void> {
+	const buffer = consoleBuffers.get(tabId) ?? [];
+	const replay: ConsoleEntry[] = [];
+	replaying.set(tabId, replay);
+	try {
+		await send(tabId, "Runtime.enable");
+		// The replay is delivered as events around the reply.
+		await new Promise((r) => setTimeout(r, 30));
+	} finally {
+		replaying.delete(tabId);
+	}
+	const unmatched = [...buffer];
+	for (const entry of replay) {
+		const i = unmatched.findIndex((e) => e.level === entry.level && e.text === entry.text);
+		if (i >= 0) unmatched.splice(i, 1);
+		else buffer.push(afterGap ? { ...entry, replayed: true } : entry);
+	}
+	if (buffer.length > MAX_ENTRIES) buffer.splice(0, buffer.length - MAX_ENTRIES);
+}
+
+/** Start buffering console output for a tab (no-op if already on). */
+export async function enableConsoleCapture(tabId: number): Promise<CaptureReport | undefined> {
+	return ensureCapture(tabId, "console");
 }
 
 export function readConsole(tabId: number, clear = false): ConsoleEntry[] {
@@ -700,11 +895,14 @@ export function readConsole(tabId: number, clear = false): ConsoleEntry[] {
 	return out;
 }
 
-export async function enableNetworkCapture(tabId: number): Promise<void> {
-	installCaptureListener();
-	if (networkBuffers.has(tabId)) return;
-	networkBuffers.set(tabId, new Map());
-	await cdpSend(tabId, "Network.enable");
+export async function enableNetworkCapture(tabId: number): Promise<CaptureReport | undefined> {
+	return ensureCapture(tabId, "network");
+}
+
+/** Capture for a tab Tabkyra just opened, started before its first page loads. */
+export async function startCapture(tabId: number): Promise<void> {
+	await ensureCapture(tabId, "console");
+	await ensureCapture(tabId, "network");
 }
 
 /** One captured request in full: its entry, the request body's shape and a JSON response, capped. */
@@ -823,7 +1021,8 @@ function cap(text: string, max: number): string {
 
 /** Whether read_network has turned capture on for this tab. */
 export function networkCapturing(tabId: number): boolean {
-	return networkBuffers.has(tabId);
+	// Stopped and not yet reported is not capturing: what is buffered is from before.
+	return networkBuffers.has(tabId) && (pendingGaps.get(tabId)?.network.length ?? 0) === 0;
 }
 
 export function readNetwork(tabId: number, clear = false): NetworkEntry[] {

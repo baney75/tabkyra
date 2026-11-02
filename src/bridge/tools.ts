@@ -636,7 +636,7 @@ export const handlers: Record<string, Handler> = {
 
 	"console.read": async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
-		await enableConsoleCapture(tabId);
+		const capture = await enableConsoleCapture(tabId);
 		let entries = readConsole(tabId, params.clear === true);
 		if (params.onlyErrors === true) entries = entries.filter((e) => e.level === "error");
 		const pattern = str(params, "pattern");
@@ -644,14 +644,14 @@ export const handlers: Record<string, Handler> = {
 			const re = new RegExp(pattern, "i");
 			entries = entries.filter((e) => re.test(e.text));
 		}
-		return { entries: entries.slice(-(num(params, "limit") ?? 100)) };
+		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
 	},
 
 	"network.read": async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
-		await enableNetworkCapture(tabId);
+		const capture = await enableNetworkCapture(tabId);
 		const requestId = str(params, "requestId");
-		if (requestId) return { request: await readNetworkDetail(tabId, requestId) };
+		if (requestId) return { ...(capture ? { capture } : {}), request: await readNetworkDetail(tabId, requestId) };
 		let entries = readNetwork(tabId, params.clear === true);
 		const pattern = str(params, "urlPattern");
 		if (pattern) {
@@ -660,6 +660,6 @@ export const handlers: Record<string, Handler> = {
 		}
 		const type = str(params, "type");
 		if (type) entries = entries.filter((e) => e.type?.toLowerCase() === type.toLowerCase());
-		return { entries: entries.slice(-(num(params, "limit") ?? 100)) };
+		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
 	},
 };

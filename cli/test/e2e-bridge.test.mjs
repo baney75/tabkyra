@@ -1054,3 +1054,85 @@ test("find ranks exact and whole-word name matches first, names unlabeled checkb
 	const task = lines(await tool("find", { query: "second task" }));
 	assert.ok(task.some((l) => /checkbox "second task"/.test(l)), task.join("\n"));
 });
+
+
+/** The console entries of a read_console result, as their texts. */
+const texts = (result) => result.entries.map((e) => e.text);
+const readConsole = async (args = {}) => JSON.parse(await tool("read_console", args));
+const readNetwork = async (args = {}) => JSON.parse(await tool("read_network", args));
+const logInPage = (message) => js(`console.log(${JSON.stringify(message)}); 1`, { world: "main" });
+const fetchInPage = (path) => js(`fetch(${JSON.stringify(path)}).then((r) => r.status)`, { world: "main" });
+
+test("capture that stopped (a detach nobody announced) is reported by the next read, and resumes", async () => {
+	await go("edit");
+	await readConsole();
+	await readNetwork();
+	await logInPage("before-gap");
+	await fetchInPage("/before-gap");
+	const first = await readConsole();
+	assert.deepEqual(texts(first), ["before-gap"]);
+	assert.equal(first.capture, undefined, "nothing had stopped yet");
+
+	// The debugger leaves without an onDetach event; the next input re-attaches silently.
+	await sw(`chrome.debugger.detach({ tabId: ${await tabOn("edit")} }).then(() => true)`);
+	await logInPage("during-gap");
+	await fetchInPage("/during-gap");
+
+	const afterGap = await readConsole();
+	assert.ok(afterGap.capture, "the read must say capture stopped, not return old data as live");
+	assert.match(afterGap.capture.stopped[0].reason, /detached without notice/);
+	assert.ok(afterGap.capture.stopped[0].at && afterGap.capture.resumedAt);
+	assert.match(afterGap.capture.note, /on again/);
+	assert.equal(texts(afterGap).filter((t) => t === "before-gap").length, 1, "a replayed entry doubled an old one");
+	const net = await readNetwork();
+	assert.ok(net.capture, "network capture stopped too");
+	assert.match(net.capture.stopped[0].reason, /detached without notice/);
+	assert.ok(net.entries.some((e) => e.url.endsWith("/before-gap")));
+	assert.ok(!net.entries.some((e) => e.url.endsWith("/during-gap")), "a request from the gap cannot be there");
+
+	// Reported once; events after the gap are captured.
+	await logInPage("after-gap");
+	await fetchInPage("/after-gap");
+	const later = await readConsole();
+	assert.equal(later.capture, undefined);
+	assert.ok(texts(later).includes("after-gap"));
+	const laterNet = await readNetwork();
+	assert.equal(laterNet.capture, undefined);
+	assert.ok(laterNet.entries.some((e) => e.url.endsWith("/after-gap")));
+});
+
+test("capture that stopped because the page crashed is reported, and resumes after the reload", async () => {
+	await go("edit");
+	await readConsole();
+	await logInPage("before-crash");
+	const id = await tabOn("edit");
+	const page = (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "page" && t.url === `${pageUrl}edit`);
+	await cdp(page.webSocketDebuggerUrl, "Page.crash").catch(() => {});
+	await until(() => sw(`chrome.tabs.get(${id}).then(() => true)`), 5000, "the crashed tab");
+	await sw(`chrome.tabs.reload(${id}).then(() => true)`);
+	await until(async () => (await js("document.readyState")) === "complete", 30_000, "the reloaded page");
+	await logInPage("after-crash");
+	const result = await readConsole();
+	assert.ok(result.capture, "a crash must be reported");
+	assert.match(result.capture.stopped[0].reason, /crashed/);
+	assert.ok(texts(result).includes("after-crash"));
+	assert.equal((await readConsole()).capture, undefined);
+});
+
+test("capture lost to a worker restart is reported, and resumes", async () => {
+	await go("edit");
+	await readConsole();
+	await logInPage("before-restart");
+	const version = await (await fetch(`http://${devtools}/json/version`)).json();
+	const worker = (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "service_worker" && t.url.includes(EXTENSION_ID));
+	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId: worker.id });
+	await connected();
+	const result = await readConsole();
+	assert.ok(result.capture, "a restart must be reported, not look like a first call");
+	assert.match(result.capture.stopped[0].reason, /background worker restarted/);
+	// What is logged from here on is captured again.
+	await logInPage("after-restart");
+	const later = await readConsole();
+	assert.equal(later.capture, undefined);
+	assert.ok(texts(later).includes("after-restart"));
+});
