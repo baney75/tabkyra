@@ -72,6 +72,14 @@ export interface HandlerContext {
 	 * call was waiting on the frozen page); it must send no more input after that.
 	 */
 	aborted(): boolean;
+	/**
+	 * Call just before the last input event of an action goes out, with the result to report. If a
+	 * dialog opens from here on, the action itself worked, and the call returns this result with a
+	 * note about the dialog instead of failing with dialog_open (which made agents repeat it).
+	 * `notRun`, if set, is how many later steps of the call did not run. Call with no result once
+	 * the action has finished, so a dialog from a later step is not blamed on this one.
+	 */
+	delivered(result?: Record<string, unknown>): void;
 }
 
 function stopIfAborted(ctx: HandlerContext): void {
@@ -439,7 +447,9 @@ export const handlers: Record<string, Handler> = {
 		await click(tabId, p.x, p.y, {
 			button: button === "right" || button === "middle" ? button : "left",
 			clickCount: num(params, "clickCount") ?? 1,
+			beforeLastEvent: () => ctx.delivered({ clicked: p }),
 		});
+		ctx.delivered();
 		return { clicked: p };
 	},
 
@@ -598,8 +608,14 @@ export const handlers: Record<string, Handler> = {
 			}
 			const withTab = params.tabId !== undefined && sub.tabId === undefined ? { ...sub, tabId: params.tabId } : sub;
 			stopIfAborted(ctx);
+			// A step that opens a dialog worked, but the steps after it did not run: say so.
+			const stepCtx: HandlerContext = {
+				...ctx,
+				delivered: (result) =>
+					ctx.delivered(result ? { ...result, steps: done.length + 1, notRun: steps.length - i - 1 } : undefined),
+			};
 			try {
-				done.push(await handlers[kind](ctx, withTab));
+				done.push(await handlers[kind](stepCtx, withTab));
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				throw new BridgeError(ERR.BAD_PARAMS, `step ${i} (${kind}) failed after ${i} steps succeeded: ${message}`);

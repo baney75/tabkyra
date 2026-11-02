@@ -201,7 +201,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
 				ASK_USER_INSTRUCTION,
 				THREADS_INSTRUCTION,
-				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
+				"A click that opens an alert/confirm/prompt box succeeds and says so in its result: do not repeat it, answer the box with handle_dialog. If a call fails with dialog_open, a box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
 				"If a call fails with interrupted, the browser connection dropped while it ran: check the page with read_page before you repeat it.",
 			]
 				// A scoped session hears only about the tools it has, so a small model isn't sent
@@ -600,9 +600,11 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			try {
 				const res = (await client.call("actions", args)) as {
 					steps: number;
+					/** Set when a step opened a dialog: what it is and how to answer it. */
+					note?: string;
 					screenshot?: { data: string; mimeType: string; width: number; height: number };
 				};
-				const content: Content[] = [{ type: "text", text: `${res.steps} steps done.` }];
+				const content: Content[] = [{ type: "text", text: `${res.steps} steps done.${res.note ? ` ${res.note}` : ""}` }];
 				if (res.screenshot) {
 					content.unshift({ type: "image", data: res.screenshot.data, mimeType: res.screenshot.mimeType });
 					content.push({

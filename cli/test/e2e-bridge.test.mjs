@@ -220,6 +220,12 @@ async function connected() {
 	);
 }
 
+/** Navigate, waiting for the extension to connect first (these tests may run alone). */
+async function go(path) {
+	await connected();
+	await tool("navigate", { url: `${pageUrl}${path}` });
+}
+
 async function until(fn, ms, what) {
 	const end = Date.now() + ms;
 	let last;
@@ -559,18 +565,27 @@ test("web components, a frame in a shadow root, a row's own button, a frame fiel
 	assert.match(field.text, /covered by div "Cookie settings"/);
 });
 
-test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {
-	await tool("navigate", { url: `${pageUrl}dialog` });
+test("a click that opens a confirm() box succeeds and says so; calls after it fail with dialog_open until handle_dialog answers", async () => {
+	await go("dialog");
 	const started = Date.now();
-	const blocked = await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
-	const message = blocked.content.map((c) => c.text).join("\n");
-	assert.ok(blocked.isError, message);
-	assert.match(message, /dialog_open: A confirm dialog is open on tab \d+: "Really delete\?"/);
+	const clicked = await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
+	const message = clicked.content.map((c) => c.text).join("\n");
+	// The click worked: an error here made agents repeat it.
+	assert.ok(!clicked.isError, message);
+	const result = JSON.parse(message);
+	assert.equal(result.dialog.type, "confirm");
+	assert.equal(result.dialog.message, "Really delete?");
+	assert.match(result.dialog.tabId.toString(), /^\d+$/);
+	assert.match(result.note, /confirm dialog is now open on tab \d+: "Really delete\?"/);
+	assert.match(result.note, /handle_dialog/);
 	assert.ok(Date.now() - started < 10_000, "the call must not wait for the 90 s handler timeout");
-	// While it is open, page calls fail the same way instead of hanging.
+	// While it is open, page calls fail instead of hanging, and a second click did not run.
 	const frozen = await mcp.callTool({ name: "get_page_text", arguments: {} });
 	assert.ok(frozen.isError);
-	assert.match(frozen.content[0].text, /dialog_open/);
+	assert.match(frozen.content[0].text, /dialog_open: A confirm dialog is open on tab \d+: "Really delete\?"/);
+	const again = await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
+	assert.ok(again.isError, again.content[0].text);
+	assert.match(again.content[0].text, /^dialog_open: /);
 
 	const answered = JSON.parse(await tool("handle_dialog", { accept: false }));
 	assert.equal(answered.type, "confirm");
@@ -583,6 +598,19 @@ test("a confirm() box fails the call at once with its text, and handle_dialog an
 	const none = await mcp.callTool({ name: "handle_dialog", arguments: { accept: true } });
 	assert.ok(none.isError);
 	assert.match(none.content[0].text, /No dialog is open/);
+});
+
+test("a click step in actions that opens a dialog succeeds and says how many steps did not run", async () => {
+	await go("dialog");
+	const res = await mcp.callTool({ name: "actions", arguments: { steps: [{ click: { selector: "#del" } }, { wait: 100 }, { wait: 100 }] } });
+	const text = res.content.map((c) => c.text).join("\n");
+	assert.ok(!res.isError, text);
+	assert.match(text, /^1 steps done\. /);
+	assert.match(text, /confirm dialog is now open on tab \d+: "Really delete\?"/);
+	assert.match(text, /The 2 later steps did not run/);
+	assert.match(text, /handle_dialog/);
+	await tool("handle_dialog", { accept: false });
+	assert.match(await tool("get_page_text"), /kept/);
 });
 
 test("an alert() fired while the page loads is reported, not a 90 s hang", async () => {
@@ -873,12 +901,6 @@ test("subscription sign-ins: the side panel reaches the native host through the 
 });
 
 // ---- tool fixes (2026-11-02 live test) ------------------------------------------------------
-
-/** Navigate, waiting for the extension to connect first (these tests may run alone). */
-async function go(path) {
-	await connected();
-	await tool("navigate", { url: `${pageUrl}${path}` });
-}
 
 /** run_js in the page, parsed. */
 async function js(code, args = {}) {

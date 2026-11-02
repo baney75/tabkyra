@@ -351,7 +351,13 @@ export async function click(
 	tabId: number,
 	x: number,
 	y: number,
-	options: { button?: MouseButton; clickCount?: number; modifiers?: number } = {},
+	options: {
+		button?: MouseButton;
+		clickCount?: number;
+		modifiers?: number;
+		/** Called just before the click's last mouse event is sent. */
+		beforeLastEvent?: () => void;
+	} = {},
 ): Promise<void> {
 	const button = options.button ?? "left";
 	const clickCount = options.clickCount ?? 1;
@@ -359,6 +365,7 @@ export async function click(
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
 	for (let i = 1; i <= clickCount; i++) {
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, clickCount: i, modifiers });
+		if (i === clickCount) options.beforeLastEvent?.();
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button, clickCount: i, modifiers });
 	}
 }
