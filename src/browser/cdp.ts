@@ -5,6 +5,7 @@
  * on tabs that are not visible; nothing here activates a tab.
  */
 
+import { ConsoleBuffer, type ConsoleEntry, MAX_ENTRIES } from "./console-buffer.js";
 import { editingCommands, isMacBrowser } from "./key-commands.js";
 import { bodyShape, maskJsonResponse, maskUrl } from "./mask-body.js";
 
@@ -609,13 +610,7 @@ export async function pressKey(tabId: number, chord: string): Promise<void> {
 // Console and network capture (per tab ring buffers, on demand)
 // ---------------------------------------------------------------------------
 
-export interface ConsoleEntry {
-	level: string;
-	text: string;
-	timestamp: number;
-	/** The browser replayed it from the page's console history when capture was turned back on: the timestamp is the replay's. */
-	replayed?: boolean;
-}
+export type { ConsoleEntry };
 
 export interface NetworkEntry {
 	requestId: string;
@@ -635,11 +630,8 @@ export interface NetworkEntry {
 	failed?: string;
 }
 
-const MAX_ENTRIES = 300;
-const consoleBuffers = new Map<number, ConsoleEntry[]>();
+const consoleBuffers = new Map<number, ConsoleBuffer>();
 const networkBuffers = new Map<number, Map<string, NetworkEntry>>();
-/** Console entries arriving while Runtime.enable replays the page's history, kept apart to merge (see ensureCapture). */
-const replaying = new Map<number, ConsoleEntry[]>();
 let captureListenerInstalled = false;
 
 function installCaptureListener(): void {
@@ -654,20 +646,27 @@ function installCaptureListener(): void {
 		} else if (method === "Inspector.targetCrashed") {
 			noteCaptureStopped(tabId, "the page crashed");
 		} else if (method === "Runtime.consoleAPICalled") {
-			const buf = replaying.get(tabId) ?? consoleBuffers.get(tabId);
+			const buf = consoleBuffers.get(tabId);
 			if (!buf) return;
 			const args = (p.args as Array<{ value?: unknown; description?: string }>) ?? [];
 			const text = args.map((a) => (a.value !== undefined ? String(a.value) : (a.description ?? ""))).join(" ");
-			buf.push({ level: String(p.type ?? "log"), text, timestamp: Date.now() });
-			if (buf.length > MAX_ENTRIES) buf.splice(0, buf.length - MAX_ENTRIES);
+			buf.add({
+				level: String(p.type ?? "log"),
+				text,
+				timestamp: typeof p.timestamp === "number" ? p.timestamp : Date.now(),
+				contextId: typeof p.executionContextId === "number" ? p.executionContextId : undefined,
+			});
 		} else if (method === "Runtime.exceptionThrown") {
-			const buf = replaying.get(tabId) ?? consoleBuffers.get(tabId);
+			const buf = consoleBuffers.get(tabId);
 			if (!buf) return;
-			const details = p.exceptionDetails as { text?: string; exception?: { description?: string } } | undefined;
-			buf.push({
+			const details = p.exceptionDetails as
+				| { text?: string; exception?: { description?: string }; executionContextId?: number }
+				| undefined;
+			buf.add({
 				level: "error",
 				text: details?.exception?.description ?? details?.text ?? "Uncaught exception",
-				timestamp: Date.now(),
+				timestamp: typeof p.timestamp === "number" ? p.timestamp : Date.now(),
+				contextId: details?.executionContextId,
 			});
 		} else if (method === "Network.requestWillBeSent") {
 			const buf = networkBuffers.get(tabId);
@@ -826,7 +825,8 @@ export async function ensureCapture(tabId: number, kind: CaptureKind): Promise<C
 				at: 0,
 				reason: `the extension's background worker restarted after capture began at ${new Date(since).toISOString()}; what the page logged since is missing`,
 			});
-		buffers.set(tabId, (kind === "console" ? [] : new Map()) as never);
+		if (kind === "console") consoleBuffers.set(tabId, new ConsoleBuffer());
+		else networkBuffers.set(tabId, new Map());
 	} else {
 		const pending = pendingGaps.get(tabId)?.[kind] ?? [];
 		gaps.push(...pending);
@@ -843,7 +843,12 @@ export async function ensureCapture(tabId: number, kind: CaptureKind): Promise<C
 		await ensureAttached(tabId);
 		await sendRaw(tabId, "Inspector.enable").catch(() => undefined);
 		if (kind === "network") await send(tabId, "Network.enable");
-		else await enableRuntimeMerging(tabId, known);
+		else {
+			// Runtime.enable replays the page's console history. What is stamped before now is history;
+			// after a gap (a detach, a worker restart) the entries it adds are marked replayed.
+			consoleBuffers.get(tabId)?.startReplay(Date.now(), known || gaps.length > 0);
+			await send(tabId, "Runtime.enable");
+		}
 	} catch (err) {
 		// Not capturing: keep what was reported, so the next read tries again and says it.
 		if (!known) buffers.delete(tabId);
@@ -860,33 +865,8 @@ export async function ensureCapture(tabId: number, kind: CaptureKind): Promise<C
 	return {
 		stopped: gaps.map((g) => ({ at: g.at ? new Date(g.at).toISOString() : null, reason: g.reason })),
 		resumedAt: new Date(resumed).toISOString(),
-		note: `${kind === "console" ? "Console" : "Network"} capture had stopped; it is on again from resumedAt. ${kind === "console" ? "The browser replays the page's console history when capture resumes, so messages logged meanwhile are usually there (marked replayed, timestamped at the replay); those from a page you have since left, or after a crash, are missing." : "Requests made while it was off are missing."} Entries older than the gap are from before it stopped.`,
+		note: `${kind === "console" ? "Console" : "Network"} capture had stopped; it is on again from resumedAt. ${kind === "console" ? "The browser replays the page's console history when capture resumes, so messages logged meanwhile are usually there (marked replayed; the timestamp is when the page logged it); those from a page you have since left, or after a crash, are missing." : "Requests made while it was off are missing."} Entries older than the gap are from before it stopped.`,
 	};
-}
-
-/**
- * Runtime.enable makes the browser replay the page's console history. After a gap that history
- * holds what the page logged meanwhile, but also what the buffer already has: keep the buffer,
- * add only the entries it lacks, and mark them as replayed.
- */
-async function enableRuntimeMerging(tabId: number, afterGap: boolean): Promise<void> {
-	const buffer = consoleBuffers.get(tabId) ?? [];
-	const replay: ConsoleEntry[] = [];
-	replaying.set(tabId, replay);
-	try {
-		await send(tabId, "Runtime.enable");
-		// The replay is delivered as events around the reply.
-		await new Promise((r) => setTimeout(r, 30));
-	} finally {
-		replaying.delete(tabId);
-	}
-	const unmatched = [...buffer];
-	for (const entry of replay) {
-		const i = unmatched.findIndex((e) => e.level === entry.level && e.text === entry.text);
-		if (i >= 0) unmatched.splice(i, 1);
-		else buffer.push(afterGap ? { ...entry, replayed: true } : entry);
-	}
-	if (buffer.length > MAX_ENTRIES) buffer.splice(0, buffer.length - MAX_ENTRIES);
 }
 
 /** Start buffering console output for a tab (no-op if already on). */
@@ -895,10 +875,7 @@ export async function enableConsoleCapture(tabId: number): Promise<CaptureReport
 }
 
 export function readConsole(tabId: number, clear = false): ConsoleEntry[] {
-	const buf = consoleBuffers.get(tabId) ?? [];
-	const out = [...buf];
-	if (clear) buf.length = 0;
-	return out;
+	return consoleBuffers.get(tabId)?.read(clear, Date.now()) ?? [];
 }
 
 export async function enableNetworkCapture(tabId: number): Promise<CaptureReport | undefined> {

@@ -1125,6 +1125,30 @@ test("capture that stopped (a detach nobody announced) is reported by the next r
 	assert.ok(laterNet.entries.some((e) => e.url.endsWith("/after-gap")));
 });
 
+test("after a gap, messages already read and cleared do not come back, and the same text on a new page is kept", async () => {
+	await go("edit");
+	await readConsole({ clear: true });
+	await logInPage("cleared-msg");
+	assert.deepEqual(texts(await readConsole({ clear: true })), ["cleared-msg"]);
+	await logInPage("ready");
+	const id = await tabOn("edit");
+	await sw(`chrome.debugger.detach({ tabId: ${id} }).then(() => true)`);
+	await logInPage("during-gap");
+	const first = await readConsole();
+	assert.ok(first.capture);
+	assert.ok(!texts(first).includes("cleared-msg"), `a cleared message came back: ${JSON.stringify(first.entries)}`);
+	assert.equal(texts(first).filter((t) => t === "ready").length, 1, "the buffered entry was doubled by the replay");
+
+	// A new page (another document) logs the same text while the debugger is away.
+	await sw(`chrome.debugger.detach({ tabId: ${id} }).then(() => true)`);
+	await tool("navigate", { url: `${pageUrl}edit?b` });
+	await logInPage("ready");
+	const second = await readConsole();
+	assert.ok(second.capture);
+	assert.equal(texts(second).filter((t) => t === "ready").length, 2, "the new page's message was taken for the old one");
+	assert.ok(!texts(second).includes("cleared-msg"));
+});
+
 test("capture that stopped because the page crashed is reported, and resumes after the reload", async () => {
 	await go("edit");
 	await readConsole();
@@ -1154,6 +1178,8 @@ test("capture lost to a worker restart is reported, and resumes", async () => {
 	const result = await readConsole();
 	assert.ok(result.capture, "a restart must be reported, not look like a first call");
 	assert.match(result.capture.stopped[0].reason, /background worker restarted/);
+	// Anything from before the restart that the browser replays is flagged, never passed off as live.
+	for (const entry of result.entries.filter((x) => x.text === "before-restart")) assert.equal(entry.replayed, true, JSON.stringify(entry));
 	// What is logged from here on is captured again.
 	await logInPage("after-restart");
 	const later = await readConsole();
