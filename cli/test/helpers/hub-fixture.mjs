@@ -57,11 +57,11 @@ export function tempRoot(prefix) {
 }
 
 /** Start `tabkyra hub serve` on a free loopback port with a public URL on the same address. */
-export async function startHub(root, name = "hub") {
+export async function startHub(root, name = "hub", { port: wantedPort, env: extraEnv = {} } = {}) {
 	const m = machine(root, name);
-	const port = await freePort();
+	const port = wantedPort ?? (await freePort());
 	const url = `http://127.0.0.1:${port}`;
-	const proc = spawn(process.execPath, [cli, "hub", "serve", "--port", String(port), "--public-url", url], { env: m.env });
+	const proc = spawn(process.execPath, [cli, "hub", "serve", "--port", String(port), "--public-url", url], { env: { ...m.env, ...extraEnv } });
 	let out = "";
 	await new Promise((resolve, reject) => {
 		proc.stdout.on("data", (d) => {
@@ -100,16 +100,40 @@ export async function startHub(root, name = "hub") {
 }
 
 /** Enroll a device with a connect code and start its `link run`. Resolves once the hub sees it online. */
-export async function addDevice(root, hub, name, { manage = false, scope, wait = true } = {}) {
+export async function addDevice(root, hub, name, { manage = false, scope, wait = true, beforeRun } = {}) {
 	const m = machine(root, `device-${hub.name}-${name}`);
 	const code = hub.json(["hub", "code", "--name", name, ...(manage ? ["--manage"] : []), "--json"]).code;
 	const linked = m.run(["link", hub.url, "--code", code, "--no-service", "--json", ...(scope ? ["--scope", scope] : [])]);
 	if (linked.code !== 0) throw new Error(`link failed: ${linked.out}`);
+	beforeRun?.(m);
 	const proc = spawn(process.execPath, [cli, "link", "run"], { env: m.env });
 	let out = "";
 	proc.stdout.on("data", (d) => (out += d));
 	proc.stderr.on("data", (d) => (out += d));
-	const device = { ...m, proc, code, logs: () => out, kill: (signal = "SIGKILL") => proc.kill(signal) };
+	const device = {
+		...m,
+		proc,
+		code,
+		logs: () => out,
+		kill: (signal = "SIGKILL") => proc.kill(signal),
+		/** What link run last wrote about itself: connected, sessions, requests and streams in flight. */
+		live: () => {
+			try {
+				return JSON.parse(readFileSync(m.file("link-live.json"), "utf8"));
+			} catch {
+				return undefined;
+			}
+		},
+		async waitLive(predicate, what, timeoutMs = 15_000) {
+			const deadline = Date.now() + timeoutMs;
+			while (Date.now() < deadline) {
+				const live = this.live();
+				if (live && predicate(live)) return live;
+				await sleep(100);
+			}
+			throw new Error(`timed out waiting for ${what}: ${JSON.stringify(this.live())}`);
+		},
+	};
 	if (wait) await hub.waitDevices((d) => d[name]?.online, `${name} to come online`);
 	return device;
 }
