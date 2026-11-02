@@ -159,8 +159,11 @@ async function openCapturedTab(
 	try {
 		return { tab, ready: !(await navigateTabDetailed(tabId, url, { timeoutMs })).timedOut, note };
 	} catch (err) {
-		if (tolerant && err instanceof Error && err.message.startsWith("Navigation to "))
-			return { tab, ready: true, note };
+		if (tolerant && err instanceof Error && err.message.startsWith("Navigation to ")) {
+			// Opened, as tabs_create always did, but say the page is not there.
+			const notLoaded = `The page did not load: ${err.message}`;
+			return { tab, ready: true, note: note ? `${notLoaded} ${note}` : notLoaded };
+		}
 		throw err;
 	}
 }

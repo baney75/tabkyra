@@ -1327,3 +1327,10 @@ test("an actions step that is interrupted keeps the extension's own message, not
 	assert.match(message, /Check the page with read_page before you repeat it/);
 	assert.doesNotMatch(message, /connection dropped/);
 });
+
+test("tabs_create on a page that cannot load opens the tab and says the page did not load", async () => {
+	await connected();
+	const created = JSON.parse(await tool("tabs_create", { url: "https://example.invalid/" }));
+	assert.match(created.note, /^The page did not load: Navigation to https:\/\/example\.invalid\/ failed: /);
+	await tool("tabs_close", { tabId: created.tabId });
+});
