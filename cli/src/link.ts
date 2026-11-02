@@ -34,6 +34,7 @@ import {
 import { configDir, DEFAULT_GRANT, normalizePublicUrl } from "./oauth.ts";
 import { createToken, HUB_CALLER_HEADER, HUB_SCOPES_HEADER, LINK_TOKEN_NAME, pruneLinkTokens, revokeLinkTokens, revokeToken, SCOPES, serve } from "./remote.ts";
 import { installService, LINK_SERVICE, removeService, serviceFile, serviceLogHint } from "./service.ts";
+import { splitText } from "./text-split.ts";
 import { c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 
@@ -261,7 +262,15 @@ export async function linkRun(): Promise<void> {
 	};
 	let stopping = false;
 	let ws: WebSocket | undefined;
-	let active = new Map<string, { req: ReturnType<typeof httpRequest>; stream: boolean }>();
+	/** `initialize`: a POST that opens a session. `cancelled`: the hub gave up on it before its head came back. */
+	interface Active {
+		req: ReturnType<typeof httpRequest>;
+		stream: boolean;
+		initialize: boolean;
+		headSeen: boolean;
+		cancelled: boolean;
+	}
+	let active = new Map<string, Active>();
 	const log = (line: string) => process.stderr.write(`[tabkyra link] ${line}\n`);
 
 	const readBusy = (): boolean => {
@@ -287,6 +296,13 @@ export async function linkRun(): Promise<void> {
 		if (active.delete(id)) counts();
 	};
 
+	/** DELETE a session on the local server with this run's own link token. */
+	function closeLocalSession(sessionId: string): void {
+		const req = httpRequest({ host: "127.0.0.1", port: localPort, path: "/mcp", method: "DELETE", headers: { authorization: `Bearer ${token}`, "mcp-session-id": sessionId } }, (res) => res.resume());
+		req.on("error", () => undefined);
+		req.end();
+	}
+
 	function answer(socket: WebSocket, frame: ReqFrame): void {
 		const id = frame.id;
 		const stream = frame.method === "GET";
@@ -299,7 +315,17 @@ export async function linkRun(): Promise<void> {
 		headers.authorization = `Bearer ${token}`;
 		const body = Buffer.from(frame.body, "utf8");
 		if (body.length) headers["content-length"] = String(body.length);
+		const entry: Active = { req: undefined as unknown as Active["req"], stream, initialize: frame.method === "POST" && frame.headers["mcp-session-id"] === undefined, headSeen: false, cancelled: false };
 		const req = httpRequest({ host: "127.0.0.1", port: localPort, path: "/mcp", method: frame.method, headers }, (res) => {
+			entry.headSeen = true;
+			if (entry.cancelled) {
+				// The hub gave up on this initialize before we answered, so it will never route the session the local server just made: close it.
+				const orphan = res.headers["mcp-session-id"];
+				if (typeof orphan === "string") closeLocalSession(orphan);
+				res.resume();
+				forget(id);
+				return;
+			}
 			const out: Headers = {};
 			for (const name of FORWARD_RESPONSE_HEADERS) {
 				const v = res.headers[name];
@@ -308,7 +334,7 @@ export async function linkRun(): Promise<void> {
 			sendFrame(socket, { t: "head", id, status: res.statusCode ?? 502, headers: out });
 			const decoder = new StringDecoder("utf8");
 			const push = (text: string) => {
-				for (let at = 0; at < text.length; at += CHUNK_BYTES) sendFrame(socket, { t: "chunk", id, data: text.slice(at, at + CHUNK_BYTES) });
+				for (const piece of splitText(text, CHUNK_BYTES)) sendFrame(socket, { t: "chunk", id, data: piece });
 			};
 			res.on("data", (chunk: Buffer) => {
 				const text = decoder.write(chunk);
@@ -340,7 +366,8 @@ export async function linkRun(): Promise<void> {
 			sendFrame(socket, { t: "error", id, message: err.message.slice(0, 200) });
 			forget(id);
 		});
-		active.set(id, { req, stream });
+		entry.req = req;
+		active.set(id, entry);
 		counts();
 		req.end(body);
 	}
@@ -415,7 +442,14 @@ export async function linkRun(): Promise<void> {
 				const frame = parseHubFrame(data.toString("utf8"));
 				if (!frame) return;
 				if (frame.t === "cancel") {
-					active.get(frame.id)?.req.destroy();
+					const entry = active.get(frame.id);
+					if (!entry) return;
+					// An initialize still waiting for its head can't just be dropped: the local server goes on to make the session. Let it answer, then close what it made.
+					if (entry.initialize && !entry.headSeen) {
+						entry.cancelled = true;
+						return;
+					}
+					entry.req.destroy();
 					forget(frame.id);
 					return;
 				}
