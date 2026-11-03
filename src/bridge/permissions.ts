@@ -71,7 +71,22 @@ export function hostAllowed(host: string, allowed: string[]): boolean {
 	return allowed.some((a) => host === a || host.endsWith(`.${a}`));
 }
 
+/**
+ * Tabkyra's own pages (the side panel, Settings, the Connect relay's callers) are never a place a
+ * bridge client may take a tab: a page there runs with the extension's rights. Refused in every
+ * mode, and never put to the user as a permission prompt.
+ */
+export function isOwnExtensionUrl(url: string): boolean {
+	try {
+		const u = new URL(url);
+		return u.protocol === "chrome-extension:" && u.hostname.toLowerCase() === String(chrome.runtime.id).toLowerCase();
+	} catch {
+		return false;
+	}
+}
+
 export async function isUrlAllowed(url: string): Promise<boolean> {
+	if (isOwnExtensionUrl(url)) return false;
 	if ((await getPermissionMode()) === "allow_all") return true;
 	const host = hostOf(url);
 	if (!host) return url === "about:blank";

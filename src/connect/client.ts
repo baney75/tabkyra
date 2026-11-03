@@ -10,6 +10,8 @@ import {
 	type ConnectReply,
 	type ConnectStatus,
 	type DeviceCode,
+	GESTURE_METHODS,
+	type Gesture,
 	type JoinResult,
 } from "./types.js";
 
@@ -74,10 +76,30 @@ function connect(): chrome.runtime.Port {
 	return next;
 }
 
+export const NO_GESTURE_MESSAGE = "Click the button in the Tabkyra side panel to do that.";
+
+/**
+ * Proof the person just clicked: a one-use token minted while the browser still counts the click as
+ * live (about five seconds). The relay checks it again and refuses a method that needs one without it.
+ */
+function mintGesture(method: string): Gesture | undefined {
+	if (!GESTURE_METHODS.includes(method)) return undefined;
+	if (globalThis.navigator?.userActivation?.isActive !== true)
+		throw new ConnectRequestError("no_gesture", NO_GESTURE_MESSAGE);
+	return { token: crypto.randomUUID(), at: Date.now() };
+}
+
 function request<T>(method: string, params?: Record<string, unknown>, onProgress?: Waiter["onProgress"]): Promise<T> {
 	const id = ++seq;
 	const limit = method === "joinHub" ? JOIN_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
 	return new Promise<T>((resolve, reject) => {
+		let gesture: Gesture | undefined;
+		try {
+			gesture = mintGesture(method);
+		} catch (err) {
+			reject(err);
+			return;
+		}
 		const waiter: Waiter = {
 			resolve: resolve as (value: unknown) => void,
 			reject,
@@ -94,7 +116,7 @@ function request<T>(method: string, params?: Record<string, unknown>, onProgress
 		waiters.set(id, waiter);
 		waiter.rearm();
 		try {
-			connect().postMessage({ id, method, ...(params ? { params } : {}) });
+			connect().postMessage({ id, method, ...(params ? { params } : {}), ...(gesture ? { gesture } : {}) });
 		} catch (err) {
 			waiters.delete(id);
 			clearTimeout(waiter.timer);

@@ -163,6 +163,11 @@ test("the join form is hidden while the helper reports a config problem; loading
 	assert.match(/private async join\(\)[\s\S]*?\n\t\}\n/.exec(tab)[0], /finally \{\s*this\.joining = undefined;/);
 });
 
+/** Stand in for the browser's record of a recent click. */
+function activation(isActive) {
+	Object.defineProperty(globalThis.navigator, "userActivation", { value: { isActive }, configurable: true });
+}
+
 /** A chrome.runtime.connect whose port records what is posted and lets the test answer. */
 function fakePort() {
 	const port = { posted: [], listener: undefined, onDisconnect: undefined };
@@ -181,6 +186,7 @@ function fakePort() {
 test("a request the helper never answers fails with no_reply after 20 s (30 s for joinHub), and an answer cancels the timer", async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const port = fakePort();
+	activation(true);
 	const client = await import("../src/connect/client.ts?timeout");
 	assert.equal(client.REQUEST_TIMEOUT_MS, 20_000);
 	assert.equal(client.JOIN_TIMEOUT_MS, 30_000);
@@ -244,4 +250,173 @@ test("Join a hub asks for a Device code from Add a device, takes an optional nam
 	assert.match(tab, /this\.joinName\.trim\(\) \|\| undefined/);
 	assert.match(tab, /Tabkyra may have linked this device\. Reopen Settings to check\./);
 	assert.match(tab, /linkWritten && err instanceof ConnectRequestError && err\.code === "no_reply"/);
+});
+
+// ---------- round 2 review fixes ----------
+
+const ORIGIN = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
+
+test("first-F1: the relay serves only the side panel document, never a tab, another page or a content script", async () => {
+	const { isSidePanelPort } = await import("../src/connect/gate.ts");
+	const panel = `${ORIGIN}sidepanel.html`;
+	assert.equal(isSidePanelPort({ url: panel }, ORIGIN), true);
+	assert.equal(isSidePanelPort({ url: panel, origin: ORIGIN.slice(0, -1) }, ORIGIN), true);
+	assert.equal(isSidePanelPort({ url: `${panel}?x=1#y` }, ORIGIN), true);
+	// The panel opened as a tab: a browser-driving client can reach that.
+	assert.equal(isSidePanelPort({ url: panel, tab: { id: 7 } }, ORIGIN), false, "a tab-hosted panel was served");
+	// Other extension pages, a content script, a look-alike, nothing.
+	for (const url of [`${ORIGIN}options.html`, `${ORIGIN}sidepanel.html/x`, `${ORIGIN}x/sidepanel.html`, "https://evil.example/sidepanel.html", "chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/sidepanel.html", undefined, "not a url"]) {
+		assert.equal(isSidePanelPort({ url }, ORIGIN), false, String(url));
+	}
+	assert.equal(isSidePanelPort({ url: panel, origin: "https://evil.example" }, ORIGIN), false);
+	assert.equal(isSidePanelPort(undefined, ORIGIN), false);
+});
+
+test("first-F1: approvalCode, deviceCode and joinHub need a fresh, unused gesture token; the others do not", async () => {
+	const { GestureGate } = await import("../src/connect/gate.ts");
+	let now = 1_000_000;
+	const gate = new GestureGate(() => now);
+	for (const method of ["approvalCode", "deviceCode", "joinHub"]) {
+		assert.equal(gate.allows(method, undefined), false, `${method} without a gesture`);
+		assert.equal(gate.allows(method, { token: `t-${method}`, at: now }), true, `${method} with one`);
+		assert.equal(gate.allows(method, { token: `t-${method}`, at: now }), false, `${method}: a token works once`);
+	}
+	assert.equal(gate.allows("approvalCode", { token: "old", at: now - 5_001 }), false, "stale");
+	assert.equal(gate.allows("approvalCode", { token: "edge", at: now - 5_000 }), true);
+	assert.equal(gate.allows("approvalCode", { token: "future", at: now + 5_000 }), false, "from the future");
+	for (const method of ["status", "setBusy", "setTheme"]) assert.equal(gate.allows(method, undefined), true, method);
+	// The same token can be reused after it has aged out of the gate's memory only if it is also too old to pass.
+	now += 60_000;
+	assert.equal(gate.allows("joinHub", { token: "t-joinHub", at: now - 59_000 }), false);
+	// check.ts carries a well-formed gesture and refuses a malformed one.
+	const { checkConnectRequest } = await import("../src/connect/check.ts");
+	assert.deepEqual(checkConnectRequest({ id: 1, method: "joinHub", gesture: { token: "a", at: 5 } }).request.gesture, { token: "a", at: 5 });
+	for (const gesture of [null, "x", { token: 5, at: 1 }, { token: "a" }, { token: "a", at: "1" }, { token: "x".repeat(65), at: 1 }]) assert.equal(checkConnectRequest({ id: 1, method: "joinHub", gesture }).ok, false, JSON.stringify(gesture));
+});
+
+test("first-F1: the real relay refuses a tab-hosted panel and a missing gesture, and never forwards the gesture to the host", async () => {
+	const { installFakeChrome } = await import("./fake-chrome.mjs");
+	installFakeChrome();
+	let onConnect;
+	chrome.runtime.getURL = () => ORIGIN;
+	chrome.runtime.onConnect = { addListener: (f) => (onConnect = f) };
+	const relay = await import("../src/connect/relay.ts");
+	const sent = [];
+	relay.startConnectRelay();
+	assert.equal(typeof onConnect, "function");
+	const mkPort = (sender) => {
+		const port = { name: "tabkyra-connect", sender, replies: [], disconnected: false, listener: undefined };
+		port.postMessage = (m) => port.replies.push(m);
+		port.disconnect = () => (port.disconnected = true);
+		port.onMessage = { addListener: (f) => (port.listener = f) };
+		port.onDisconnect = { addListener() {} };
+		return port;
+	};
+	const tabPort = mkPort({ url: `${ORIGIN}sidepanel.html`, tab: { id: 3 } });
+	onConnect(tabPort);
+	assert.equal(tabPort.disconnected, true, "a tab-hosted panel kept its port");
+	assert.equal(tabPort.listener, undefined);
+
+	const panelPort = mkPort({ url: `${ORIGIN}sidepanel.html` });
+	onConnect(panelPort);
+	assert.equal(panelPort.disconnected, false);
+	panelPort.listener({ id: 1, method: "approvalCode" });
+	assert.equal(panelPort.replies[0].error.code, "no_gesture");
+	assert.equal(sent.length, 0, "a code request without a gesture reached the host");
+	// Past the gate the request goes on to the host (none is connected here, so it answers no_host).
+	panelPort.listener({ id: 2, method: "status" });
+	assert.equal(panelPort.replies[1].error.code, "no_host");
+	panelPort.listener({ id: 3, method: "approvalCode", gesture: { token: "once", at: Date.now() } });
+	assert.equal(panelPort.replies[2].error.code, "no_host");
+	panelPort.listener({ id: 4, method: "approvalCode", gesture: { token: "once", at: Date.now() } });
+	assert.equal(panelPort.replies[3].error.code, "no_gesture", "a spent token worked twice");
+	// The frame the relay builds names its fields; the gesture is not among them.
+	assert.doesNotMatch(/sendConnect\(\{[\s\S]*?\}\)/.exec(read("src/connect/relay.ts"))[0], /gesture/);
+});
+
+test("first-F1: the panel's client mints a gesture only while the click is live, and the relay's check has no test allowance", async () => {
+	const port = fakePort();
+	const client = await import("../src/connect/client.ts?gesture");
+	activation(false);
+	const refused = await client.connectApprovalCode().catch((e) => e);
+	assert.equal(refused.code, "no_gesture");
+	assert.equal(port.posted.length, 0, "a request left the panel without a click");
+	assert.equal((await client.connectJoinHub("https://h.example.com", "TK-ABCD-EFGH", undefined, () => {}).catch((e) => e)).code, "no_gesture");
+	activation(true);
+	void client.connectApprovalCode().catch(() => {});
+	assert.equal(port.posted.at(-1).method, "approvalCode");
+	assert.match(port.posted.at(-1).gesture.token, /^[0-9a-f-]{36}$/);
+	assert.ok(Math.abs(port.posted.at(-1).gesture.at - Date.now()) < 1000);
+	void client.connectStatus().catch(() => {});
+	assert.equal(port.posted.at(-1).gesture, undefined, "status needs no gesture");
+	// Release builds carry no way around the check: the relay's decision is the gate's, with no flag.
+	const relay = read("src/connect/relay.ts");
+	const gate = read("src/connect/gate.ts");
+	assert.match(relay, /if \(!isSidePanelPort\(port\.sender, origin\)\)/);
+	for (const text of [relay, gate]) assert.doesNotMatch(text.replace(/\/\*[\s\S]*?\*\//g, ""), /TEST|process\.env|__TABKYRA|allowTab|globalThis/i);
+});
+
+test("first-F1: the bridge never opens Tabkyra's own pages, in any permission mode, and never asks the user about them", async () => {
+	const { installFakeChrome } = await import("./fake-chrome.mjs");
+	const fake = installFakeChrome?.();
+	void fake;
+	chrome.runtime.id = "abcdefghijklmnopabcdefghijklmnop";
+	const perms = await import("../src/bridge/permissions.ts?own");
+	const own = `chrome-extension://${chrome.runtime.id}/sidepanel.html`;
+	assert.equal(perms.isOwnExtensionUrl(own), true);
+	assert.equal(perms.isOwnExtensionUrl(`chrome-extension://${chrome.runtime.id.toUpperCase()}/`), true);
+	assert.equal(perms.isOwnExtensionUrl("chrome-extension://someotherextensionid/"), false);
+	assert.equal(perms.isOwnExtensionUrl("https://example.com/"), false);
+	assert.equal(perms.isOwnExtensionUrl("not a url"), false);
+	await perms.setPermissionMode("allow_all");
+	assert.equal(await perms.isUrlAllowed("https://example.com/"), true);
+	assert.equal(await perms.isUrlAllowed(own), false, "allow_all opened the extension's own page");
+	await perms.setPermissionMode("ask");
+	await perms.allowHost(chrome.runtime.id);
+	assert.equal(await perms.isUrlAllowed(own), false, "an allowed host named like the extension id opened its page");
+	// native.ts checks before it asks the user, and says why.
+	const native = read("src/bridge/native.ts");
+	assert.match(native, /async function askPermission\([^)]*\): Promise<boolean> \{\s*if \(isOwnExtensionUrl\(url\)\) return false;/);
+	assert.match(native, /isOwnExtensionUrl\(url\)\s*\? "Not allowed to open Tabkyra's own pages\."/);
+});
+
+test("first-F2: joining shows the hub's host, the warning and the scopes, and sends nothing until Confirm; success lists the scopes", () => {
+	const tab = read("src/dialogs/ConnectTab.ts");
+	const format = read("src/connect/format.ts");
+	assert.match(format, /The hub's owner will be able to open sites and read pages in this browser as you\./);
+	assert.match(tab, /\$\{JOIN_WARNING\}/);
+	assert.match(tab, /Join \$\{this\.confirming\.host\}\?/);
+	assert.match(tab, /This device will allow: \$\{this\.confirming\.scopes/);
+	// The Join hub button asks; only Confirm calls join().
+	assert.match(tab, /children: "Join hub",[\s\S]*?onClick: \(\) => this\.askJoin\(s\)/);
+	assert.match(tab, /children: "Confirm", onClick: \(\) => void this\.join\(\)/);
+	assert.doesNotMatch(tab, /children: "Join hub",[\s\S]{0,80}void this\.join\(\)/);
+	// What was confirmed is what is sent.
+	assert.match(/private async join\(\)[\s\S]*?\n\t\}\n/.exec(tab)[0], /connectJoinHub\(\s*confirmed\.hubUrl,\s*confirmed\.code,\s*confirmed\.name,/);
+	assert.match(tab, /The hub may use this browser for: \$\{allowed\}/);
+});
+
+test("hubHost names the host as typed, a pasted connector URL included", async () => {
+	const { hubHost } = await import("../src/connect/format.ts");
+	assert.equal(hubHost("https://hub.example.com"), "hub.example.com");
+	assert.equal(hubHost(" https://hub.example.com/mcp "), "hub.example.com");
+	assert.equal(hubHost("hub.example.com"), "hub.example.com");
+	assert.equal(hubHost("http://127.0.0.1:8787"), "127.0.0.1:8787");
+	assert.equal(hubHost(""), undefined);
+	assert.equal(hubHost("https://"), undefined);
+	assert.equal(hubHost("a b"), undefined);
+});
+
+test("sol-F4: join progress and the outcome render outside the join form, and a service failure says to run tabkyra link status", () => {
+	const tab = read("src/dialogs/ConnectTab.ts");
+	const form = /private joinForm\([\s\S]*?\n\t\}\n/.exec(tab)[0];
+	assert.doesNotMatch(form, /joinMessage|this\.joining\b[^)]*role="status"/, "the message is still drawn inside the form that the route change removes");
+	assert.match(/private joinNotice\(\)[\s\S]*?\n\t\}\n/.exec(tab)[0], /this\.joinMessage/);
+	assert.match(/render\(\): TemplateResult[\s\S]*$/.exec(tab)[0], /\$\{this\.joinNotice\(\)\}[\s\S]*\$\{this\.assistants\(s\)\}/);
+});
+
+test("second-S2: on the link route the connector URL is the hub's own, shown once a code exists", () => {
+	const tab = read("src/dialogs/ConnectTab.ts");
+	assert.match(tab, /s\.route === "link"\s*\?\s*validApprovalCode\(this\.approval\)\s*\?\s*this\.command\("Connector URL", this\.approval\.connectorUrl\)/);
+	assert.match(tab, /Get a code to see the connector URL\./);
 });
