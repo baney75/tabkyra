@@ -860,8 +860,10 @@ Issues #94 and #97, follow-ups from #93.
   manager, 429 rate limited, otherwise "refused"; the CLI still prints the hub's words). The
   device-code origin the hub returns is normalized before use, and the hub normalizes it before
   sending. Whatever else passes through from the library is our own sentence, cut at 200 characters.
-- `link off` takes the `link.json` lock before it stops the service or revokes the token; when the
-  lock is held it changes nothing and exits 1.
+- `link off` stops the service and revokes the token outside the `link.json` lock (a service manager
+  can be slow), then takes the lock only to remove `link.json` and the live file; when the lock is
+  held it keeps `link.json`, says the service is stopped, and exits 1. Every lock file carries an
+  owner token, so a holder whose lock was taken as stale never deletes the next holder's.
 - `/link/code` for a device code returns the hub's public origin; the manager checks it (an
   origin only, canonical) and uses it in the command and the prompt. On the link route the panel
   shows the connector URL the hub returned with the approval code, and "Get a code to see the

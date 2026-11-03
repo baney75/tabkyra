@@ -30,7 +30,7 @@ import { CodeLimitError, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
 import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
-import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
+import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusyAsync } from "./link.ts";
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
 import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
@@ -167,7 +167,9 @@ const cap = (text: string): string => (text.length > MAX_PASSTHROUGH ? `${text.s
  * can carry a file's contents (a JSON parse error quotes the start of the file) or a path, so it
  * becomes a fixed sentence, naming `file` when the failure is about reading one.
  */
-function safeMessage(err: unknown, file?: string): string {
+export function safeMessage(err: unknown, file?: string): string {
+	// Text that quotes the hub or the network never passes: a hub can echo a request header, and the credential is in it.
+	if (err instanceof HubCodeError) return hubCodeFailure(err.status).message;
 	if (err instanceof ConnectError || err instanceof CodeLimitError || err instanceof LinkError) return cap(err.message);
 	if (err instanceof LockTimeoutError) return "Another Tabkyra window is busy with that. Try again in a moment.";
 	return file ? unreadable(file) : GENERIC_FAILURE;
@@ -205,7 +207,7 @@ export class ConnectService {
 		}
 	}
 
-	private run(call: ConnectCall, progress: (p: Record<string, unknown>) => void): Promise<unknown> | unknown {
+	private async run(call: ConnectCall, progress: (p: Record<string, unknown>) => void): Promise<unknown> {
 		switch (call.method) {
 			case "status":
 				return this.status();
@@ -223,7 +225,7 @@ export class ConnectService {
 				}
 				if (!linked) throw new ConnectError("unavailable", "Only a device linked to a hub can be marked busy.");
 				try {
-					setLinkBusy(call.busy);
+					await setLinkBusyAsync(call.busy);
 				} catch (err) {
 					throw new ConnectError("failed", safeMessage(err, linkFile()));
 				}
@@ -456,8 +458,9 @@ function enrollFailure(result: Extract<EnrollResult, { kind: "failed" }>, hubUrl
 		case "malformed":
 			return new ConnectError("failed", "The hub's answer wasn't one Tabkyra accepts, so nothing was linked.");
 		case "hub":
-			if (cause.status === 401) return new ConnectError("failed", "That code is wrong, expired or already used. Get a new device code on the hub and try again.");
+			if (cause.status === 401 && cause.invalidCode) return new ConnectError("failed", "That code is wrong, expired or already used. Get a new device code on the hub and try again.");
 			if (cause.status === 429) return new ConnectError("rate_limited", "The hub says there were too many wrong codes. Wait 15 minutes and try again.");
+			if (cause.status === 401) return new ConnectError("failed", "The hub refused this request. Check the hub's address and try again.");
 			return new ConnectError("failed", "The hub refused to add this computer. Check the hub's device list and try again.");
 		default:
 			return new ConnectError("failed", GENERIC_FAILURE);

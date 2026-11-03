@@ -303,9 +303,13 @@ test("first-F1: approvalCode, deviceCode and joinHub need a fresh, unused gestur
 	for (const gesture of [null, "x", { token: 5, at: 1 }, { token: "a" }, { token: "a", at: "1" }, { token: "x".repeat(65), at: 1 }]) assert.equal(checkConnectRequest({ id: 1, method: "joinHub", gesture }).ok, false, JSON.stringify(gesture));
 });
 
-test("first-F1: the real relay refuses a tab-hosted panel and a missing gesture, and never forwards the gesture to the host", async () => {
+test("first-F1: the real relay refuses a tab-hosted panel and a missing gesture, and never forwards the gesture to the host", async (t) => {
 	const { installFakeChrome } = await import("./fake-chrome.mjs");
+	const priorChrome = globalThis.chrome;
 	installFakeChrome();
+	t.after(() => {
+		globalThis.chrome = priorChrome;
+	});
 	let onConnect;
 	chrome.runtime.getURL = () => ORIGIN;
 	chrome.runtime.onConnect = { addListener: (f) => (onConnect = f) };
@@ -314,6 +318,9 @@ test("first-F1: the real relay refuses a tab-hosted panel and a missing gesture,
 	const native = await import("../src/bridge/native.ts");
 	// The bridge and the relay arm 20 s timers; unref them so the run does not wait for them.
 	const realSetTimeout = globalThis.setTimeout;
+	t.after(() => {
+		globalThis.setTimeout = realSetTimeout;
+	});
 	globalThis.setTimeout = (fn, ms, ...rest) => {
 		const t = realSetTimeout(fn, ms, ...rest);
 		if (ms >= 1000) t.unref?.();
@@ -322,6 +329,12 @@ test("first-F1: the real relay refuses a tab-hosted panel and a missing gesture,
 	let hostPort;
 	const realConnectNative = chrome.runtime.connectNative;
 	chrome.runtime.connectNative = (...args) => (hostPort = realConnectNative.apply(chrome.runtime, args));
+	// The bridge has no stop: its timers were made while setTimeout was wrapped (unref'd), and the fake host port is detached at the end.
+	t.after(() => {
+		chrome.runtime.connectNative = realConnectNative;
+		hostPort?.onMessage.listeners.splice(0);
+		hostPort?.onDisconnect.listeners.splice(0);
+	});
 	native.startBridge();
 	assert.ok(hostPort, "the native port did not connect");
 	const sent = { get length() { return hostPort.sent.filter((m) => m.type === "connect").length; }, frames: () => hostPort.sent.filter((m) => m.type === "connect") };
@@ -396,9 +409,14 @@ test("first-F1: the bridge never opens Tabkyra's own pages, in any permission mo
 	assert.equal(perms.isOwnExtensionUrl(own), true);
 	assert.equal(perms.isOwnExtensionUrl(`chrome-extension://${chrome.runtime.id.toUpperCase()}/`), true);
 	assert.equal(perms.isOwnExtensionUrl("chrome-extension://someotherextensionid/"), false);
+	assert.equal(perms.isOwnExtensionUrl(`blob:chrome-extension://${chrome.runtime.id}/6f1c0c3e-2f4b-4a53-9d40-0e1f9f3a7b11`), true);
+	assert.equal(perms.isOwnExtensionUrl(`filesystem:chrome-extension://${chrome.runtime.id}/temporary/x.html`), true);
+	assert.equal(perms.isOwnExtensionUrl("blob:https://example.com/6f1c0c3e-2f4b-4a53-9d40-0e1f9f3a7b11"), false);
+	assert.equal(perms.isOwnExtensionUrl("filesystem:https://example.com/temporary/x.html"), false);
 	assert.equal(perms.isOwnExtensionUrl("https://example.com/"), false);
 	assert.equal(perms.isOwnExtensionUrl("not a url"), false);
 	await perms.setPermissionMode("allow_all");
+	assert.equal(await perms.isUrlAllowed(`blob:chrome-extension://${chrome.runtime.id}/6f1c0c3e-2f4b-4a53-9d40-0e1f9f3a7b11`), false);
 	assert.equal(await perms.isUrlAllowed("https://example.com/"), true);
 	assert.equal(await perms.isUrlAllowed(own), false, "allow_all opened the extension's own page");
 	await perms.setPermissionMode("ask");

@@ -175,16 +175,17 @@ export type EnrollFailure =
 	| { type: "scopes" }
 	| { type: "unreachable" }
 	| { type: "malformed" }
-	| { type: "hub"; status: number };
+	| { type: "hub"; status: number; invalidCode: boolean };
 
 /** A sentence from link.ts that is safe to show a person as written: it never quotes a file. */
 export class LinkError extends Error {}
 
 /**
  * A code request the hub turned down, or could not be reached for. The message quotes the hub (the
- * CLI prints it); the Connect host never shows it, and words `status` itself.
+ * CLI prints it); the Connect host never shows it, and words `status` itself. Not a LinkError, so
+ * nothing that passes LinkError sentences through can pass it.
  */
-export class HubCodeError extends LinkError {
+export class HubCodeError extends Error {
 	constructor(
 		message: string,
 		/** The HTTP status the hub answered; undefined when it could not be reached. */
@@ -251,14 +252,14 @@ function reservationStale(file: string, now: number): boolean {
 /**
  * Take the cross-process join reservation, or return undefined when another live join holds it. Created
  * with O_EXCL under the short link.json lock, so a stale one is replaced by exactly one taker. Throws
- * LockTimeoutError when the link.json lock itself is held.
+ * LockTimeoutError when the link.json lock itself is held. Async: the native host calls it, and a held lock must not freeze its event loop.
  */
-export function takeJoinReservation(now = Date.now()): { release: () => void } | undefined {
+export async function takeJoinReservation(now = Date.now()): Promise<{ release: () => Promise<void> } | undefined> {
 	const file = joiningFile();
 	const nonce = randomBytes(8).toString("hex");
-	const taken = withFileLock(
+	const taken = await withFileLockAsync(
 		linkFile(),
-		() => {
+		async () => {
 			for (let attempt = 0; attempt < 2; attempt++) {
 				try {
 					writeFileSync(file, JSON.stringify({ pid: process.pid, nonce, at: now }), { flag: "wx", mode: 0o600 });
@@ -275,7 +276,7 @@ export function takeJoinReservation(now = Date.now()): { release: () => void } |
 	);
 	if (!taken) return undefined;
 	return {
-		release: () => {
+		release: async () => {
 			const drop = () => {
 				try {
 					if ((JSON.parse(readFileSync(file, "utf8")) as { nonce?: unknown }).nonce === nonce) rmSync(file, { force: true });
@@ -284,7 +285,7 @@ export function takeJoinReservation(now = Date.now()): { release: () => void } |
 				}
 			};
 			try {
-				withFileLock(linkFile(), drop, REQUEST_LOCK_MS);
+				await withFileLockAsync(linkFile(), async () => drop(), REQUEST_LOCK_MS);
 			} catch {
 				drop();
 			}
@@ -314,9 +315,9 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) return failed(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}.`, { type: "scopes" });
 	if (options.service && !service.valid()) return failed(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then link again (or pass --no-service). Nothing was changed.`, { type: "launcher" });
 	// Reserve before the hub sees the code: a competing join is refused here, with its code unspent.
-	let reservation: ReturnType<typeof takeJoinReservation>;
+	let reservation: Awaited<ReturnType<typeof takeJoinReservation>>;
 	try {
-		reservation = takeJoinReservation();
+		reservation = await takeJoinReservation();
 	} catch (err) {
 		if (err instanceof LockTimeoutError) return failed("Another Tabkyra join is starting on this computer. Try again in a moment. Nothing was changed.", { type: "busy" });
 		throw err;
@@ -336,7 +337,7 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 		} catch (err) {
 			return failed(`Couldn't reach ${options.hubUrl}: ${err instanceof Error ? err.message : String(err)}`, { type: "unreachable" });
 		}
-		if (result.status !== 200) return failed(`The hub refused: ${describe(result.body, result.status)}`, { type: "hub", status: result.status });
+		if (result.status !== 200) return failed(`The hub refused: ${describe(result.body, result.status)}`, { type: "hub", status: result.status, invalidCode: result.body.error === "invalid_code" });
 		const body = result.body;
 		if (typeof body.deviceId !== "string" || typeof body.secret !== "string" || typeof body.name !== "string") return failed(`The hub refused: ${describe(body, result.status)}`, { type: "malformed" });
 		// The hub chooses the name; it ends up in link.json, the service and the panel, so it must be a plain one.
@@ -365,7 +366,7 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 			}
 		}
 	} finally {
-		reservation.release();
+		await reservation.release();
 	}
 	say(`${sym.ok} Linked as ${c.bold(name)} (${deviceId})${config.manage ? ", a manager device" : ""}. Wrote ${c.dim(linkFile())}`);
 	say(`${sym.dot} This device allows: ${scopes.join(", ")}`);
@@ -758,30 +759,29 @@ export async function linkStatus(json: boolean): Promise<number> {
 }
 
 export async function linkOff(): Promise<number> {
-	let failed = false;
 	let config: LinkConfig | undefined;
 	try {
 		config = loadLinkConfig();
 	} catch (err) {
 		console.log(`${sym.warn} ${err instanceof Error ? err.message : String(err)}`);
 	}
-	// Under the lock the panel's Busy toggle uses, so a toggle in flight can't write link.json back after this removes it.
-	// The lock comes first: when it is held, nothing is changed (no service stopped, no token revoked).
+	// The service manager and the hub can be slow, so neither runs under the lock: stop the service and revoke the token first
+	// (when that fails, link.json is kept), then take link.json's lock only to remove the files. The panel's Busy toggle uses the
+	// same lock, so one in flight can't write link.json back after this removes it.
+	const service = removeService(LINK_SERVICE);
+	if (!service.ok) {
+		console.error(`${sym.fail} ${service.failure}`);
+		return 1;
+	}
+	for (const note of service.notes) console.log(`${sym.ok} ${note}`);
+	const n = revokeLinkTokens();
+	if (n) console.log(`${sym.ok} Revoked the local link token.`);
+	rmSync(pidFile(), { force: true });
 	let removed = false;
 	try {
 		withFileLock(
 			linkFile(),
 			() => {
-				const service = removeService(LINK_SERVICE);
-				if (!service.ok) {
-					console.error(`${sym.fail} ${service.failure}`);
-					failed = true;
-					return;
-				}
-				for (const note of service.notes) console.log(`${sym.ok} ${note}`);
-				const n = revokeLinkTokens();
-				if (n) console.log(`${sym.ok} Revoked the local link token.`);
-				rmSync(pidFile(), { force: true });
 				removed = existsSync(linkFile());
 				rmSync(linkFile(), { force: true });
 				rmSync(liveFile(), { force: true });
@@ -790,26 +790,28 @@ export async function linkOff(): Promise<number> {
 		);
 	} catch (err) {
 		if (!(err instanceof LockTimeoutError)) throw err;
-		console.error(`${sym.fail} ${linkFile()} is locked by another Tabkyra window. Nothing was changed. Try again in a moment.`);
+		console.error(`${sym.fail} ${linkFile()} is locked by another Tabkyra window. The service is stopped; run tabkyra link off again in a moment to remove it.`);
 		return 1;
 	}
-	if (failed) return 1;
 	console.log(config || removed ? `${sym.ok} Removed ${c.dim(linkFile())}.${config ? ` The hub still lists ${config.name} until you run: tabkyra hub remove ${config.name}` : ""}` : `${sym.dot} No link.json; nothing else to remove.`);
 	return 0;
 }
 
-/** Mark this device busy or not. Throws when it isn't linked. The read and the write happen under link.json's lock, so a `link off` can't be undone by a toggle already in flight. */
+function markBusy(busy: boolean): void {
+	const config = loadLinkConfig();
+	if (!config) throw new LinkError("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
+	const { busy: _old, ...rest } = config;
+	writeJsonPrivate(linkFile(), busy ? { ...rest, busy: true } : rest);
+}
+
+/** Mark this device busy or not. Throws when it isn't linked. The read and the write happen under link.json's lock, so a `link off` can't be undone by a toggle already in flight. CLI only: it blocks while it waits for the lock. */
 export function setLinkBusy(busy: boolean): void {
-	withFileLock(
-		linkFile(),
-		() => {
-			const config = loadLinkConfig();
-			if (!config) throw new LinkError("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
-			const { busy: _old, ...rest } = config;
-			writeJsonPrivate(linkFile(), busy ? { ...rest, busy: true } : rest);
-		},
-		REQUEST_LOCK_MS,
-	);
+	withFileLock(linkFile(), () => markBusy(busy), REQUEST_LOCK_MS);
+}
+
+/** `setLinkBusy` for the native host: waiting for the lock leaves its event loop running. */
+export async function setLinkBusyAsync(busy: boolean): Promise<void> {
+	await withFileLockAsync(linkFile(), async () => markBusy(busy), REQUEST_LOCK_MS);
 }
 
 export function linkBusy(value: string | undefined): number {

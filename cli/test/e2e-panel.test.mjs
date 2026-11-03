@@ -8,7 +8,7 @@
 //   TABKYRA_NO_BUMP=1 TABKYRA_OUT_DIR=$PWD/dist-chrome npm run build   (repo root)
 // and a Playwright Chromium (`npx playwright-core install chromium`).
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -21,6 +21,7 @@ const extensionDir = join(here, "..", "..", "dist-chrome");
 const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
 const PANEL = `chrome-extension://${EXTENSION_ID}/sidepanel.html`;
 
+const { isSidePanelPort } = await loadTs(`export { isSidePanelPort } from "@src/../../src/connect/gate.ts";`);
 const { PRESETS, contrast } = await loadTs(`export { PRESETS, contrast } from "@src/../../src/appearance/palettes.ts";`);
 
 let profile;
@@ -33,7 +34,7 @@ before(async () => {
 		channel: "chromium",
 		headless: true,
 		viewport: { width: 400, height: 860 },
-		args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`, "--use-mock-keychain", "--password-store=basic"],
+		args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`, "--use-mock-keychain", "--password-store=basic", "--remote-debugging-port=0"],
 	});
 	await context.route(/^https?:\/\//, (r) => r.abort());
 	// A stand-in for the native host behind the Connect relay: no route, so Connect shows its setup commands.
@@ -240,6 +241,97 @@ test("the real Connect relay closes a port from the panel opened as a tab", asyn
 				}),
 		);
 		assert.equal(outcome, "disconnected");
+	} finally {
+		await page.close();
+	}
+});
+
+test("a real side panel (no tab) is served by the real Connect relay, not disconnected", async () => {
+	// Chromium opens a genuine side panel even headless: a second sidepanel.html document that chrome.tabs.getCurrent() cannot place in a tab.
+	const worker = context.serviceWorkers().find((w) => w.url().startsWith(`chrome-extension://${EXTENSION_ID}/`)) ?? (await context.waitForEvent("serviceworker"));
+	// Record every port's sender as Chrome built it, next to the relay's own listener.
+	await worker.evaluate(() => {
+		globalThis.__senders = [];
+		chrome.runtime.onConnect.addListener((port) => {
+			if (port.name === "tabkyra-connect") globalThis.__senders.push(JSON.parse(JSON.stringify(port.sender ?? null)));
+		});
+	});
+	const page = await context.newPage();
+	try {
+		await page.goto(PANEL);
+		// Let the app finish drawing, or it replaces the page body under the button.
+		await page.getByRole("button", { name: "Set up provider" }).waitFor({ timeout: 20_000 });
+		await page.waitForTimeout(1500);
+		await page.evaluate(() => {
+			const b = document.createElement("button");
+			b.id = "open-real-panel";
+			b.style.cssText = "position:fixed;top:0;left:0;width:100px;height:50px;z-index:99999";
+			b.addEventListener("click", async () => {
+				try {
+					const w = await chrome.windows.getCurrent();
+					const [tab] = await chrome.tabs.query({ active: true, windowId: w.id });
+					await chrome.sidePanel.setOptions({ tabId: tab.id, path: "sidepanel.html", enabled: true });
+					await chrome.sidePanel.open({ tabId: tab.id });
+					globalThis.__opened = "ok";
+				} catch (e) {
+					globalThis.__opened = `error: ${e.message}`;
+				}
+			});
+			document.body.append(b);
+		});
+		// A real click is the user gesture sidePanel.open needs.
+		await page.click("#open-real-panel");
+		await page.waitForFunction(() => globalThis.__opened !== undefined);
+		assert.equal(await page.evaluate(() => globalThis.__opened), "ok");
+		const tabTarget = (await (await context.newCDPSession(page)).send("Target.getTargetInfo")).targetInfo.targetId;
+		const port = readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0];
+		let panel;
+		for (let i = 0; i < 50 && !panel; i++) {
+			const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+			panel = list.find((t) => t.type === "page" && t.url === PANEL && t.id !== tabTarget);
+			if (!panel) await new Promise((r) => setTimeout(r, 100));
+		}
+		assert.ok(panel, "Chromium did not open a side panel document");
+		const ws = new WebSocket(panel.webSocketDebuggerUrl);
+		await new Promise((resolve, reject) => {
+			ws.onopen = resolve;
+			ws.onerror = reject;
+		});
+		let seq = 0;
+		const evaluate = (expression) =>
+			new Promise((resolve) => {
+				const id = ++seq;
+				ws.addEventListener("message", function onMessage(e) {
+					const m = JSON.parse(e.data);
+					if (m.id !== id) return;
+					ws.removeEventListener("message", onMessage);
+					resolve(m.result?.result?.value ?? m.result);
+				});
+				ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } }));
+			});
+		try {
+			assert.equal(await evaluate("chrome.tabs.getCurrent().then((t) => String(t))"), "undefined", "the panel document is hosted in a tab");
+			// The real relay, from the real side panel: no host runs here, so the answer is a no_host error, not a disconnect.
+			const outcome = await evaluate(`new Promise((resolve) => {
+				const port = chrome.runtime.connect({ name: "tabkyra-connect" });
+				port.onDisconnect.addListener(() => resolve("disconnected"));
+				port.onMessage.addListener((m) => resolve("answered " + JSON.stringify(m)));
+				setTimeout(() => port.postMessage({ id: 1, method: "status" }), 100);
+				setTimeout(() => resolve("still open"), 5000);
+			})`);
+			assert.match(outcome, /^answered /, outcome);
+			assert.equal(JSON.parse(outcome.slice("answered ".length)).error.code, "no_host");
+		} finally {
+			ws.close();
+		}
+		// What Chrome reported for that port: the shape isSidePanelPort has to accept.
+		const senders = await worker.evaluate(() => globalThis.__senders);
+		console.log("real side panel port.sender:", JSON.stringify(senders));
+		const fromPanel = senders.find((x) => x.tab === undefined);
+		assert.ok(fromPanel, `no tab-less sender among ${JSON.stringify(senders)}`);
+		assert.equal(fromPanel.url, PANEL);
+		assert.equal(isSidePanelPort(fromPanel, `chrome-extension://${EXTENSION_ID}/`), true, JSON.stringify(fromPanel));
+		assert.equal(isSidePanelPort({ ...fromPanel, tab: { id: 1 } }, `chrome-extension://${EXTENSION_ID}/`), false);
 	} finally {
 		await page.close();
 	}

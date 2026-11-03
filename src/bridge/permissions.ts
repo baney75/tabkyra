@@ -108,7 +108,9 @@ export function isGuardedUrl(url: string, guardedHosts: readonly string[] | unde
  */
 export function isOwnExtensionUrl(url: string): boolean {
 	try {
-		const u = new URL(url);
+		let u = new URL(url);
+		// blob: and filesystem: URLs carry the origin that made them after the scheme; that document has the extension's rights.
+		if (u.protocol === "blob:" || u.protocol === "filesystem:") u = new URL(u.pathname);
 		return u.protocol === "chrome-extension:" && u.hostname.toLowerCase() === String(chrome.runtime.id).toLowerCase();
 	} catch {
 		return false;
