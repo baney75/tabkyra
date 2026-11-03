@@ -798,3 +798,36 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
   the card; `--border` stays the soft divider. Light, Dark or Match system is sent to the helper
   with the preset and accent, kept in `theme.json` as `mode` (absent for Match system), and fixes
   the pages' `color-scheme`.
+
+## D34. Connect hardening after review: who may ask, one join at a time, what the panel says (Claude, 2026-11-02)
+
+- The Connect relay serves only the side panel document: a port whose sender has a tab, or whose
+  URL is not `sidepanel.html` of this extension, is closed. A browser-driving client can open
+  `sidepanel.html` as a tab, so that page must never reach code minting. `approvalCode`,
+  `deviceCode` and `joinHub` also need a gesture: the panel mints a one-use token on a live click
+  (`navigator.userActivation.isActive`) and the relay accepts it for 5 seconds, once
+  (`src/connect/gate.ts`). The relay has no test allowance; the panel e2e replaces
+  `chrome.runtime.connect` with a stand-in, and a second e2e test drives the real relay from a tab
+  and expects it to close the port. The bridge refuses to open `chrome-extension://<own id>/`
+  in every permission mode, without asking the user.
+- Joining shows a confirm step first: the hub's host, "The hub's owner will be able to open sites
+  and read pages in this browser as you", and the scopes (`status.joinScopes`). Nothing is sent
+  until Confirm, and what was confirmed is what is sent. Success lists the scopes.
+- A join, from the panel or the CLI, takes `link.json.joining` (O_EXCL, under the short
+  `link.json` lock; pid, nonce, time) before it contacts the hub and drops it when link.json is
+  written or the join fails. A competing join is refused before it redeems its code. A reservation
+  is stale after 5 minutes or when its pid is gone. This replaces D33's "a second join enrolls
+  too, but is refused at its write". The commit re-checks under the lock: the panel the whole route
+  (hub.json, remote.json, link.json), the CLI that no link.json appeared. A route created in the
+  gap can still leave an unused device record on the hub; the join then writes nothing.
+- `link off` and the Busy toggle take the `link.json` lock, so a toggle in flight cannot bring a
+  removed link.json back.
+- The hub's words do not reach the panel. Enroll failures map by status to fixed sentences (wrong
+  or expired code, rate limited, unreachable, refused); the hub-chosen device name must pass
+  `validDeviceName` before anything is written; service-manager output is replaced by "run
+  tabkyra link status". Whatever else passes through from the library is cut at 200 characters
+  (a manager's `/link/code` refusal still quotes the hub, capped).
+- `/link/code` for a device code returns the hub's public origin; the manager checks it (an
+  origin only, canonical) and uses it in the command and the prompt. On the link route the panel
+  shows the connector URL the hub returned with the approval code, and "Get a code to see the
+  connector URL" before that, instead of deriving it from the link address.
