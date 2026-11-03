@@ -7,17 +7,18 @@
  */
 
 import "./cjs-shim.ts";
-import { randomInt } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes, randomInt } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { WebSocket } from "ws";
 import { BridgeClient } from "./client.ts";
-import { normalizeCode } from "./codes.ts";
-import { readJsonFile, writeJsonPrivate } from "./files.ts";
+import { normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
+import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { launcherValid, tabkyraBinary } from "./harness.ts";
+import { validDeviceName } from "./hub-state.ts";
 import {
 	CHUNK_BYTES,
 	FORWARD_REQUEST_HEADERS,
@@ -159,8 +160,22 @@ export interface EnrollOptions {
 
 /** What enrolling did. `failed`: nothing was written. `linked`: link.json exists; `ok` is false when the service didn't start. */
 export type EnrollResult =
-	| { kind: "failed"; error: string }
+	| { kind: "failed"; error: string; cause: EnrollFailure }
 	| { kind: "linked"; ok: boolean; name: string; deviceId: string; manage: boolean; scopes: string[]; service: string };
+
+/**
+ * Why enrolling failed, for a caller that words it itself (the native host shows fixed sentences,
+ * never the hub's text). `hub`: the hub answered with a status other than 200.
+ */
+export type EnrollFailure =
+	| { type: "busy" }
+	| { type: "linked" }
+	| { type: "unreadable" }
+	| { type: "launcher" }
+	| { type: "scopes" }
+	| { type: "unreachable" }
+	| { type: "malformed" }
+	| { type: "hub"; status: number };
 
 /** A sentence from link.ts that is safe to show a person as written: it never quotes a file. */
 export class LinkError extends Error {}
@@ -188,33 +203,156 @@ export interface EnrollHooks {
 	commit?: (write: () => void) => Promise<void>;
 }
 
+// ---------- the join reservation ----------
+
+/** A join (CLI or panel) holds `link.json.joining` from before it contacts the hub until link.json is written or the join fails. */
+const joiningFile = () => `${linkFile()}.joining`;
+/** A reservation older than this is a crashed join's; the next join replaces it. */
+export const JOIN_STALE_MS = 5 * 60_000;
+
+function pidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+function reservationStale(file: string, now: number): boolean {
+	try {
+		const held = JSON.parse(readFileSync(file, "utf8")) as { pid?: unknown; at?: unknown };
+		if (typeof held.at !== "number" || now - held.at > JOIN_STALE_MS) return true;
+		return typeof held.pid === "number" && !pidAlive(held.pid);
+	} catch {
+		// Unreadable or half-written: the file's own age decides.
+		try {
+			return now - statSync(file).mtimeMs > JOIN_STALE_MS;
+		} catch {
+			return true;
+		}
+	}
+}
+
+/**
+ * Take the cross-process join reservation, or return undefined when another live join holds it. Created
+ * with O_EXCL under the short link.json lock, so a stale one is replaced by exactly one taker. Throws
+ * LockTimeoutError when the link.json lock itself is held.
+ */
+export function takeJoinReservation(now = Date.now()): { release: () => void } | undefined {
+	const file = joiningFile();
+	const nonce = randomBytes(8).toString("hex");
+	const taken = withFileLock(
+		linkFile(),
+		() => {
+			for (let attempt = 0; attempt < 2; attempt++) {
+				try {
+					writeFileSync(file, JSON.stringify({ pid: process.pid, nonce, at: now }), { flag: "wx", mode: 0o600 });
+					return true;
+				} catch (err) {
+					if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+					if (!reservationStale(file, now)) return false;
+					rmSync(file, { force: true });
+				}
+			}
+			return false;
+		},
+		REQUEST_LOCK_MS,
+	);
+	if (!taken) return undefined;
+	return {
+		release: () => {
+			const drop = () => {
+				try {
+					if ((JSON.parse(readFileSync(file, "utf8")) as { nonce?: unknown }).nonce === nonce) rmSync(file, { force: true });
+				} catch {
+					/* already gone */
+				}
+			};
+			try {
+				withFileLock(linkFile(), drop, REQUEST_LOCK_MS);
+			} catch {
+				drop();
+			}
+		},
+	};
+}
+
+const ALREADY_LINKED = (link: LinkConfig) => `This device is already linked to ${link.hubUrl} as ${link.name}. Run tabkyra link off first. Nothing was changed.`;
+
 /** Enroll this device. Prints nothing itself: it reports through `hooks` and its result. */
 export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: EnrollHooks = {}): Promise<EnrollResult> {
 	const say = hooks.say ?? (() => {});
 	const service = hooks.service ?? { valid: launcherValid, install: () => (hooks.nonBlocking ? installServiceAsync(LINK_SERVICE) : installService(LINK_SERVICE)) };
-	let existing: LinkConfig | undefined;
-	try {
-		existing = loadLinkConfig();
-	} catch (err) {
-		return { kind: "failed", error: `${err instanceof Error ? err.message : String(err)} Nothing was changed.` };
-	}
-	if (existing) return { kind: "failed", error: `This device is already linked to ${existing.hubUrl} as ${existing.name}. Run tabkyra link off first. Nothing was changed.` };
+	const failed = (error: string, cause: EnrollFailure): Extract<EnrollResult, { kind: "failed" }> => ({ kind: "failed", error, cause });
+	const checkLinked = (): Extract<EnrollResult, { kind: "failed" }> | undefined => {
+		let existing: LinkConfig | undefined;
+		try {
+			existing = loadLinkConfig();
+		} catch (err) {
+			return failed(`${err instanceof Error ? err.message : String(err)} Nothing was changed.`, { type: "unreadable" });
+		}
+		return existing ? failed(ALREADY_LINKED(existing), { type: "linked" }) : undefined;
+	};
+	const early = checkLinked();
+	if (early) return early;
 	const scopes = options.scopes?.length ? [...new Set(options.scopes)] : [...DEFAULT_GRANT];
-	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) return { kind: "failed", error: `Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}.` };
-	if (options.service && !service.valid()) return { kind: "failed", error: `${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then link again (or pass --no-service). Nothing was changed.` };
-	hooks.step?.("contacting");
-	let result: Awaited<ReturnType<typeof hubPost>>;
+	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) return failed(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}.`, { type: "scopes" });
+	if (options.service && !service.valid()) return failed(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then link again (or pass --no-service). Nothing was changed.`, { type: "launcher" });
+	// Reserve before the hub sees the code: a competing join is refused here, with its code unspent.
+	let reservation: ReturnType<typeof takeJoinReservation>;
 	try {
-		result = await hubPost(options, "/link/enroll", { code: options.code, name: options.name ?? defaultDeviceName(), version: VERSION });
+		reservation = takeJoinReservation();
 	} catch (err) {
-		return { kind: "failed", error: `Couldn't reach ${options.hubUrl}: ${err instanceof Error ? err.message : String(err)}` };
+		if (err instanceof LockTimeoutError) return failed("Another Tabkyra join is starting on this computer. Try again in a moment. Nothing was changed.", { type: "busy" });
+		throw err;
 	}
-	const { deviceId, secret, manage, name } = result.body;
-	if (result.status !== 200 || typeof deviceId !== "string" || typeof secret !== "string" || typeof name !== "string") return { kind: "failed", error: `The hub refused: ${describe(result.body, result.status)}` };
-	const config: LinkConfig = { hubUrl: options.hubUrl, deviceId, secret, name, manage: manage === true, scopes };
-	const write = () => writeJsonPrivate(linkFile(), config);
-	if (hooks.commit) await hooks.commit(write);
-	else write();
+	if (!reservation) return failed("Another join is already running on this computer. Wait for it, or try again in a few minutes. Nothing was changed.", { type: "busy" });
+	let config: LinkConfig;
+	let deviceId: string;
+	let name: string;
+	try {
+		// A join may have finished between the first look and the reservation.
+		const raced = checkLinked();
+		if (raced) return raced;
+		hooks.step?.("contacting");
+		let result: Awaited<ReturnType<typeof hubPost>>;
+		try {
+			result = await hubPost(options, "/link/enroll", { code: options.code, name: options.name ?? defaultDeviceName(), version: VERSION });
+		} catch (err) {
+			return failed(`Couldn't reach ${options.hubUrl}: ${err instanceof Error ? err.message : String(err)}`, { type: "unreachable" });
+		}
+		if (result.status !== 200) return failed(`The hub refused: ${describe(result.body, result.status)}`, { type: "hub", status: result.status });
+		const body = result.body;
+		if (typeof body.deviceId !== "string" || typeof body.secret !== "string" || typeof body.name !== "string") return failed(`The hub refused: ${describe(body, result.status)}`, { type: "malformed" });
+		// The hub chooses the name; it ends up in link.json, the service and the panel, so it must be a plain one.
+		if (!validDeviceName(body.name)) return failed("The hub answered with a device name Tabkyra won't use, so nothing was linked.", { type: "malformed" });
+		deviceId = body.deviceId;
+		name = body.name;
+		config = { hubUrl: options.hubUrl, deviceId, secret: body.secret, name, manage: body.manage === true, scopes };
+		const write = () => writeJsonPrivate(linkFile(), config);
+		if (hooks.commit) await hooks.commit(write);
+		else {
+			// The CLI and the host share one rule: the check and the write happen together, under the lock.
+			try {
+				await withFileLockAsync(
+					linkFile(),
+					async () => {
+						const now = checkLinked();
+						if (now) throw new LinkError(now.error);
+						write();
+					},
+					REQUEST_LOCK_MS,
+				);
+			} catch (err) {
+				if (err instanceof LinkError) return failed(err.message, { type: "linked" });
+				if (err instanceof LockTimeoutError) return failed("Another Tabkyra window is writing link.json. Try again in a moment.", { type: "busy" });
+				throw err;
+			}
+		}
+	} finally {
+		reservation.release();
+	}
 	say(`${sym.ok} Linked as ${c.bold(name)} (${deviceId})${config.manage ? ", a manager device" : ""}. Wrote ${c.dim(linkFile())}`);
 	say(`${sym.dot} This device allows: ${scopes.join(", ")}`);
 	let serviceMessage = "no service (run: tabkyra link run)";
@@ -620,19 +758,40 @@ export async function linkOff(): Promise<number> {
 	for (const note of service.notes) console.log(`${sym.ok} ${note}`);
 	const n = revokeLinkTokens();
 	if (n) console.log(`${sym.ok} Revoked the local link token.`);
-	rmSync(pidFile(), { force: true });
-	rmSync(linkFile(), { force: true });
-	rmSync(liveFile(), { force: true });
-	console.log(config ? `${sym.ok} Removed ${c.dim(linkFile())}. The hub still lists ${config.name} until you run: tabkyra hub remove ${config.name}` : `${sym.dot} No link.json; nothing else to remove.`);
+	// Under the lock the panel's Busy toggle uses, so a toggle in flight can't write link.json back after this removes it.
+	let removed = false;
+	try {
+		withFileLock(
+			linkFile(),
+			() => {
+				rmSync(pidFile(), { force: true });
+				removed = existsSync(linkFile());
+				rmSync(linkFile(), { force: true });
+				rmSync(liveFile(), { force: true });
+			},
+			5_000,
+		);
+	} catch (err) {
+		if (!(err instanceof LockTimeoutError)) throw err;
+		console.error(`${sym.fail} ${linkFile()} is locked by another Tabkyra window. Try again in a moment.`);
+		return 1;
+	}
+	console.log(config || removed ? `${sym.ok} Removed ${c.dim(linkFile())}.${config ? ` The hub still lists ${config.name} until you run: tabkyra hub remove ${config.name}` : ""}` : `${sym.dot} No link.json; nothing else to remove.`);
 	return 0;
 }
 
-/** Mark this device busy or not. Throws when it isn't linked. */
+/** Mark this device busy or not. Throws when it isn't linked. The read and the write happen under link.json's lock, so a `link off` can't be undone by a toggle already in flight. */
 export function setLinkBusy(busy: boolean): void {
-	const config = loadLinkConfig();
-	if (!config) throw new LinkError("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
-	const { busy: _old, ...rest } = config;
-	writeJsonPrivate(linkFile(), busy ? { ...rest, busy: true } : rest);
+	withFileLock(
+		linkFile(),
+		() => {
+			const config = loadLinkConfig();
+			if (!config) throw new LinkError("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
+			const { busy: _old, ...rest } = config;
+			writeJsonPrivate(linkFile(), busy ? { ...rest, busy: true } : rest);
+		},
+		REQUEST_LOCK_MS,
+	);
 }
 
 export function linkBusy(value: string | undefined): number {
@@ -663,13 +822,25 @@ export async function mintViaHub(kind: "connect" | "approval", manage: boolean):
 	} catch (err) {
 		throw new LinkError(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
 	}
-	const { code, expiresAt, url } = result.body;
+	const { code, expiresAt, url, hubUrl: publicOrigin } = result.body;
 	if (result.status !== 200) throw new LinkError(`The hub refused: ${describe(result.body, result.status)}`);
 	// The reply is untrusted: the owner may paste what it carries into a shell, so only the exact shapes pass.
 	const shaped = typeof code === "string" ? normalizeCode(code) : undefined;
 	if (!shaped || shaped !== code || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) throw new LinkError("The hub answered with a malformed code.");
 	if (url !== undefined && (typeof url !== "string" || !isConnectorUrl(url))) throw new LinkError("The hub answered with a malformed code.");
-	return { code: shaped, expiresAt, ...(typeof url === "string" ? { url } : {}), hubUrl: config.hubUrl };
+	// A device code names the hub's public origin: the owner pastes it into a command on the other device. Older hubs send none, and the link address stands in.
+	if (publicOrigin !== undefined && (typeof publicOrigin !== "string" || !isHubOrigin(publicOrigin))) throw new LinkError("The hub answered with a malformed code.");
+	return { code: shaped, expiresAt, ...(typeof url === "string" ? { url } : {}), hubUrl: typeof publicOrigin === "string" ? publicOrigin : config.hubUrl };
+}
+
+/** A hub address as `link` takes it: an origin only, in its canonical form, with nothing a shell would act on. */
+function isHubOrigin(value: string): boolean {
+	if (value.length > 300 || /[\s"'`$;&|<>\\]/.test(value)) return false;
+	try {
+		return normalizeHubUrl(value) === value;
+	} catch {
+		return false;
+	}
 }
 
 /** An https origin (http only on loopback, as for a hub address) plus /mcp, with no credentials, query or fragment. */

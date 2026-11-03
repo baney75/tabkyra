@@ -663,7 +663,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			}
 			if (body.kind === "connect") {
 				const { code, expiresAt } = mintConnectCode({ name: typeof body.name === "string" && body.name ? body.name : undefined, manage: body.manage === true }, Date.now(), REQUEST_LOCK_MS);
-				return sendJson(res, 200, { kind: "connect", code, expiresAt });
+				return sendJson(res, 200, { kind: "connect", code, expiresAt, hubUrl: options.publicUrl });
 			}
 		} catch (err) {
 			if (err instanceof HubStateError) return sendJson(res, err.status, { error: "invalid_request", error_description: err.message });
