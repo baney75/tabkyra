@@ -310,7 +310,21 @@ test("first-F1: the real relay refuses a tab-hosted panel and a missing gesture,
 	chrome.runtime.getURL = () => ORIGIN;
 	chrome.runtime.onConnect = { addListener: (f) => (onConnect = f) };
 	const relay = await import("../src/connect/relay.ts");
-	const sent = [];
+	// A connected native port that records what the relay sends to the host.
+	const native = await import("../src/bridge/native.ts");
+	// The bridge and the relay arm 20 s timers; unref them so the run does not wait for them.
+	const realSetTimeout = globalThis.setTimeout;
+	globalThis.setTimeout = (fn, ms, ...rest) => {
+		const t = realSetTimeout(fn, ms, ...rest);
+		if (ms >= 1000) t.unref?.();
+		return t;
+	};
+	let hostPort;
+	const realConnectNative = chrome.runtime.connectNative;
+	chrome.runtime.connectNative = (...args) => (hostPort = realConnectNative.apply(chrome.runtime, args));
+	native.startBridge();
+	assert.ok(hostPort, "the native port did not connect");
+	const sent = { get length() { return hostPort.sent.filter((m) => m.type === "connect").length; }, frames: () => hostPort.sent.filter((m) => m.type === "connect") };
 	relay.startConnectRelay();
 	assert.equal(typeof onConnect, "function");
 	const mkPort = (sender) => {
@@ -332,13 +346,20 @@ test("first-F1: the real relay refuses a tab-hosted panel and a missing gesture,
 	panelPort.listener({ id: 1, method: "approvalCode" });
 	assert.equal(panelPort.replies[0].error.code, "no_gesture");
 	assert.equal(sent.length, 0, "a code request without a gesture reached the host");
-	// Past the gate the request goes on to the host (none is connected here, so it answers no_host).
+	// A fabricated token, a spent one, a stale one: none of them reaches the host.
+	// Past the gate the request goes on to the host, and the recorded frame shows it.
 	panelPort.listener({ id: 2, method: "status" });
-	assert.equal(panelPort.replies[1].error.code, "no_host");
+	assert.equal(sent.length, 1, "a status request did not reach the host");
+	assert.equal(sent.frames()[0].method, "status");
 	panelPort.listener({ id: 3, method: "approvalCode", gesture: { token: "once", at: Date.now() } });
-	assert.equal(panelPort.replies[2].error.code, "no_host");
+	assert.equal(sent.length, 2);
+	assert.equal(sent.frames()[1].method, "approvalCode");
+	assert.equal(sent.frames()[1].gesture, undefined, "the gesture went on to the host");
 	panelPort.listener({ id: 4, method: "approvalCode", gesture: { token: "once", at: Date.now() } });
-	assert.equal(panelPort.replies[3].error.code, "no_gesture", "a spent token worked twice");
+	assert.equal(panelPort.replies.at(-1).error.code, "no_gesture", "a spent token worked twice");
+	panelPort.listener({ id: 5, method: "joinHub", params: { hubUrl: "https://h.example.com", code: "TK-ABCD-EFGH" }, gesture: { token: "stale", at: Date.now() - 60_000 } });
+	assert.equal(panelPort.replies.at(-1).error.code, "no_gesture");
+	assert.equal(sent.length, 2, "a refused request reached the host");
 	// The frame the relay builds names its fields; the gesture is not among them.
 	assert.doesNotMatch(/sendConnect\(\{[\s\S]*?\}\)/.exec(read("src/connect/relay.ts"))[0], /gesture/);
 });
@@ -392,10 +413,11 @@ test("first-F1: the bridge never opens Tabkyra's own pages, in any permission mo
 test("first-F2: joining shows the hub's host, the warning and the scopes, and sends nothing until Confirm; success lists the scopes", () => {
 	const tab = read("src/dialogs/ConnectTab.ts");
 	const format = read("src/connect/format.ts");
-	assert.match(format, /The hub's owner will be able to open sites and read pages in this browser as you\./);
+	assert.match(format, /export const JOIN_WARNING =\s*"The hub's owner will be able to open sites, read pages, and click and type in this browser as you\.";/);
 	assert.match(tab, /\$\{JOIN_WARNING\}/);
 	assert.match(tab, /Join \$\{this\.confirming\.host\}\?/);
-	assert.match(tab, /This device will allow: \$\{this\.confirming\.scopes/);
+	assert.match(tab, /This device will allow:[\s\S]*?this\.confirming\.scopes\.map\(\(x\) => html`<li>\$\{x\.what\}<\/li>`\)/);
+	assert.doesNotMatch(tab, /the hub's default list/);
 	// The Join hub button asks; only Confirm calls join().
 	assert.match(tab, /children: "Join hub",[\s\S]*?onClick: \(\) => this\.askJoin\(s\)/);
 	assert.match(tab, /children: "Confirm", onClick: \(\) => void this\.join\(\)/);
@@ -428,4 +450,21 @@ test("second-S2: on the link route the connector URL is the hub's own, shown onc
 	const tab = read("src/dialogs/ConnectTab.ts");
 	assert.match(tab, /s\.route === "link"\s*\?\s*validApprovalCode\(this\.approval\)\s*\?\s*this\.command\("Connector URL", this\.approval\.connectorUrl\)/);
 	assert.match(tab, /Get a code to see the connector URL\./);
+});
+
+test("first-F3/second-G2: a helper that lists no scopes in {id, what} form gets no Confirm; the confirm lists descriptions, never 'the hub's choice'", async () => {
+	const { joinScopesOf, HELPER_OUT_OF_DATE } = await import("../src/connect/format.ts");
+	assert.equal(HELPER_OUT_OF_DATE, "Tabkyra's helper is out of date. Run tabkyra update, then try again.");
+	const rows = [{ id: "browser.read", what: "See the agent's own tabs and read pages" }];
+	assert.deepEqual(joinScopesOf({ joinScopes: rows }), rows);
+	for (const bad of [undefined, [], ["browser.read"], [{ id: "a" }], [{ id: "", what: "x" }], [rows[0], null], "browser.read"]) assert.equal(joinScopesOf({ joinScopes: bad }), undefined, JSON.stringify(bad));
+	const tab = read("src/dialogs/ConnectTab.ts");
+	assert.match(/private askJoin\([\s\S]*?\n\t\}\n/.exec(tab)[0], /const scopes = joinScopesOf\(s\);\s*if \(!scopes\) \{\s*this\.joinMessage = \{ ok: false, text: HELPER_OUT_OF_DATE \};\s*return;/);
+	assert.doesNotMatch(tab, /joinScopes \?\? \[\]/);
+});
+
+test("second-G3: a confirm is dropped when a route or problem appears, and when the address, code or name is edited", () => {
+	const tab = read("src/dialogs/ConnectTab.ts");
+	assert.match(/private async load\(\)[\s\S]*?\n\t\}\n/.exec(tab)[0], /this\.status = await connectStatus\(\);[\s\S]*?if \(this\.status\.route !== "none" \|\| this\.status\.problem\) this\.confirming = undefined;/);
+	for (const field of ["hubUrl", "joinCode", "joinName"]) assert.match(tab, new RegExp(`this\\.${field} = \\(e\\.target as HTMLInputElement\\)\\.value;\\s*this\\.confirming = undefined;`), field);
 });

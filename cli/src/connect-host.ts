@@ -30,8 +30,9 @@ import { CodeLimitError, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
 import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
-import { type EnrollHooks, type EnrollResult, enrollDevice, HubError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
+import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
+import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
 import { isAccent, isMode, loadTheme, PRESETS, saveTheme } from "./theme.ts";
 
@@ -167,8 +168,6 @@ const cap = (text: string): string => (text.length > MAX_PASSTHROUGH ? `${text.s
  * becomes a fixed sentence, naming `file` when the failure is about reading one.
  */
 function safeMessage(err: unknown, file?: string): string {
-	// Text that quotes the hub or the network never passes: a hub can echo a request header, and the credential is in it.
-	if (err instanceof HubError) return err.safe;
 	if (err instanceof ConnectError || err instanceof CodeLimitError || err instanceof LinkError) return cap(err.message);
 	if (err instanceof LockTimeoutError) return "Another Tabkyra window is busy with that. Try again in a moment.";
 	return file ? unreadable(file) : GENERIC_FAILURE;
@@ -275,7 +274,7 @@ export class ConnectService {
 			...(link ? { link: { hubUrl: link.hubUrl, name: link.name, online: linkOnline(readLinkLive(), this.now()), busy: link.busy === true, manage: link.manage } } : {}),
 			...(devices ? { hub: { devices } } : {}),
 			theme: loadTheme(),
-			...(route === "none" && !problems.length ? { joinScopes: [...DEFAULT_GRANT] } : {}),
+			...(route === "none" && !problems.length ? { joinScopes: DEFAULT_GRANT.map((id) => ({ id, what: SCOPES[id]?.what ?? id })) } : {}),
 			...(problems.length ? { problem: problems[0] } : {}),
 		};
 	}
@@ -339,6 +338,8 @@ export class ConnectService {
 	/** A minting error as the panel sees it: our own sentences as written, a fixed one for anything else. */
 	private codeFailure(err: unknown, file?: string): ConnectError {
 		if (err instanceof ConnectError) return err;
+		// What the hub said never reaches the panel: the status picks a fixed sentence (the CLI still prints the hub's own words).
+		if (err instanceof HubCodeError) return hubCodeFailure(err.status);
 		return new ConnectError(err instanceof LinkError && /manager/.test(err.message) ? "unavailable" : "failed", safeMessage(err, file));
 	}
 
@@ -420,6 +421,15 @@ export class ConnectService {
 			this.joining = false;
 		}
 	}
+}
+
+/** What a hub's refusal of a code request says to a person: a fixed sentence for the status, never the hub's own words. */
+function hubCodeFailure(status: number | undefined): ConnectError {
+	if (status === undefined) return new ConnectError("failed", "Couldn't reach the hub. Check this computer's connection.");
+	if (status === 401) return new ConnectError("failed", "This device's link was revoked. Run tabkyra link status.");
+	if (status === 429) return new ConnectError("rate_limited", "The hub is rate limiting code requests. Wait a few minutes and try again.");
+	if (status === 403) return new ConnectError("unavailable", "This device isn't a manager on the hub.");
+	return new ConnectError("failed", "The hub refused to make a code.");
 }
 
 /** What a failed enroll says to a person: a fixed sentence for the cause, never the hub's own words. */

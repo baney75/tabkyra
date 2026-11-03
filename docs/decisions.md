@@ -827,15 +827,23 @@ Issues #94 and #97, follow-ups from #93.
 - The Connect relay serves only the side panel document: a port whose sender has a tab, or whose
   URL is not `sidepanel.html` of this extension, is closed. A browser-driving client can open
   `sidepanel.html` as a tab, so that page must never reach code minting. `approvalCode`,
-  `deviceCode` and `joinHub` also need a gesture: the panel mints a one-use token on a live click
-  (`navigator.userActivation.isActive`) and the relay accepts it for 5 seconds, once
-  (`src/connect/gate.ts`). The relay has no test allowance; the panel e2e replaces
+  `deviceCode` and `joinHub` also carry a gesture token. The security boundary is
+  `isSidePanelPort` (the side panel document, no tab sender); code in that document is the
+  extension's own, and MV3's CSP keeps page script out of it. The token is not proof of a click to
+  the worker, which cannot observe one: the panel mints it only while
+  `navigator.userActivation.isActive`, and the relay accepts it for 5 seconds, once
+  (`src/connect/gate.ts`). It is a same-document guard against accidental or scripted calls from
+  the panel's own code paths; code already in the panel can fabricate one. The relay has no test allowance; the panel e2e replaces
   `chrome.runtime.connect` with a stand-in, and a second e2e test drives the real relay from a tab
   and expects it to close the port. The bridge refuses to open `chrome-extension://<own id>/`
   in every permission mode, without asking the user.
-- Joining shows a confirm step first: the hub's host, "The hub's owner will be able to open sites
-  and read pages in this browser as you", and the scopes (`status.joinScopes`). Nothing is sent
-  until Confirm, and what was confirmed is what is sent. Success lists the scopes.
+- Joining shows a confirm step first: the hub's host, "The hub's owner will be able to open sites,
+  read pages, and click and type in this browser as you", and each scope the link would allow with
+  its description (`status.joinScopes`, `{id, what}` pairs from the host's `SCOPES`, the
+  device's default grant, not the hub's choice). A helper that sends no list is out of date: no
+  Confirm, "run tabkyra update". Nothing is sent until Confirm, and what was confirmed is what is
+  sent; a route change, a problem, or an edit to the address, code or name clears the confirm.
+  Success lists the scopes.
 - A join, from the panel or the CLI, takes `link.json.joining` (O_EXCL, under the short
   `link.json` lock; pid, nonce, time) before it contacts the hub and drops it when link.json is
   written or the join fails. A competing join is refused before it redeems its code. A reservation
@@ -848,8 +856,12 @@ Issues #94 and #97, follow-ups from #93.
 - The hub's words do not reach the panel. Enroll failures map by status to fixed sentences (wrong
   or expired code, rate limited, unreachable, refused); the hub-chosen device name must pass
   `validDeviceName` before anything is written; service-manager output is replaced by "run
-  tabkyra link status". Whatever else passes through from the library is cut at 200 characters
-  (a manager's `/link/code` refusal still quotes the hub, capped).
+  tabkyra link status". A manager's `/link/code` refusal maps the same way (401 revoked, 403 not a
+  manager, 429 rate limited, otherwise "refused"; the CLI still prints the hub's words). The
+  device-code origin the hub returns is normalized before use, and the hub normalizes it before
+  sending. Whatever else passes through from the library is our own sentence, cut at 200 characters.
+- `link off` takes the `link.json` lock before it stops the service or revokes the token; when the
+  lock is held it changes nothing and exits 1.
 - `/link/code` for a device code returns the hub's public origin; the manager checks it (an
   origin only, canonical) and uses it in the command and the prompt. On the link route the panel
   shows the connector URL the hub returned with the approval code, and "Get a code to see the

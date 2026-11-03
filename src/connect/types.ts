@@ -26,9 +26,15 @@ export interface ConnectStatus {
 	hub?: { devices: ConnectDevice[] };
 	theme: { preset: string; accent?: string; mode?: "light" | "dark" };
 	/** What joining a hub would let the hub's owner do here (the scopes a new link allows). Present when the route is none. */
-	joinScopes?: string[];
+	joinScopes?: JoinScope[];
 	/** A config file that is present but unreadable, in a sentence; the route reads as none until it is fixed. */
 	problem?: string;
+}
+
+/** A scope a new link allows, with the sentence that says what it lets the hub's owner do. */
+export interface JoinScope {
+	id: string;
+	what: string;
 }
 
 export interface ApprovalCode {
@@ -62,17 +68,17 @@ export interface ConnectRequest {
 	id: number;
 	method: string;
 	params?: Record<string, unknown>;
-	/** Proof of a recent click in the panel; the relay requires it for the methods in GESTURE_METHODS and strips it before the host. */
+	/** A single-use, short-lived token the panel mints while it has user activation; the relay requires it for the methods in GESTURE_METHODS and strips it before the host. It guards against accidental or scripted calls from the panel itself; the worker cannot verify a click. */
 	gesture?: Gesture;
 }
 
-/** Minted by the panel on a click: a one-use token and the time it was minted. */
+/** Minted by the panel while it has user activation: a one-use token and the time it was minted. Sender-supplied, so not proof of a click. */
 export interface Gesture {
 	token: string;
 	at: number;
 }
 
-/** Methods that hand out a code or give a hub control of this browser: they need a gesture. */
+/** Methods that hand out a code or give a hub control of this browser: they need a gesture token. */
 export const GESTURE_METHODS: readonly string[] = ["approvalCode", "deviceCode", "joinHub"];
 
 /** How long a gesture token is good for. */

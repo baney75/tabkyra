@@ -18,15 +18,17 @@ import {
 import {
 	connectorUrl,
 	countdown,
+	HELPER_OUT_OF_DATE,
 	hubHost,
 	JOIN_WARNING,
+	joinScopesOf,
 	lastSeen,
 	linkCommand,
 	MALFORMED_CODE,
 	validApprovalCode,
 	validDeviceCode,
 } from "../connect/format.js";
-import type { ApprovalCode, ConnectStatus, DeviceCode } from "../connect/types.js";
+import type { ApprovalCode, ConnectStatus, DeviceCode, JoinScope } from "../connect/types.js";
 
 const POLL_MS = 10_000;
 
@@ -67,7 +69,7 @@ export class ConnectTab extends SettingsTab {
 	@state() private joinName = "";
 	@state() private joining?: string;
 	/** The confirm step: the hub's host and what joining allows, shown before anything is sent. */
-	@state() private confirming?: { host: string; scopes: string[]; hubUrl: string; code: string; name?: string };
+	@state() private confirming?: { host: string; scopes: JoinScope[]; hubUrl: string; code: string; name?: string };
 	@state() private joinMessage?: { ok: boolean; text: string };
 	@state() private busyPending = false;
 	/** A refused or failed Busy toggle. Its own field: the status poll clears `error`, and this must outlast it. */
@@ -104,6 +106,8 @@ export class ConnectTab extends SettingsTab {
 		this.loading = true;
 		try {
 			this.status = await connectStatus();
+			// A route or a problem takes the form away; a confirm left open would come back with a stale code and scopes.
+			if (this.status.route !== "none" || this.status.problem) this.confirming = undefined;
 			this.noHost = false;
 			this.error = undefined;
 		} catch (err) {
@@ -156,10 +160,15 @@ export class ConnectTab extends SettingsTab {
 			this.joinMessage = { ok: false, text: "Enter the hub's address, like https://hub.example.com." };
 			return;
 		}
-		// What is confirmed is what is sent: editing a field afterward cannot change the host the person agreed to.
+		const scopes = joinScopesOf(s);
+		if (!scopes) {
+			this.joinMessage = { ok: false, text: HELPER_OUT_OF_DATE };
+			return;
+		}
+		// What is confirmed is what is sent: editing a field clears the confirm, so the host the person agreed to cannot change.
 		this.confirming = {
 			host,
-			scopes: s.joinScopes ?? [],
+			scopes,
 			hubUrl: this.hubUrl.trim(),
 			code: this.joinCode.trim(),
 			name: this.joinName.trim() || undefined,
@@ -180,7 +189,7 @@ export class ConnectTab extends SettingsTab {
 				if (step === "service") linkWritten = true;
 				this.joining = step === "service" ? "Starting the background service..." : "Contacting the hub...";
 			});
-			const allowed = (result.scopes?.length ? result.scopes : scopes).join(", ");
+			const allowed = (result.scopes?.length ? result.scopes : scopes.map((x) => x.id)).join(", ");
 			this.joinMessage = {
 				ok: true,
 				text: `Joined as ${result.name}. This computer now shows in your hub's device list.${allowed ? ` The hub may use this browser for: ${allowed}.` : ""}`,
@@ -456,6 +465,7 @@ export class ConnectTab extends SettingsTab {
 						e: Event,
 					) => {
 						this.hubUrl = (e.target as HTMLInputElement).value;
+						this.confirming = undefined;
 					}} />
 				</label>
 				<label class="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -464,6 +474,7 @@ export class ConnectTab extends SettingsTab {
 						e: Event,
 					) => {
 						this.joinCode = (e.target as HTMLInputElement).value;
+						this.confirming = undefined;
 					}} />
 				</label>
 				<label class="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -472,6 +483,7 @@ export class ConnectTab extends SettingsTab {
 						e: Event,
 					) => {
 						this.joinName = (e.target as HTMLInputElement).value;
+						this.confirming = undefined;
 					}} />
 				</label>
 				${
@@ -480,7 +492,10 @@ export class ConnectTab extends SettingsTab {
 								<div class="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3" role="group" aria-label="Confirm joining" data-join-confirm>
 									<p class="text-sm font-medium text-foreground">Join ${this.confirming.host}?</p>
 									<p class="text-xs text-foreground">${JOIN_WARNING}</p>
-									<p class="text-xs text-muted-foreground">This device will allow: ${this.confirming.scopes.length ? this.confirming.scopes.join(", ") : "the hub's default list"}.</p>
+									<ul class="list-disc pl-4 text-xs text-muted-foreground" data-join-scopes>
+										<li class="list-none -ml-4">This device will allow:</li>
+										${this.confirming.scopes.map((x) => html`<li>${x.what}</li>`)}
+									</ul>
 									<div class="flex items-center gap-2">
 										${Button({ size: "sm", children: "Confirm", onClick: () => void this.join() })}
 										${Button({

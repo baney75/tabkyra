@@ -79,8 +79,10 @@ function connect(): chrome.runtime.Port {
 export const NO_GESTURE_MESSAGE = "Click the button in the Tabkyra side panel to do that.";
 
 /**
- * Proof the person just clicked: a one-use token minted while the browser still counts the click as
- * live (about five seconds). The relay checks it again and refuses a method that needs one without it.
+ * A one-use token minted only while the browser counts the click as live (about five seconds). It
+ * guards against accidental or scripted calls from this panel's own code paths. The relay can only
+ * reject a missing, replayed or old one; it cannot see a click, and the boundary is that the port
+ * comes from the side panel document.
  */
 function mintGesture(method: string): Gesture | undefined {
 	if (!GESTURE_METHODS.includes(method)) return undefined;

@@ -1,7 +1,9 @@
 /**
  * Background worker: carries the side panel's Connect requests to the native host and the answers
  * back. Only the side panel document may use it (never a content script, a page, or the panel
- * opened as a tab), and the methods that mint a code or join a hub need a fresh click. The
+ * opened as a tab); that is the boundary. The methods that mint a code or join a hub also need a
+ * single-use, short-lived token from the panel, a guard against accidental or scripted calls from
+ * the panel's own code paths, not proof of a click (the worker cannot see one). The
  * worker checks the method name and that params is a plain object; the host parses the rest
  * strictly (cli/src/connect-host.ts) and is the authority.
  */

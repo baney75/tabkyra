@@ -181,23 +181,18 @@ export type EnrollFailure =
 export class LinkError extends Error {}
 
 /**
- * A failure that quotes the hub or the network (an error_description can echo a request header). `message` is for a
- * terminal; `safe` is a fixed sentence the side panel and the host log may carry.
+ * A code request the hub turned down, or could not be reached for. The message quotes the hub (the
+ * CLI prints it); the Connect host never shows it, and words `status` itself.
  */
-export class HubError extends LinkError {
+export class HubCodeError extends LinkError {
 	constructor(
 		message: string,
-		readonly safe: string,
+		/** The HTTP status the hub answered; undefined when it could not be reached. */
+		readonly status?: number,
 	) {
 		super(message);
 	}
 }
-
-const unreachableText = (hubUrl: string) => `Couldn't reach ${hubUrl}. Check the address and that the hub is running.`;
-const badCodeText = "That connect code is wrong, expired or already used. Run tabkyra hub code on the hub for a new one.";
-/** Fixed text for a hub refusal. Only the status and the hub's `invalid_code` error id pick it; no remote text is quoted. */
-const refusedText = (status: number, body: Record<string, unknown> = {}) =>
-	status === 401 && body.error === "invalid_code" ? badCodeText : `The hub refused the request (status ${status}). Check the code and try again, or look at the hub's own log.`;
 
 /** A valid device name from this computer's hostname: its first label, characters the hub allows, at most 40; "device" when nothing is left. */
 export function defaultDeviceName(host: string = hostname()): string {
@@ -763,26 +758,29 @@ export async function linkStatus(json: boolean): Promise<number> {
 }
 
 export async function linkOff(): Promise<number> {
+	let failed = false;
 	let config: LinkConfig | undefined;
 	try {
 		config = loadLinkConfig();
 	} catch (err) {
 		console.log(`${sym.warn} ${err instanceof Error ? err.message : String(err)}`);
 	}
-	const service = removeService(LINK_SERVICE);
-	if (!service.ok) {
-		console.error(`${sym.fail} ${service.failure}`);
-		return 1;
-	}
-	for (const note of service.notes) console.log(`${sym.ok} ${note}`);
-	const n = revokeLinkTokens();
-	if (n) console.log(`${sym.ok} Revoked the local link token.`);
 	// Under the lock the panel's Busy toggle uses, so a toggle in flight can't write link.json back after this removes it.
+	// The lock comes first: when it is held, nothing is changed (no service stopped, no token revoked).
 	let removed = false;
 	try {
 		withFileLock(
 			linkFile(),
 			() => {
+				const service = removeService(LINK_SERVICE);
+				if (!service.ok) {
+					console.error(`${sym.fail} ${service.failure}`);
+					failed = true;
+					return;
+				}
+				for (const note of service.notes) console.log(`${sym.ok} ${note}`);
+				const n = revokeLinkTokens();
+				if (n) console.log(`${sym.ok} Revoked the local link token.`);
 				rmSync(pidFile(), { force: true });
 				removed = existsSync(linkFile());
 				rmSync(linkFile(), { force: true });
@@ -792,9 +790,10 @@ export async function linkOff(): Promise<number> {
 		);
 	} catch (err) {
 		if (!(err instanceof LockTimeoutError)) throw err;
-		console.error(`${sym.fail} ${linkFile()} is locked by another Tabkyra window. Try again in a moment.`);
+		console.error(`${sym.fail} ${linkFile()} is locked by another Tabkyra window. Nothing was changed. Try again in a moment.`);
 		return 1;
 	}
+	if (failed) return 1;
 	console.log(config || removed ? `${sym.ok} Removed ${c.dim(linkFile())}.${config ? ` The hub still lists ${config.name} until you run: tabkyra hub remove ${config.name}` : ""}` : `${sym.dot} No link.json; nothing else to remove.`);
 	return 0;
 }
@@ -839,26 +838,27 @@ export async function mintViaHub(kind: "connect" | "approval", manage: boolean):
 	try {
 		result = await hubPost(config, "/link/code", { kind, manage }, `${config.deviceId}.${config.secret}`);
 	} catch (err) {
-		throw new HubError(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`, unreachableText(config.hubUrl));
+		throw new HubCodeError(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
 	}
 	const { code, expiresAt, url, hubUrl: publicOrigin } = result.body;
-	if (result.status !== 200) throw new HubError(`The hub refused: ${describe(result.body, result.status)}`, refusedText(result.status, result.body));
+	if (result.status !== 200) throw new HubCodeError(`The hub refused: ${describe(result.body, result.status)}`, result.status);
 	// The reply is untrusted: the owner may paste what it carries into a shell, so only the exact shapes pass.
 	const shaped = typeof code === "string" ? normalizeCode(code) : undefined;
 	if (!shaped || shaped !== code || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) throw new LinkError("The hub answered with a malformed code.");
 	if (url !== undefined && (typeof url !== "string" || !isConnectorUrl(url))) throw new LinkError("The hub answered with a malformed code.");
 	// A device code names the hub's public origin: the owner pastes it into a command on the other device. Older hubs send none, and the link address stands in.
-	if (publicOrigin !== undefined && (typeof publicOrigin !== "string" || !isHubOrigin(publicOrigin))) throw new LinkError("The hub answered with a malformed code.");
-	return { code: shaped, expiresAt, ...(typeof url === "string" ? { url } : {}), hubUrl: typeof publicOrigin === "string" ? publicOrigin : config.hubUrl };
+	const origin = typeof publicOrigin === "string" ? hubOrigin(publicOrigin) : undefined;
+	if (publicOrigin !== undefined && !origin) throw new LinkError("The hub answered with a malformed code.");
+	return { code: shaped, expiresAt, ...(typeof url === "string" ? { url } : {}), hubUrl: origin ?? config.hubUrl };
 }
 
-/** A hub address as `link` takes it: an origin only, in its canonical form, with nothing a shell would act on. */
-function isHubOrigin(value: string): boolean {
-	if (value.length > 300 || /[\s"'`$;&|<>\\]/.test(value)) return false;
+/** A hub address as `link` takes it, in its canonical form (a trailing slash, :443, capitals or /mcp are normalized), or undefined when it is not one or carries anything a shell would act on. */
+function hubOrigin(value: string): string | undefined {
+	if (value.length > 300 || /[\s"'`$;&|<>\\]/.test(value)) return undefined;
 	try {
-		return normalizeHubUrl(value) === value;
+		return normalizeHubUrl(value);
 	} catch {
-		return false;
+		return undefined;
 	}
 }
 

@@ -56,7 +56,7 @@ before(async () => {
 						const reply = (r) => listeners.forEach((l) => l({ id: req.id, ...r }));
 						if (req.method === "status") {
 							if (joined) return reply({ result: { route: "link", passcodeSet: false, theme: { preset: "tabkyra" }, link: { hubUrl: "https://hub.example.com", name: "laptop", online: false, busy: false, manage: true } } });
-							return reply({ result: { route: "none", passcodeSet: false, theme: { preset: "tabkyra" }, joinScopes: ["browser.read", "browser.act"] } });
+							return reply({ result: { route: "none", passcodeSet: false, theme: { preset: "tabkyra" }, joinScopes: [{ id: "browser.read", what: "See the agent's own tabs and read pages" }, { id: "browser.act", what: "Click and type: can submit forms and act under the user's sign-in" }] } });
 						}
 						if (req.method === "joinHub") {
 							joined = true;
@@ -206,8 +206,9 @@ test("Join hub asks for a Confirm that names the host and the scopes; after join
 		await confirm.waitFor();
 		const text = await confirm.innerText();
 		assert.match(text, /Join hub\.example\.com\?/);
-		assert.match(text, /The hub's owner will be able to open sites and read pages in this browser as you\./);
-		assert.match(text, /browser\.read, browser\.act/);
+		assert.match(text, /The hub's owner will be able to open sites, read pages, and click and type in this browser as you\./);
+		assert.match(text, /See the agent's own tabs and read pages/);
+		assert.match(text, /Click and type: can submit forms and act under the user's sign-in/);
 		// Cancel sends nothing and brings the button back.
 		await confirm.getByRole("button", { name: "Cancel" }).click();
 		await page.getByRole("button", { name: "Join hub" }).waitFor();

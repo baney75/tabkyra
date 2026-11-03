@@ -1,7 +1,7 @@
 /** Small text helpers for Settings > Connect. */
 
 import { CONNECT_CODE, HUB_ORIGIN } from "../agent-setup-prompt.js";
-import type { ApprovalCode, DeviceCode } from "./types.js";
+import type { ApprovalCode, ConnectStatus, DeviceCode, JoinScope } from "./types.js";
 
 export const MALFORMED_CODE = "The helper answered with a malformed code. Try again, or update it: tabkyra update";
 
@@ -71,4 +71,22 @@ export function hubHost(typed: string): string | undefined {
 }
 
 /** What the person is told before a hub is given control of this browser. */
-export const JOIN_WARNING = "The hub's owner will be able to open sites and read pages in this browser as you.";
+export const JOIN_WARNING =
+	"The hub's owner will be able to open sites, read pages, and click and type in this browser as you.";
+
+/** Said when the helper's status has no scope list (a helper from before the list): joining is not offered. */
+export const HELPER_OUT_OF_DATE = "Tabkyra's helper is out of date. Run tabkyra update, then try again.";
+
+/** The scopes a join would grant, as the helper listed them; undefined when it listed none in the shape this panel reads. */
+export function joinScopesOf(status: Pick<ConnectStatus, "joinScopes">): JoinScope[] | undefined {
+	const list: unknown = status.joinScopes;
+	if (!Array.isArray(list) || list.length === 0) return undefined;
+	const out: JoinScope[] = [];
+	for (const item of list) {
+		const entry = item as Partial<JoinScope> | null;
+		if (!entry || typeof entry.id !== "string" || typeof entry.what !== "string" || !entry.id || !entry.what)
+			return undefined;
+		out.push({ id: entry.id, what: entry.what.slice(0, 200) });
+	}
+	return out;
+}
