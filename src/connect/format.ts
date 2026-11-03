@@ -57,3 +57,18 @@ export const connectorUrl = (origin: string): string => `${origin}/mcp`;
 
 /** The command another device runs to join a hub. */
 export const linkCommand = (hubUrl: string, code: string): string => `tabkyra link ${hubUrl} --code ${code}`;
+
+/** The host of a hub address as typed (a pasted connector URL included), or undefined when it isn't an address. */
+export function hubHost(typed: string): string | undefined {
+	const text = typed.trim();
+	if (!text || text.length > 300) return undefined;
+	try {
+		const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`);
+		return url.host || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** What the person is told before a hub is given control of this browser. */
+export const JOIN_WARNING = "The hub's owner will be able to open sites and read pages in this browser as you.";

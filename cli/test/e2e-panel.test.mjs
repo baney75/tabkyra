@@ -40,6 +40,9 @@ before(async () => {
 	await context.addInitScript(() => {
 		if (!globalThis.chrome?.runtime?.connect) return;
 		const original = chrome.runtime.connect.bind(chrome.runtime);
+		// The unstubbed connect, for the test that drives the real relay from a tab.
+		globalThis.__realConnect = original;
+		let joined = false;
 		chrome.runtime.connect = (info) => {
 			if (info?.name !== "tabkyra-connect") return original(info);
 			const listeners = [];
@@ -51,7 +54,14 @@ before(async () => {
 				postMessage(req) {
 					setTimeout(() => {
 						const reply = (r) => listeners.forEach((l) => l({ id: req.id, ...r }));
-						if (req.method === "status") return reply({ result: { route: "none", passcodeSet: false, theme: { preset: "tabkyra" } } });
+						if (req.method === "status") {
+							if (joined) return reply({ result: { route: "link", passcodeSet: false, theme: { preset: "tabkyra" }, link: { hubUrl: "https://hub.example.com", name: "laptop", online: false, busy: false, manage: true } } });
+							return reply({ result: { route: "none", passcodeSet: false, theme: { preset: "tabkyra" }, joinScopes: ["browser.read", "browser.act"] } });
+						}
+						if (req.method === "joinHub") {
+							joined = true;
+							return reply({ error: { code: "linked_no_service", message: "Linked as laptop, but the background service didn't start; run tabkyra link status." } });
+						}
 						if (req.method === "setTheme") return reply({ result: { preset: req.params.preset } });
 						reply({ error: { code: "bad_params", message: "not stubbed" } });
 					}, 30);
@@ -185,3 +195,51 @@ for (const width of [400, 320]) {
 		}
 	});
 }
+
+test("Join hub asks for a Confirm that names the host and the scopes; after joining, the outcome stays up although the form is gone", async () => {
+	const page = await settings("Connect");
+	try {
+		await page.getByPlaceholder("https://hub.example.com").fill("https://hub.example.com/mcp");
+		await page.getByPlaceholder("TK-XXXX-XXXX").fill("TK-ABCD-EFGH");
+		await page.getByRole("button", { name: "Join hub" }).click();
+		const confirm = page.locator("[data-join-confirm]");
+		await confirm.waitFor();
+		const text = await confirm.innerText();
+		assert.match(text, /Join hub\.example\.com\?/);
+		assert.match(text, /The hub's owner will be able to open sites and read pages in this browser as you\./);
+		assert.match(text, /browser\.read, browser\.act/);
+		// Cancel sends nothing and brings the button back.
+		await confirm.getByRole("button", { name: "Cancel" }).click();
+		await page.getByRole("button", { name: "Join hub" }).waitFor();
+		await page.getByRole("button", { name: "Join hub" }).click();
+		await confirm.getByRole("button", { name: "Confirm" }).click();
+		// The route is now "link", so the form is gone; the message is not.
+		const message = page.locator("[data-join-message]");
+		await message.waitFor({ timeout: 10_000 });
+		assert.match(await message.innerText(), /Linked as laptop, but the background service didn't start; run tabkyra link status\./);
+		assert.equal(await page.getByRole("button", { name: "Join hub" }).count(), 0);
+		assert.equal(await page.locator("tabkyra-connect-tab").getByText("Get a code to see the connector URL.").count(), 1);
+	} finally {
+		await page.close();
+	}
+});
+
+test("the real Connect relay closes a port from the panel opened as a tab", async () => {
+	const page = await context.newPage();
+	try {
+		await page.goto(PANEL);
+		const outcome = await page.evaluate(
+			() =>
+				new Promise((resolve) => {
+					const port = globalThis.__realConnect({ name: "tabkyra-connect" });
+					port.onDisconnect.addListener(() => resolve("disconnected"));
+					port.onMessage.addListener((m) => resolve(`answered ${JSON.stringify(m)}`));
+					setTimeout(() => port.postMessage({ id: 1, method: "approvalCode" }), 100);
+					setTimeout(() => resolve("still open"), 4000);
+				}),
+		);
+		assert.equal(outcome, "disconnected");
+	} finally {
+		await page.close();
+	}
+});
