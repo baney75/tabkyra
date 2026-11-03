@@ -316,20 +316,32 @@ test("first-F1: the real relay refuses a tab-hosted panel and a missing gesture,
 	const relay = await import("../src/connect/relay.ts");
 	// A connected native port that records what the relay sends to the host.
 	const native = await import("../src/bridge/native.ts");
-	// The bridge and the relay arm 20 s timers; unref them so the run does not wait for them.
+	// The bridge and the relay arm timers that outlive this test (the bridge has no stop). Track every timer and
+	// interval made while it runs and clear them all at the end, so none fires after the test has ended.
 	const realSetTimeout = globalThis.setTimeout;
+	const realSetInterval = globalThis.setInterval;
+	const timers = [];
+	const intervals = [];
+	globalThis.setTimeout = (fn, ms, ...rest) => {
+		const h = realSetTimeout(fn, ms, ...rest);
+		timers.push(h);
+		return h;
+	};
+	globalThis.setInterval = (fn, ms, ...rest) => {
+		const h = realSetInterval(fn, ms, ...rest);
+		intervals.push(h);
+		return h;
+	};
 	t.after(() => {
 		globalThis.setTimeout = realSetTimeout;
+		globalThis.setInterval = realSetInterval;
+		for (const h of timers) clearTimeout(h);
+		for (const h of intervals) clearInterval(h);
 	});
-	globalThis.setTimeout = (fn, ms, ...rest) => {
-		const t = realSetTimeout(fn, ms, ...rest);
-		if (ms >= 1000) t.unref?.();
-		return t;
-	};
 	let hostPort;
 	const realConnectNative = chrome.runtime.connectNative;
 	chrome.runtime.connectNative = (...args) => (hostPort = realConnectNative.apply(chrome.runtime, args));
-	// The bridge has no stop: its timers were made while setTimeout was wrapped (unref'd), and the fake host port is detached at the end.
+	// The bridge has no stop: its timers are cleared above, and the fake host port is detached at the end.
 	t.after(() => {
 		chrome.runtime.connectNative = realConnectNative;
 		hostPort?.onMessage.listeners.splice(0);
