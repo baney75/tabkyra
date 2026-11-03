@@ -25,6 +25,8 @@ export interface ConnectStatus {
 	link?: { hubUrl: string; name: string; online: boolean; busy: boolean; manage: boolean };
 	hub?: { devices: ConnectDevice[] };
 	theme: { preset: string; accent?: string; mode?: "light" | "dark" };
+	/** What joining a hub would let the hub's owner do here (the scopes a new link allows). Present when the route is none. */
+	joinScopes?: string[];
 	/** A config file that is present but unreadable, in a sentence; the route reads as none until it is fixed. */
 	problem?: string;
 }
@@ -45,6 +47,8 @@ export interface DeviceCode {
 export interface JoinResult {
 	name: string;
 	manage: boolean;
+	/** What the hub's owner may do through this device: the scopes the link allows. */
+	scopes: string[];
 }
 
 /** Methods the side panel may call. Everything else is refused in the background worker and again in the host. */
@@ -58,7 +62,21 @@ export interface ConnectRequest {
 	id: number;
 	method: string;
 	params?: Record<string, unknown>;
+	/** Proof of a recent click in the panel; the relay requires it for the methods in GESTURE_METHODS and strips it before the host. */
+	gesture?: Gesture;
 }
+
+/** Minted by the panel on a click: a one-use token and the time it was minted. */
+export interface Gesture {
+	token: string;
+	at: number;
+}
+
+/** Methods that hand out a code or give a hub control of this browser: they need a gesture. */
+export const GESTURE_METHODS: readonly string[] = ["approvalCode", "deviceCode", "joinHub"];
+
+/** How long a gesture token is good for. */
+export const GESTURE_MS = 5_000;
 
 /** background -> side panel */
 export interface ConnectReply {
