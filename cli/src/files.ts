@@ -25,6 +25,38 @@ export function writeJsonPrivate(path: string, value: unknown): void {
 /** A lock file stayed held past the caller's patience. Request handlers map it to 503. */
 export class LockTimeoutError extends Error {}
 
+const STALE_LOCK_MS = 30_000;
+
+function isStale(file: string): boolean {
+	try {
+		return Date.now() - statSync(file).mtimeMs > STALE_LOCK_MS;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Remove `lock` if it is stale, and say whether it did. Two processes can see the same stale lock:
+ * recovery goes one at a time through a marker file and looks again inside it, so the slower one
+ * finds the winner's fresh lock and leaves it. A marker a crash left behind goes stale the same way.
+ */
+function reapStaleLock(lock: string): boolean {
+	const marker = `${lock}.reap`;
+	try {
+		writeFileSync(marker, "", { flag: "wx" });
+	} catch {
+		if (isStale(marker)) rmSync(marker, { force: true });
+		return false;
+	}
+	try {
+		if (!isStale(lock)) return false;
+		rmSync(lock, { force: true });
+		return true;
+	} finally {
+		rmSync(marker, { force: true });
+	}
+}
+
 /**
  * Run `fn` holding an exclusive lock file next to `path`; gives up after `timeoutMs`. A lock older than 30 seconds is stale.
  * The lock records an owner token and is removed only while it still holds that token, so a holder whose lock
@@ -40,15 +72,9 @@ export function withFileLock<T>(path: string, fn: () => T, timeoutMs = 10_000): 
 			writeFileSync(lock, token, { flag: "wx" });
 			break;
 		} catch {
-			let stale = false;
-			try {
-				stale = Date.now() - statSync(lock).mtimeMs > 30_000;
-			} catch {
-				/* gone */
-			}
-			if (stale) rmSync(lock, { force: true });
-			else if (Date.now() > deadline) throw new LockTimeoutError(`${path} is locked (${lock}).`);
-			else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+			if (isStale(lock) && reapStaleLock(lock)) continue;
+			if (Date.now() > deadline) throw new LockTimeoutError(`${path} is locked (${lock}).`);
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
 		}
 	}
 	try {
@@ -79,15 +105,9 @@ export async function withFileLockAsync<T>(path: string, fn: () => Promise<T>, t
 			writeFileSync(lock, token, { flag: "wx" });
 			break;
 		} catch {
-			let stale = false;
-			try {
-				stale = Date.now() - statSync(lock).mtimeMs > 30_000;
-			} catch {
-				/* gone */
-			}
-			if (stale) rmSync(lock, { force: true });
-			else if (Date.now() > deadline) throw new LockTimeoutError(`${path} is locked (${lock}).`);
-			else await new Promise((resolve) => setTimeout(resolve, 25));
+			if (isStale(lock) && reapStaleLock(lock)) continue;
+			if (Date.now() > deadline) throw new LockTimeoutError(`${path} is locked (${lock}).`);
+			await new Promise((resolve) => setTimeout(resolve, 25));
 		}
 	}
 	try {

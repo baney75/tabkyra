@@ -105,3 +105,22 @@ test("a redirect that commits after navigate timed out is blanked and its tab re
 	assert.equal(read.result, undefined, "text read the approval page");
 	assert.equal(read.error?.code, "permission_denied");
 });
+
+test("T4: once the agent gives a tab back, the user's own trip to the approval page is left alone", async () => {
+	for (const [method, params] of [
+		["tabs.release", (tabId) => ({ tabId })],
+		["session.end", () => ({ close: false })],
+	]) {
+		const { fake, request, realSetTimeout } = await startBridge();
+		await chrome.storage.local.set({ bridge_permission_mode: "allow_all" });
+		const opened = await request("c1", "navigate", { url: "https://slow.example.com/", timeoutMs: 1 });
+		assert.equal(opened.error, undefined);
+		const tabId = opened.result.tabId;
+		const gaveBack = await request("c1", method, params(tabId));
+		assert.equal(gaveBack.error, undefined, `${method} failed`);
+		const url = "https://tabkyra.example.com/authorize?client_id=x";
+		fake.commitNav(tabId, url);
+		await new Promise((r) => realSetTimeout(r, 100));
+		assert.equal((await chrome.tabs.get(tabId)).url, url, `${method}: the user's page was blanked`);
+	}
+});

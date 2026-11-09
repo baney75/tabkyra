@@ -5,7 +5,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import fs, { chmodSync, existsSync, readFileSync, statSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -1418,6 +1419,88 @@ test("first-F2: a lock taken as stale is not deleted by the holder that lost it"
 		});
 		assert.equal(readFileSync(lock, "utf8"), "other-owner");
 	});
+});
+
+// ---------- weekly review 2026-11-09: T3 stale-lock recovery, T5 minting under a held lock ----------
+
+test("T3: a process that saw a stale lock doesn't delete the fresh lock another process just took", async () => {
+	const { withFileLock } = await loadTs('export { withFileLock } from "@src/files.ts";');
+	await inConfig("stale-race", async (dir) => {
+		for (const [name, take] of [
+			["sync", (target, fn) => withFileLock(target, fn, 150)],
+			["async", (target, fn) => withFileLockAsync(target, async () => fn(), 150)],
+		]) {
+			const target = join(dir, `${name}.json`);
+			const lock = `${target}.lock`;
+			writeFileSync(lock, "dead-owner");
+			utimesSync(lock, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+			const realStat = fs.statSync;
+			let raced = false;
+			// Right after this process sees the stale lock, another one replaces it with its own.
+			fs.statSync = (path, ...rest) => {
+				const seen = realStat(path, ...rest);
+				if (path === lock && !raced) {
+					raced = true;
+					rmSync(lock);
+					writeFileSync(lock, "fresh-owner");
+				}
+				return seen;
+			};
+			syncBuiltinESMExports();
+			let entered = false;
+			try {
+				await take(target, () => {
+					entered = true;
+				});
+			} catch {
+				/* timing out behind the fresh lock is the right outcome */
+			} finally {
+				fs.statSync = realStat;
+				syncBuiltinESMExports();
+			}
+			assert.equal(entered, false, `${name}: entered while another process held the lock`);
+			assert.equal(readFileSync(lock, "utf8"), "fresh-owner", `${name}: deleted the fresh lock`);
+			assert.equal(existsSync(`${lock}.reap`), false);
+		}
+	});
+});
+
+test("T3: a stale lock is still recovered, even past a reap marker a crash left behind", async () => {
+	const { withFileLock } = await loadTs('export { withFileLock } from "@src/files.ts";');
+	await inConfig("stale-recover", async (dir) => {
+		const old = new Date(Date.now() - 60_000);
+		for (const [name, marker] of [["plain", false], ["marker", true]]) {
+			const target = join(dir, `${name}.json`);
+			const lock = `${target}.lock`;
+			writeFileSync(lock, "dead-owner");
+			utimesSync(lock, old, old);
+			if (marker) {
+				writeFileSync(`${lock}.reap`, "");
+				utimesSync(`${lock}.reap`, old, old);
+			}
+			assert.equal(withFileLock(target, () => "ran", 1000), "ran");
+			assert.equal(existsSync(lock), false);
+			assert.equal(existsSync(`${lock}.reap`), false);
+		}
+	});
+});
+
+test("T5: minting a code behind a held code-file lock answers busy within a fraction of a second", async () => {
+	for (const [method, config, file] of [
+		["approvalCode", "remote.json", "oauth-codes.json"],
+		["deviceCode", "hub.json", "hub-codes.json"],
+	]) {
+		await inConfig(`mint-busy-${method}`, async (dir) => {
+			writeJson(join(dir, config), { publicUrl: "https://hub.example.com", port: 8787, route: "custom" });
+			writeFileSync(join(dir, `${file}.lock`), "1");
+			const started = Date.now();
+			const { error } = await ask(new ConnectService(), method);
+			const waited = Date.now() - started;
+			assert.ok(waited < 1500, `${method} blocked the host for ${waited} ms`);
+			assert.equal(error.code, "busy", `${method}: ${error.code}`);
+			assert.match(error.message, /busy/);
+		});
+	}
 });
 
 test("a hub's 403 that echoes the Authorization header never reaches the panel's reply or the host log", async () => {

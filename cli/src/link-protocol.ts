@@ -8,6 +8,8 @@
  * Every frame is checked against these shapes on arrival; anything else is dropped.
  */
 
+import { validateHeaderName, validateHeaderValue } from "node:http";
+
 /**
  * A request body of up to MAX_BODY_BYTES is sent as a JSON string, and escaping can double it (every
  * backslash or quote) or, for stray control characters, multiply it by six. The frame limit leaves
@@ -72,8 +74,13 @@ function toHeaders(v: unknown): Headers | undefined {
 	const out: Headers = {};
 	for (const [k, val] of Object.entries(v)) {
 		if (typeof val !== "string" || val.length > 4096 || !/^[a-z0-9-]{1,64}$/.test(k)) return undefined;
-		// A header value can't carry a line break.
-		if (/[\r\n\0]/.test(val)) return undefined;
+		// Anything Node would refuse when the hub writes this head stops here, not in writeHead.
+		try {
+			validateHeaderName(k);
+			validateHeaderValue(k, val);
+		} catch {
+			return undefined;
+		}
 		out[k] = val;
 	}
 	return out;
