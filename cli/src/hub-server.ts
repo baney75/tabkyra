@@ -62,6 +62,10 @@ const MAX_QUEUED_BYTES = 16_000_000;
 /** Initialize requests whose bodies are still arriving, hub-wide. Per caller, the session cap bounds them. */
 const MAX_INIT_READERS = 64;
 const SESSION_ID = /^[\x21-\x7e]{1,128}$/;
+/** Cancelled initialize requests remembered per link, so a late answer to one can have its session closed. */
+const MAX_LATE_INITS = 64;
+/** Cleanup DELETEs for those late answers in flight per link. */
+const MAX_LATE_DELETES = 8;
 
 export interface HubOptions {
 	port: number;
@@ -78,6 +82,8 @@ export interface HubOptions {
 
 interface Pending {
 	res?: ServerResponse;
+	/** An initialize request: if it ends before its head, a late head can still have made a session. */
+	initialize: boolean;
 	/** A long-lived GET event stream: counted apart from requests. */
 	stream: boolean;
 	headSent: boolean;
@@ -107,6 +113,10 @@ interface Link {
 	blocked: Set<string>;
 	/** initialize requests sent and not yet finished: load the device hasn't reported. */
 	initsPending: number;
+	/** Initialize requests the hub gave up on before their head, oldest first. Only these may answer late. */
+	lateInits: Set<string>;
+	/** Session ids with a cleanup DELETE in flight. */
+	lateDeletes: Set<string>;
 }
 
 interface HubSession {
@@ -245,6 +255,10 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		clearTimeout(p.timer);
 		unblock(link, id, p);
 		link.inflight.delete(id);
+		if (p.initialize && !p.headSent) {
+			link.lateInits.add(id);
+			if (link.lateInits.size > MAX_LATE_INITS) link.lateInits.delete(link.lateInits.values().next().value as string);
+		}
 		if (p.stream) link.streams--;
 		else link.calls--;
 		p.onDone?.();
@@ -290,7 +304,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	}
 
 	/** Send one request over a link and stream the answer back to `res`. */
-	function forward(link: Link, request: { method: ReqFrame["method"]; headers: Headers; body: string; res?: ServerResponse; stream?: boolean; onHead?: Pending["onHead"]; onDone?: () => void }): void {
+	function forward(link: Link, request: { method: ReqFrame["method"]; headers: Headers; body: string; res?: ServerResponse; stream?: boolean; initialize?: boolean; onHead?: Pending["onHead"]; onDone?: () => void }): void {
 		const id = `r${++counter}`;
 		const frame: ReqFrame = { t: "req", id, method: request.method, path: "/mcp", headers: request.headers, body: request.body };
 		const text = JSON.stringify(frame);
@@ -303,7 +317,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		const timer = setTimeout(() => failPending(link, id, 504, "The device didn't answer in time."), headTimeoutMs);
 		timer.unref();
 		const stream = request.stream === true;
-		const p: Pending = { res: request.res, stream, headSent: false, done: false, timer, onHead: request.onHead, onDone: request.onDone };
+		const p: Pending = { res: request.res, initialize: request.initialize === true, stream, headSent: false, done: false, timer, onHead: request.onHead, onDone: request.onDone };
 		link.inflight.set(id, p);
 		if (stream) link.streams++;
 		else link.calls++;
@@ -328,8 +342,9 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		}
 		const p = link.inflight.get(frame.id);
 		if (!p || p.done) {
-			// The hub gave up on this request (client gone, timeout) but the device answered: if that created a session, nothing maps it, so close it.
-			if (frame.t === "head") discardLateHead(link, frame.status, frame.headers);
+			// The hub gave up on this initialize (client gone, timeout) but the device answered: if that created a session, nothing maps it, so close it.
+			// Any other unknown id is noise: a device can't make the hub spend anything by inventing them.
+			if (link.lateInits.delete(frame.id) && frame.t === "head") discardLateHead(link, frame.status, frame.headers);
 			return;
 		}
 		if (frame.t === "head") {
@@ -376,11 +391,12 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		if (frame.t === "error") failPending(link, frame.id, 502, `The device reported an error: ${frame.message}`);
 	}
 
-	/** A head for a request the hub no longer tracks. If it carries a session id the hub doesn't route, tell the device to close that session. */
+	/** A late head for a cancelled initialize. If it carries a session id the hub doesn't route, tell the device to close that session. */
 	function discardLateHead(link: Link, status: number, headers: Headers): void {
 		const id = headers["mcp-session-id"];
-		if (status < 200 || status >= 300 || !id || !SESSION_ID.test(id) || sessions.has(id)) return;
-		forward(link, { method: "DELETE", headers: { "mcp-session-id": id, [HUB_SCOPES_HEADER]: "", [HUB_CALLER_HEADER]: "hub" }, body: "" });
+		if (status < 200 || status >= 300 || !id || !SESSION_ID.test(id) || sessions.has(id) || link.lateDeletes.has(id) || link.lateDeletes.size >= MAX_LATE_DELETES) return;
+		link.lateDeletes.add(id);
+		forward(link, { method: "DELETE", headers: { "mcp-session-id": id, [HUB_SCOPES_HEADER]: "", [HUB_CALLER_HEADER]: "hub" }, body: "", onDone: () => link.lateDeletes.delete(id) });
 	}
 
 	function dropLink(link: Link, reason: string): void {
@@ -407,6 +423,8 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			reserved: 0,
 			blocked: new Set(),
 			initsPending: 0,
+			lateInits: new Set(),
+			lateDeletes: new Set(),
 		};
 		// One live link per device: a new one replaces the old.
 		if (previous) {
@@ -421,7 +439,14 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			if (isBinary) return ws.close(1003, "text frames only");
 			link.lastSeen = Date.now();
 			const frame = parseDeviceFrame(data.toString("utf8"));
-			if (frame) onDeviceFrame(link, frame);
+			if (!frame) return;
+			try {
+				onDeviceFrame(link, frame);
+			} catch (err) {
+				// One device's frame costs that device its link, never the hub and everyone else's sessions.
+				process.stderr.write(`[tabkyra hub] closed a device link after a frame error: ${err instanceof Error ? err.message : String(err)}\n`);
+				ws.terminate();
+			}
 		});
 		ws.on("pong", () => {
 			link.lastSeen = Date.now();
@@ -592,6 +617,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			headers: requestHeaders(req, who),
 			body,
 			res,
+			initialize: true,
 			onHead: (status, headers) => {
 				const id = headers["mcp-session-id"];
 				// A device can't take over a session id the hub already routes.

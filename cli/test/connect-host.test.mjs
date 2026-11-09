@@ -5,7 +5,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import fs, { chmodSync, existsSync, readFileSync, statSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -1418,6 +1419,156 @@ test("first-F2: a lock taken as stale is not deleted by the holder that lost it"
 		});
 		assert.equal(readFileSync(lock, "utf8"), "other-owner");
 	});
+});
+
+// ---------- weekly review 2026-11-09: T3 stale-lock recovery, T5 minting under a held lock ----------
+
+test("T3: a process that saw a stale lock doesn't delete the fresh lock another process just took", async () => {
+	const { withFileLock } = await loadTs('export { withFileLock } from "@src/files.ts";');
+	await inConfig("stale-race", async (dir) => {
+		for (const [name, take] of [
+			["sync", (target, fn) => withFileLock(target, fn, 150)],
+			["async", (target, fn) => withFileLockAsync(target, async () => fn(), 150)],
+		]) {
+			const target = join(dir, `${name}.json`);
+			const lock = `${target}.lock`;
+			writeFileSync(lock, "dead-owner");
+			utimesSync(lock, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+			const realStat = fs.statSync;
+			let raced = false;
+			// Right after this process sees the stale lock, another one replaces it with its own.
+			fs.statSync = (path, ...rest) => {
+				const seen = realStat(path, ...rest);
+				if (path === lock && !raced) {
+					raced = true;
+					rmSync(lock);
+					writeFileSync(lock, "fresh-owner");
+				}
+				return seen;
+			};
+			syncBuiltinESMExports();
+			let entered = false;
+			try {
+				await take(target, () => {
+					entered = true;
+				});
+			} catch {
+				/* timing out behind the fresh lock is the right outcome */
+			} finally {
+				fs.statSync = realStat;
+				syncBuiltinESMExports();
+			}
+			assert.equal(entered, false, `${name}: entered while another process held the lock`);
+			assert.equal(readFileSync(lock, "utf8"), "fresh-owner", `${name}: deleted the fresh lock`);
+			assert.equal(existsSync(`${lock}.reap`), false);
+		}
+	});
+});
+
+test("T3: a stale lock is still recovered, even past a reap marker a crash left behind", async () => {
+	const { withFileLock } = await loadTs('export { withFileLock } from "@src/files.ts";');
+	await inConfig("stale-recover", async (dir) => {
+		const old = new Date(Date.now() - 60_000);
+		for (const [name, marker] of [["plain", false], ["marker", true]]) {
+			const target = join(dir, `${name}.json`);
+			const lock = `${target}.lock`;
+			writeFileSync(lock, "dead-owner");
+			utimesSync(lock, old, old);
+			const claim = firstClaim(lock);
+			if (marker) writeFileSync(claim, String(spawnSync(process.execPath, ["-e", ""]).pid));
+			assert.equal(withFileLock(target, () => "ran", 1000), "ran");
+			assert.equal(existsSync(lock), false);
+			assert.equal(existsSync(claim), false);
+		}
+	});
+});
+
+/** The name of the first reap claim for the lock file as it is now (see `lockSnapshot` in files.ts). */
+function firstClaim(lock) {
+	const seen = statSync(lock);
+	const id = createHash("sha256").update(`${seen.ino}:${seen.mtimeMs}:${readFileSync(lock, "utf8")}`).digest("hex").slice(0, 16);
+	return `${lock}.reap.${id}.0`;
+}
+
+test("T3 round 2: a contender that saw a dead reap marker can't displace the one that just replaced it", async () => {
+	const { withFileLock } = await loadTs('export { withFileLock } from "@src/files.ts";');
+	await inConfig("stale-marker-race", async (dir) => {
+		const old = new Date(Date.now() - 60_000);
+		const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+		for (const [name, take] of [
+			["sync", (target, fn) => withFileLock(target, fn, 150)],
+			["async", (target, fn) => withFileLockAsync(target, async () => fn(), 150)],
+		]) {
+			const target = join(dir, `${name}.json`);
+			const lock = `${target}.lock`;
+			writeFileSync(lock, "dead-owner");
+			utimesSync(lock, old, old);
+			// The marker a crashed contender left, in both the old fixed name and the per-lock claim name.
+			for (const marker of [`${lock}.reap`, firstClaim(lock)]) {
+				writeFileSync(marker, String(deadPid));
+				utimesSync(marker, old, old);
+			}
+			const realStat = fs.statSync;
+			const realRead = fs.readFileSync;
+			let fresh;
+			// Right after this contender observes the dead marker, another replaces it and is mid-recovery.
+			const race = (path) => {
+				if (fresh || typeof path !== "string" || !path.includes(".reap")) return;
+				fresh = path.replace(/\.(\d+)$/, (_, n) => `.${Number(n) + 1}`);
+				fs.rmSync(path === fresh ? path : `${lock}.reap`, { force: true });
+				writeFileSync(fresh, String(process.pid));
+			};
+			fs.statSync = (path, ...rest) => {
+				const seen = realStat(path, ...rest);
+				race(path);
+				return seen;
+			};
+			fs.readFileSync = (path, ...rest) => {
+				const seen = realRead(path, ...rest);
+				race(path);
+				return seen;
+			};
+			syncBuiltinESMExports();
+			let entered = false;
+			try {
+				await take(target, () => {
+					entered = true;
+				});
+			} catch {
+				/* timing out behind the other contender is the right outcome */
+			} finally {
+				fs.statSync = realStat;
+				fs.readFileSync = realRead;
+				syncBuiltinESMExports();
+			}
+			assert.ok(fresh, `${name}: the interleaving never ran`);
+			assert.equal(entered, false, `${name}: ran its callback while another contender was mid-recovery`);
+			assert.equal(existsSync(fresh) && readFileSync(fresh, "utf8"), String(process.pid), `${name}: deleted the fresh marker`);
+			assert.equal(readFileSync(lock, "utf8"), "dead-owner", `${name}: removed the lock from under the other contender`);
+			// The other contender finishes without recovering; the lock is still recoverable.
+			rmSync(fresh);
+			rmSync(`${lock}.reap`, { force: true });
+			assert.equal(await take(target, () => "ran"), "ran", `${name}: the stale lock was never recovered`);
+		}
+	});
+});
+
+test("T5: minting a code behind a held code-file lock answers busy within a fraction of a second", async () => {
+	for (const [method, config, file] of [
+		["approvalCode", "remote.json", "oauth-codes.json"],
+		["deviceCode", "hub.json", "hub-codes.json"],
+	]) {
+		await inConfig(`mint-busy-${method}`, async (dir) => {
+			writeJson(join(dir, config), { publicUrl: "https://hub.example.com", port: 8787, route: "custom" });
+			writeFileSync(join(dir, `${file}.lock`), "1");
+			const started = Date.now();
+			const { error } = await ask(new ConnectService(), method);
+			const waited = Date.now() - started;
+			assert.ok(waited < 1500, `${method} blocked the host for ${waited} ms`);
+			assert.equal(error.code, "busy", `${method}: ${error.code}`);
+			assert.match(error.message, /busy/);
+		});
+	}
 });
 
 test("a hub's 403 that echoes the Authorization header never reaches the panel's reply or the host log", async () => {

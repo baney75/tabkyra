@@ -499,6 +499,11 @@ export class BrowserSession {
 		return this.state.loose?.includes(tabId) ?? false;
 	}
 
+	/** Whether the tab is still this agent's: false once it was released or the session ended. */
+	ownsTab(tabId: number): boolean {
+		return !this.ended && this.state.tabIds.includes(tabId);
+	}
+
 	get tabIds(): number[] {
 		return [...this.state.tabIds];
 	}
