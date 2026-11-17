@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **Tabkyra is now Tychicus.** Development continues at [baney75/tychicus](https://github.com/baney75/tychicus), and this repository is archived. Install Tychicus from its [latest release](https://github.com/baney75/tychicus/releases/latest). Your Tabkyra settings carry over when you run `tychicus install`.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="media/brand/hero.png">
