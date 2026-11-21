@@ -90,6 +90,10 @@
 - The header's share button did nothing on the tab in front, which is nearly always the agent's already, and gave no feedback; hovered, it looked switched on (gold on gray). It is now a "Share this tab" pill that shows only for a tab the agent doesn't have, and hover no longer colors icons. `test/panel-ui.test.mjs` and the side panel test in `cli/test/e2e-bridge.test.mjs`.
 - Dollar amounts in the agent's answers rendered as math: "$89, a hand grinder ... $4 less" became one italic formula with the words run together. A `$` before a number is now a price; math such as `$2^{10}$` and code are unchanged.
 - Contrast: the tool row's host name (2.7:1 in light), the light theme's info toast (white on light gray) and the success toast (white on green, 3.3:1) now pass WCAG AA.
+- A misbehaving device can no longer take down a shared hub. Header values Node would refuse are dropped on arrival, and an error while handling one device's frame closes only that link. Late answers count only for initialize requests the hub cancelled, with at most 8 cleanup DELETEs per link in flight. Tests: `cli/test/hub-hardening.test.mjs`.
+- Two Tabkyra processes can no longer both enter a lock while recovering a stale one. Recovery goes one at a time through a `.reap` marker and looks again before removing anything. Test: `cli/test/connect-host.test.mjs`.
+- A tab you got back from an agent keeps the page you open in it. The approval-page guard now stops at `tabs_release` and `session_end`. Test: `test/guarded-hosts.test.mjs`.
+- Minting a code while another process holds the code file answers busy at once instead of freezing the helper for ten seconds. Test: `cli/test/connect-host.test.mjs`.
 
 ## [1.1.9] - 2026-10-27
 

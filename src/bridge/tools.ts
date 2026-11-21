@@ -229,7 +229,8 @@ const GUARD_WATCH_MS = 120000;
  */
 function watchGuardedCommits(ctx: HandlerContext, tabId: number): void {
 	const onCommitted = (d: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
-		if (d.tabId === tabId && d.frameId === 0 && ctx.isGuarded(d.url))
+		// A tab the agent gave back is the user's: where they go in it is theirs to decide.
+		if (d.tabId === tabId && d.frameId === 0 && ctx.session.ownsTab(tabId) && ctx.isGuarded(d.url))
 			void chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
 	};
 	chrome.webNavigation.onCommitted.addListener(onCommitted);

@@ -265,6 +265,88 @@ test("a head that arrives after the hub gave up on an initialize gets its sessio
 	assert.equal(del.headers["mcp-session-id"], "late-session-1");
 });
 
+// ---------- weekly review 2026-11-09: T1 malformed device headers, T2 unsolicited heads ----------
+
+const hubAlive = async (hub) => {
+	assert.equal(hub.proc.exitCode, null, "the hub process exited");
+	assert.equal((await fetch(`${hub.url}/`)).status, 200);
+};
+
+test("T1: a device head with an invalid header value is dropped and the hub keeps serving", async () => {
+	const hub = await hubFor("bad-header-hub", { env: { TABKYRA_HUB_HEAD_TIMEOUT_MS: "300" } });
+	const values = ["text/plain\u0001", "text/Āplain"];
+	await fakeDevice(hub, "bad-headers", {
+		onReq: (frame, ws) => {
+			if (frame.method === "POST") ws.send(JSON.stringify({ t: "head", id: frame.id, status: 200, headers: { "content-type": values.shift() } }));
+		},
+	});
+	const secret = createToken(hub, "caller", "skills.read");
+	for (let i = 0; i < 2; i++) {
+		const res = await rpc(`${hub.url}/mcp`, secret, INITIALIZE).catch((err) => ({ status: String(err) }));
+		assert.equal(res.status, 504, "the bad head never reaches the client, so the request times out");
+		await sleep(50);
+		await hubAlive(hub);
+	}
+});
+
+test("T1: an error while handling a device frame closes that link and the hub keeps serving", async () => {
+	const preload = join(root, "throw-on-599.mjs");
+	writeFileSync(preload, `import { ServerResponse } from "node:http";\nconst real = ServerResponse.prototype.writeHead;\nServerResponse.prototype.writeHead = function (status, ...rest) {\n\tif (status === 599) throw new Error("injected");\n\treturn real.call(this, status, ...rest);\n};\n`);
+	const hub = await hubFor("frame-error-hub", { env: { NODE_OPTIONS: `--import ${preload}` } });
+	const fake = await fakeDevice(hub, "thrower", {
+		onReq: (frame, ws) => {
+			if (frame.method === "POST") ws.send(JSON.stringify({ t: "head", id: frame.id, status: 599, headers: { "content-type": "application/json" } }));
+		},
+	});
+	await rpc(`${hub.url}/mcp`, createToken(hub, "caller", "skills.read"), INITIALIZE).catch(() => undefined);
+	await sleep(50);
+	await hubAlive(hub);
+	await waitFor(() => fake.closedCode() !== undefined, "the offending link to close");
+});
+
+test("T2: heads for requests the hub never sent cost it nothing", async () => {
+	const hub = await hubFor("unsolicited-head-hub");
+	const fake = await fakeDevice(hub, "forger");
+	for (let i = 0; i < 50; i++) fake.ws.send(JSON.stringify({ t: "head", id: `forged${i}`, status: 200, headers: { "mcp-session-id": `forged-session-${i}` } }));
+	await sleep(300);
+	assert.deepEqual(fake.reqs().filter((r) => r.method === "DELETE"), [], "the hub sent cleanup for a request it never made");
+	await hubAlive(hub);
+});
+
+test("T2: a late head repeated for one cancelled initialize closes its session once", async () => {
+	const hub = await hubFor("replayed-head-hub", { env: { TABKYRA_HUB_HEAD_TIMEOUT_MS: "300" } });
+	const fake = await fakeDevice(hub, "replayer", {
+		onReq: (frame, ws, frames) => {
+			if (frame.method !== "POST") return;
+			waitFor(() => frames.some((f) => f.t === "cancel" && f.id === frame.id), "the cancel").then(() => {
+				for (let i = 0; i < 5; i++) ws.send(JSON.stringify({ t: "head", id: frame.id, status: 200, headers: { "mcp-session-id": `replayed-${i}` } }));
+			});
+		},
+	});
+	assert.equal((await rpc(`${hub.url}/mcp`, createToken(hub, "caller", "skills.read"), INITIALIZE)).status, 504);
+	await waitFor(() => fake.reqs().find((r) => r.method === "DELETE"), "the DELETE for the orphan");
+	await sleep(100);
+	assert.equal(fake.reqs().filter((r) => r.method === "DELETE").length, 1);
+});
+
+test("T2: cleanup DELETEs in flight are bounded however many cancelled initializes answer late", async () => {
+	const hub = await hubFor("bounded-cleanup-hub", { env: { TABKYRA_HUB_HEAD_TIMEOUT_MS: "300" } });
+	const posts = [];
+	const fake = await fakeDevice(hub, "flood", {
+		onReq: (frame) => {
+			if (frame.method === "POST") posts.push(frame.id);
+		},
+	});
+	const secret = createToken(hub, "caller", "skills.read");
+	for (let batch = 0; batch < 2; batch++) {
+		const answers = await Promise.all(Array.from({ length: 5 }, () => rpc(`${hub.url}/mcp`, secret, INITIALIZE)));
+		assert.deepEqual(answers.map((a) => a.status), [504, 504, 504, 504, 504]);
+	}
+	for (const id of posts) fake.ws.send(JSON.stringify({ t: "head", id, status: 200, headers: { "mcp-session-id": `orphan-${id}` } }));
+	await sleep(120);
+	assert.equal(fake.reqs().filter((r) => r.method === "DELETE").length, 8);
+});
+
 // ---------- sonnet-F2: UTF-16 safe chunks ----------
 
 test("splitText never ends a piece between the halves of a surrogate pair", async () => {

@@ -330,7 +330,7 @@ export class ConnectService {
 				const made = await mintViaHub("approval", false);
 				return { code: made.code, expiresAt: made.expiresAt, connectorUrl: made.url ?? `${made.hubUrl}/mcp` };
 			}
-			const made = mintApprovalCode();
+			const made = mintApprovalCode(REQUEST_LOCK_MS);
 			return { code: made.code, expiresAt: made.expiresAt, connectorUrl: `${status.publicUrl}/mcp` };
 		} catch (err) {
 			throw this.codeFailure(err, status.route === "link" ? undefined : join(configDir(), "oauth-codes.json"));
@@ -342,6 +342,7 @@ export class ConnectService {
 		if (err instanceof ConnectError) return err;
 		// What the hub said never reaches the panel: the status picks a fixed sentence (the CLI still prints the hub's own words).
 		if (err instanceof HubCodeError) return hubCodeFailure(err.status);
+		if (err instanceof LockTimeoutError) return new ConnectError("busy", safeMessage(err));
 		return new ConnectError(err instanceof LinkError && /manager/.test(err.message) ? "unavailable" : "failed", safeMessage(err, file));
 	}
 
@@ -356,7 +357,7 @@ export class ConnectService {
 				const made = await mintViaHub("connect", false);
 				return { code: made.code, expiresAt: made.expiresAt, hubUrl: made.hubUrl };
 			}
-			const made = mintConnectCode({ manage: false }, this.now());
+			const made = mintConnectCode({ manage: false }, this.now(), REQUEST_LOCK_MS);
 			return { code: made.code, expiresAt: made.expiresAt, hubUrl: status.publicUrl ?? "" };
 		} catch (err) {
 			throw this.codeFailure(err, status.route === "link" ? undefined : join(configDir(), "hub-codes.json"));
